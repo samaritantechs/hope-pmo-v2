@@ -4,10 +4,19 @@
      "An officer can pinpoint coordinates of the customer during visitation. And pressing map
       later will open maps app in phone or browser to direct us towards that customer."
 
-   What only a browser can show: that the buttons are on the card, that Location really asks the
-   phone for a position and sends it with the card's own ref and team, that an existing point is
-   put to the officer as a question rather than overwritten, and that Map opens the directions
-   link -- including with no signal at all, from the point kept on the handset.
+   "Add them as two icons on the right side of name and team+refno ... two rows map icons for both
+    customer and guarantor. All tied to ref no."
+   "Someone fraudulent could update real location into fake, so if there is more than one location,
+    open location history once the button is clicked."
+
+   What only a browser can show: that the customer's two icons sit at the right of the name and
+   the team + REF lines and the guarantor's at the right of the guarantor's own row, that Location
+   really asks the phone for a position and sends it with the card's own ref and team and the
+   right party, that an existing point is put to the officer as a question rather than
+   overwritten, that Map opens the directions link -- including with no signal at all, from the
+   point kept on the handset -- to the right person's door, and that a person with more than one
+   location gets the history (current and earlier points, who, when, how far apart, a warning when
+   they differ) when Map is pressed, while a person with one location still goes straight to Maps.
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -49,7 +58,9 @@ function answer(fn, args) {
     if (pinMode === 'pending') return { ok: true, stored: false, pending: 'MIGRATION' };
     if (pinMode === 'notmine') return { ok: false, error: 'NOT_YOUR_TEAM' };
     if (pinMode === 'exists' && !p.replace) return { ok: true, stored: false, exists: { by: 'ASHA JUMA', at: '2026-08-01 10:00', distM: 340 } };
-    saved[p.party] = { lat: p.lat, lng: p.lng, acc: Math.round(p.acc), by: 'JUMA ISSA', at: '2026-08-02 11:00' };
+    const prev = saved[p.party];
+    const hist = prev && p.replace ? (prev.hist || []).concat([{ lat: prev.lat, lng: prev.lng, acc: prev.acc, by: prev.by, at: prev.at }]) : [];
+    saved[p.party] = { lat: p.lat, lng: p.lng, acc: Math.round(p.acc), by: 'JUMA ISSA', at: '2026-08-02 11:00', hist };
     return { ok: true, stored: true, party: p.party, replaced: pinMode === 'exists', loc: saved[p.party] };
   }
   return { ok: true };
@@ -180,6 +191,33 @@ await page.waitForSelector('#locNo', { timeout: 8000 });
 await page.click('#locNo');
 await page.waitForTimeout(300);
 check('saying no keeps the old point and sends nothing more', pins.length === 1 && !/locYes/.test(await page.evaluate(() => document.getElementById('locNote_G').innerHTML)));
+
+// --- 8b. HISTORY: the guarantor's point was replaced above, so there are now TWO locations -- Map opens the history, not Maps
+pinMode = 'store';
+await page.reload(); await openCard();
+check('a person with more than one location says so, under the icons', /Maeneo 2/.test(await text('#locNote_G')) && !!(await box('#locHist_G')), await text('#locNote_G'));
+check('while the customer, with one location, shows no history link', !(await box('#locHist_C')));
+await page.evaluate(() => { window.__opened = []; });
+await page.click('#locMap_G');
+await page.waitForSelector('#locNote_G .histpanel', { timeout: 3000 });
+check('Map opens the history instead of going straight to Maps', (await page.evaluate(() => window.__opened.length)) === 0 && !!(await box('#locNote_G .histpanel')));
+check('with the current point and the one it replaced', (await page.evaluate(() => document.querySelectorAll('#locNote_G .histrow').length)) === 2, await text('#locNote_G .histlist'));
+check('each says who pinned it and when', /JUMA ISSA/.test(await text('#locNote_G .histlist')) && /2026-08-0[12] \d\d:\d\d/.test(await text('#locNote_G .histlist')), await text('#locNote_G .histlist'));
+check('the earlier one says how far it is from the current point', /km kutoka sasa|m kutoka sasa/.test(await text('#locNote_G .histlist')), await text('#locNote_G .histlist'));
+check('and the places differ, so there is a warning in red words', /Maeneo yanatofautiana hadi/.test(await text('#locNote_G .histwarn')), await text('#locNote_G .histpanel'));
+if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT + '-history.png' });
+await page.click('#locNote_G .histrow:nth-child(2) .locbtn');
+check('the earlier point has its own Map icon, to ITS coordinates', (await page.evaluate(() => window.__opened.slice())).pop() === 'https://www.google.com/maps/dir/?api=1&destination=-6.801,39.215&travelmode=driving', JSON.stringify(await page.evaluate(() => window.__opened)));
+await page.click('#locNote_G .histrow:nth-child(1) .locbtn');
+check('and so does the current one', (await page.evaluate(() => window.__opened.slice())).pop() === 'https://www.google.com/maps/dir/?api=1&destination=-6.7924,39.2083&travelmode=driving');
+await page.click('#locHistClose');
+check('Close puts the note back', !(await box('#locNote_G .histpanel')) && /Saved:/.test(await text('#locNote_G')));
+await page.click('#locHist_G');
+check('and the "view history" line opens it as well', !!(await box('#locNote_G .histpanel')));
+await page.click('#locHistClose');
+await page.evaluate(() => { window.__opened = []; });
+await page.click('#locMap_C');
+check('a person with ONE location still goes straight to Maps', (await page.evaluate(() => window.__opened.length)) === 1 && !(await box('#locNote_C .histpanel')));
 
 // --- 9. before the migration, and a customer who is not this officer's, each say so
 pinMode = 'pending'; await page.click('#locPin_C'); await page.waitForTimeout(500);

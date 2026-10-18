@@ -2100,7 +2100,7 @@ test('the customer card has Location and Map icons beside the name and a second 
     'saved through the ordinary call transport with the card\'s own ref and team, the party, and that person\'s own name');
   assert.ok(/d\.exists/.test(call) && /locSave_\(r, party, fix, true\)/.test(call), 'an existing point is replaced only when the officer says yes');
   assert.ok(/d\.pending/.test(call) && /Ofisi bado haijawasha huduma ya eneo\./.test(call), 'before the migration the officer is told, not left guessing');
-  assert.ok(/https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=' \+ loc\.lat \+ ',' \+ loc\.lng/.test(call) && /window\.open\(url, '_blank'\)/.test(call), 'Map opens directions to the point in the Maps app or the browser');
+  assert.ok(/function locOpenMap_\(lat, lng, party\)\{\s*\n\s*var url = 'https:\/\/www\.google\.com\/maps\/dir\/\?api=1&destination=' \+ lat \+ ',' \+ lng/.test(call) && /window\.open\(url, '_blank'\)/.test(call), 'Map opens directions to the point in the Maps app or the browser');
   assert.ok(/function custLocKey_\(ref, party\)\{ return party === 'G' \? String\(ref\) \+ '\|G' : String\(ref\); \}/.test(call), 'the customer keeps the key the first release stored; the guarantor is ref|G');
   assert.ok(/localStorage\.setItem\(CUSTLOC_LS/.test(call) && /localStorage\.removeItem\(CUSTLOC_LS\)/.test(call), 'the points are kept on the phone for no-signal use, and forgotten at sign-out');
   assert.ok(/custLocPut_\(r\.ref, 'C', d\.loc \|\| null\); custLocPut_\(r\.ref, 'G', d\.gloc \|\| null\);/.test(call) && call.split("'api_callCustPin'").length - 1 === 1,
@@ -2127,4 +2127,33 @@ test('the customer-location migrations are small, idempotent and non-destructive
   assert.ok(!/\b(delete|truncate|update)\b/i.test(code), 'no row is deleted or rewritten');
   const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
   assert.ok(/create table if not exists customer_locations \([\s\S]*?primary key \(ref, party\)\s*\);/.test(schema), 'schema.sql carries the final shape for a fresh database');
+});
+
+/* LOCATION HISTORY -- "Someone fraudulent could update real location into fake, so if there is more than one location,
+   open location history once the button is clicked." */
+test('Map opens the location history when a person has more than one location, and goes straight to Maps when there is one', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  const map = call.slice(call.indexOf('function locMap_(r, party)'), call.indexOf('function locOpenMap_'));
+  assert.ok(/if \(loc\.hist && loc\.hist\.length\)\{ locHistory_\(r\.ref, party\); return; \}\s*\n\s*locOpenMap_\(loc\.lat, loc\.lng, party\);/.test(map),
+    'more than one location: the history; one: straight to Maps');
+  const hist = call.slice(call.indexOf('function locHistory_'), call.indexOf('function locPin_'));
+  assert.ok(/\.concat\(\(loc\.hist \|\| \[\]\)\.slice\(\)\.reverse\(\)\)/.test(hist) && /cur: true/.test(hist), 'the point in force now, then each earlier one, newest first');
+  assert.ok(/locMeters_\(loc\.lat, loc\.lng, e\.lat, e\.lng\)/.test(hist) && /spread >= LOCHIST_WARN_M/.test(hist) && /LOCHIST_WARN_M = 100/.test(call), 'how far each is from the current one, and a warning from 100 m');
+  assert.ok(/esc\(e\.by \|\| /.test(hist) && /esc\(e\.at \|\| ''\)/.test(hist) && /e\.acc != null/.test(hist), 'who pinned it, when, how accurate');
+  assert.ok(/locOpenMap_\(e\.lat, e\.lng, party\)/.test(hist), 'every entry has its own Map icon, to its own coordinates');
+  assert.ok(/id="locHist_' \+ party \+ '">angalia historia \/ view history/.test(call) && /hb\.onclick = function\(\)\{ locHistory_\(ref, party\); \}/.test(call), 'a "view history" line under the icons whenever there is one');
+  assert.ok(/id="locHistClose"/.test(hist) && /locPaint_\(ref, party\)/.test(hist), 'and a way back');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-18-b'/.test(src), 'BUILD moved again');
+});
+
+test('the location-history migration is one metadata-only column, idempotent, non-destructive, and schema.sql declares it', () => {
+  const dbDir = join(PUBLIC, '..', 'db');
+  const sql = readFileSync(join(dbDir, 'RUN-ME-2026-10-18c-location-history.sql'), 'utf-8');
+  const code = sql.replace(/--.*$/gm, '');
+  assert.ok(sql.split('\n').length < 100, 'under a hundred lines');
+  assert.equal((code.match(/add column if not exists hist jsonb not null default '\[\]'::jsonb/g) || []).length, 1, 'one idempotent column with a constant default');
+  assert.ok(!/\b(drop|delete|truncate|update|insert|create)\b/i.test(code), 'nothing destructive, nothing else touched');
+  const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
+  assert.ok(/hist jsonb not null default '\[\]'::jsonb,\s*\n\s*primary key \(ref, party\)/.test(schema), 'schema.sql carries it for a fresh database');
 });

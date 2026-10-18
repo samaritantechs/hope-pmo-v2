@@ -1663,6 +1663,42 @@ const COMMENT_LIMIT = 100;
 const custLocGone_ = new WeakMap();              // db client -> ms until which the table is known absent
 const CUSTLOC_RETRY_MS = 5 * 60 * 1000;
 const custLocMissing_ = e => /customer_locations|does not exist|schema cache|42P01|PGRST205/i.test(String((e && (e.message || e.code)) || e || ''));
+/* THE HISTORY OF A POINT -- so a fake pin cannot erase the real one.
+     "Someone fraudulent could update real location into fake, so if there is more than one
+      location, open location history once the button is clicked."
+   Pinning again REPLACES the point on the row, which is exactly what a fraudster would do to hide
+   the real door. So the row keeps every point it replaced, oldest first, in `hist` (jsonb:
+   [{ lat, lng, acc, by, at }]): who pinned it, when, how accurate the phone said it was. It lives
+   ON THE ROW the card's history call already reads, so it adds no read and no trip, and it
+   travels to the phone with the point (the phone shows it with no signal). Bounded: at most
+   HIST_KEEP entries, and the FIRST pin is never the one dropped -- somebody re-pinning twenty
+   times to push the original out of the list would only leave twenty marks of having done so.
+   A re-pin from the same officer within HIST_MIN_M of the old point is the same door measured
+   again, not a different place: it refreshes the point and adds nothing.
+   BEFORE db/RUN-ME-2026-10-18c-location-history.sql the column is not there: the read and the
+   write both retry without it, once, and are not asked again for five minutes -- pinning and Map
+   carry on exactly as before, only without a record of what was replaced. */
+const HIST_KEEP = 20, HIST_MIN_M = 5;
+const custHistGone_ = new WeakMap();             // db client -> ms until which the hist column is known absent
+const custHistMissing_ = e => /\bhist\b/i.test(String((e && (e.message || e.code)) || e || ''));
+/** Runs a read or write of customer_locations with the hist column, and without it when this
+    database has not got it yet -- run(true) / run(false). One extra trip, only in that state. */
+async function withHist_(db, nowMs, run) {
+  const on = (custHistGone_.get(db) || 0) <= nowMs;
+  let res = await run(on);
+  if (on && res && res.error && custHistMissing_(res.error)) {
+    custHistGone_.set(db, nowMs + CUSTLOC_RETRY_MS);
+    res = await run(false);
+  }
+  return res;
+}
+const histOut_ = h => (Array.isArray(h) ? h : [])
+  .filter(x => x && Number.isFinite(Number(x.lat)) && Number.isFinite(Number(x.lng)))
+  .map(x => ({ lat: Number(x.lat), lng: Number(x.lng), acc: x.acc == null ? null : num(x.acc),
+    by: x.by || '', at: x.at ? eatStamp(Date.parse(x.at)) : '' }));
+/** One stored row -> the point the phone draws, with the points it replaced. */
+const locOut_ = lr => ({ lat: Number(lr.lat), lng: Number(lr.lng), acc: lr.acc == null ? null : num(lr.acc),
+  by: lr.saved_by || '', at: lr.saved_at ? eatStamp(Date.parse(lr.saved_at)) : '', hist: histOut_(lr.hist) });
 async function comments(db, [dev, ref], nowMs = Date.now()) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
@@ -1681,8 +1717,9 @@ async function comments(db, [dev, ref], nowMs = Date.now()) {
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, created_at')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(10)),
-    skipLoc ? null : runQuery(() => db.from('customer_locations')
-      .select('party, lat, lng, acc, saved_by, saved_at').eq('ref', String(ref)).limit(2), 1),
+    skipLoc ? null : withHist_(db, nowMs, on => runQuery(() => db.from('customer_locations')
+      .select(on ? 'party, lat, lng, acc, saved_by, saved_at, hist' : 'party, lat, lng, acc, saved_by, saved_at')
+      .eq('ref', String(ref)).limit(2), 1)),
   ]);
   if (error) throw new Error(error.message);
   const items = (data || []).map(c => ({
@@ -1707,8 +1744,7 @@ async function comments(db, [dev, ref], nowMs = Date.now()) {
   } else {
     for (const lr of ((locRes && locRes.data) || [])) {
       if (!(Number.isFinite(Number(lr.lat)) && Number.isFinite(Number(lr.lng)))) continue;
-      const pt = { lat: Number(lr.lat), lng: Number(lr.lng), acc: lr.acc == null ? null : num(lr.acc),
-        by: lr.saved_by || '', at: lr.saved_at ? eatStamp(Date.parse(lr.saved_at)) : '' };
+      const pt = locOut_(lr);
       if (lr.party === 'G') gloc = pt; else loc = pt;
     }
   }
@@ -1761,18 +1797,26 @@ async function custPin(db, [dev, p], nowMs) {
   const team = String(p.team == null ? '' : p.team).trim();
   const me = await scopedUser(db, cu, nowMs);
   if (me.teams && (!team || !teamAllowed(me, team))) return { ok: false, error: 'NOT_YOUR_TEAM' };
-  const { data: had, error: hErr } = await db.from('customer_locations')
-    .select('lat, lng, acc, saved_by, saved_at').eq('ref', ref).eq('party', party).limit(1);
+  const { data: had, error: hErr } = await withHist_(db, nowMs, on => db.from('customer_locations')
+    .select(on ? 'lat, lng, acc, saved_by, saved_at, hist' : 'lat, lng, acc, saved_by, saved_at')
+    .eq('ref', ref).eq('party', party).limit(1));
   if (hErr) {
     if (custLocMissing_(hErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
     throw new Error(hErr.message);
   }
   const old = had && had[0];
-  if (old && p.replace !== true) {
+  /* What the row keeps of the point it is about to replace -- see HIST_KEEP above. */
+  let hist = old ? (Array.isArray(old.hist) ? old.hist.slice() : []) : [];
+  if (old) {
     const distM = metersBetween_(Number(old.lat), Number(old.lng), lat, lng);
-    if (distM >= PIN_SAME_DOOR_M) {
+    if (p.replace !== true && distM >= PIN_SAME_DOOR_M) {
       return { ok: true, stored: false, exists: { by: old.saved_by || '', distM: Math.round(distM),
         at: old.saved_at ? eatStamp(Date.parse(old.saved_at)) : '' } };
+    }
+    if (distM >= HIST_MIN_M || String(old.saved_by || '') !== String(cu.name || '')) {
+      hist.push({ lat: Number(old.lat), lng: Number(old.lng), acc: old.acc == null ? null : num(old.acc),
+        by: old.saved_by || '', at: old.saved_at || null });
+      if (hist.length > HIST_KEEP) hist.splice(1, hist.length - HIST_KEEP);      // the first pin is never the one dropped
     }
   }
   const row = {
@@ -1780,14 +1824,15 @@ async function custPin(db, [dev, p], nowMs) {
     lat, lng, acc: Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null,
     saved_by: cu.name, saved_at: new Date(nowMs).toISOString(),
   };
-  const { error: wErr } = await db.from('customer_locations').upsert(row, { onConflict: 'ref,party' });
+  const { error: wErr } = await withHist_(db, nowMs, on => db.from('customer_locations')
+    .upsert(on ? { ...row, hist } : row, { onConflict: 'ref,party' }));
   if (wErr) {
     if (custLocMissing_(wErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
     throw new Error(wErr.message);
   }
   custLocGone_.delete(db);
   return { ok: true, stored: true, party, replaced: !!old,
-    loc: { lat, lng, acc: row.acc, by: cu.name, at: eatStamp(nowMs) } };
+    loc: { lat, lng, acc: row.acc, by: cu.name, at: eatStamp(nowMs), hist: (custHistGone_.get(db) || 0) > nowMs ? [] : histOut_(hist) } };
 }
 async function addComment(db, [dev, p], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
