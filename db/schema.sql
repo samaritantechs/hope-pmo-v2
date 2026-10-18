@@ -558,6 +558,20 @@ create table if not exists call_logs (
 create index if not exists idx_call_logs_date_team on call_logs(call_date, team);
 create index if not exists idx_call_logs_user_date on call_logs(user_id, call_date);
 
+-- Where each customer is: the point an officer pinned from the HOPE Calls card (api_callCustPin).
+-- One row per REF NO; pinning again replaces it. See db/RUN-ME-2026-10-18-customer-locations.sql
+-- for the CREATE an already-live database runs.
+create table if not exists customer_locations (
+  ref text primary key,
+  team text,
+  full_name text,
+  lat double precision not null,
+  lng double precision not null,
+  acc integer,                    -- metres, as the handset reported
+  saved_by text,
+  saved_at timestamptz not null default now()
+);
+
 -- =====================================================================================
 -- ANNOUNCEMENTS (image and/or text takeover)
 -- =====================================================================================

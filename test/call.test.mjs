@@ -2642,3 +2642,97 @@ test('weekday with the standing rule is untouched: Rec IS today, one figure, agr
   assert.equal(d.recToday.num, 150);
   assert.equal(d.recToday.isToday, true);
 });
+
+/* =========================================================================================
+   WHERE THE CUSTOMER IS -- the Location and Map buttons on the customer card.
+   "An officer can pinpoint coordinates of the customer during visitation. And pressing map
+   later will open maps app in phone or browser to direct us towards that customer."
+   api_callCustPin writes customer_locations; the point comes back with the card's history. */
+const DOOR = { ref: '111', team: 'KONGOWE', name: 'AMINA H', lat: -6.79240, lng: 39.20830, acc: 12 };
+
+test('Location: an officer pins the customer at the door; the point is on file with who and when', async () => {
+  const db = await registeredDb();
+  const r = await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  assert.equal(r.ok, true); assert.equal(r.stored, true); assert.equal(r.replaced, false);
+  assert.equal(r.loc.lat, -6.7924); assert.equal(r.loc.by, 'JUMA ISSA'); assert.equal(r.loc.acc, 12);
+  const row = db._dump('customer_locations').find(x => x.ref === '111');
+  assert.equal(row.lat, -6.7924); assert.equal(row.lng, 39.2083); assert.equal(row.acc, 12);
+  assert.equal(row.saved_by, 'JUMA ISSA'); assert.equal(row.team, 'KONGOWE'); assert.equal(row.full_name, 'AMINA H');
+  assert.equal(Date.parse(row.saved_at), NOW);
+});
+
+test('Map: the pinned point comes back with the customer\'s history -- and nothing is claimed when there is none', async () => {
+  const db = await registeredDb();
+  let c = await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.equal(c.ok, true); assert.equal(c.loc, null); assert.equal(c.locReady, true, 'no point yet is not "feature off"');
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  c = await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.deepEqual({ lat: c.loc.lat, lng: c.loc.lng, acc: c.loc.acc, by: c.loc.by }, { lat: -6.7924, lng: 39.2083, acc: 12, by: 'JUMA ISSA' });
+  assert.match(c.loc.at, /^2026-07-24 \d\d:\d\d$/, 'stamped on the EAT clock, like the history beside it');
+  c = await callApi(db, 'api_callComments', ['d1', '222'], NOW);
+  assert.equal(c.loc, null, 'another customer has no point');
+});
+
+test('Location: a point already on file is never replaced from somewhere else without the officer saying yes', async () => {
+  const db = await registeredDb();
+  await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW);
+  // 400 m away (about 0.0036 degrees of latitude): the page is told, nothing is written.
+  const far = { ...DOOR, lat: -6.7960, lng: 39.2083 };
+  const ask = await callApi(db, 'api_callCustPin', ['d1', far], NOW + 60000);
+  assert.equal(ask.stored, false); assert.equal(ask.exists.by, 'JUMA ISSA');
+  assert.ok(ask.exists.distM > 300 && ask.exists.distM < 500, 'says how far the old pin is: ' + ask.exists.distM);
+  assert.equal(db._dump('customer_locations')[0].lat, -6.7924, 'the old point stands');
+  const yes = await callApi(db, 'api_callCustPin', ['d1', { ...far, replace: true }], NOW + 120000);
+  assert.equal(yes.stored, true); assert.equal(yes.replaced, true);
+  assert.equal(db._dump('customer_locations').length, 1, 'one row per customer, replaced not added');
+  assert.equal(db._dump('customer_locations')[0].lat, -6.796);
+  // The same door again (a few metres off) just refreshes, no question asked.
+  const same = await callApi(db, 'api_callCustPin', ['d1', { ...far, lat: -6.79601 }], NOW + 180000);
+  assert.equal(same.stored, true);
+});
+
+test('Location: only a real position, only for a team the officer works, only from a registered handset', async () => {
+  const db = await registeredDb();
+  for (const bad of [{ lat: 0, lng: 0 }, { lat: 91, lng: 10 }, { lat: 'x', lng: 'y' }, { lat: undefined, lng: undefined }]) {
+    assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, ...bad }], NOW), { ok: false, error: 'BAD_FIX' });
+  }
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, ref: '' }], NOW), { ok: false, error: 'NO_REF' });
+  // Juma works KONGOWE; ref 333 belongs to MBAGALA. Leaving the team out is no way round it.
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, ref: '333', team: 'MBAGALA' }], NOW), { ok: false, error: 'NOT_YOUR_TEAM' });
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', { ...DOOR, ref: '333', team: '' }], NOW), { ok: false, error: 'NOT_YOUR_TEAM' });
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['nobody', DOOR], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' });
+  assert.deepEqual(await callApi(db, 'api_callCustPin', [], NOW), { ok: false, error: 'DEVICE_NOT_REGISTERED' });
+  assert.equal(db._dump('customer_locations').length, 0, 'nothing refused was stored');
+  // A leader works the teams on their code: ASHA JUMA (d2) has KONGOWE, so KONGOWE is fine, MBAGALA is not.
+  assert.equal((await callApi(db, 'api_callCustPin', ['d2', DOOR], NOW)).stored, true);
+  assert.equal((await callApi(db, 'api_callCustPin', ['d2', { ...DOOR, ref: '333', team: 'MBAGALA' }], NOW)).error, 'NOT_YOUR_TEAM');
+});
+
+test('Location before the migration: the card opens as before, Location says pending, never an error', async () => {
+  const t = makeTables();
+  const db = fakeDb(t, { missingTables: ['customer_locations'] });
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  assert.deepEqual(await callApi(db, 'api_callCustPin', ['d1', DOOR], NOW), { ok: true, stored: false, pending: 'MIGRATION' });
+  const c = await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.equal(c.ok, true, 'the history still loads'); assert.equal(c.loc, null); assert.equal(c.locReady, false);
+  // And it stops asking: the table is known to be absent, so the next card pays nothing for it.
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callComments', ['d1', '222'], NOW + 30000);
+  assert.ok(!asked.includes('customer_locations'), 'not asked again inside five minutes');
+  await callApi(db, 'api_callComments', ['d1', '222'], NOW + 6 * 60000);
+  assert.ok(asked.includes('customer_locations'), 'asked again after five, so the migration is noticed without a redeploy');
+});
+
+test('the customer\'s point costs sync, boot and every list NOTHING -- it rides only the card\'s own history call', async () => {
+  const db = await registeredDb();
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callBoot', ['d1'], NOW);
+  for (const v of ['today', 'tomorrow', 'defaulters']) await callApi(db, 'api_callList', ['d1', v], NOW);
+  await callApi(db, 'api_callSync', ['d1', [{ phone: '0712000001', date: '2026-07-24', ts: 1, duration: 60, outcome: 'CONNECTED' }]], NOW);
+  await callApi(db, 'api_callDailySummary', ['d1'], NOW);
+  assert.ok(!asked.includes('customer_locations'), 'boot, lists, sync and the strip never touch it');
+  await callApi(db, 'api_callComments', ['d1', '111'], NOW);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 1, 'one keyed read per card opening');
+});

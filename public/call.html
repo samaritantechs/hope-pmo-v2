@@ -944,7 +944,8 @@ function doLogout(){
   // otherwise the next sign-in on a weekday inherits an empty label sitting on the strip.
   var _rt = $('#dsRecTodayWrap'); if (_rt) _rt.classList.add('hide');
   var _dt = $('#dsTag'); if (_dt) _dt.textContent = 'Leo';
-  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); } catch(e){}
+  try { localStorage.removeItem(CACHE_LS_KEY); localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); localStorage.removeItem(CUSTLOC_LS); } catch(e){}
+  S.custLoc = {}; S.locWait = null;
   sheetHide();
   $('#confirmModal').style.display = 'none';
   $('#bgPrompt').style.display = 'none';
@@ -2039,8 +2040,13 @@ function openSheet(ref){
   sb.innerHTML = sheetSkeleton(r) ;
   sheetShow();
   wireSheetForm(r);
+  wireLoc_(r);
   saveUi_();                     // dialling happens from this card -- remember it NOW
+  S.locWait = String(r.ref);     // the point arrives with the history; Map says "loading" until then
   srv('api_callComments', DEV, r.ref).then(function(d){
+    if (d && d.ok !== false && d.locReady !== false) custLocPut_(r.ref, d.loc || null);
+    if (S.locWait === String(r.ref)) S.locWait = null;
+    locPaint_(r.ref);
     S.comments = (d && d.items) || [];
     var h = $('#histBox'); if (h) h.innerHTML = historyHtml(S.comments);
     /* The customer's registered complaints, ABOVE the history -- the officer must see an
@@ -2055,7 +2061,7 @@ function openSheet(ref){
           + (c.who ? '<b style="font-size:12px">' + esc(c.who) + '</b> ' : '') + esc(c.what || '') + '</div>';
       }).join('') + h.innerHTML;
     }
-  }).catch(function(){});
+  }).catch(function(){ if (S.locWait === String(r.ref)) S.locWait = null; });
 }
 function sheetSkeleton(r){
   var cHref = telHref(r.contact), gHref = telHref(r.gContact);
@@ -2075,6 +2081,11 @@ function sheetSkeleton(r){
     + (cHref!=='#' ? '<a class="btn btn-pri" href="tel:'+cHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mteja \u00B7 ' + esc(r.contact) + '</a>' : '<span class="btn btn-ghost">Hana namba</span>')
     + '</div>'
     + (gHref!=='#' ? '<div class="callrow"><a class="btn btn-ghost" href="tel:'+gHref+'" data-ref="' + esc(r.ref) + '">\uD83D\uDCDE Mdhamini \u00B7 ' + esc(r.gContact) + '</a></div>' : '')
+    + '<div class="callrow">'
+    + '<button type="button" class="btn btn-ghost" id="locPin">' + LOCPIN_LABEL + '</button>'
+    + '<button type="button" class="btn btn-ghost" id="locMap">' + LOCMAP_LABEL + '</button>'
+    + '</div>'
+    + '<div id="locNote" class="hint" style="font-size:12px;color:var(--mut);margin-top:6px"></div>'
     + '</div>'
     + '<div class="sheet-card"><div class="sheet-title" style="font-size:14px">Historia / History</div>'
     + '<div id="histBox" style="margin-top:6px"><div class="center" style="padding:16px"><div class="sk"></div></div></div></div>'
@@ -2158,6 +2169,154 @@ function wireSheetForm(r){
       toast(String(e), true);
     });
   };
+}
+
+/* =====================================================================================
+   WHERE THE CUSTOMER IS -- the Location and Map buttons on the customer card.
+
+     "An officer can pinpoint coordinates of the customer during visitation. And pressing map
+      later will open maps app in phone or browser to direct us towards that customer."
+
+   LOCATION is pressed at the customer's door. It asks the phone for a real GPS reading (not the
+   cheap last-known fix the officer-position report uses), watches for up to twenty seconds and
+   keeps the most accurate reading it saw, stopping early at 25 m. A reading worse than 100 m is
+   not saved quietly -- the officer is asked to save it anyway or try again outside. The server
+   (api_callCustPin) refuses a point for a team that is not theirs and never replaces a point
+   already on file from 25 m or more away without the officer saying yes.
+
+   MAP opens https://www.google.com/maps/dir/?api=1&destination=lat,lng: the Maps app where it
+   is installed (the Android shell hands every window.open to the phone), otherwise the
+   browser. The point is the one that came with the card's history, kept on the phone as well
+   (CUSTLOC_LS, newest 300) so the button still works with no signal when the officer is
+   standing outside a house they pinned last week. Signing out forgets all of them.
+
+   Nothing here runs unless a button is pressed; nothing is added to sync or any list. */
+var LOCPIN_LABEL = '\uD83D\uDCCD Location', LOCMAP_LABEL = '\uD83D\uDDFA\uFE0F Map';
+var LOCPIN_GOOD_M = 25, LOCPIN_OK_M = 100, LOCPIN_WAIT_MS = 20000;
+var CUSTLOC_LS = 'hcCustLoc', CUSTLOC_KEEP = 300;
+function custLocGet_(ref){
+  ref = String(ref);
+  if (S.custLoc && S.custLoc[ref]) return S.custLoc[ref];
+  try { var m = JSON.parse(localStorage.getItem(CUSTLOC_LS) || '{}'); return m[ref] || null; } catch(e){ return null; }
+}
+function custLocPut_(ref, loc){
+  ref = String(ref); S.custLoc = S.custLoc || {};
+  if (loc) S.custLoc[ref] = loc; else delete S.custLoc[ref];
+  try {
+    var m = JSON.parse(localStorage.getItem(CUSTLOC_LS) || '{}');
+    delete m[ref]; if (loc) m[ref] = loc;                       // re-inserted last: the oldest go first
+    var ks = Object.keys(m); while (ks.length > CUSTLOC_KEEP) delete m[ks.shift()];
+    localStorage.setItem(CUSTLOC_LS, JSON.stringify(m));
+  } catch(e){}
+}
+function locNoteHtml_(loc){
+  if (!loc) return 'Bado hakuna eneo la mteja. Ukiwa kwake bonyeza \uD83D\uDCCD Location. / No point saved yet \u2014 press Location when you are at the customer.';
+  return '\uD83D\uDCCD Eneo limehifadhiwa / Saved: <b>' + Number(loc.lat).toFixed(5) + ', ' + Number(loc.lng).toFixed(5) + '</b>'
+    + (loc.acc != null ? ' \u00B1' + esc(loc.acc) + ' m' : '') + (loc.by ? ' \u00B7 ' + esc(loc.by) : '') + (loc.at ? ' \u00B7 ' + esc(loc.at) : '');
+}
+function locPaint_(ref){
+  if (String(S.curRef) !== String(ref)) return;                 // the officer has moved on to another card
+  var n = $('#locNote'), m = $('#locMap'); if (!n) return;
+  var loc = custLocGet_(ref);
+  n.innerHTML = locNoteHtml_(loc);
+  if (m) m.className = 'btn ' + (loc ? 'btn-pri' : 'btn-ghost');
+}
+/* A question asked in the card's own note line, not a browser dialog: the WebView's confirm() is
+   only as good as the shell's WebChromeClient, and a card is where the officer is looking. */
+function locAsk_(ref, msg, yes, no, onYes, onNo){
+  var n = $('#locNote'); if (!n || String(S.curRef) !== String(ref)) return;
+  n.innerHTML = '<div style="color:var(--ink);margin-bottom:6px">' + esc(msg) + '</div>'
+    + '<div class="callrow"><button type="button" class="btn btn-pri" id="locYes">' + esc(yes) + '</button>'
+    + '<button type="button" class="btn btn-ghost" id="locNo">' + esc(no) + '</button></div>';
+  $('#locYes').onclick = function(){ locPaint_(ref); onYes(); };
+  $('#locNo').onclick = function(){ locPaint_(ref); if (onNo) onNo(); };
+}
+function locErr_(code){
+  return ({
+    DEVICE_NOT_REGISTERED: 'Simu hii haijasajiliwa. / This phone is not registered.',
+    NOT_YOUR_TEAM: 'Mteja huyu si wa timu yako. / This customer is not on your team.',
+    BAD_FIX: 'Mahali palipopatikana si sahihi \u2014 jaribu tena. / That position is not valid \u2014 try again.'
+  })[code] || 'Eneo halikuhifadhiwa. / The location was not saved.';
+}
+function wireLoc_(r){
+  $('#locPin').onclick = function(){ locPin_(r); };
+  $('#locMap').onclick = function(){ locMap_(r); };
+  locPaint_(r.ref);                                             // whatever this phone already holds, before the answer comes
+}
+function locMap_(r){
+  var loc = custLocGet_(r.ref);
+  if (!loc){
+    toast(S.locWait === String(r.ref)
+      ? 'Inapakia\u2026 jaribu tena baada ya sekunde chache. / Loading \u2014 try again in a moment.'
+      : 'Hakuna eneo lililohifadhiwa kwa mteja huyu. / No point is saved for this customer yet.', true);
+    return;
+  }
+  var url = 'https://www.google.com/maps/dir/?api=1&destination=' + loc.lat + ',' + loc.lng + '&travelmode=driving';
+  var w = null; try { w = window.open(url, '_blank'); } catch(e){}
+  if (!w){                                                      // a browser that blocks pop-ups: give the officer the link to press
+    var n = $('#locNote');
+    if (n) n.innerHTML = locNoteHtml_(loc) + '<div style="margin-top:6px"><a class="btn btn-pri" target="_blank" rel="noopener" href="' + esc(url) + '">\uD83D\uDDFA\uFE0F Fungua ramani / Open the map</a></div>';
+  }
+}
+function locPin_(r){
+  var b = $('#locPin'); if (!b || b.disabled) return;
+  if (!navigator.geolocation){ toast('Simu hii haina GPS. / This device has no GPS.', true); return; }
+  var ref = String(r.ref), best = null, done = false, wid = null, hard = 0;
+  b.disabled = true;
+  function say(){ b.textContent = '\uD83D\uDCCD Inatafuta\u2026' + (best ? ' \u00B1' + Math.round(best.accuracy) + ' m' : ''); }
+  function stop(){
+    done = true; clearTimeout(hard);
+    try { navigator.geolocation.clearWatch(wid); } catch(e){}
+    b.disabled = false; b.textContent = LOCPIN_LABEL;
+  }
+  function finish(){
+    if (done) return;
+    stop();
+    if (!best){ toast('Imeshindikana kupata mahali. Washa GPS ujaribu tena nje. / Could not get a position \u2014 switch GPS on and try outside.', true); return; }
+    if (best.accuracy > LOCPIN_OK_M){
+      locAsk_(ref, 'Usahihi ni \u00B1' + Math.round(best.accuracy) + ' m tu (GPS dhaifu). Hifadhi hivyo, au jaribu tena ukiwa nje? / Accuracy is only \u00B1'
+        + Math.round(best.accuracy) + ' m \u2014 save it anyway, or retry outside?',
+        'Hifadhi / Save', 'Jaribu tena / Retry', function(){ locSave_(r, best, false); }, function(){ locPin_(r); });
+      return;
+    }
+    locSave_(r, best, false);
+  }
+  say();
+  hard = setTimeout(finish, LOCPIN_WAIT_MS);
+  wid = navigator.geolocation.watchPosition(function(p){
+    var c = p && p.coords; if (!c || !isFinite(c.latitude) || !isFinite(c.longitude) || done) return;
+    if (!best || c.accuracy < best.accuracy) best = { lat: c.latitude, lng: c.longitude, accuracy: c.accuracy };
+    say();
+    if (best.accuracy <= LOCPIN_GOOD_M) finish();
+  }, function(err){
+    if (done) return;
+    if (err && err.code === 1){
+      stop();
+      toast('Ruhusa ya eneo imekataliwa \u2014 ruhusu Location kwa HOPE Calls kwenye mipangilio ya simu. / Location is off for HOPE Calls \u2014 allow it in the phone settings.', true);
+    }                                                           // a timeout or no signal yet: the twenty-second timer decides
+  }, { enableHighAccuracy: true, maximumAge: 0, timeout: LOCPIN_WAIT_MS });
+}
+function locSave_(r, fix, replace){
+  var b = $('#locPin'); if (b){ b.disabled = true; b.textContent = '\uD83D\uDCCD Inahifadhi\u2026'; }
+  function back(){ var x = $('#locPin'); if (x){ x.disabled = false; x.textContent = LOCPIN_LABEL; } }
+  srv('api_callCustPin', DEV, { ref: r.ref, team: r.team, name: r.name, lat: fix.lat, lng: fix.lng, acc: fix.accuracy, replace: !!replace }).then(function(d){
+    back();
+    if (!d || d.ok === false){ toast(locErr_(d && d.error), true); return; }
+    if (d.pending){ toast('Ofisi bado haijawasha huduma ya eneo la mteja. / The office has not switched customer locations on yet.', true); return; }
+    if (d.exists){
+      locAsk_(r.ref, 'Mteja huyu ana eneo lililohifadhiwa tayari' + (d.exists.by ? ' (na ' + d.exists.by + (d.exists.at ? ', ' + d.exists.at : '') + ')' : '')
+        + ' \u2014 mita ' + d.exists.distM + ' kutoka ulipo sasa. Libadilishe? / This customer already has a saved point, ' + d.exists.distM
+        + ' m from where you stand. Replace it?', 'Badilisha / Replace', 'Acha / Keep', function(){ locSave_(r, fix, true); }, null);
+      return;
+    }
+    if (d.stored){
+      custLocPut_(r.ref, d.loc); locPaint_(r.ref);
+      toast((d.replaced ? 'Eneo limebadilishwa' : 'Eneo la mteja limehifadhiwa') + (d.loc && d.loc.acc != null ? ' (\u00B1' + d.loc.acc + ' m)' : '') + '. / Customer location saved.');
+    }
+  }).catch(function(e){
+    back();
+    toast('Eneo halikuhifadhiwa \u2014 angalia mtandao ujaribu tena. / Not saved \u2014 check the network and try again. ' + String(e), true);
+  });
 }
 
 /* ================= leader reports ================= */

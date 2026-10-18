@@ -353,7 +353,14 @@ export function fakeDb(tables, opts = {}) {
   const storageFiles = { buckets: {} };
   return {
     from(name) { if (!store[name]) store[name] = { rows: [] };
-      return new FakeQuery(store[name], name, (opts.missingColumns || {})[name]); },
+      const q = new FakeQuery(store[name], name, (opts.missingColumns || {})[name]);
+      /* A TABLE THE DATABASE HAS NOT GOT YET refuses every read and write on it, with PostgREST's
+         own words -- migrations are run by hand, so a deployment spends some time without each
+         new table. `missingTables` names them; opt-in, because an unnamed table is an empty one. */
+      if ((opts.missingTables || []).includes(name)) {
+        q.rejectWith = { code: 'PGRST205', message: "Could not find the table 'public." + name + "' in the schema cache" };
+      }
+      return q; },
     rpc(name, args) {
       return new FakeRpc(async () => {
         if (!Object.prototype.hasOwnProperty.call(rpcs, name) || rpcs[name] == null) {
