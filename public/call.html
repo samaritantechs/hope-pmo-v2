@@ -370,6 +370,11 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
            written by the script, not fixed here: on Saturday this is Friday's money and it
            says so. -->
       <span class="hide" id="dsRecTodayWrap"><span id="dsRecTodayLbl">Rec leo</span> <b id="dsRecToday">&mdash;</b></span>
+      <!-- T.DEF. The defaulters' total arrears as the newest current deck leaves them, AFTER the
+           recovery: "Add total default after recovery on the call app summary line." In figures
+           (34.6m, 378k, 3.2b), never a percentage. The title says which deck it is. -->
+      <span class="ds-dot">&middot;</span>
+      <span id="dsDefWrap">T.Def <b id="dsDef">&mdash;</b></span>
     </div>
     <!-- SANDBOX BANNER. A figure read off a sandbox screen must never be quotable as the book,
          and on a phone the header icon alone is too easy to miss. -->
@@ -959,7 +964,7 @@ function doLogout(){
      the same handset. */
   _sumAt = 0; _sumVer = null;
   var _ds = $('#dayStrip'); if (_ds) { _ds.classList.add('hide'); _ds.classList.remove('stale'); }
-  ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec','#dsRecToday'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec','#dsRecToday','#dsDef'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
   // Rec leo is weekend-only, so signing out must put it back to hidden and not merely blank --
   // otherwise the next sign-in on a weekday inherits an empty label sitting on the strip.
   var _rt = $('#dsRecTodayWrap'); if (_rt) _rt.classList.add('hide');
@@ -1437,6 +1442,12 @@ function drawSummary_(d, stale, atMs){
       $('#dsRecToday').textContent = Number(rt.num) ? mc_(rt.num) : '—';
     }
   }
+  /* T.DEF -- the total default, in figures. A deck with nothing owing is a real zero; no deck at
+     all is a dash. The title names the deck it came from, so a figure that is not today's can be
+     told apart by whoever presses and holds it. */
+  var td = d.totalDef, dw = $('#dsDefWrap');
+  $('#dsDef').textContent = td ? mc_(td.num, true) : '\u2014';
+  if (dw) dw.title = td ? ('Deni jumla / Total default \u00B7 deki ya ' + (td.date || '') + (td.isToday ? '' : ' (si ya leo / not today\'s)')) : '';
   /* Figures kept from another day are still shown -- they are the last true thing the officer
      was told -- but never as today's. The tag is the only honest place to say so. */
   $('#dayStrip').classList.toggle('stale', !!stale);
@@ -1448,8 +1459,19 @@ function drawSummary_(d, stale, atMs){
 S.asOf = S.asOf || {};
 function pctW_(x){ return (x==null||isNaN(x)||!isFinite(x)) ? '\u2014' : Math.round(100*x) + '%'; }
 /** Money at a glance: 10k, 210k, 1.4m. A percentage says how well the day is going; the
-    SHILLINGS say how much has actually come in, which is the number people talk about. */
-function mc_(n){ n = Number(n)||0;
+    SHILLINGS say how much has actually come in, which is the number people talk about.
+    `fine` is for a stock the officer reads to the decimal rather than a flow they glance at --
+    T.Def: 34.6m, 378k, 3.2b -- one decimal on the millions and the billions at every size, where
+    the plain form drops it from ten million up. Billions exist in both, rather than 1500m. */
+function mc_(n, fine){ n = Number(n)||0;
+  var tidy = function(v){ return v.toFixed(1).replace(/\.0$/,''); };
+  if (fine){
+    if (n >= 1e9) return tidy(n/1e9) + 'b';
+    if (n >= 1e6){ var m = tidy(n/1e6); return parseFloat(m) >= 1000 ? tidy(n/1e9) + 'b' : m + 'm'; }
+    if (n >= 1e3){ var k = Math.round(n/1e3); return k >= 1000 ? tidy(n/1e6) + 'm' : k + 'k'; }
+    return String(Math.round(n));
+  }
+  if (n >= 1e9) return (n/1e9).toFixed(n >= 1e10 ? 0 : 1).replace(/\.0$/,'') + 'b';
   if (n >= 1e6) return (n/1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/,'') + 'm';
   if (n >= 1e3) return Math.round(n/1e3) + 'k';
   return String(Math.round(n)); }

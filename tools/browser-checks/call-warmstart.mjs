@@ -50,6 +50,8 @@ function answer(fn) {
     if (summaryFails) return { ok: false, error: 'BOOM' };
     return { ok: true, period: 'day', col: { pct: 0.42 }, kesho: { pct: 0.11 }, weekCol: { pct: 0.55 },
              sales: { pct: 0.3 }, expdf: { pct: 0.2, num: 1400000 }, recovery: { pct: 0.6, num: 900000 },
+             // T.Def: the defaulters' total arrears off the newest current deck.
+             totalDef: { num: 34600000, customers: 120, day: 'FRI', date: '2026-08-01', isToday: true },
              dataVersion: dataVersion };
   }
   if (fn === 'api_callSync') return { ok: true, added: 0, watermark: 1, dataVersion: dataVersion };
@@ -153,6 +155,8 @@ const strip = () => page.evaluate(() => {
   return { shown: !el.classList.contains('hide'), stale: el.classList.contains('stale'),
            col: document.getElementById('dsCol').textContent,
            rec: document.getElementById('dsRec').textContent,
+           def: document.getElementById('dsDef').textContent,
+           defAfterRec: !!(document.getElementById('dsRec').compareDocumentPosition(document.getElementById('dsDef')) & Node.DOCUMENT_POSITION_FOLLOWING),
            saved: !!localStorage.getItem('hcDaySummary_v1') };
 });
 await page.waitForTimeout(400);
@@ -160,6 +164,7 @@ const s1 = await strip();
 check('the strip is on screen with its figures', s1.shown && s1.col === '42%', JSON.stringify(s1));
 check('and the shillings ride beside the percentage', /60%/.test(s1.rec) && /900k/.test(s1.rec), s1.rec);
 check('the figures are kept on the handset', s1.saved);
+check('T.Def sits after Rec, in figures', s1.def === '34.6m' && s1.defAfterRec, JSON.stringify({ def: s1.def, after: s1.defAfterRec }));
 
 // A failed request must not blank it. This is the exact behaviour that made it feel unreliable.
 summaryFails = true;

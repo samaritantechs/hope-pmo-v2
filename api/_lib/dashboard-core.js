@@ -143,6 +143,16 @@ async function buildDashboardUncached(db, user, nowMs) {
   const defCurRows = decks.pairs.length
     ? decks.pairs.flatMap(p => defAdj_(p.cur, 'current', deckDate_(p)))
     : scoped(decks.currentRows);
+  /* TOTAL DEFAULT -- the defaulters' arrears as the NEWEST current deck leaves them, once.
+       "Add total default after recovery on the call app summary line."
+     defCurRows above is every deck of the period laid end to end, which is right for Recovered
+     (a sum over days) and wrong for a STOCK: on a weekend it adds Monday's arrears to Tuesday's
+     to Friday's, and the same defaulters are in all five. So the standing total is taken from
+     the one newest deck, with the same register correction every other arrears figure gets, and
+     it says which day and date it is, so a screen can tell today's deck from the last one filed.
+     Nothing is read for it: the deck was already in hand. */
+  const latestDefRows = decks.latestCur
+    ? defAdj_(decks.latestCur.rows, 'current', String(decks.latestCur.date).slice(0, 10)) : [];
   const deckPairs = decks.pairs.map(p => ({ ...p,
     ini: defAdj_(p.ini, 'initial', deckDate_(p)), cur: defAdj_(p.cur, 'current', deckDate_(p)) }));
 
@@ -268,6 +278,10 @@ async function buildDashboardUncached(db, user, nowMs) {
     uncollected: tUncollected(expRows),
     defaulterCustomers: tCustomers(defCurRows),
     defaulterArrears: tArrears(defCurRows),
+    defaulterLatest: decks.latestCur
+      ? { arrears: tArrears(latestDefRows), customers: tCustomers(latestDefRows), day: decks.latestCur.day,
+          date: String(decks.latestCur.date).slice(0, 10), isToday: String(decks.latestCur.date).slice(0, 10) === String(today) }
+      : null,
     salesCount: sal.length,
     salesAmount: sal.reduce((s, r) => s + (num(r.principal_amt) || num(r.loan_amt)), 0),
     receivedCount: rcv.length,
@@ -352,6 +366,7 @@ async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
     const cur = await defaulterTotalsLatest(db, { type: 'current', weekday: wd, notAfter: today, teams });
     if (!cur.rows.length) return out;
     out.currentRows = cur.rows;
+    out.latestCur = { day: wd, date: cur.date, rows: cur.rows };
     out.dates[wd] = cur.date;
     const ini = await defaulterTotalsLatest(db, { type: 'initial', weekday: wd, onDate: cur.date, teams });
     // The day a pair belongs to travels WITH it. Recovered is a sum over pairs, and a sum that
@@ -375,6 +390,7 @@ async function loadDecks(db, { weekend, today, wd, weekMon, weekFri, teams }) {
     const c = curPer.get(d);
     if (!c || !c.rows.length) continue;                       // no deck at all that day
     out.currentRows = out.currentRows.concat(c.rows);
+    out.latestCur = { day: d, date: c.date, rows: c.rows };          // the loop runs Monday to Sunday: the last deck seen is the newest
     out.dates[d] = c.date;
     const i = iniPer.get(d);
     if (i && i.rows.length && String(i.date) === String(c.date)) out.pairs.push({ day: d, date: c.date, ini: i.rows, cur: c.rows });

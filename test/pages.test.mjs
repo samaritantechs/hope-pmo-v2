@@ -2157,3 +2157,23 @@ test('the location-history migration is one metadata-only column, idempotent, no
   const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
   assert.ok(/hist jsonb not null default '\[\]'::jsonb,\s*\n\s*primary key \(ref, party\)/.test(schema), 'schema.sql carries it for a fresh database');
 });
+
+/* T.DEF -- "Add total default after recovery on the call app summary line. In figures e.g. T.Def 34.6m or 378k or 3.2b" */
+test('the call app summary strip ends with T.Def after Rec, in figures: 34.6m, 378k, 3.2b', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  const strip = call.slice(call.indexOf('<div class="daystrip hide" id="dayStrip">'), call.indexOf('<!-- SANDBOX BANNER.'));
+  assert.ok(strip.indexOf('id="dsRec"') > 0 && strip.indexOf('id="dsRecTodayWrap"') > strip.indexOf('id="dsRec"') && strip.indexOf('id="dsDef"') > strip.indexOf('id="dsRecTodayWrap"'),
+    'T.Def comes after Rec, and after Rec leo so the two recovery figures stay together');
+  assert.ok(/<span id="dsDefWrap">T\.Def <b id="dsDef">&mdash;<\/b><\/span>/.test(strip), 'labelled T.Def, a dash until the figure arrives');
+  assert.ok(/\$\('#dsDef'\)\.textContent = td \? mc_\(td\.num, true\) : '\\u2014';/.test(call), 'drawn with the fine formatter; no deck is a dash, an empty book is a real 0');
+  assert.ok(/'#dsRecToday','#dsDef'\]/.test(call), 'signing out blanks it with the rest of the strip');
+  const fn = call.slice(call.indexOf('function mc_(n, fine)'), call.indexOf('function loadDaySummary'));
+  const mc = new Function(fn + '; return mc_;')();
+  assert.equal(mc(34600000, true), '34.6m'); assert.equal(mc(378000, true), '378k'); assert.equal(mc(3200000000, true), '3.2b');
+  assert.equal(mc(34000000, true), '34m', 'a round figure carries no trailing .0');
+  assert.equal(mc(999999, true), '1m', 'and 999,999 is not "1000k"'); assert.equal(mc(0, true), '0');
+  // The plain form every other figure on the strip uses is untouched, except that billions now read as billions.
+  assert.equal(mc(1400000), '1.4m'); assert.equal(mc(34600000), '35m'); assert.equal(mc(210000), '210k'); assert.equal(mc(1500000000), '1.5b');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-18-c'/.test(src), 'BUILD moved');
+});
