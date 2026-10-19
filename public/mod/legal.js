@@ -87,8 +87,7 @@ VIEWS.legal = function(){
           + [br.logo ? '' : 'nembo / logo', br.stamp ? '' : 'muhuri wa kampuni / company stamp', br.sign ? '' : 'sahihi / signature'].filter(Boolean).join(', ')
           + '. Admin: weka kupitia viungo hapo juu. / The letter prints WITHOUT it until an admin sets it through the links above.</div>')
       + bar('<button class="btn sm" id="newNotice">+ Notisi mpya / New demand notice</button>'
-        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuona maelezo ya notisi na kuchapisha. / Tap a row for the notice\'s details and to print it.'
-        + ' · PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).</span>');
+        + '<span style="font-size:12px;color:var(--mut)">Bofya mstari kuona maelezo ya notisi na kupakua PDF yake. / Tap a row for the notice\'s details and to download its PDF.</span>');
     S.rows = d.rows;
     S.cols = [col('notice_id','Kumb.Na. / Ref'), col('notice_date','Notice date','date'),
       col('ref','REF#'), col('full_name','Customer'), col('branch','Branch'), col('team','Team'),
@@ -147,8 +146,8 @@ function lgIssue(){
       var dup = e.servedToday || [], old = (e.served || []).filter(function(s){ return dup.indexOf(s) < 0; });
       $('#lgPrev').innerHTML =
         (dup.length ? '<div class="note">⚠ Ameshapewa notisi leo: <b>'+esc(dup.map(function(s){ return s.noticeId; }).join(', '))+'</b>.'
-            + ' Chapisha tena ile ile badala ya kutoa nyingine. / Already served today — reprint that one rather than issue another.'
-            + ' <a href="#" id="lgReprint">Chapisha tena / Reprint</a></div>' : '')
+            + ' Pakua ile ile badala ya kutoa nyingine. / Already served today — download that one rather than issue another.'
+            + ' <a href="#" id="lgReprint">Pakua tena / Download again</a></div>' : '')
         + (old.length ? '<div class="sub">Notisi za awali / Earlier notices: '+esc(old.map(function(s){ return s.noticeId+' ('+s.date+')'; }).join(', '))+'</div>' : '')
         + '<div class="facts"><div class="frow"><span>Customer</span><b>'+esc(e.full_name||'')+'</b></div>'
         + '<div class="frow"><span>Team</span><span>'+esc(e.team||'')+'</span></div>'
@@ -173,19 +172,18 @@ function lgIssue(){
         + '<div class="fld"><label>Mdhamini / Guarantor</label><input id="lgG" value="'+esc(e.guarantor||'')+'"></div>'
         + '<div class="fld"><label>Simu ya mdhamini / Guarantor phone</label><input id="lgGC" value="'+esc(e.guarantor_contact||'')+'"></div>'
         // No button below the DC: the letter cannot be generated, and the note above says why.
-        + (e.eligible ? '<button class="btn w" id="lgGo">Toa notisi &amp; chapisha / Issue &amp; print</button>'
-        /* "haina option ya kudownload inaprint direct" -- the PDF is the print dialog's own
-           "Save as PDF", which a phone does not show and a computer does. Said where the
-           button is, not left for the officer to discover. */
-        + '<div class="sub">Kupata PDF: kwenye dirisha la kuchapisha chagua “Save as PDF” (kompyuta); faili huitwa jina la mteja.'
-        + ' / For a PDF: in the print dialog choose “Save as PDF” (on a computer); the file is named after the customer.</div>' : '');
-      if (dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgPrint(dup[0].id); };
+        /* "Button on demands notices must be download not print": the letter is made into a PDF
+           file on this device (noticePdf_) and saved -- in the app to Downloads, in a browser as
+           a download -- named after the customer. No print dialog anywhere. */
+        + (e.eligible ? '<button class="btn w" id="lgGo">Toa notisi &amp; pakua PDF / Issue &amp; download PDF</button>'
+        + '<div class="sub">Faili huitwa jina la mteja na kuhifadhiwa Downloads. / The file is named after the customer and saved to Downloads.</div>' : '');
+      if (dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgDownload(dup[0].id); };
       if (e.eligible) $('#lgGo').onclick = function(){
         srv('addDemandNotice', { ref:e.ref, noticeDate:$('#lgDate').value, noticeDays:$('#lgDays').value,
           guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim(), device: hcDevice_() })
           .then(function(r){
-            toast('Notisi '+r.noticeId+' imetolewa. PDF: “Save as PDF” kwenye dirisha la kuchapisha. / Issued. PDF: “Save as PDF” in the print dialog.');
-            printHtml(r.html);
+            toast('Notisi '+r.noticeId+' imetolewa. Inatengeneza PDF\u2026 / Issued. Making the PDF\u2026');
+            noticePdf_(r.html);
             closeDrawer(); render();
           })
           .catch(function(err){ toast(String(err.message||err), true); });
@@ -222,21 +220,123 @@ function lgIssue(){
 }
 
 /* "demand retrival": the SAME letter again, off the register row (db/RUN-ME-040), with the
-   company's current images. The print dialog is also where the PDF comes from, so the toast
-   says so before it opens -- on a phone the dialog has no such option, and that is said too. */
-function lgPrint(id){
-  srv('demandNoticePrint', { id: id, device: hcDevice_() }).then(function(p){
+   company's current images -- as a PDF file, never a print dialog. */
+function lgDownload(id){
+  return srv('demandNoticePrint', { id: id, device: hcDevice_() }).then(function(p){
     if (p.rebuilt) toast('Notisi ya zamani: barua imejengwa upya kutoka deki ya sasa. / Issued before letters were kept: rebuilt from today\'s deck.');
-    else toast('PDF: chagua “Save as PDF” kwenye dirisha la kuchapisha (kompyuta). / PDF: choose “Save as PDF” in the print dialog (computer).');
-    printHtml(p.html);
+    return noticePdf_(p.html);
   }).catch(function(err){ toast(String(err.message||err), true); });
+}
+
+/* =====================================================================================
+   THE LETTER AS A FILE -- "Button on demands notices must be download not print".
+
+   The letter is ONE definition (demandNoticeHtml, portal-core.js): the HTML the legal officer
+   has tuned to exactly two pages. A PDF of it is made HERE, on the device, from that same HTML:
+   the letter is laid out in a hidden frame at its print width, each of its two pages is drawn to
+   a bitmap (html2canvas) and placed on an A4 sheet inside the letter's own margins (jsPDF), and
+   the file -- named after the customer, as the print dialog named it -- goes through download():
+   into Downloads inside the HOPE Calls app, as a download in a browser. No print dialog, so a
+   phone and a computer get the same file.
+
+   The two libraries (about 550 KB together) are fetched from cdnjs the FIRST time a letter is
+   downloaded in a session, the way the upload page fetches its spreadsheet reader -- never at
+   portal open, never by anybody who does not press the button. No connection: said plainly.
+
+   The first page is fitted the way the print fit (hopeFit) fits it: measured, and scaled down
+   just enough to sit within the sheet, so the costs table never leaves page one. An image the
+   browser could not read (a logo or stamp on a host that refuses cross-site reads) is left out
+   and NAMED in the toast rather than silently missing from a letter with the company's name on
+   it. The pages are bitmaps at twice screen resolution: crisp on paper, not searchable text. */
+var PDF_LIBS = {
+  html2canvas: 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',
+  jspdf: 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+};
+var PDF_MM = { w: 210, h: 297, top: 15, side: 18, bottom: 18, firstMax: 243 };   // A4 and the letter's own @page margins; hopeFit's limit
+function pdfLib_(key, test){
+  if (test()) return Promise.resolve();
+  return new Promise(function(res, rej){
+    var sc = document.createElement('script');
+    sc.src = PDF_LIBS[key]; sc.async = true;
+    sc.onload = function(){ test() ? res() : rej(new Error(key)); };
+    sc.onerror = function(){ if (sc.parentNode) sc.parentNode.removeChild(sc); rej(new Error(key)); };
+    document.head.appendChild(sc);
+  });
+}
+function pdfLibs_(){
+  return Promise.all([
+    pdfLib_('html2canvas', function(){ return typeof window.html2canvas === 'function'; }),
+    pdfLib_('jspdf', function(){ return !!(window.jspdf && window.jspdf.jsPDF); })
+  ]).catch(function(){
+    throw new Error('Vifaa vya PDF havikupakia (cdnjs). Angalia mtandao kisha jaribu tena. / The PDF tools did not load (cdnjs). Check the connection and try again.');
+  });
+}
+function noticePdf_(html){
+  var tm = /<title>([^<]*)<\/title>/i.exec(html || '');
+  var title = (tm ? tm[1].replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').trim() : '') || 'notisi';
+  var name = title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim() + '.pdf';
+  var f = document.createElement('iframe');
+  f.setAttribute('aria-hidden', 'true');
+  // Off screen but laid out: a hidden (display:none) frame has no sizes to measure.
+  f.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:1400px;border:0;opacity:0;pointer-events:none';
+  document.body.appendChild(f);
+  var done = function(){ if (f.parentNode) f.parentNode.removeChild(f); };
+  return pdfLibs_().then(function(){
+    var doc = f.contentWindow.document;
+    doc.open(); doc.write(html); doc.close();
+    return new Promise(function(res){ if (doc.readyState === 'complete') res(); else f.contentWindow.addEventListener('load', res); });
+  }).then(function(){
+    var doc = f.contentWindow.document;
+    // Every image in, or given up on -- a letter drawn before its stamp arrived has no stamp.
+    var imgs = Array.prototype.slice.call(doc.images);
+    return Promise.all(imgs.map(function(im){
+      im.setAttribute('crossorigin', 'anonymous');            // ask for a readable copy; the server's answer decides
+      if (im.complete) return null;
+      return new Promise(function(res){ im.onload = res; im.onerror = res; setTimeout(res, 8000); });
+    })).then(function(){ return doc; });
+  }).then(function(doc){
+    var missing = Array.prototype.filter.call(doc.images, function(im){ return !(im.complete && im.naturalWidth > 0); })
+      .map(function(im){ return im.getAttribute('alt') || 'picha / image'; });
+    var fp = doc.querySelector('.first-page');
+    var brk = doc.querySelector('.page-break-before');
+    if (!fp || !brk) throw new Error('Barua haina kurasa mbili zinazotambulika. / The letter\'s two pages could not be found.');
+    // The print fit scales the first page with CSS; here the bitmap is scaled instead, so undo it.
+    fp.style.zoom = ''; fp.style.transform = ''; fp.style.height = '';
+    // Page two is everything after the break, gathered into one box so it can be drawn as one.
+    var p2 = doc.createElement('div'); p2.className = 'second-page';
+    var n = brk.nextSibling;
+    while (n) { var nx = n.nextSibling; if (n.nodeType === 1 && n.tagName === 'SCRIPT') { n = nx; continue; } p2.appendChild(n); n = nx; }
+    brk.parentNode.insertBefore(p2, brk.nextSibling);
+    var h2c = f.contentWindow.html2canvas || window.html2canvas;
+    var opts = { scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false, windowWidth: 900 };
+    return h2c(fp, opts).then(function(c1){
+      return h2c(p2, opts).then(function(c2){ return { c1: c1, c2: c2, missing: missing }; });
+    });
+  }).then(function(r){
+    var JsPDF = window.jspdf.jsPDF;
+    var pdf = new JsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait', compress: true });
+    var innerW = PDF_MM.w - 2 * PDF_MM.side, innerH = PDF_MM.h - PDF_MM.top - PDF_MM.bottom;
+    var place = function(canvas, maxH){
+      var wmm = innerW, hmm = canvas.height * wmm / canvas.width;
+      if (hmm > maxH) { var s = maxH / hmm; hmm = maxH; wmm = wmm * s; }   // the first page's own fit, as a scale
+      pdf.addImage(canvas.toDataURL('image/jpeg', 0.9), 'JPEG', PDF_MM.side, PDF_MM.top, wmm, hmm);
+    };
+    place(r.c1, Math.min(PDF_MM.firstMax, innerH));
+    pdf.addPage();
+    place(r.c2, innerH);
+    pdf.setProperties({ title: title });
+    download(pdf.output('blob'), name);
+    if (r.missing.length) toast('⚠ Barua imetoka bila: ' + r.missing.join(', ') + '. / The letter came out without: ' + r.missing.join(', ') + '.', true);
+    done();
+    return name;
+  }).catch(function(e){ done(); toast(String(e && e.message || e), true); throw e; });
 }
 
 /* THE DETAILS PANE -- "When demand row clicked, shouldnt open the doc but put show details pane
    and print as an option". Everything the register row carries, read in two columns: the
    notice as served (reference, dates, days, the demand and its parts) and what has happened
    since (arrears now, paid since, payments and how they were matched, recovered, status).
-   Print is a button at the bottom, with the Save-as-PDF note beside it. */
+   Download PDF is the button at the bottom. */
 function lgDetails(r){
   var row = function(k, v, strong){
     return '<div class="frow"><span>'+k+'</span>'+(strong ? '<b>'+v+'</b>' : '<span>'+v+'</span>')+'</div>'; };
@@ -272,8 +372,7 @@ function lgDetails(r){
     + row('Imetolewa na / Issued by', esc(r.issued_by||'—') + (r.created_at ? ' · ' + d(r.created_at) : ''))
     + row('Barua / Letter', r.letter_kept ? 'imehifadhiwa na rejista / kept with the register' : 'ya zamani — itajengwa upya kutoka deki ya sasa / old — rebuilt from today\'s deck')
     + '</div>'
-    + '<button class="btn w" id="lgDoPrint">Chapisha / Print</button>'
-    + '<div class="sub">PDF: kwenye dirisha la kuchapisha chagua “Save as PDF” (kompyuta); faili huitwa jina la mteja.'
-    + ' / PDF: in the print dialog choose “Save as PDF” (computer); the file is named after the customer.</div>');
-  $('#lgDoPrint').onclick = function(){ lgPrint(r.id); };
+    + '<button class="btn w" id="lgDoPrint">Pakua PDF / Download PDF</button>'
+    + '<div class="sub">Faili huitwa jina la mteja na kuhifadhiwa Downloads. / The file is named after the customer and saved to Downloads.</div>');
+  $('#lgDoPrint').onclick = function(){ var b = $('#lgDoPrint'); b.disabled = true; lgDownload(r.id).then(function(){ b.disabled = false; }, function(){ b.disabled = false; }); };
 }
