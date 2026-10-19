@@ -2259,3 +2259,23 @@ test('the call app carries its own build, hears the server\'s on boot, and reloa
   const upd = readFileSync(join(PUBLIC, '..', 'android', 'app', 'src', 'main', 'java', 'com', 'samaritantechs', 'hopecalls', 'Updater.java'), 'utf-8');
   assert.ok(/private static final long SKIP_FOR_MS = 0L;/.test(upd) && /SKIP_FOR_MS > 0 &&/.test(upd), 'the APK asks again at the very next launch after a Later');
 });
+
+/* THE DEMAND NOTICE IS DOWNLOADED, NOT PRINTED -- "Button on demands notices must be download not print". */
+test('the legal screen makes a PDF file of the letter on the device and never opens a print dialog', () => {
+  const lg = page('legal');
+  assert.equal(lg.split('printHtml(').length - 1, 0, 'no call into the print path from the legal screen');
+  assert.ok(/id="lgGo">Toa notisi &amp; pakua PDF \/ Issue &amp; download PDF/.test(lg) && /id="lgDoPrint">Pakua PDF \/ Download PDF/.test(lg) && /id="lgReprint">Pakua tena \/ Download again/.test(lg), 'all three buttons say download');
+  assert.ok(!/Save as PDF/.test(lg) && !/dirisha la kuchapisha/.test(lg), 'the "use the print dialog on a computer" notes are gone');
+  assert.ok(/noticePdf_\(r\.html\)/.test(lg) && /return noticePdf_\(p\.html\)/.test(lg), 'issue and retrieve both go to the PDF maker');
+  assert.ok(/html2canvas: 'https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/html2canvas\/1\.4\.1\/html2canvas\.min\.js'/.test(lg)
+    && /jspdf: 'https:\/\/cdnjs\.cloudflare\.com\/ajax\/libs\/jspdf\/2\.5\.1\/jspdf\.umd\.min\.js'/.test(lg), 'two pinned libraries, from the host the upload page already uses');
+  assert.ok(/return pdfLibs_\(\)\.then\(/.test(lg) && lg.indexOf('return pdfLibs_().then(') > lg.indexOf('function noticePdf_') && !/pdfLibs_\(\)/.test(lg.slice(0, lg.indexOf('function pdfLib_'))), 'fetched the first time a letter is downloaded, not at portal open');
+  assert.ok(/var PDF_MM = \{ w: 210, h: 297, top: 15, side: 18, bottom: 18, firstMax: 243 \};/.test(lg), 'A4, the letter\'s own @page margins (15/18/18/18), and hopeFit\'s 243 mm first-page limit');
+  assert.ok(/fp\.style\.zoom = ''; fp\.style\.transform = ''; fp\.style\.height = '';/.test(lg) && /if \(hmm > maxH\) \{ var s = maxH \/ hmm;/.test(lg), 'the first page is fitted as a scale of the bitmap, the print fit undone first');
+  assert.ok(/doc\.querySelector\('\.first-page'\)/.test(lg) && /doc\.querySelector\('\.page-break-before'\)/.test(lg) && /pdf\.addPage\(\);/.test(lg), 'two pages: the first-page box and everything after the break');
+  assert.ok(/useCORS: true/.test(lg) && /Barua imetoka bila: /.test(lg), 'an image the browser could not read is named, never silently missing');
+  assert.ok(/download\(pdf\.output\('blob'\), name\);/.test(lg) && /\.replace\(\/\[\\\\\/:\*\?"<>\|\]\+\/g, ' '\)/.test(lg), 'saved through the one download path (app bridge or browser), named after the customer');
+  assert.ok(/pdf\.setProperties\(\{ title: title \}\);/.test(lg));
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-19-c'/.test(src), 'BUILD moved');
+});
