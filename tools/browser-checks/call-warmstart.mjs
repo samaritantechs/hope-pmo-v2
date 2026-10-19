@@ -38,7 +38,7 @@ const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', le
                // The customer sheet builds its follow-up dropdown from these.
                fuStatuses: ['AMETOA AHADI', 'ANALIPA LEO', 'HAPATIKANI YEYE & MDHAMINI'],
                fuNeedDate: ['AMETOA AHADI'], fuNeedComment: [], fuNeedNumber: [],
-               userId: 'U-JUMA', systemOpen: false };
+               userId: 'U-JUMA', systemOpen: false, callBuild: null };   // callBuild is set below to drive the self-reload
 
 let bellFails = false;
 let summaryFails = false;         // flip to simulate the strip's request failing
@@ -399,9 +399,26 @@ check('and still closes', !(await sheetOpen()));
 
 
 console.log('\nPASS');
+/* THE PAGE KEEPS UP. A boot answer carrying a newer call.html build makes the page reload itself past
+   every cache -- but only once the app has been put away for two seconds, and only once per build. */
+BOOT.callBuild = 'newer-build';
+await page.goto(base + '/');
+await page.waitForTimeout(800);                                   // the fresh boot answer lands and is noted
+const before = await page.evaluate(() => location.search);
+check('a newer build on the server does NOT reload the page while it is on screen', before === '', before);
+await page.evaluate(() => { Object.defineProperty(document, 'hidden', { get: () => true, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+await page.waitForTimeout(2800);
+check('put away for two seconds, it reloads itself at a versioned address', (await page.evaluate(() => location.search)) === '?v=newer-build', await page.evaluate(() => location.search));
+await page.waitForTimeout(800);
+await page.evaluate(() => { Object.defineProperty(document, 'hidden', { get: () => true, configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+await page.waitForTimeout(2800);
+check('and never loops: the same build is not tried twice', (await page.evaluate(() => location.search)) === '?v=newer-build' && await page.evaluate(() => localStorage.getItem('hcBuildTried') === 'newer-build'));
+BOOT.callBuild = null;
+
 ok.forEach(s => console.log('  ok   ' + s));
 if (fail.length) { console.log('\nFAIL'); fail.forEach(s => console.log('  FAIL ' + s)); }
 if (errs.length) { console.log('\nPAGE ERRORS'); errs.forEach(s => console.log('  ! ' + s)); }
+
 console.log('\n' + ok.length + ' passed, ' + fail.length + ' failed, ' + errs.length + ' page errors');
 
 await browser.close(); srv.close();

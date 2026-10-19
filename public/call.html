@@ -768,6 +768,10 @@ var CACHE_LS_KEY = 'hcListCache_v1';
    again, and a wait on the network, after EVERY call. The lists were already saved here; the
    only thing standing between the officer and their work was asking the server who they are,
    which it had already answered that morning. */
+/* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
+   api_callBoot reports the one the server has (callBuild); when they differ this page reloads
+   itself past every cache the next time it is put away -- see buildNote_. */
+var CALL_BUILD = '2026-10-19-c';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -913,6 +917,7 @@ function boot(){
     }
     if (d.ok && !loggedOut){
       try { localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      buildNote_(d.callBuild);                                    // the warm start's fresh answer counts too: it is the common case
       /* BEFORE the app is entered, so a handset that was showing yesterday's list from storage
          does not paint it first and correct itself afterwards. Opening the app IS the moment
          somebody expects to see what was uploaded. */
@@ -1033,6 +1038,7 @@ $('#regBtn').onclick = function(){
       // Remember who this handset is from the very first sign-in, so the NEXT launch -- and
       // every return from a phone call -- goes straight in instead of waiting on the network.
       try { localStorage.removeItem('hcLoggedOut'); localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      buildNote_(d.callBuild);                                    // an older page than the server's reloads itself at a quiet moment
       /* AND THE CODE JUST TYPED IS THE PORTAL'S SIGN-IN TOO -- the team code opens the portal
          as a field officer, a leader's code as themselves -- so the switch to the system never
          asks for it a second time. Same key the portal keeps its own sign-in under. */
@@ -1194,6 +1200,38 @@ function locInit_(){
     if (!document.hidden && Date.now() - LOC.lookedAt > 60000) setTimeout(locLook_, 1500);   // back on screen: a fresh look
   });
 }
+/* =====================================================================================
+   THE CALL APP KEEPS UP, LIKE THE PORTAL.
+     "I found out some people can't do things due updates -- remember we force updates and
+      permissions at every app start / launch"
+   The APK asks for its update and its permissions at every launch; this PAGE never asked at
+   all. A WebView that kept an old copy of call.html ran it for days -- without the fix or the
+   icon everybody else had. Every boot answer now carries the build the server has (callBuild);
+   when it is newer, the page reloads itself PAST EVERY CACHE (a versioned address, and the
+   crisis worker's stored copy dropped first) -- at a quiet moment only: when the app has been
+   put away for a couple of seconds, never under the officer's eyes, never with a card open,
+   and once per build (a page that cannot be refreshed must not loop). The officer comes back to
+   the same app, current. */
+var BUILD_BEHIND = null;
+function buildNote_(b){
+  b = String(b == null ? '' : b);
+  if (!b || b === CALL_BUILD) return;
+  var tried = null; try { tried = localStorage.getItem('hcBuildTried'); } catch(e){}
+  if (tried === b) return;                                   // already tried this build once: not again
+  BUILD_BEHIND = b;
+}
+function buildApply_(){
+  if (!BUILD_BEHIND || !document.hidden) return;
+  if ($('#sheet').style.display === 'flex') return;          // a customer card is open: not now
+  var b = BUILD_BEHIND; BUILD_BEHIND = null;
+  try { localStorage.setItem('hcBuildTried', b); } catch(e){ return; }
+  var go = function(){ location.replace('/call?v=' + encodeURIComponent(b)); };
+  try { if (window.caches) { caches.open('hope-crisis-v1').then(function(c){ return c.delete('/call'); }).then(go, go); return; } } catch(e){}
+  go();
+}
+document.addEventListener('visibilitychange', function(){
+  if (document.hidden) setTimeout(buildApply_, 2000);        // put away, and still away two seconds later
+});
 function enterApp(d){
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
   S.locOn = d.locReport !== false;                          // Settings > CALL_LOCATION = OFF stops every handset

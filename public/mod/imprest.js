@@ -353,6 +353,7 @@ VIEWS.impreq = function(){
     var spent = appr.reduce(function(s,r){ return s+(r.retiredAt?(r.retireTotal||0):0); }, 0);
     var toRefund = appr.reduce(function(s,r){ return s+(r.retireBalance!=null&&r.retireBalance>0?r.retireBalance:0); }, 0);
     var blocked = !!(d.unretired && d.unretired.length);
+    var flash = S.imqFlash || null; S.imqFlash = null;
     /* THE PERSONAL DASHBOARD -- "dashboards of applications per signed in user". Built here,
        from the same rows the history table below already holds: no second read for it. */
     HEAD = '<div class="kpis">'
@@ -412,9 +413,17 @@ VIEWS.impreq = function(){
           }).join('')
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px;font-size:15px"><b>JUMLA / TOTAL</b><b id="imqTotal">0</b></div>'
         + '<div class="fld"><label>Madhumuni ya safari / Objectives — purpose of trip *</label><textarea id="imqPurpose" rows="3"></textarea></div>'
-        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+((roles.length && !blocked)?'':' disabled')+(blocked?' data-blocked="1"':'')+'>'
+        /* WHY THE BUTTON IS CLOSED travels on the button itself (data-closed), and the core's
+           wiring (wireForms, app.html) writes the one line under it -- for the gate, for a rate
+           table nobody has filled, and for a figure that is not a whole number. data-blocked stays
+           for a core older than this module. */
+        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+((roles.length && !blocked)?'':' disabled')
+          + (blocked ? ' data-blocked="1" data-closed="blocked"' : (!roles.length ? ' data-closed="rates"' : '')) + '>'
           + (blocked ? 'Retire imprest ya awali kwanza / Retire the previous imprest first' : 'Tuma ombi / Submit request') + '</button>'
-        + '<div id="imqOut" class="note" style="display:none;margin-top:8px"></div>'
+        + '<div id="imqWhy" class="note bad" style="display:none;margin-top:6px"></div>'
+        /* The last submit's confirmation, carried across the redraw that follows it (S.imqFlash, set
+           by the core's Send handler) -- shown once, on this draw, then forgotten. */
+        + '<div id="imqOut" class="note' + (flash && flash.bad ? ' bad' : '') + '" style="' + (flash ? 'display:block' : 'display:none') + ';margin-top:8px">' + (flash ? flash.html : '') + '</div>'
         + '</div></div>';
     S.rows = rows;
     S.cols = [col('at','Tarehe / Timestamp','dt'), col('travelDate','Safari / Travel','date'), col('destination','Mahali / Destination'),

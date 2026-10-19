@@ -2218,3 +2218,44 @@ test('the phone\'s search asks the book once per pause, for three letters or mor
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
   assert.ok(!/var BUILD = '2026-10-19-a'/.test(src), 'BUILD moved');
 });
+
+/* THE IMPREST SUBMIT BUTTON -- "GMO is saying he can't submit imprest request that the button ain't working".
+   In a clean browser the button is wired and sends (tools/browser-checks/portal-imprest.mjs); what it did NOT do was say
+   why it was closed, keep its confirmation past the redraw, or stay closed when there is no rate table. */
+test('the imprest form: every closed state says why under the button, the confirmation survives the redraw, Sending is visible', () => {
+  const app = appSrc();
+  const wire = app.slice(app.indexOf("var send = document.getElementById('imqSend');"), app.indexOf('/* IDHINI YA IMPREST: the state filter'));
+  assert.ok(/var closed = send\.getAttribute\('data-closed'\) \|\| \(send\.getAttribute\('data-blocked'\) === '1' \? 'blocked' : ''\);/.test(wire), 'the closed state is read off the button, old attribute included');
+  assert.ok(/send\.disabled = invalid \|\| !!closed;/.test(wire), 'a missing rate table keeps it closed -- recalc no longer re-opens it');
+  assert.ok(/Namba nzima tu \(bila nukta au koma\)/.test(wire) && /Retire imprest ya awali kwanza: bofya ombi hilo/.test(wire) && /hajaweka viwango vya wadhifa/.test(wire), 'three reasons, in words');
+  assert.ok(/why\.textContent = reason; why\.style\.display = reason \? 'block' : 'none';/.test(wire), 'written under the button, hidden when there is none');
+  assert.ok(/b\.textContent = 'Inatuma\\u2026 \/ Sending\\u2026';/.test(wire) && /b\.textContent = label;/.test(wire), 'the button says Sending while the request is out, and gets its label back on failure');
+  assert.ok(/S\.imqFlash = \{ html: html, bad: !d\.emailed \};/.test(wire) && /toast\('Ombi limetumwa/.test(wire) && /render\(\{ force:true \}\);/.test(wire), 'the confirmation is handed to the next draw and said as a toast');
+  const mod = page('imprest');
+  assert.ok(/data-closed="blocked"/.test(mod) && /data-closed="rates"/.test(mod) && /data-blocked="1"/.test(mod), 'the module marks why the button is closed, old attribute kept for an older core');
+  assert.ok(/<div id="imqWhy" class="note bad" style="display:none;margin-top:6px"><\/div>/.test(mod), 'and gives the reason its line');
+  assert.ok(/var flash = S\.imqFlash \|\| null; S\.imqFlash = null;/.test(mod) && /\(flash \? flash\.html : ''\)/.test(mod), 'the flash is drawn once and forgotten');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-19-b'/.test(src), 'BUILD moved');
+});
+
+/* THE CALL APP KEEPS UP -- "some people can't do things due updates; remember we force updates and permissions at every
+   app start / launch for those who haven't". The page never reloaded itself; now it does, past every cache, at a quiet
+   moment, once per build. The APK's Later now holds until the next launch, not a day. */
+test('the call app carries its own build, hears the server\'s on boot, and reloads itself past every cache only when put away', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  const m = /var CALL_BUILD = '([^']{1,40})';/.exec(call);
+  assert.ok(m, 'CALL_BUILD is declared');
+  const core = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'call-core.js'), 'utf-8');
+  assert.ok(/callBuild: callBuild_\(\),/.test(core) && /var CALL_BUILD = '\(\[\^'\]\{1,40\}\)'/.test(core), 'boot reports it, read off this very file');
+  assert.equal(call.split('buildNote_(d.callBuild);').length - 1, 2, 'the boot answer is handed to the note on BOTH paths: the cold start and the warm start\'s fresh answer');
+  assert.ok(/if \(!b \|\| b === CALL_BUILD\) return;/.test(call) && /if \(tried === b\) return;/.test(call), 'the same build, or one already tried, is never reloaded for');
+  assert.ok(/if \(!BUILD_BEHIND \|\| !document\.hidden\) return;/.test(call) && /if \(\$\('#sheet'\)\.style\.display === 'flex'\) return;/.test(call), 'only while the app is put away, never with a card open');
+  assert.ok(/localStorage\.setItem\('hcBuildTried', b\)/.test(call), 'once per build');
+  assert.ok(/caches\.open\('hope-crisis-v1'\)\.then\(function\(c\)\{ return c\.delete\('\/call'\); \}\)/.test(call) && /location\.replace\('\/call\?v=' \+ encodeURIComponent\(b\)\)/.test(call), 'past the crisis worker\'s copy and past the HTTP cache');
+  assert.ok(/if \(document\.hidden\) setTimeout\(buildApply_, 2000\);/.test(call), 'two seconds after being put away, not the instant the screen changes');
+  const sync = call.slice(call.indexOf('function startSyncLoop'), call.indexOf('function startSyncLoop') + 3000);
+  assert.ok(!/buildApply_|buildNote_/.test(sync), 'nothing is added to the sync loop');
+  const upd = readFileSync(join(PUBLIC, '..', 'android', 'app', 'src', 'main', 'java', 'com', 'samaritantechs', 'hopecalls', 'Updater.java'), 'utf-8');
+  assert.ok(/private static final long SKIP_FOR_MS = 0L;/.test(upd) && /SKIP_FOR_MS > 0 &&/.test(upd), 'the APK asks again at the very next launch after a Later');
+});
