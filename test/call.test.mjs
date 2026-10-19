@@ -3110,3 +3110,13 @@ test('find: fewer than three letters asks the database for nothing; a missing lo
   assert.equal(d.ok, true); assert.equal(d.loansReady, false);
   assert.deepEqual(d.rows.map(r => r.ref), ['555'], 'the register still answers');
 });
+
+/* THE CALL APP KEEPS UP: boot carries the build of the call.html the server holds, read off the file. */
+test('boot says which call.html the server has, and it is the one in public/', async () => {
+  const { readFileSync } = await import('node:fs');
+  const want = /var CALL_BUILD = '([^']{1,40})';/.exec(readFileSync(new URL('../public/call.html', import.meta.url), 'utf8'))[1];
+  const db = await registeredDb();
+  const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
+  assert.equal(d.callBuild, want);
+  assert.match(want, /^\d{4}-\d{2}-\d{2}-[a-z]$/, 'the same shape as app.html\'s BUILD, bumped on every change to the file');
+});

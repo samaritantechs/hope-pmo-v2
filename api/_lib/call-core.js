@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { fetchAll, runQuery, rpcAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
@@ -241,6 +242,16 @@ async function teamList(db) {
 
    The officer's app opens in one wait instead of ten, and a Monday-morning rush costs the
    database a third of the connections it used to. */
+let callBuildStamp;
+function callBuild_() {
+  if (callBuildStamp !== undefined) return callBuildStamp;
+  try {
+    const src = fs.readFileSync(new URL('../../public/call.html', import.meta.url), 'utf8');
+    const m = src.match(/var CALL_BUILD = '([^']{1,40})'/);
+    callBuildStamp = m ? m[1] : null;
+  } catch { callBuildStamp = null; }
+  return callBuildStamp;
+}
 async function boot(db, [dev], nowMs) {
   const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK', 'CALL_LOCATION'];
   let cu = null, accountOff = false;
@@ -349,6 +360,12 @@ async function boot(db, [dev], nowMs) {
     /* WHERE THE OFFICER IS (api_callBeat). On unless the admin writes CALL_LOCATION = OFF in Settings --
        it rides the settings read this function already makes, so the switch costs nothing extra. */
     locReport: !['NO', 'OFF', '0', 'FALSE'].includes(K(setting('CALL_LOCATION'))),
+    /* WHICH call.html THE SERVER HAS -- so a handset running an older page can reload itself.
+       "some people can't do things due updates": the portal has reloaded itself past the cache
+       since BUILD, and the call app never did; a WebView kept yesterday's page and its officer
+       lacked yesterday's fix. Read off the file the same way /api/me reads app.html's BUILD --
+       no build step for the two to drift across, no read of the database. */
+    callBuild: callBuild_(),
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
     today: callTotals(callRollupRows(logs, () => cu.user_id)),

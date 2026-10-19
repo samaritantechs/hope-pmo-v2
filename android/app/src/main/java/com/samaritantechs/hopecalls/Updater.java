@@ -37,9 +37,12 @@ class Updater {
     private static final String PREF_SKIPPED = "skippedVersion";
     private static final String PREF_TRIED = "triedVersion";
     private static final String PREF_SKIPPED_AT = "skippedAt";
-    /** How long "Later" holds. A day: long enough not to nag, short enough that a
-        declined update is never a permanent dead end. */
-    private static final long SKIP_FOR_MS = 24L * 60 * 60 * 1000;
+    /** How long "Later" holds: UNTIL THE NEXT LAUNCH, and no longer. It held a day, and "some
+        people can't do things due updates -- remember we force updates and permissions at every
+        app start / launch for those who haven't": a Later tapped in the morning kept an officer
+        on the old build all day. Later still closes the dialog (a prompt with no way out is not
+        a prompt), but the very next launch asks again, exactly as the permissions do. */
+    private static final long SKIP_FOR_MS = 0L;
 
     static void checkInBackground(final MainActivity activity, final String baseUrl) {
         new Thread(() -> {
@@ -59,7 +62,7 @@ class Updater {
                 // then stranded on an old build with no way back to the offer.
                 int skipped = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getInt(PREF_SKIPPED, 0);
                 long skippedAt = activity.getSharedPreferences("hopecalls", Context.MODE_PRIVATE).getLong(PREF_SKIPPED_AT, 0);
-                if (skipped == remote && System.currentTimeMillis() - skippedAt < SKIP_FOR_MS) return;
+                if (SKIP_FOR_MS > 0 && skipped == remote && System.currentTimeMillis() - skippedAt < SKIP_FOR_MS) return;
                 // Have we already been round this loop for THIS version and come back still
                 // running the old build? Then the install did not take -- a download that
                 // served a stale file, or "install unknown apps" never granted -- and asking
