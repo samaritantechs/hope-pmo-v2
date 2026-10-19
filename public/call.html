@@ -1839,8 +1839,46 @@ $('#listQ').addEventListener('input', function(){
     if ($('#listQ').value !== S.q) return;   // query changed again while sources were loading
     S.rows = globalSearchRows_(S.q);
     drawList();
+    findInBook_(S.q);
   });
 });
+/* =====================================================================================
+   SEARCH REACHES THE WHOLE BOOK, NOT ONLY THE THREE LISTS ON THE PHONE.
+     "searching through call app can bring a customer card from the latest expected or default or
+      approved so that even if not yet started repayments people can search and add comment or
+      location" / "Search can check from loan applications too.. some want to pin location during
+      assessments"
+   The lists on the phone answer first, at once. Then, for three letters or more and after the
+   typing has paused, the server is asked once (api_callFind): the Expected window, the whole
+   defaulter register, and every loan in the officer's teams -- applications under assessment,
+   approved loans not yet started, old loans -- each row wearing where it came from. Whoever the
+   phone already found is not listed twice. One request per pause, never per keystroke, and the
+   answer is kept for two minutes so backspacing does not ask again. */
+var FIND_MIN = 3, FIND_WAIT_MS = 450, FIND_KEEP_MS = 2 * 60 * 1000;
+var FIND = { timer: 0, cache: {} };
+function findInBook_(q){
+  clearTimeout(FIND.timer);
+  var key = q.trim().toUpperCase();
+  if (key.length < FIND_MIN) return;
+  var hit = FIND.cache[key];
+  if (hit && Date.now() - hit.at < FIND_KEEP_MS){ mergeFound_(key, hit.rows); return; }
+  FIND.timer = setTimeout(function(){
+    if ($('#listQ').value.trim().toUpperCase() !== key) return;
+    srv('api_callFind', DEV, key).then(function(d){
+      var rows = (d && d.ok !== false && d.rows) || [];
+      FIND.cache[key] = { at: Date.now(), rows: rows };
+      mergeFound_(key, rows);
+    }).catch(function(){});                                      // the phone's own results stand; the book was a bonus
+  }, FIND_WAIT_MS);
+}
+function mergeFound_(key, rows){
+  if ($('#listQ').value.trim().toUpperCase() !== key || !rows.length) return;
+  var have = {}; S.rows.forEach(function(r){ have[String(r.ref)] = 1; });
+  var add = rows.filter(function(r){ return r.ref && !have[String(r.ref)]; });
+  if (!add.length) return;
+  S.rows = S.rows.concat(add);
+  drawList();
+}
 function isIOS_(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent || '') || (navigator.platform === 'MacIntel' && (navigator.maxTouchPoints || 0) > 1);
 }
@@ -1960,8 +1998,10 @@ function drawList(){
 }
 function rowHtml(r, showSeg){
   var href = telHref(r.contact);
-  var subBits = [esc(r.team), 'Deni TZS ' + money(r.amt)];
-  if (r.installment !== '' && r.installment != null) subBits.push('Rejesho TZS ' + money(r.installment));
+  var subBits = r.noBook
+    ? [esc(r.team), esc(r.note || '')]                           // from the book, not a list: the stage, not a debt of 0
+    : [esc(r.team), 'Deni TZS ' + money(r.amt)];
+  if (!r.noBook && r.installment !== '' && r.installment != null) subBits.push('Rejesho TZS ' + money(r.installment));
   /* THE FOURTH CHIP: WHOSE CUSTOMER THIS IS.
      Status, cycle and D.S say what the customer is; none of them said who is supposed to be
      following them up. The rotation moves every defaulter between a GMO, a MANAGER and a BIKE
@@ -2114,8 +2154,10 @@ function sheetSkeleton(r){
     + '<div class="sheet-sub">' + esc(r.team) + ' \u00B7 REF ' + esc(r.ref) + '</div></div>'
     + locIcons_('C') + '</div>'
     + '<div id="locNote_C" class="locnote"></div>'
-    + '<div class="factrow"><span>Deni / Arrears</span><b>TZS ' + money(r.amt) + '</b></div>'
-    + (r.installment !== '' && r.installment != null ? '<div class="factrow"><span>Rejesho</span><span>TZS ' + money(r.installment) + '</span></div>' : '')
+    + (r.noBook
+        ? '<div class="factrow"><span>Hali / Status</span><b>' + esc(r.note || '') + '</b></div>'
+        : '<div class="factrow"><span>Deni / Arrears</span><b>TZS ' + money(r.amt) + '</b></div>'
+          + (r.installment !== '' && r.installment != null ? '<div class="factrow"><span>Rejesho</span><span>TZS ' + money(r.installment) + '</span></div>' : ''))
     + (r.custStatus ? '<div class="factrow"><span>Hali ya mteja / Customer status</span>' + statusChip(r.custStatus) + '</div>' : '')
     + (r.fuStatus ? '<div class="factrow"><span>Ufuatiliaji wa mwisho / Last follow-up</span>' + statusChip(r.fuStatus) + '</div>' : '')
     + (r.ds ? '<div class="factrow"><span>D.S</span><span>' + esc(r.ds) + '</span></div>' : '')

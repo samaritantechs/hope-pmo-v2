@@ -2201,3 +2201,20 @@ test('the docket-key migration mirrors docketKeyOf, backfills once, rekeys the p
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
   assert.ok(!/var BUILD = '2026-10-18-d'/.test(src), 'BUILD moved');
 });
+
+/* SEARCH REACHES THE BOOK -- "searching through call app can bring a customer card from the latest expected or default or
+   approved ... Search can check from loan applications too.. some want to pin location during assessments". */
+test('the phone\'s search asks the book once per pause, for three letters or more, and a found customer with no figures says what they are', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  assert.ok(/var FIND_MIN = 3, FIND_WAIT_MS = 450, FIND_KEEP_MS = 2 \* 60 \* 1000;/.test(call), 'three letters, a 450 ms pause, kept two minutes');
+  assert.ok(/S\.rows = globalSearchRows_\(S\.q\);\s*\n\s*drawList\(\);\s*\n\s*findInBook_\(S\.q\);/.test(call), 'the phone\'s own lists answer first, then the book');
+  assert.ok(/clearTimeout\(FIND\.timer\)/.test(call) && /FIND\.timer = setTimeout\(/.test(call) && call.split("'api_callFind'").length - 1 === 1, 'one request per pause, from one place');
+  assert.ok(/if \(\$\('#listQ'\)\.value\.trim\(\)\.toUpperCase\(\) !== key\) return;/.test(call), 'an answer to a question no longer being asked is dropped');
+  assert.ok(/var add = rows\.filter\(function\(r\)\{ return r\.ref && !have\[String\(r\.ref\)\]; \}\);/.test(call), 'whoever the phone already found is not listed twice');
+  assert.ok(/\.catch\(function\(\)\{\}\);\s*\/\/ the phone's own results stand/.test(call), 'a failed book search is silent: the lists still answer');
+  assert.ok(/r\.noBook\s*\n?\s*\? \[esc\(r\.team\), esc\(r\.note \|\| ''\)\]/.test(call) && /<span>Hali \/ Status<\/span><b>' \+ esc\(r\.note/.test(call), 'a row and a card from the book show the stage, never "Deni TZS 0"');
+  const sync = call.slice(call.indexOf('function startSyncLoop'), call.indexOf('function startSyncLoop') + 3000);
+  assert.ok(!/findInBook_|api_callFind/.test(sync), 'nothing is added to the sync loop');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-19-a'/.test(src), 'BUILD moved');
+});
