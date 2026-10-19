@@ -55,7 +55,7 @@ ${Array.from({ length: 6 }, (_, i) => `<p>${i + 1}. Kwa kuwa umeshindwa kulipa r
 
 const calls = [];
 const ROW = { id: 'n1', notice_id: 'DN/2026/0001', notice_date: '2026-10-19', full_name: 'AMINA JUMA', ref: '22171109841', team: 'KONGOWE', contact: '0712000001',
-  notice_days: 7, paid_count: 3, arrears_at_notice: 1250000, arrears_now: 1100000, arrears_down: 150000, rec_pct: 12, paid_since: 150000, paid_n: 2, paid_n_phone: 1,
+  notice_days: 7, paid_count: 3, ds: '3/12', arrears_at_notice: 1250000, arrears_now: 1100000, arrears_down: 150000, rec_pct: 12, paid_since: 150000, paid_n: 2, paid_n_phone: 1,
   last_paid: '2026-10-18', total_demand: 1250000, fine: 50000, principal_remaining: 900000, notice_state: 'served', issued_by: 'LEGAL ONE', created_at: '2026-10-19T08:00:00Z', letter_kept: true };
 function answer(fn, args) {
   calls.push(fn);
@@ -65,7 +65,7 @@ function answer(fn, args) {
   if (fn === 'addDemandNotice') return { ok: true, noticeId: 'DN/2026/0002', html: LETTER };
   if (fn === 'legalFind') return { ok: true, rows: [], minDc: 2 };                 // a bare REF of six digits or more previews straight away
   if (fn === 'legalPreview') return { ok: true, found: true, ref: args.ref, full_name: 'AMINA JUMA', eligible: true, servedToday: [], served: [], dc: 3, minDc: 2,
-    disb_date: '2026-07-01', expire_date: '2026-10-01', guarantor_name: 'G ONE', guarantor_contact: '0713000001', team: 'KONGOWE', contact: '0712000001', arrears: 1250000 };
+    disb_date: '2026-07-01', expire_date: '2026-10-01', guarantor_name: 'G ONE', guarantor_contact: '0713000001', team: 'KONGOWE', contact: '0712000001', arrears: 1250000, ds: '3/12' };
   if (fn === 'notifications') return { ok: true, unseen: 0, seenAt: '', items: [] };
   return { ok: true, rows: [] };
 }
@@ -115,6 +115,10 @@ check('the register says download, not print', /kupakua PDF/.test(bar) && !/Save
 await page.evaluate(() => lgDetails(S.rows[0]));
 await page.waitForSelector('#lgDoPrint', { timeout: 4000 });
 check('the details pane\'s button is Download PDF', /Pakua PDF/.test(await page.evaluate(() => document.getElementById('lgDoPrint').textContent)));
+// "Replace Marejesho / Paid (of 12) with DS (default summary)": the deck's D.S, no paid-of-12 count.
+const pane = await page.evaluate(() => document.body.textContent);
+check('the details pane shows DS (default summary) and no paid-of-12 count', /DS \(default summary\)\s*3\/12/.test(pane) && !/\(of 12\)/.test(pane) && !/Marejesho \/ Paid/.test(pane),
+  (pane.match(/DS \(default summary\).{0,12}/) || ['no DS row'])[0] + ' | ' + (pane.match(/.{0,40}(\(of 12\)|Marejesho \/ Paid).{0,20}/) || [''])[0]);
 
 // --- 2. pressing it makes a two-page PDF named after the customer, with no print dialog
 const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#lgDoPrint')]);
@@ -148,6 +152,8 @@ await page.click('#lgLoad');
 await page.waitForSelector('#lgGo', { timeout: 8000 });
 const goLabel = await page.evaluate(() => document.getElementById('lgGo').textContent);
 check('the issue button says Issue & download PDF, with no print-dialog note', /pakua PDF/.test(goLabel) && !/Save as PDF/.test(await page.evaluate(() => document.getElementById('lgPrev').textContent)), goLabel);
+const prev = await page.evaluate(() => document.getElementById('lgPrev').textContent);
+check('the preview shows DS (default summary), not a paid-of-12 count', /DS \(default summary\)\s*3\/12/.test(prev) && !/\/ 12/.test(prev) && !/Marejesho \/ Paid/.test(prev), prev.slice(0, 160));
 const [dl3] = await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#lgGo')]);
 check('issuing a notice downloads its letter', dl3.suggestedFilename() === 'AMINA JUMA.pdf' && calls.includes('addDemandNotice'));
 check('still no print dialog', (await page.evaluate(() => window.__printed)) === 0);

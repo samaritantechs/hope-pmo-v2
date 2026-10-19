@@ -1951,7 +1951,7 @@ test('the commission payout note reaches the officer who needs it', async () => 
    it. */
 test('demand notices show whether they worked', async () => {
   const t = tables();
-  const D = (ref, team, arrears, type) => ({ ref, team, arrears, snapshot_type: type,
+  const D = (ref, team, arrears, type, ds) => ({ ref, team, arrears, snapshot_type: type, ds,
     weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'b' + type, full_name: 'C' + ref });
   t.demand_notices = [
     { id: 'n1', ref: '111', team: 'KONGOWE', notice_date: TODAY, arrears_at_notice: 1000, total_demand: 1200, fine: 200 },
@@ -1959,11 +1959,15 @@ test('demand notices show whether they worked', async () => {
     { id: 'n3', ref: '222', team: 'KONGOWE', notice_date: TODAY, arrears_at_notice: 500, total_demand: 600, fine: 100 },
   ];
   // 111 has paid some of it down, 555 has not moved, 222 is off the deck entirely.
-  t.defaulter_snapshots = [D('111', 'KONGOWE', 400, 'current'), D('555', 'KONGOWE', 800, 'current')];
+  t.defaulter_snapshots = [D('111', 'KONGOWE', 400, 'current', '9/12'), D('555', 'KONGOWE', 800, 'current', ' 2/6 ')];
   const d = await portalApi(fakeDb(t), ADMIN, 'demandNotices', {}, NOW);
   const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
 
   assert.equal(by['111'].arrears_now, 400);
+  // "Replace Marejesho / Paid (of 12) with DS (default summary)": the deck's own D.S today.
+  assert.equal(by['111'].ds, '9/12');
+  assert.equal(by['555'].ds, '2/6', 'as the sheet wrote it, trimmed');
+  assert.equal(by['222'].ds, null, 'off the deck: no summary to show');
   assert.equal(by['111'].rec_pct, 60, 'recovery: 600 of the 1,000 at notice');
   assert.match(by['111'].notice_state, /Reducing/);
 
@@ -1975,6 +1979,8 @@ test('demand notices show whether they worked', async () => {
   assert.equal(by['222'].arrears_now, 0);
   assert.equal(by['222'].rec_pct, 100);
   assert.match(by['222'].notice_state, /Cleared/);
+  // The preview before a notice is issued reads the same D.S off the same deck.
+  assert.equal((await portalApi(fakeDb(t), ADMIN, 'legalPreview', { ref: '111', noticeDate: TODAY }, NOW)).ds, '9/12');
 
   assert.equal(d.recovery, 1100, 'the arrears drop: 600 + 0 + 500');
   assert.equal(d.cleared, 1);
@@ -1988,6 +1994,7 @@ test('demand notices show whether they worked', async () => {
   const noDeck = { ...t, defaulter_snapshots: [] };
   const nd = await portalApi(fakeDb(noDeck), ADMIN, 'demandNotices', {}, NOW);
   assert.equal(nd.rows[0].arrears_now, null);
+  assert.equal(nd.rows[0].ds, null);
   assert.equal(nd.rows[0].rec_pct, null);
   assert.equal(nd.recovery, 0);
   assert.equal(nd.cleared, 0);

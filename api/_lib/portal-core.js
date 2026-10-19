@@ -2901,7 +2901,7 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
     .sort((x, y) => y.date.localeCompare(x.date) || String(y.noticeId).localeCompare(String(x.noticeId)));
   return { found: true, ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
     guarantor: d.guarantor_name, guarantor_contact: d.guarantor_contact,
-    arrears: num(d.arrears), paidCount: f.paidCount, weeks: f.weeks, rate: f.rate,
+    arrears: num(d.arrears), paidCount: f.paidCount, ds: dsOf(d), weeks: f.weeks, rate: f.rate,
     ratePct: Math.round(f.rate * 1000) / 10, fine,
     disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
     ...a, noticeDate: noticeKey,
@@ -3413,8 +3413,8 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
     // by name -- so the tab can say what their letters will carry, and from where.
     staffPhone_(db, user, args && args.device),
   ]);
-  const nowBy = {};
-  for (const d of cur.rows) nowBy[K(d.ref)] = num(d.arrears);
+  const nowBy = {}, dsBy = {};
+  for (const d of cur.rows) { nowBy[K(d.ref)] = num(d.arrears); dsBy[K(d.ref)] = dsOf(d); }
   const seen = cur.rows.length > 0;
   /* WHAT A NOTICE BROUGHT IN, READ TWO WAYS.
        "i had a weakness of not recording the collected recovered amount in the previous demand
@@ -3448,6 +3448,10 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
       branch: teamBranch.get(K(x.team)) || null,
       letter_kept: !!letter,
       arrears_now: current,
+      /* DS (DEFAULT SUMMARY) -- "Replace Marejesho / Paid (of 12) with DS (default summary)":
+         the deck's own D.S for this customer TODAY ("9/12"), read off the same current deck
+         as arrears_now, so no read is added. Null off the deck, or with no deck at all. */
+      ds: known ? dsBy[key] : null,
       arrears_down: down,
       paid_since: paidSince,
       paid_n: paidBy ? (p ? num(p.n) : 0) : null,
@@ -3805,10 +3809,16 @@ function principalOf(r) {
   const total = num(r.initial_inst) + 11 * num(r.other_inst);
   return total > 0 ? Math.round(total / 1.36) : num(r.balance);
 }
+/** The deck's D.S as the sheet wrote it ("3/6", "9/12" -- paid of target, TEXT): the DEFAULT
+    SUMMARY. One reading for every screen that shows it; null when the row carries none. */
+function dsOf(r) {
+  const v = r.ds == null ? r.due_summary : r.ds;
+  return v == null || String(v).trim() === '' ? null : String(v).trim();
+}
 /** Installments paid, read the way the sheet did: "3/6" in D.S, else derived from what has
     actually been paid against the schedule. */
 function paidCount(r) {
-  const m = String(r.ds == null ? (r.due_summary == null ? '' : r.due_summary) : r.ds).trim().match(/^(\d+)\s*\/\s*(\d+)$/);
+  const m = String(dsOf(r) || '').match(/^(\d+)\s*\/\s*(\d+)$/);
   if (m) return Math.min(12, Math.max(0, Number(m[1])));
   const initial = num(r.initial_inst), other = num(r.other_inst), paid = num(r.t_payment);
   let pc = 0;
@@ -6180,7 +6190,7 @@ async function creditInfo(db, user, _args, nowMs) {
       guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
       branch: t.branch || null, team: d.team,
       analyst: officerOf(teamBy, d.team, 'credit'),
-      paid: paidCount(d), ds: d.ds == null ? (d.due_summary == null ? null : d.due_summary) : d.ds,
+      paid: paidCount(d), ds: dsOf(d),
       days: num(d.days_elapsed) || num(d.dc) || null,
       status: d.status || null,
       initArr: initA, curArr: cur, recovered: Math.max(0, initA - cur),

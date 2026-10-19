@@ -2279,3 +2279,17 @@ test('the legal screen makes a PDF file of the letter on the device and never op
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
   assert.ok(!/var BUILD = '2026-10-19-c'/.test(src), 'BUILD moved');
 });
+
+/* DS IN PLACE OF THE PAID-OF-12 COUNT -- "Replace Marejesho / Paid (of 12) with DS (default summary)". */
+test('the legal screen shows the deck\'s DS (default summary) where it showed a paid-of-12 count', () => {
+  const lg = page('legal');
+  assert.ok(!/'Marejesho \/ Paid/.test(lg) && !/\+' \/ 12'\)/.test(lg), 'the paid-of-12 label and figure are gone');
+  assert.ok(/row\('DS \(default summary\)', esc\(r\.ds \|\| '[^']+'\)\)/.test(lg), 'the details pane row');
+  assert.ok(/kpi\('DS \(default summary\)', esc\(e\.ds \|\| '[^']+'\)\)/.test(lg), 'the preview card before issuing');
+  const core = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'portal-core.js'), 'utf-8');
+  assert.ok(/ds: known \? dsBy\[key\] : null,/.test(core), 'the register row carries the current deck\'s D.S, off the deck already read for arrears_now');
+  assert.ok(/paidCount: f\.paidCount, ds: dsOf\(d\), weeks: f\.weeks/.test(core), 'and so does the preview');
+  assert.equal(core.split('function dsOf(').length - 1, 1, 'one reading of D.S');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-19-d'/.test(src), 'BUILD moved');
+});

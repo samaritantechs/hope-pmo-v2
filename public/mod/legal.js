@@ -162,7 +162,7 @@ function lgIssue(){
         + (e.eligible ? '' : '<div class="note bad">⛔ Notisi hutolewa kwa mdaiwa wa DC <b>'+esc(String(e.minDc))+'</b> na zaidi tu; huyu ana DC <b>'+esc(String(e.dc))+'</b>.'
             + ' / A demand notice is issued only to a customer at <b>'+esc(String(e.minDc))+'</b> DC and above — this one is at <b>'+esc(String(e.dc))+'</b>.</div>')
         + '<div class="kpis sm">'
-        + kpi('Marejesho / Paid', (e.paidCount||0)+' / 12')
+        + kpi('DS (default summary)', esc(e.ds || '—'))
         + kpi('Wiki za faini / Weeks late', (e.weeks||0)+' ('+e.ratePct+'%)')
         + kpi('Faini / Fine', money(e.fine), null, e.fine?'bad':'good')
         + kpi('Deni la msingi', money(e.principalRemaining))
@@ -359,7 +359,9 @@ function lgDetails(r){
     + '<div class="facts">'
     + row('Simu / Contact', esc(r.contact||'—'))
     + row('Tarehe ya notisi / Notice date', d(r.notice_date) + ' · siku / days ' + esc(r.notice_days == null ? '—' : r.notice_days))
-    + row('Marejesho / Paid (of 12)', esc(r.paid_count == null ? '—' : r.paid_count))
+    /* DS (DEFAULT SUMMARY): the deck's own "paid of target" for this customer today, in place of
+       the paid-of-12 count -- "Replace Marejesho / Paid (of 12) with DS (default summary)". */
+    + row('DS (default summary)', esc(r.ds || '—'))
     + row('Faini / Fine', m(r.fine))
     + row('Deni la msingi / Principal left', m(r.principal_remaining))
     + row('Jumla ya madai / Total demand', m(r.total_demand), true)
