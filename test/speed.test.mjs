@@ -506,6 +506,13 @@ const PHONE = [
      ceiling of six hid that: it had three trips of slack, which is exactly where a fifth read
      would have gone unnoticed. Rule 1, counted and written down in call-core.js beside comments. */
   ['Calls: one customer\'s comments', 'api_callComments', ['DEV1', 'R1'], 4, 200],
+  /* THE SEARCH BOX'S REACH INTO THE BOOK (api_callFind): an officer-initiated request after a pause in
+     typing, never on sync, boot or a list. The book the officer works comes off the phone index sync
+     keeps warm; this fixture measures it COLD -- 12 trips, of which the five of the index rebuild are
+     ones sync would otherwise pay, and two are the scope reads cached a minute per instance -- plus
+     ONE read of `loans` narrowed at the database to the handset's teams and 25 rows. Warm it is the
+     device, the scope, the two stamps and that one read. Rule 1, counted. */
+  ['Calls: find a customer', 'api_callFind', ['DEV1', 'JUMA'], 12, 30000],
   /* The phone's search index. It used to read EVERY comment ever written to find the few
      hundred carrying a replacement phone number -- the portal's copy of this was fixed weeks
      ago and the phone's was not, which is why the app felt slower than the portal on the same

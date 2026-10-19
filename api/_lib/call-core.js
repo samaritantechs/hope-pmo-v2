@@ -12,7 +12,7 @@ import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { statusWithPaid } from './settled.js';
 /* The docket is the key under every comment and pinned point -- see docket.js and history.js. */
-import { docketKeyOf } from './docket.js';
+import { docketKeyOf, refFor } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
    constant, because it is typed by a person. Asking the same question the PMO board asks is
@@ -2773,6 +2773,110 @@ async function callBeat(db, [dev, fix], nowMs) {
   return { ok: true, stored: true };
 }
 
+/* =======================================================================================
+   FIND A CUSTOMER ANYWHERE IN THE BOOK -- the search behind the phone's search box.
+
+     "searching through call app can bring a customer card from the latest expected or default
+      or approved so that even if not yet started repayments people can search and add comment
+      or location" / "Search can check from loan applications too.. some want to pin location
+      during assessments"
+
+   The phone searches its own three lists first and at once; this answers the rest, once per
+   pause in typing (the page waits for three letters and 450 ms):
+     1. the book the officer already works -- the defaulter register and the two-week Expected
+        window -- read off the PHONE INDEX sync already keeps warm (phoneIndex), so this costs the
+        database nothing while the index is warm; it is filtered to the handset's teams in memory
+        because the index is one company-wide map held for sync, not rows fetched for this
+        request;
+     2. every loan in the handset's teams, whatever its stage -- an application under assessment,
+        an approved loan not yet started, an old loan -- ONE read of `loans`, narrowed AT THE
+        DATABASE to those teams and to 25 rows.
+   A customer the lists already hold is not sent twice. Each row says where it came from (_seg)
+   and, for a loan, its stage and amount (note) instead of a debt of 0 the book never said.
+
+   RULE 1, COUNTED (test/speed.test.mjs): an officer-initiated request, never on sync, boot or a
+   list. Warm: the device, the scope, the two version stamps and the loans read. Cold (first
+   search after a deploy, or after an upload moved DATA_VERSION): plus the index rebuild sync
+   would have paid on its next call anyway. A missing loans table costs nothing but that part.
+   ======================================================================================= */
+const FIND_MIN_CHARS = 3, FIND_LIMIT = 25;
+const STAGE_SEG = {
+  unassigned: 'Maombi', assigned: 'Maombi', unassessed: 'Maombi', assessed: 'Maombi', pending_approval: 'Maombi',
+  approved: 'Imeidhinishwa', pending_disb: 'Imeidhinishwa', disbursed: 'Mkopo', funded: 'Mkopo', closed: 'Imefungwa',
+};
+const refIndexCache_ = new WeakMap();           // byNum -> Map(ref -> { name, contact, gName, gContact, team, src })
+function refIndexOf_(byNum) {
+  let m = refIndexCache_.get(byNum);
+  if (m) return m;
+  m = new Map();
+  for (const o of Object.values(byNum)) {
+    if (!o.R) continue;
+    const e = m.get(o.R) || { ref: String(o.R), team: o.T || '', src: o.S || '', name: '', contact: '', gName: '', gContact: '' };
+    if (o.C === 'G') { if (!e.gName) { e.gName = o.N || ''; e.gContact = o.K || ''; } }
+    else if (!e.name) { e.name = o.N || ''; e.contact = o.K || ''; }
+    m.set(o.R, e);
+  }
+  refIndexCache_.set(byNum, m);
+  return m;
+}
+async function find(db, [dev, q], nowMs) {
+  const cu = await userByDeviceSoft(db, dev);
+  if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
+  const needle = String(q == null ? '' : q).replace(/[,()"']/g, ' ').replace(/\s+/g, ' ').trim();
+  if (needle.length < FIND_MIN_CHARS) return { ok: true, rows: [] };
+  const base = await scopedUser(db, cu, nowMs);
+  const user = { ...base, teams: await scopeFor(db, base) };
+  const up = needle.toUpperCase(), digits = needle.replace(/\D/g, '');
+  const num9 = digits.length >= 7 ? digits.slice(-9) : '';
+  const has = (v, what) => String(v || '').toUpperCase().includes(what);
+  const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
+  const [byNum, loansRes] = await Promise.all([
+    phoneIndex(db, nowMs, (vs('DATA_VERSION') || '') + '|' + (vs('NEW_NUMBER_VERSION') || '')),
+    runQuery(() => {
+      const like = '%' + needle.replace(/[%_\\]/g, m => '\\' + m) + '%';
+      const clauses = ['full_name.ilike.' + like, 'guarantor_name.ilike.' + like];
+      if (/-/.test(needle)) clauses.push('docket_no.ilike.' + like);
+      if (digits.length >= 4) clauses.push('loan_id.ilike.%' + digits + '%');
+      if (num9) clauses.push('contact.ilike.%' + num9 + '%', 'guarantor_contact.ilike.%' + num9 + '%');
+      let lq = db.from('loans')
+        .select('loan_id, docket_no, track_no, full_name, contact, guarantor_name, guarantor_contact, team, stage, principal_amt, requested_amt, approved_date, disb_date, created_at')
+        .or(clauses.join(',')).order('created_at', { ascending: false }).limit(FIND_LIMIT);
+      if (user.teams && user.teams.length) lq = lq.in('team', teamMatchList(user.teams));
+      return lq;
+    }, 1),
+  ]);
+  const rows = [], seen = new Set();
+  for (const e of refIndexOf_(byNum).values()) {
+    if (rows.length >= FIND_LIMIT) break;
+    if (!teamAllowed(user, e.team)) continue;
+    const hit = has(e.name, up) || has(e.gName, up)
+      || (num9 && (String(e.contact).includes(num9) || String(e.gContact).includes(num9)))
+      || (digits.length >= 4 && e.ref.includes(digits));
+    if (!hit) continue;
+    seen.add(e.ref);
+    const def = e.src === 'DEF';
+    rows.push({ ref: e.ref, name: e.name, contact: e.contact, gName: e.gName, gContact: e.gContact, team: e.team,
+      amt: null, installment: null, custStatus: '', fuStatus: '', ds: '', days: '', called: false, noBook: true,
+      note: def ? 'Kwenye rejista ya waliokosa / in the defaulter register' : 'Kwenye Expected (wiki 2) / on an Expected sheet (two weeks)',
+      _seg: def ? 'Def' : 'Exp', src: def ? 'DEF' : 'EXP' });
+  }
+  const loans = (loansRes && !loansRes.error && Array.isArray(loansRes.data)) ? loansRes.data : [];
+  for (const l of loans) {
+    const ref = String(l.loan_id || '').trim() || (l.docket_no && l.track_no ? refFor(l.docket_no, l.track_no) : '');
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
+    const stage = String(l.stage || '').toLowerCase();
+    const amt = num(l.principal_amt) || num(l.requested_amt);
+    const when = String(l.disb_date || l.approved_date || l.created_at || '').slice(0, 10);
+    rows.push({ ref, docket: l.docket_no || '', name: l.full_name || '', contact: l.contact || '',
+      gName: l.guarantor_name || '', gContact: l.guarantor_contact || '', team: l.team || '',
+      amt: null, installment: null, custStatus: '', fuStatus: '', ds: '', days: '', called: false, noBook: true,
+      note: (STAGE_SEG[stage] || 'Mkopo') + ' · ' + stage.replace(/_/g, ' ') + (amt ? ' · TZS ' + Math.round(amt).toLocaleString('en-US') : '') + (when ? ' · ' + when : ''),
+      _seg: STAGE_SEG[stage] || 'Mkopo', src: 'LOAN', stage });
+  }
+  return { ok: true, rows, loansReady: !(loansRes && loansRes.error) };
+}
+
 const HANDLERS = {
   api_brand: brand,
   api_teamCode: teamCode,
@@ -2792,6 +2896,7 @@ const HANDLERS = {
   api_callNotifSeen: callNotifSeen,
   api_callBeat: callBeat,
   api_callCustPin: custPin,
+  api_callFind: find,
 };
 export async function callApi(db, fn, args, nowMs = Date.now()) {
   const h = HANDLERS[fn];

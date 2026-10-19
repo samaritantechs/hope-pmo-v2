@@ -35,6 +35,7 @@ const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium-1194/chrome-linu
 const PAGE = fs.readFileSync(path.join(ROOT, 'public/call.html'), 'utf8');
 
 const pins = [];                      // every api_callCustPin body the page sent
+const finds = [];                     // every api_callFind query the page sent
 let offline = false;                  // flip to simulate no signal
 let pinMode = 'store';                // store | exists | pending | notmine
 const saved = { C: null, G: null };   // what the server holds for R1, per party
@@ -54,6 +55,10 @@ function answer(fn, args) {
   // The history follows the docket: R1's card also carries a note made on the customer's earlier loan, R0.
   if (fn === 'api_callComments') return { ok: true, complaints: [], loc: args[1] === 'R1' ? saved.C : null, gloc: args[1] === 'R1' ? saved.G : null, locReady: true,
     items: args[1] === 'R1' ? [{ ref: 'R1', by: 'JUMA G', at: '2026-08-01 10:00', fu: '', comment: 'mkopo huu' }, { ref: 'R0', by: 'ASHA J', at: '2026-05-02 09:00', fu: 'AMETOA AHADI', comment: 'mkopo uliopita' }] : [] };
+  // The book behind the search box: an application under assessment, found by name after a pause.
+  if (fn === 'api_callFind') { finds.push(args[1]); return { ok: true, loansReady: true, rows: /MWOMB/i.test(args[1]) ? [
+    { ref: '22171109991', docket: '2-217-110999', name: 'MWOMBAJI MPYA', contact: '0719000001', gName: 'MDHAMINI WAKE', gContact: '0719000002', team: 'KONGOWE',
+      amt: null, installment: null, custStatus: '', fuStatus: '', ds: '', days: '', called: false, noBook: true, note: 'Maombi · assessed · TZS 300,000 · 2026-07-20', _seg: 'Maombi', src: 'LOAN', stage: 'assessed' } ] : [] }; }
   if (fn === 'api_callCustPin') {
     const p = args[1];
     pins.push(p);
@@ -239,6 +244,31 @@ await page.click('#body [data-ref="R2"]');
 await page.waitForSelector('#locPin_C'); await page.waitForTimeout(250);
 check('no guarantor, no second pair', await page.evaluate(() => !document.getElementById('locPin_G') && !document.getElementById('locMap_G') && !document.querySelector('.partyrow')));
 check('and the customer\'s pair is there and does not carry R1\'s point', !!(await box('#locPin_C')) && (await text('#locNote_C')) === '' && await page.evaluate(() => !document.getElementById('locMap_C').classList.contains('on')));
+
+// --- 10b. SEARCH REACHES THE BOOK: an applicant under assessment, not on any list, found by name -- and pinnable
+await page.evaluate(() => sheetHide());
+finds.length = 0;
+await page.fill('#listQ', 'mw');
+await page.waitForTimeout(700);
+check('two letters ask the book nothing', finds.length === 0);
+await page.fill('#listQ', 'mwomb');
+await page.waitForTimeout(250);
+check('and three or more wait for the typing to pause', finds.length === 0);
+await page.waitForSelector('#body [data-ref="22171109991"]', { timeout: 4000 });
+check('after the pause the book is asked once, and the applicant appears', finds.length === 1 && finds[0] === 'MWOMB', JSON.stringify(finds));
+const appRow = await page.evaluate(() => document.querySelector('#body [data-ref="22171109991"]').textContent.replace(/\s+/g, ' '));
+check('the row says Maombi and the stage and amount, not a debt of 0', /Maombi/.test(appRow) && /TZS 300,000/.test(appRow) && !/Deni TZS 0/.test(appRow), appRow);
+await page.click('#body [data-ref="22171109991"]');
+await page.waitForSelector('#locPin_C'); await page.waitForTimeout(250);
+const appCard = await page.evaluate(() => document.getElementById('sheetBody').textContent.replace(/\s+/g, ' '));
+check('the card opens with the status instead of arrears, the guarantor, and the Location icons for both', /Hali \/ Status/.test(appCard) && /MDHAMINI WAKE/.test(appCard) && !/Deni \/ Arrears/.test(appCard) && !!(await box('#locPin_G')), appCard.slice(0, 160));
+pins.length = 0; pinMode = 'store';
+await page.click('#locPin_C');
+await page.waitForFunction(() => /Saved:/.test(document.getElementById('locNote_C').textContent), null, { timeout: 8000 });
+check('and the applicant\'s location is pinned under the REF the loan will carry', pins.length === 1 && pins[0].ref === '22171109991' && pins[0].party === 'C', JSON.stringify(pins[0]));
+await page.evaluate(() => sheetHide());
+await page.fill('#listQ', '');
+await page.waitForTimeout(300);
 
 // --- 11. a phone with no GPS permission is told how to fix it
 const ctx2 = await browser.newContext();                      // no geolocation permission granted

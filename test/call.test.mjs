@@ -3046,3 +3046,67 @@ test('the happy path still costs ONE read of comments and ONE of locations per c
   assert.equal(asked.filter(n => n === 'followup_comments').length, 1);
   assert.equal(asked.filter(n => n === 'customer_locations').length, 1);
 });
+
+/* =========================================================================================
+   FIND A CUSTOMER ANYWHERE IN THE BOOK -- api_callFind, behind the phone's search box.
+     "searching through call app can bring a customer card from the latest expected or default or
+      approved so that even if not yet started repayments people can search and add comment or
+      location" / "Search can check from loan applications too.." */
+async function findDb_() {
+  const t = makeTables();
+  t.loans.push(
+    { team: 'KONGOWE', stage: 'assessed', docket_no: '2-217-110999', track_no: '1', loan_id: null, full_name: 'MWOMBAJI MPYA', contact: '0719000001',
+      guarantor_name: 'MDHAMINI WAKE', guarantor_contact: '0719000002', requested_amt: 300000, created_at: '2026-07-20T08:00:00Z' },
+    { team: 'KONGOWE', stage: 'approved', docket_no: '2-217-110555', track_no: '1', loan_id: '555', full_name: 'DEF GUY', contact: '0714000001',
+      principal_amt: 200000, approved_date: '2026-07-10', created_at: '2026-07-10T08:00:00Z' },
+    { team: 'MBAGALA', stage: 'unassessed', docket_no: '2-300-000777', track_no: '1', loan_id: null, full_name: 'MWOMBAJI WA MBAGALA', contact: '0719000003',
+      requested_amt: 100000, created_at: '2026-07-21T08:00:00Z' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['dA', '', '', 'ADMIN1', '0788111299'], NOW);
+  return db;
+}
+
+test('find: an application under assessment is found by name, with its stage and amount, and gets a REF to hang notes and a point on', async () => {
+  const db = await findDb_();
+  const d = await callApi(db, 'api_callFind', ['d1', 'mwombaji'], NOW);
+  assert.equal(d.ok, true); assert.equal(d.loansReady, true);
+  assert.deepEqual(d.rows.map(r => r.name), ['MWOMBAJI MPYA'], 'the KONGOWE applicant; MBAGALA\'s is not this officer\'s');
+  const r = d.rows[0];
+  assert.equal(r.ref, '22171109991', 'docket + track, the same REF the loan will carry');
+  assert.equal(r.noBook, true); assert.equal(r._seg, 'Maombi');
+  assert.match(r.note, /Maombi .* assessed .* TZS 300,000/);
+  assert.equal(r.gName, 'MDHAMINI WAKE');
+  // Notes and a point can be made on it right away, keyed on its docket.
+  await callApi(db, 'api_callAddComment', ['d1', { ref: r.ref, team: r.team, name: r.name, comment: 'tathmini: biashara ipo' }], NOW);
+  assert.equal((await callApi(db, 'api_callCustPin', ['d1', { ref: r.ref, team: r.team, name: r.name, lat: -6.79, lng: 39.2, acc: 8 }], NOW)).stored, true);
+  assert.equal(db._dump('customer_locations')[0].docket_key, '2217110999');
+});
+
+test('find: the book the officer already works comes off the warm index -- register and Expected window, scoped -- and a loan already listed is not sent twice', async () => {
+  const db = await findDb_();
+  await callApi(db, 'api_callSync', ['d1', []], NOW);                           // warms the index the way the phone does
+  const d = await callApi(db, 'api_callFind', ['d1', 'DEF GUY'], NOW);
+  assert.equal(d.rows.length, 1, 'DEF GUY is in the register AND has an approved loan under the same ref: one row');
+  assert.equal(d.rows[0].ref, '555'); assert.equal(d.rows[0]._seg, 'Def'); assert.equal(d.rows[0].src, 'DEF');
+  const byPhone = await callApi(db, 'api_callFind', ['d1', '0714000001'], NOW);
+  assert.deepEqual(byPhone.rows.map(r => r.ref), ['555'], 'found by the number too');
+  const other = await callApi(db, 'api_callFind', ['d1', 'OTHER TEAM'], NOW);
+  assert.deepEqual(other.rows, [], 'MBAGALA\'s customer on today\'s sheet is not this officer\'s');
+  const admin = await callApi(db, 'api_callFind', ['dA', 'OTHER TEAM'], NOW);
+  assert.deepEqual(admin.rows.map(r => [r.ref, r._seg]), [['333', 'Exp']], 'an all-teams code sees them, as on an Expected sheet');
+});
+
+test('find: fewer than three letters asks the database for nothing; a missing loans table costs only that part', async () => {
+  const db = await findDb_();
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  assert.deepEqual(await callApi(db, 'api_callFind', ['d1', 'mw'], NOW), { ok: true, rows: [] });
+  assert.ok(!asked.includes('loans') && !asked.includes('followup_status'), 'nothing read for two letters');
+  const t = makeTables();
+  const db2 = fakeDb(t, { missingTables: ['loans'] });
+  await callApi(db2, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  const d = await callApi(db2, 'api_callFind', ['d1', 'DEF GUY'], NOW);
+  assert.equal(d.ok, true); assert.equal(d.loansReady, false);
+  assert.deepEqual(d.rows.map(r => r.ref), ['555'], 'the register still answers');
+});
