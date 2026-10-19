@@ -233,7 +233,7 @@ abnormal:           rows[{id, team, customer_name, paid, created_at, source}], c
 received:           from, to, rows[{id, team, amount_paid, paid_at}], count, amount, keptFrom
 complaints:         rows[{id, team, complainant, status, details, created_at, branch}], count, from, to, open, resolved, loggedToday, categories[], channels[], statuses[], teams[]
 restructures:       rows[{id, ref, team, full_name, arrears, total, installments, inst_amt, status, requested_by, created_at, branch, …}], count, strategy{…}, canApprove, pending, approved, rejected
-demandNotices:      rows[{id, ref, team, full_name, notice_date, total_demand, issued_by, created_at, branch, arrears_now, recovered_since, notice_state}], count, demanded, fines, atNotice, recoveredSince, cleared, asOf
+demandNotices:      rows[{id, ref, team, full_name, notice_date, total_demand, issued_by, created_at, branch, arrears_now, ds (the current deck's D.S, "9/12"; null off the deck), recovered_since, notice_state}], count, demanded, fines, atNotice, recoveredSince, cleared, asOf
 adjustments:        rows[…], totals{…}, net, ready, targets[], superseded, deckChecked
 perfHistory:        period, rows[…], count, available, note, periods[]
 recoveryByCredit:   week{…}, metrics[{weekday, date, creditUser, team, assigned, recovered}]
