@@ -11,6 +11,9 @@ import { isSystemOpen } from './system-gate.js';
 import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { statusWithPaid } from './settled.js';
+/* The docket is the key under every comment and pinned point -- see docket.js and history.js. */
+import { docketKeyOf } from './docket.js';
+import { commentsOf, withDocketKey } from './history.js';
 /* The collection role has ONE definition in this system and it lives here -- a setting, not a
    constant, because it is typed by a person. Asking the same question the PMO board asks is
    what stops the two screens disagreeing about who is a collection officer. */
@@ -1724,19 +1727,27 @@ async function comments(db, [dev, ref], nowMs = Date.now()) {
   /* The customer's registered complaints come back with their history -- the officer about to
      ring somebody must know there is an open complaint BEFORE the call. One keyed read,
      allowed to fail quietly so the history never stops loading over its side-dish. */
-  const [{ data, error }, compRes, locRes] = await Promise.all([
-    db.from('followup_comments')
-      .select('comment, fu_status, created_by, created_at, new_number, promise_date, promise_amt')
-      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(COMMENT_LIMIT),
+  /* THE HISTORY IS THE CUSTOMER'S, NOT THE LOAN'S: commentsOf reads by docket (every REF of this
+     customer) where the database has the key, by ref alone where it has not -- one read either
+     way, one rule for the phone and the portal. The pinned points are keyed the same way. */
+  const key = docketKeyOf(ref);
+  const [hist, compRes, locRes] = await Promise.all([
+    commentsOf(db, { ref, cols: 'comment, fu_status, created_by, created_at, new_number, promise_date, promise_amt', limit: COMMENT_LIMIT }, nowMs),
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, created_at')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(10)),
-    skipLoc ? null : withHist_(db, nowMs, on => runQuery(() => db.from('customer_locations')
-      .select(on ? 'party, lat, lng, acc, saved_by, saved_at, hist' : 'party, lat, lng, acc, saved_by, saved_at')
-      .eq('ref', String(ref)).limit(2), 1)),
+    skipLoc ? null : withDocketKey(db, nowMs, key, k => withHist_(db, nowMs, on => runQuery(() => {
+      let q = db.from('customer_locations')
+        .select(on ? 'party, lat, lng, acc, saved_by, saved_at, hist' : 'party, lat, lng, acc, saved_by, saved_at');
+      q = k ? q.eq('docket_key', k) : q.eq('ref', String(ref));
+      return q.limit(2);
+    }, 1))),
   ]);
-  if (error) throw new Error(error.message);
+  const data = hist.rows;
   const items = (data || []).map(c => ({
+    /* Which loan the note was written about. Same ref as the card: this loan; another: an earlier
+       (or later) loan of the same customer, which the card says beside the note. */
+    ref: String(c.ref == null ? '' : c.ref),
     by: c.created_by || '', at: c.created_at ? eatStamp(Date.parse(c.created_at)) : '',
     fu: c.fu_status || '', comment: c.comment || '',
     /* The number an "Ana namba nyingine" recorded. It was written into the log and never
@@ -1762,7 +1773,7 @@ async function comments(db, [dev, ref], nowMs = Date.now()) {
       if (lr.party === 'G') gloc = pt; else loc = pt;
     }
   }
-  return { ok: true, items, complaints, capped: items.length >= COMMENT_LIMIT, loc, gloc, locReady };
+  return { ok: true, items, complaints, capped: items.length >= COMMENT_LIMIT, loc, gloc, locReady, byDocket: hist.byDocket };
 }
 
 /* =======================================================================================
@@ -1811,9 +1822,16 @@ async function custPin(db, [dev, p], nowMs) {
   const team = String(p.team == null ? '' : p.team).trim();
   const me = await scopedUser(db, cu, nowMs);
   if (me.teams && (!team || !teamAllowed(me, team))) return { ok: false, error: 'NOT_YOUR_TEAM' };
-  const { data: had, error: hErr } = await withHist_(db, nowMs, on => db.from('customer_locations')
-    .select(on ? 'lat, lng, acc, saved_by, saved_at, hist' : 'lat, lng, acc, saved_by, saved_at')
-    .eq('ref', ref).eq('party', party).limit(1));
+  /* THE POINT IS THE CUSTOMER'S, across every loan: keyed on the docket where the database has
+     the key (a pin on this loan replaces the one made on the last, after the same question),
+     on the ref alone where it has not. */
+  const key = docketKeyOf(ref, p.docket);
+  const { data: had, error: hErr } = await withDocketKey(db, nowMs, key, k => withHist_(db, nowMs, on => {
+    let q = db.from('customer_locations')
+      .select(on ? 'lat, lng, acc, saved_by, saved_at, hist' : 'lat, lng, acc, saved_by, saved_at');
+    q = k ? q.eq('docket_key', k) : q.eq('ref', ref);
+    return q.eq('party', party).limit(1);
+  }));
   if (hErr) {
     if (custLocMissing_(hErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
     throw new Error(hErr.message);
@@ -1838,8 +1856,8 @@ async function custPin(db, [dev, p], nowMs) {
     lat, lng, acc: Number.isFinite(acc) && acc >= 0 ? Math.round(acc) : null,
     saved_by: cu.name, saved_at: new Date(nowMs).toISOString(),
   };
-  const { error: wErr } = await withHist_(db, nowMs, on => db.from('customer_locations')
-    .upsert(on ? { ...row, hist } : row, { onConflict: 'ref,party' }));
+  const { error: wErr } = await withDocketKey(db, nowMs, key, k => withHist_(db, nowMs, on => db.from('customer_locations')
+    .upsert({ ...row, ...(k ? { docket_key: k } : {}), ...(on ? { hist } : {}) }, { onConflict: k ? 'docket_key,party' : 'ref,party' })));
   if (wErr) {
     if (custLocMissing_(wErr)) return { ok: true, stored: false, pending: 'MIGRATION' };
     throw new Error(wErr.message);
@@ -1864,11 +1882,14 @@ async function addComment(db, [dev, p], nowMs) {
   const { error: sErr } = await db.from('followup_status')
     .upsert({ ref, team: p.team || null, full_name: p.name || null }, { onConflict: 'ref', ignoreDuplicates: true });
   if (sErr) throw new Error(sErr.message);
-  const { error: cErr } = await db.from('followup_comments').insert({
+  // Filed under the customer's docket as well as the loan's ref -- see history.js. Before the
+  // migration the column is not there and the note is filed under the ref alone, as it always was.
+  const { error: cErr } = await withDocketKey(db, nowMs, docketKeyOf(ref, p.docket), k => db.from('followup_comments').insert({
     ref, team: p.team || null, full_name: p.name || null, comment: p.comment || null,
     fu_status: fu || null, promise_date: p.promiseDate || null, promise_amt: p.promiseAmt || null,
     new_number: p.newNo ? pnorm(p.newNo) : null, created_by: cu.name, created_at: now,
-  });
+    ...(k ? { docket_key: k } : {}),
+  }));
   if (cErr) throw new Error(cErr.message);
   /* A COMMENT WITHOUT A STATUS KEEPS THE STATUS. The form accepts either a status or a bare
      comment ("Chagua hali au andika maoni") -- but this update wrote fu_status: fu || null,

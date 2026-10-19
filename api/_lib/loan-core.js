@@ -3,6 +3,7 @@ import { normPhone, textOrNull, normTeam } from './parse.js';
 import { todayKey } from './time.js';
 import { sendMail, noticeHtml } from './mail.js';
 import { PDFDocument } from 'pdf-lib';
+import { refFor, docketFromRef } from './docket.js';
 
 /* =====================================================================================
    HOPE LOAN -- ORIGINATION, END TO END.
@@ -100,25 +101,11 @@ export function mintDocket(serial) {
   const stem = SANDBOX_PREFIX + padSerial(serial, 6);          // e.g. 9190000042
   return stem.slice(0, 1) + '-' + stem.slice(1, 4) + '-' + stem.slice(4);
 }
-export function refFor(docket, track) {
-  const digits = docket.replace(/-/g, '');
-  return digits + String(track);
-}
-/** The inverse, for the ONE report that carries a reference with no docket column at all --
-    the expected report; every other report (defaulters, approved) carries DOCKET# outright
-    and should be read from that column directly, never decoded.
-
-    ONLY TRACKS 1-10 ARE UNAMBIGUOUS FROM THE BARE REFERENCE, and this is a known, open gap,
-    not an oversight: "ending 0 is track 10" was confirmed, but a ref ending in 1-9 could be
-    track 1-9 OR the low digit of track 11-19 -- nothing in the digits themselves says which,
-    and that was left explicitly unresolved rather than guessed at. Never call this assuming
-    it is exact past single digits; where the docket is known, use it instead of this. */
-export function docketFromRef(ref) {
-  const s = String(ref || '');
-  const track = s.slice(-1) === '0' ? s.slice(-2) : s.slice(-1);
-  const digits = s.slice(0, s.length - track.length);
-  return { docket: digits.slice(0, 1) + '-' + digits.slice(1, 4) + '-' + digits.slice(4), track: Number(track) };
-}
+/* refFor and docketFromRef now live in docket.js -- the docket is the key under every comment
+   and every pinned location, so the rule that reads it off a reference belongs in one small
+   module the call path can import without pulling pdf-lib in behind it. Re-exported here so
+   nothing that imported them from this file has to change. */
+export { refFor, docketFromRef };
 
 async function nextSerial(db) {
   /* THE CHEAPEST READ THERE IS: PostgREST answers a head-only exact count in a HEADER, with no

@@ -2959,3 +2959,90 @@ test('T.Def is on the dashboard answer too, so the portal and the phone can neve
   assert.equal(dash.totals.defaulterLatest.arrears, 350);
   assert.equal(dash.totals.defaulterLatest.date, '2026-07-24');
 });
+
+/* =========================================================================================
+   THE HISTORY AND THE POINTS FOLLOW THE DOCKET, NOT THE LOAN (db/RUN-ME-2026-10-19-docket-keys.sql).
+     "remember comments and location should be docket based so that they travel all reference
+      numbers / loan tracks"
+   One customer: docket 2217110984, loan 1 = ref 22171109841, loan 2 = ref 22171109842. */
+const L1 = '22171109841', L2 = '22171109842', OTHER = '30010000011';
+async function docketDb_(opts) {
+  const t = makeTables();
+  t.followup_status.push(
+    { ref: L1, team: 'KONGOWE', full_name: 'AMINA DOCKET', contact: '0712555001', arrears: 100, status: 'Defaulter' },
+    { ref: L2, team: 'KONGOWE', full_name: 'AMINA DOCKET', contact: '0712555001', arrears: 900, status: 'Defaulter' },
+    { ref: OTHER, team: 'KONGOWE', full_name: 'SOMEBODY ELSE', contact: '0712555002', arrears: 500, status: 'Defaulter' });
+  const db = fakeDb(t, opts);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  return db;
+}
+
+test('a note written on the first loan is on the card of the second, marked with the loan it was about; another customer\'s is not', async () => {
+  const db = await docketDb_();
+  await callApi(db, 'api_callAddComment', ['d1', { ref: L1, team: 'KONGOWE', name: 'AMINA DOCKET', fu: 'AMETOA AHADI', promiseDate: '2026-07-30', comment: 'mkopo wa kwanza' }], NOW);
+  await callApi(db, 'api_callAddComment', ['d1', { ref: OTHER, team: 'KONGOWE', name: 'SOMEBODY ELSE', comment: 'mtu mwingine' }], NOW + 1000);
+  await callApi(db, 'api_callAddComment', ['d1', { ref: L2, team: 'KONGOWE', name: 'AMINA DOCKET', comment: 'mkopo wa pili' }], NOW + 2000);
+  const row = db._dump('followup_comments').find(c => c.ref === L1);
+  assert.equal(row.docket_key, '2217110984', 'every new note is filed under the customer\'s docket key');
+  const c = await callApi(db, 'api_callComments', ['d1', L2], NOW + 3000);
+  assert.equal(c.byDocket, true);
+  assert.deepEqual(c.items.map(i => [i.comment, i.ref]), [['mkopo wa pili', L2], ['mkopo wa kwanza', L1]], 'both loans\' notes, newest first, each saying its ref');
+  assert.ok(!c.items.some(i => i.comment === 'mtu mwingine'), 'and not another customer\'s');
+  const c1 = await callApi(db, 'api_callComments', ['d1', L1], NOW + 3000);
+  assert.equal(c1.items.length, 2, 'from the first loan\'s card the second loan\'s note shows too');
+  // The portal's drawer reads the same history, by the same rule.
+  const { portalApi } = await import('../api/_lib/portal-core.js').catch(() => ({}));
+  if (portalApi) {
+    const d = await portalApi(db, { name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['followup'] }, 'comments', { ref: L2 }, NOW + 3000);
+    assert.deepEqual(d.rows.map(r => r.ref), [L2, L1]);
+  }
+});
+
+test('a point pinned on the first loan is the customer\'s on the second: Map works, and re-pinning asks before replacing it', async () => {
+  const db = await docketDb_();
+  const atDoor = { ref: L1, team: 'KONGOWE', name: 'AMINA DOCKET', lat: -6.7924, lng: 39.2083, acc: 10 };
+  assert.equal((await callApi(db, 'api_callCustPin', ['d1', atDoor], NOW)).stored, true);
+  assert.equal(db._dump('customer_locations')[0].docket_key, '2217110984');
+  const c = await callApi(db, 'api_callComments', ['d1', L2], NOW + 1000);
+  assert.equal(c.loc.lat, -6.7924, 'the second loan\'s card has the point pinned on the first');
+  const far = { ...atDoor, ref: L2, lat: -6.8100 };
+  const ask = await callApi(db, 'api_callCustPin', ['d1', far], NOW + 2000);
+  assert.equal(ask.stored, false); assert.ok(ask.exists && ask.exists.distM > 1000, 'the first loan\'s point is put to the officer before anything is replaced');
+  const yes = await callApi(db, 'api_callCustPin', ['d1', { ...far, replace: true }], NOW + 3000);
+  assert.equal(yes.replaced, true);
+  const rows = db._dump('customer_locations');
+  assert.equal(rows.length, 1, 'ONE point per customer and party, however many loans');
+  assert.equal(rows[0].ref, L2, 'now pinned under the second loan');
+  assert.equal(rows[0].hist.length, 1, 'and the first loan\'s point is kept in its history');
+  const other = await callApi(db, 'api_callComments', ['d1', OTHER], NOW + 4000);
+  assert.equal(other.loc, null, 'another customer has no point');
+});
+
+test('before the docket migration: notes and points are read and written by ref exactly as before -- no error, no empty card', async () => {
+  const db = await docketDb_({ missingColumns: { followup_comments: ['docket_key'], customer_locations: ['docket_key'] } });
+  const r = await callApi(db, 'api_callAddComment', ['d1', { ref: L1, team: 'KONGOWE', name: 'AMINA DOCKET', comment: 'kabla' }], NOW);
+  assert.equal(r.ok, true);
+  assert.equal(db._dump('followup_comments')[0].docket_key, undefined, 'the column is not written');
+  const c = await callApi(db, 'api_callComments', ['d1', L1], NOW + 1000);
+  assert.equal(c.ok, true); assert.equal(c.byDocket, false);
+  assert.deepEqual(c.items.map(i => i.comment), ['kabla'], 'the history by ref, as it always was');
+  assert.equal((await callApi(db, 'api_callComments', ['d1', L2], NOW + 1000)).items.length, 0, 'and not yet across loans');
+  const pin = await callApi(db, 'api_callCustPin', ['d1', { ref: L1, team: 'KONGOWE', name: 'AMINA DOCKET', lat: -6.7924, lng: 39.2083, acc: 10 }], NOW + 2000);
+  assert.equal(pin.stored, true);
+  assert.equal((await callApi(db, 'api_callComments', ['d1', L1], NOW + 3000)).loc.lat, -6.7924);
+  // Inside five minutes the column is not asked for again; after, it is tried once more.
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callComments', ['d1', L1], NOW + 60000);
+  assert.equal(asked.filter(n => n === 'followup_comments').length, 1, 'one read, no retry dance, inside five minutes');
+});
+
+test('the happy path still costs ONE read of comments and ONE of locations per card', async () => {
+  const db = await docketDb_();
+  await callApi(db, 'api_callAddComment', ['d1', { ref: L1, team: 'KONGOWE', name: 'AMINA DOCKET', comment: 'x' }], NOW);
+  const asked = [];
+  const from = db.from.bind(db); db.from = n => { asked.push(n); return from(n); };
+  await callApi(db, 'api_callComments', ['d1', L2], NOW + 1000);
+  assert.equal(asked.filter(n => n === 'followup_comments').length, 1);
+  assert.equal(asked.filter(n => n === 'customer_locations').length, 1);
+});

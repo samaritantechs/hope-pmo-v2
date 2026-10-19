@@ -2126,7 +2126,7 @@ test('the customer-location migrations are small, idempotent and non-destructive
   assert.equal((code.match(/\bdrop\b/gi) || []).length, 1, 'the only drop is that guarded key');
   assert.ok(!/\b(delete|truncate|update)\b/i.test(code), 'no row is deleted or rewritten');
   const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
-  assert.ok(/create table if not exists customer_locations \([\s\S]*?primary key \(ref, party\)\s*\);/.test(schema), 'schema.sql carries the final shape for a fresh database');
+  assert.ok(/create table if not exists customer_locations \([\s\S]*?party text not null default 'C' check \(party in \('C', 'G'\)\)/.test(schema), 'schema.sql carries the party for a fresh database');
 });
 
 /* LOCATION HISTORY -- "Someone fraudulent could update real location into fake, so if there is more than one location,
@@ -2155,7 +2155,7 @@ test('the location-history migration is one metadata-only column, idempotent, no
   assert.equal((code.match(/add column if not exists hist jsonb not null default '\[\]'::jsonb/g) || []).length, 1, 'one idempotent column with a constant default');
   assert.ok(!/\b(drop|delete|truncate|update|insert|create)\b/i.test(code), 'nothing destructive, nothing else touched');
   const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
-  assert.ok(/hist jsonb not null default '\[\]'::jsonb,\s*\n\s*primary key \(ref, party\)/.test(schema), 'schema.sql carries it for a fresh database');
+  assert.ok(/hist jsonb not null default '\[\]'::jsonb,\s*\n\s*primary key \(docket_key, party\)/.test(schema), 'schema.sql carries it for a fresh database');
 });
 
 /* T.DEF -- "Add total default after recovery on the call app summary line. In figures e.g. T.Def 34.6m or 378k or 3.2b" */
@@ -2176,4 +2176,28 @@ test('the call app summary strip ends with T.Def after Rec, in figures: 34.6m, 3
   assert.equal(mc(1400000), '1.4m'); assert.equal(mc(34600000), '35m'); assert.equal(mc(210000), '210k'); assert.equal(mc(1500000000), '1.5b');
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
   assert.ok(!/var BUILD = '2026-10-18-c'/.test(src), 'BUILD moved');
+});
+
+/* THE DOCKET UNDER EVERY NOTE AND POINT -- "comments and location should be docket based so that they travel all
+   reference numbers / loan tracks" (db/RUN-ME-2026-10-19-docket-keys.sql). */
+test('the docket-key migration mirrors docketKeyOf, backfills once, rekeys the points without losing one, and says it is slow', () => {
+  const dbDir = join(PUBLIC, '..', 'db');
+  const sql = readFileSync(join(dbDir, 'RUN-ME-2026-10-19-docket-keys.sql'), 'utf-8');
+  const code = sql.replace(/--.*$/gm, '');
+  assert.ok(sql.split('\n').length < 100, 'under a hundred lines');
+  assert.ok(/create or replace function public\.docket_key_of\(p_ref text, p_docket text\)/.test(code), 'the rule in SQL, named as the one in docket.js');
+  assert.ok(/when right\(regexp_replace\(p_ref, '\\D', '', 'g'\), 1\) = '0' then 2 else 1 end/.test(code), 'a ref ending in 0 is track 10: the same decode as docketKeyOf');
+  assert.ok(/add column if not exists docket_key text/.test(code) && /where docket_key is null/.test(code), 'idempotent: the key is added and filled only where empty');
+  assert.ok(/idx_fu_comments_docket on public\.followup_comments \(docket_key, created_at desc\)/.test(code), 'its own index, so the card\'s one read stays one indexed read');
+  assert.ok(/set hist = w\.hist \|\|/.test(code) && /delete from public\.customer_locations a using public\.customer_locations b/.test(code), 'two refs of one customer: the older point is folded into the newer one\'s history before the duplicate goes');
+  assert.ok(/add primary key \(docket_key, party\)/.test(code) && /a\.attname = 'ref'/.test(code), 'the key moves to (docket, party) only while it is still on the ref');
+  assert.ok(/RUN IT IN THE EVENING/.test(sql) && /SLOW/.test(sql), 'the slow statement is named and the file says when to run it');
+  assert.ok(!/\btruncate\b/i.test(code), 'nothing is emptied');
+  const schema = readFileSync(join(dbDir, 'schema.sql'), 'utf-8');
+  assert.ok(/docket_key text\n\);\s*\ncreate index if not exists idx_fu_comments_ref/.test(schema) && /idx_fu_comments_docket/.test(schema), 'schema.sql carries the comment key and index');
+  assert.ok(/create table if not exists customer_locations \(\s*\n\s*docket_key text not null,/.test(schema), 'and the points keyed on the docket');
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  assert.ok(/String\(c\.ref\) !== String\(S\.curRef\)/.test(call) && /Mkopo REF ' \+ esc\(c\.ref\)/.test(call), 'a note from another loan of the customer is marked with its REF on the card');
+  const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
+  assert.ok(!/var BUILD = '2026-10-18-d'/.test(src), 'BUILD moved');
 });

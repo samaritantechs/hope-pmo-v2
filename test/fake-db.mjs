@@ -83,7 +83,16 @@ class FakeQuery {
     this.wantCount = !!(opts && opts.count);
     return this;
   }
-  eq(k, v) { this.filters.push(r => String(r[k]) === String(v)); return this; }
+  /* A FILTER ON A COLUMN THE SCHEMA LACKS IS REFUSED TOO, not matched against nothing: PostgREST
+     answers "column X does not exist" for an unknown column in a filter exactly as in a select,
+     and a read keyed on a column its migration has not added yet must be seen to fail here, or
+     its fallback can never be tested. */
+  _absent(k) {
+    if (this.missingCols.includes(k) && !this.rejectWith) {
+      this.rejectWith = { code: '42703', message: 'column ' + this.tableName + '.' + k + ' does not exist' };
+    }
+  }
+  eq(k, v) { this._absent(k); this.filters.push(r => String(r[k]) === String(v)); return this; }
   neq(k, v) { this.filters.push(r => String(r[k]) !== String(v)); return this; }
   // PostgREST spells "everything with a value here" as .not(col, 'is', null) -- the idiom for
   // a delete-all, which needs a filter to be accepted at all.
@@ -130,6 +139,7 @@ class FakeQuery {
       if (rest.startsWith('not.')) { negate = true; rest = rest.slice(4); }
       const j = rest.indexOf('.');
       if (j < 0) return null;
+      this._absent(col);
       return { col, op: rest.slice(0, j), val: rest.slice(j + 1), negate };
     }).filter(Boolean);
     const test = (p, r) => {
