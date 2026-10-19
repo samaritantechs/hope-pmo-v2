@@ -259,9 +259,13 @@ create table if not exists followup_comments (
   promise_amt numeric(14,2),
   new_number text,
   created_by text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- The customer's docket key (the docket's digits -- api/_lib/docket.js), so a note made on one
+  -- loan is on the card of the next. See db/RUN-ME-2026-10-19-docket-keys.sql for the backfill.
+  docket_key text
 );
 create index if not exists idx_fu_comments_ref on followup_comments(ref, created_at desc);
+create index if not exists idx_fu_comments_docket on followup_comments(docket_key, created_at desc);
 -- The phones' number index rebuild asks for the few hundred comments carrying a replacement
 -- number out of the whole history; the partial index holds only those rows. The predicate
 -- matches the query's own filters exactly, which is what lets the planner use it.
@@ -559,12 +563,14 @@ create index if not exists idx_call_logs_date_team on call_logs(call_date, team)
 create index if not exists idx_call_logs_user_date on call_logs(user_id, call_date);
 
 -- Where each customer and guarantor is: the point an officer pinned from the HOPE Calls card
--- (api_callCustPin). One row per (REF NO, party), party 'C' = customer, 'G' = guarantor; pinning
--- again replaces it. See db/RUN-ME-2026-10-18b-location-party.sql for what an already-live
--- database runs (it also covers a database that ran the first file, RUN-ME-2026-10-18-customer-locations.sql).
+-- (api_callCustPin). One row per (customer's DOCKET KEY, party), party 'C' = customer, 'G' =
+-- guarantor, so the point follows the customer from one loan to the next; `ref` is the loan it
+-- was last pinned under. Pinning again replaces it and keeps the old point in `hist`. See
+-- db/RUN-ME-2026-10-19-docket-keys.sql for what an already-live database runs.
 create table if not exists customer_locations (
-  ref text not null,
+  docket_key text not null,
   party text not null default 'C' check (party in ('C', 'G')),
+  ref text not null,
   team text,
   full_name text,
   lat double precision not null,
@@ -575,7 +581,7 @@ create table if not exists customer_locations (
   -- Every point this row replaced, oldest first: [{lat, lng, acc, by, at}] -- so a fake pin cannot erase the
   -- real one. See db/RUN-ME-2026-10-18c-location-history.sql.
   hist jsonb not null default '[]'::jsonb,
-  primary key (ref, party)
+  primary key (docket_key, party)
 );
 
 -- =====================================================================================

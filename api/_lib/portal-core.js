@@ -1,4 +1,6 @@
 import { fetchAll, runQuery , rpcAll } from './supabase.js';
+import { docketKeyOf } from './docket.js';
+import { commentsOf, withDocketKey } from './history.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
 import { nameOrNull, textOrNull, digitsCell, accountCell, phoneCell, nidaBirth, staffIdFor } from './parse.js';
 import { ADV_APPROVALS } from './importers.js';
@@ -1105,16 +1107,15 @@ async function comments(db, user, { ref }) {
      open complaint BEFORE the call, not after filing another one. One keyed read on a
      drawer that is already two reads deep; allowed to fail quietly, because a history that
      stops loading over its side-dish is a worse history. */
-  const [{ data, error }, compRes] = await Promise.all([
-    db.from('followup_comments')
-      .select('comment, fu_status, promise_date, promise_amt, new_number, created_by, created_at')
-      .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(200),
+  /* BY DOCKET, like the phone: commentsOf (history.js) is the one read of a customer's notes, so
+     the drawer and the card can never show two histories. Each row carries the ref it was about. */
+  const [hist, compRes] = await Promise.all([
+    commentsOf(db, { ref, cols: 'comment, fu_status, promise_date, promise_amt, new_number, created_by, created_at', limit: 200 }),
     runQuery(() => db.from('complaints')
       .select('complainant, category, details, status, resolution, created_at')
       .eq('ref', String(ref)).order('created_at', { ascending: false }).limit(20)),
   ]);
-  if (error) throw new Error(error.message);
-  return { rows: data || [],
+  return { rows: hist.rows, byDocket: hist.byDocket,
     complaints: (compRes && !compRes.error && compRes.data) ? compRes.data : [] };
 }
 
@@ -1134,11 +1135,12 @@ async function addComment(db, user, p, nowMs) {
   if (FU_NEED_NUMBER.includes(fu) && !p.newNumber) throw badRequest('A new phone number is required for "Ana namba nyingine".');
   const now = new Date(nowMs).toISOString();
   await db.from('followup_status').upsert({ ref, team: p.team || null, full_name: p.fullName || null }, { onConflict: 'ref', ignoreDuplicates: true });
-  const { error: cErr } = await db.from('followup_comments').insert({
+  const { error: cErr } = await withDocketKey(db, nowMs, docketKeyOf(ref, p.docketNo), k => db.from('followup_comments').insert({
     ref, docket_no: p.docketNo || null, team: p.team || null, full_name: p.fullName || null,
     comment: p.comment || null, fu_status: fu || null, promise_date: p.promiseDate || null,
     promise_amt: p.promiseAmt || null, new_number: p.newNumber || null, created_by: user.name, created_at: now,
-  });
+    ...(k ? { docket_key: k } : {}),          // the customer's docket as well as the loan's ref -- history.js
+  }));
   if (cErr) throw new Error(cErr.message);
   /* A COMMENT WITHOUT A STATUS KEEPS THE STATUS -- the same rule the calls app's addComment
      applies, fixed in both places at once: writing fu_status: fu || null meant a bare comment

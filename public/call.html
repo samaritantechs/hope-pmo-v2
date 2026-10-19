@@ -2174,7 +2174,12 @@ function historyHtml(items){
       ? '<div style="font-size:12px;margin-top:2px"><b>Ahadi / Promised: ' + esc(c.promiseDate) + '</b>'
         + (c.promiseAmt ? ' \u00B7 TZS ' + money(c.promiseAmt) : '') + '</div>'
       : '';
-    return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + '</span><span>' + esc(c.at||'') + '</span></div>'
+    /* A NOTE FROM ANOTHER LOAN OF THE SAME CUSTOMER. The history follows the docket (one customer,
+       many REF NOs), so a note written on the last loan is on this card too -- marked with the REF
+       it was about, so nobody reads last year's promise as this week's. */
+    var other = c.ref && S.curRef && String(c.ref) !== String(S.curRef)
+      ? ' <span class="chip mut" title="Mkopo mwingine wa mteja huyu / another loan of this customer">Mkopo REF ' + esc(c.ref) + '</span>' : '';
+    return '<div class="hist-item"><div class="h-top"><span>' + esc(c.by||'') + other + '</span><span>' + esc(c.at||'') + '</span></div>'
       + (c.fu ? statusChip(c.fu) + ' ' : '') + esc(c.comment||'') + nn + pr + '</div>';
   }).join('');
 }

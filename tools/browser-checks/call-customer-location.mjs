@@ -51,7 +51,9 @@ const BOOT = { ok: true, name: 'JUMA ISSA', team: 'KONGOWE', role: 'Officer', le
 function answer(fn, args) {
   if (fn === 'api_callBoot') return BOOT;
   if (fn === 'api_callList') return { ok: true, rows: ROWS, asOf: '2026-08-01', stale: false };
-  if (fn === 'api_callComments') return { ok: true, items: [], complaints: [], loc: args[1] === 'R1' ? saved.C : null, gloc: args[1] === 'R1' ? saved.G : null, locReady: true };
+  // The history follows the docket: R1's card also carries a note made on the customer's earlier loan, R0.
+  if (fn === 'api_callComments') return { ok: true, complaints: [], loc: args[1] === 'R1' ? saved.C : null, gloc: args[1] === 'R1' ? saved.G : null, locReady: true,
+    items: args[1] === 'R1' ? [{ ref: 'R1', by: 'JUMA G', at: '2026-08-01 10:00', fu: '', comment: 'mkopo huu' }, { ref: 'R0', by: 'ASHA J', at: '2026-05-02 09:00', fu: 'AMETOA AHADI', comment: 'mkopo uliopita' }] : [] };
   if (fn === 'api_callCustPin') {
     const p = args[1];
     pins.push(p);
@@ -120,6 +122,12 @@ check('and level with the name and team + REF block (the two lines they sit besi
 check('the old wide buttons are gone', !(await page.evaluate(() => !!document.getElementById('locPin') || !!document.getElementById('locMap'))));
 check('a card with no point has no note line taking room', (await box('#locNote_C')).h === 0, JSON.stringify(await box('#locNote_C')));
 check('and Map is not tinted ready until there is a point', await page.evaluate(() => !document.getElementById('locMap_C').classList.contains('on')));
+
+// --- 1b. a note from the customer's EARLIER loan is on this card, marked with its REF; this loan's is not marked
+await page.waitForFunction(() => /mkopo uliopita/.test(document.getElementById('histBox').textContent), null, { timeout: 5000 });
+const histItems = await page.evaluate(() => Array.from(document.querySelectorAll('#histBox .hist-item')).map(e => e.textContent.replace(/\s+/g, ' ')));
+check('the earlier loan\'s note is on the card and says which loan it was about', histItems.some(t => /mkopo uliopita/.test(t) && /Mkopo REF R0/.test(t)), JSON.stringify(histItems));
+check('and this loan\'s own note carries no such mark', histItems.some(t => /mkopo huu/.test(t) && !/Mkopo REF/.test(t)), JSON.stringify(histItems));
 
 // --- 2. the guarantor has a row of their own with their own pair, to the right of the name
 const gname = await box('.partyrow .pname'), gp = await box('#locPin_G'), gm = await box('#locMap_G');
