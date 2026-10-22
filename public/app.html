@@ -47,6 +47,10 @@
   .nrow.new{background:var(--b50);margin:0 -16px;padding-left:16px;padding-right:16px}
   .nrow .m{color:var(--mut);font-size:11.5px;margin-top:2px}
   .busy{height:2px;background:transparent;overflow:hidden;flex:0 0 auto}
+  /* The imprest-alerts ask, under the title bar, on every opening until the phone is ON (pushAsk_). */
+  .pushBar{display:none;margin:10px 16px 0;padding:10px 12px;border:1px solid var(--warnline);background:var(--warnbg);color:var(--ink);border-radius:10px;font-size:13px;line-height:1.45;flex:0 0 auto}
+  .pushBar.on{display:block}
+  .pushBar .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
   .busy.on{background:var(--b100)}
   .busy.on::after{content:'';display:block;height:100%;width:40%;background:var(--b600);animation:bz 1.1s ease-in-out infinite}
   @keyframes bz{0%{margin-left:-40%}100%{margin-left:100%}}
@@ -620,6 +624,8 @@
       <button class="btn sm ghost" id="refBtn" title="Reload">&#8635;</button>
     </div>
     <div class="busy" id="busy"></div>
+    <!-- Arifa za imprest: asked for here at every opening, not only inside the bell -- see pushAsk_. -->
+    <div class="pushBar" id="pushBar" role="status"></div>
     <div class="body" id="view"></div>
   </main>
 </div>
@@ -751,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-19-e';
+var BUILD = '2026-10-22-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1526,29 +1532,36 @@ function b64uToBytes_(s){
   for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
   return out;
 }
-function pushOn_(){
-  var btn = $('#pushOn'); if (btn) { btn.disabled = true; btn.textContent = 'Inawasha\u2026 / Turning on\u2026'; }
-  var fail = function(msg){ pushRedraw_(null, msg); };
-  // The permission prompt must come straight from the tap, before anything asynchronous.
-  Promise.resolve(window.Notification ? Notification.requestPermission() : 'denied').then(function(p){
+/** THE ONE ENABLING FLOW, shared by the bell's switch and the bar under the title: the browser's
+    permission question, the server's key, the worker, the subscription, and the copy filed under
+    this code. Resolves, never rejects: { ok, sub } or { ok: false, denied, note }. Called straight
+    from a tap when permission is still to be asked -- the prompt must come before anything
+    asynchronous -- and from nowhere in particular when it was already given. */
+function pushEnable_(){
+  return Promise.resolve(window.Notification ? Notification.requestPermission() : 'denied').then(function(p){
     if (p !== 'granted') {
-      fail('Ruhusa ya arifa imekataliwa \u2014 iruhusu kwenye mipangilio ya browser, kisha jaribu tena. '
-         + '/ Notification permission was refused; allow it in the browser settings and try again.');
-      return;
+      return { ok: false, denied: true, note: 'Ruhusa ya arifa imekataliwa \u2014 iruhusu kwenye mipangilio ya browser, kisha jaribu tena. '
+         + '/ Notification permission was refused; allow it in the browser settings and try again.' };
     }
     return srv('pushKey', {}).then(function(k){
-      if (!k || !k.publicKey) { fail((k && k.note) || 'Funguo za arifa hazipo. / Push keys missing.'); return; }
+      if (!k || !k.publicKey) return { ok: false, note: (k && k.note) || 'Funguo za arifa hazipo. / Push keys missing.' };
       return pushReg_().then(function(reg){
         return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes_(k.publicKey) });
       }).then(function(sub){
         return srv('pushSubscribe', { sub: sub.toJSON(), ua: navigator.userAgent.slice(0, 160) })
-          .then(function(){
-            pushRedraw_(sub, 'Simu hii itaarifiwa kwa kila hatua ya imprest inayokuhusu. Bonyeza Jaribu kuthibitisha. '
-              + '/ This phone is told of every imprest step that concerns you. Tap Test to prove it.');
-          });
+          .then(function(){ return { ok: true, sub: sub }; });
       });
     });
-  }).catch(function(e){ fail(String((e && e.message) || e)); });
+  }).catch(function(e){ return { ok: false, note: String((e && e.message) || e) }; });
+}
+function pushOn_(){
+  var btn = $('#pushOn'); if (btn) { btn.disabled = true; btn.textContent = 'Inawasha\u2026 / Turning on\u2026'; }
+  pushEnable_().then(function(r){
+    if (!r.ok) { pushRedraw_(null, r.note); return; }
+    pushRedraw_(r.sub, 'Simu hii itaarifiwa kwa kila hatua ya imprest inayokuhusu. Bonyeza Jaribu kuthibitisha. '
+      + '/ This phone is told of every imprest step that concerns you. Tap Test to prove it.');
+    pushBarHide_();          // the bar under the title has nothing left to ask
+  });
 }
 function pushOff_(){
   pushCurrent_().then(function(sub){
@@ -1558,6 +1571,94 @@ function pushOff_(){
     });
   }).then(function(){ pushRedraw_(null, ''); })
     .catch(function(e){ toast(String(e.message||e), true); });
+}
+
+/* ASKED AT EVERY OPENING, NOT ONLY INSIDE THE BELL.
+     "Web browser visitation and app should all ask to allow notifications so that we sure to
+      push imprest notifications"
+   The switch in the bell waited for somebody to open the bell, and most never did -- so an
+   imprest went to email alone and the phone in the pocket stayed silent. Now every opening of
+   the portal by a code that holds an imprest pane asks, in a bar under the title, until THIS
+   phone is on:
+     - permission already given but this browser not subscribed (a new phone, cleared site data,
+       a rotated key): subscribed quietly, no bar -- the browser would show no question anyway;
+     - not yet asked: the bar, with Ruhusu / Allow. The browser's own question comes from that
+       tap, as it must -- Safari and Firefox show nothing without a gesture;
+     - refused: the bar says where in the browser to allow it, with a retry;
+     - inside the HOPE Calls app: an Android WebView has no push at all (no PushManager, no
+       Notification), so the bar hands the portal to Chrome on the same phone, where the
+       subscription can be made and Chrome delivers it with the app closed. The app itself asks
+       the OS notification permission at every launch (MainActivity.requestMissingPermissions);
+       that permission is for the app's own tray, it does not give the WebView a push service;
+     - an iPhone not on the Home Screen: Safari's rule, as in the bell.
+   Baadaye / Later closes the bar for THIS sitting only (sessionStorage): the next opening asks
+   again -- the same rule the APK keeps for its own permission dialog ("always prompt them to
+   allow whenever they open app"). ?push=1 on the address, which is how the Chrome hand-off
+   arrives, asks at once however many Laters came before. Not a request the first screen waits
+   for: it runs with the bell, a breath after the tab somebody opened. */
+var PUSH_LATER_KEY = 'hopePushLater';
+function inApk_(){ return !!(window.HopeCalls || /HopeCalls/i.test(navigator.userAgent || '')); }
+function pushWantsAsk_(){ try { return new URLSearchParams(location.search).get('push') === '1'; } catch (e) { return false; } }
+function pushLater_(){ try { return !pushWantsAsk_() && sessionStorage.getItem(PUSH_LATER_KEY) === '1'; } catch (e) { return false; } }
+function pushBarHide_(){ var bar = $('#pushBar'); if (bar) { bar.className = 'pushBar'; bar.innerHTML = ''; } }
+function pushAsk_(){
+  var bar = $('#pushBar'); if (!bar) return;
+  if (!S.me || !impTab_()) { pushBarHide_(); return; }
+  if (pushLater_()) return;
+  if (inApk_()) { pushBarDraw_('apk', ''); return; }
+  if (!window.PushManager || !navigator.serviceWorker) {
+    var ios = /iPhone|iPad/.test(navigator.userAgent)
+      && !(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) && !navigator.standalone;
+    if (ios) pushBarDraw_('ios', ''); else pushBarHide_();   // a browser that cannot push is not nagged
+    return;
+  }
+  var perm = window.Notification ? Notification.permission : 'denied';
+  if (perm === 'granted') {
+    pushCurrent_().then(function(sub){
+      if (sub) { pushBarHide_(); return; }
+      return pushEnable_().then(function(r){ if (r.ok) pushBarHide_(); else pushBarDraw_('ask', r.note); });
+    });
+    return;
+  }
+  pushBarDraw_(perm === 'denied' ? 'denied' : 'ask', '');
+}
+function pushBarDraw_(kind, note){
+  var bar = $('#pushBar'); if (!bar) return;
+  var tab = impTab_();
+  var what = tab === 'impappr' ? ['kila ombi jipya la imprest', 'every new imprest request']
+           : tab === 'imprep' ? ['kila imprest iliyoidhinishwa inayosubiri malipo', 'every approved imprest waiting to be paid']
+           : ['kila hatua ya ombi lako la imprest', 'every step of your own imprest request'];
+  var lead = '<b>Ruhusu arifa za imprest kwenye simu hii / Allow imprest alerts on this phone.</b> '
+    + 'Utaarifiwa ' + what[0] + ' hata mfumo ukiwa umefungwa. / You will be told of ' + what[1] + ' even with the system closed.';
+  var body = '', btns = '';
+  if (kind === 'ask') btns = '<button class="btn sm good" id="pushBarOn">Ruhusu / Allow</button>';
+  else if (kind === 'denied') {
+    body = 'Browser hii ilikataa arifa za mfumo huu. Fungua mipangilio ya browser (Site settings \u2192 Notifications), ruhusu, kisha bonyeza Jaribu tena. '
+      + '/ This browser has refused notifications for this site. Open the browser\'s Site settings, allow Notifications, then tap Try again.';
+    btns = '<button class="btn sm good" id="pushBarOn">Jaribu tena / Try again</button>';
+  } else if (kind === 'apk') {
+    body = 'Ndani ya app ya HOPE Calls arifa za imprest hazifiki. Fungua mfumo kwenye Chrome ya simu hii, ingia kwa msimbo wako na uruhusu arifa hapo \u2014 Chrome huzileta hata app ikiwa imefungwa. '
+      + '/ Inside the HOPE Calls app imprest alerts cannot arrive. Open the system in this phone\'s Chrome, sign in with your code and allow alerts there; Chrome delivers them even with the app closed.';
+    btns = '<button class="btn sm good" id="pushBarChrome">Fungua kwenye Chrome / Open in Chrome</button>';
+  } else if (kind === 'ios') {
+    body = 'iPhone: weka portal kwenye Home Screen kwanza (Share \u2192 Add to Home Screen), kisha ruhusu arifa ukiifungua kutoka hapo. '
+      + '/ iPhone: add the portal to the Home Screen first, then allow alerts when you open it from there.';
+  }
+  bar.innerHTML = lead + (body ? '<div style="margin-top:6px">' + body + '</div>' : '')
+    + (note ? '<div style="margin-top:6px">' + esc(note) + '</div>' : '')
+    + '<div class="row">' + btns + '<button class="btn sm ghost" id="pushBarLater">Baadaye / Later</button></div>';
+  bar.className = 'pushBar on';
+  var on = $('#pushBarOn'), ch = $('#pushBarChrome'), later = $('#pushBarLater');
+  if (on) on.onclick = function(){
+    on.disabled = true; on.textContent = 'Inawasha\u2026 / Turning on\u2026';
+    pushEnable_().then(function(r){
+      if (r.ok) { pushBarHide_(); toast('Arifa za imprest zimewashwa kwenye simu hii. / Imprest alerts are on for this phone.'); return; }
+      pushBarDraw_(r.denied ? 'denied' : 'ask', r.note);
+    });
+  };
+  // The Android shell hands every window.open to the phone's real browser (MainActivity.onCreateWindow).
+  if (ch) ch.onclick = function(){ window.open(location.origin + '/dashboard?push=1', '_blank'); };
+  if (later) later.onclick = function(){ try { sessionStorage.setItem(PUSH_LATER_KEY, '1'); } catch (e) {} pushBarHide_(); };
 }
 /* A tap on the notification while the portal is already open: the worker brings this window
    forward and names the item (push-sw.js); the item opens exactly as the email's deep link. */
@@ -1733,7 +1834,8 @@ function start(me){
   /* THE FIRST SCREEN'S OWN READS GO FIRST. The tips, the announcement and the bell are three
      more requests nobody is waiting for at the moment of opening; they follow a breath later,
      after the tab somebody actually opened has had the connection to itself. */
-  setTimeout(function(){ tipsStart(); annCheck(); bellRefresh(); }, 2500);
+  pushBarHide_();          // whatever the last sitting left there: pushAsk_ decides afresh for this code
+  setTimeout(function(){ tipsStart(); annCheck(); bellRefresh(); pushAsk_(); }, 2500);
   $('#bellBtn').onclick = bellOpen;
   /* THE MAGNIFIER IS TAFUTA MTEJA. It used to open a lighter search drawer while the full
      find-a-customer screen -- the one that says in words whether today's screens can see the
