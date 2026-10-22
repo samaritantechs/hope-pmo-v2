@@ -3094,6 +3094,12 @@ background. Both are scheduled when a portal code signs in on the handset and ca
 signs out, so a handset that is only ever HOPE Calls never polls. A poll is a read; the phone
 remembers the newest `at` it drew (`alertSince`). APK 1.10.0 (versionCode 19) carries it.
 
+**The role box on the request form** lists the approver's rate table and nothing else, so a
+role the approver has not priced is not on it ("am not seeing role here"). It opens on the
+signed-in code's own role when that role is priced ("It must be of existing and of user logged
+in"), and the core's preview computes the nightly rate from that option at draw time; a role
+with no rate is explained under the box, with the way out (Imprest approval → Rates).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

@@ -386,7 +386,11 @@ VIEWS.impreq = function(){
         + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
         + '<div style="flex:1;min-width:160px" class="fld"><label>Wadhifa / Role *</label><select id="imqRole">'
           + '<option value="">— chagua / choose —</option>'
-          + roles.map(function(r){ return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'">'+esc(r.role)+' · malazi '+money(r.rate)+'/siku</option>'; }).join('')
+          /* "It must be of existing and of user logged in": the box opens on the signed-in code's
+             own role whenever the approver has priced it, so the requester confirms rather than
+             chooses. Another listed role can still be picked. */
+          + roles.map(function(r){ var mine = String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase();
+              return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'"'+(mine?' selected':'')+'>'+esc(r.role)+' · malazi '+money(r.rate)+'/siku'+(mine?' (wadhifa wako / your role)':'')+'</option>'; }).join('')
           + '</select>'
           /* "am not seeing role here": the list is the approver's rate table, nothing else, so a
              role the approver has not priced is not on it. Say so under the box, with the way out. */

@@ -2069,6 +2069,12 @@ test('imprest alerts are asked for at every opening of the portal, until this ph
   assert.ok(/body\.put\("fn", "pushPending"\)/.test(java) && /"alertSince"/.test(java) && /IMPORTANCE_HIGH/.test(java), 'the app polls pushPending, remembers the newest `at`, and draws loudly');
   const hint = page('imprest');
   assert.ok(/hauna kiwango cha malazi bado/.test(hint) && /String\(S\.me\.role\|\|''\)\.toUpperCase\(\)/.test(hint), 'a role the approver has not priced is explained under the box');
+  /* "It must be of existing and of user logged in": the box opens on the signed-in code's own
+     role when the approver has priced it, and the core's recalc() at wire time reads that
+     option's data-rate into the rate field without a change event. */
+  assert.ok(/\(mine\?' selected':''\)/.test(hint) && /wadhifa wako \/ your role/.test(hint), 'the signed-in role is preselected and labelled as theirs');
+  const wire = readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
+  assert.ok(/\['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'\]\.forEach[^]*?\n\s*recalc\(\);/.test(wire), 'the rate preview is computed once on draw, so the preselected role fills the rate without a tap');
   assert.ok(/if \(perm === 'granted'\) \{[^]*?if \(sub\) \{ pushBarHide_\(\); return; \}[^]*?return pushEnable_\(\)\.then/.test(ask),
     'permission already given: subscribed quietly, no bar');
   assert.ok(/pushBarDraw_\(perm === 'denied' \? 'denied' : 'ask', ''\);/.test(ask), 'not yet asked: the bar; refused: the bar with the way back');
