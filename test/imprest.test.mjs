@@ -513,6 +513,50 @@ test('push: a new request buzzes every approver phone that is on -- and only tho
   assert.equal(r.emailed, true, 'the email still goes too');
 });
 
+/* "Imprest push notifications to roles I choose only. There is a privacy concern." */
+test('push: the approver narrows a broadcast topic to the roles chosen -- honoured where a phone subscribes, where the app polls, and when the alert is sent', async () => {
+  const t = tables();
+  t.access_codes.push({ code: 'OPS1', name: 'OPS LEAD', role: 'OPERATIONS', teams: null, tabs: ['impappr'] });
+  const db = db_(t);
+  const OPS = { code: 'OPS1', name: 'OPS LEAD', role: 'OPERATIONS', teams: null, tabs: ['impappr'] };
+  // open by default: the GM, the operations lead and the admin all hear a new request
+  assert.deepEqual((await portalApi(db, GM, 'pushPolicy', {}, NOW)).policy, { IMPREST: null, IMPREST_FUND: null });
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  await portalApi(db, OPS, 'pushSubscribe', { sub: SUB(2) }, NOW);
+  await portalApi(db, ADMIN, 'pushSubscribe', { sub: SUB(3) }, NOW);
+  await portalApi(db, OPS, 'pushSubscribe', { sub: { endpoint: 'apk:ops-device-1' } }, NOW);
+  assert.equal((await askOne(db, STAFF)).pushed, 4, 'three browsers and one app queue');
+  pushes = [];
+  // narrowed to the GM alone
+  const saved = await portalApi(db, GM, 'pushPolicySave', { policy: { IMPREST: ['gm'], IMPREST_FUND: null } }, NOW);
+  assert.deepEqual(saved.policy, { IMPREST: ['GM'], IMPREST_FUND: null }, 'kept in the registry\'s spelling');
+  assert.deepEqual((await portalApi(db, GM, 'pushKey', {}, NOW)).topics, ['IMPREST']);
+  assert.deepEqual((await portalApi(db, OPS, 'pushKey', {}, NOW)).topics, [], 'a role left out is offered nothing');
+  assert.deepEqual((await portalApi(db, ADMIN, 'pushKey', {}, NOW)).topics, ['IMPREST_FUND', 'IMPREST_MINE'], 'ADMIN too is left out of a narrowed topic unless ticked');
+  await assert.rejects(portalApi(db, OPS, 'pushSubscribe', { sub: SUB(5) }, NOW), /Hakuna arifa|No notification topic/);
+  assert.equal((await portalApi(db, OPS, 'pushPending', { since: 0 }, NOW)).interval, 0, 'the app stops polling for a role that hears nothing');
+  const r = await askOne(db, STAFF2);
+  assert.equal(r.pushed, 1, 'phones registered before the change are narrowed at send time');
+  assert.deepEqual(pushes.map(p => p.endpoint), [SUB(1).endpoint]);
+  const q = db._dump('settings').find(x => x.key === 'PUSH_Q_OPS1');
+  assert.equal(JSON.parse(q.value).length, 1, 'the app queue of a role left out gets nothing new');
+  // an empty list silences the topic, and the answer says so
+  pushes = [];
+  await portalApi(db, GM, 'pushPolicySave', { policy: { IMPREST: [] } }, NOW);
+  const quiet = await askOne(db, { ...STAFF, code: 'S3', name: 'THIRD' });
+  assert.equal(quiet.pushed, 0); assert.match(quiet.pushNote, /wadhifa uliochaguliwa|chosen role/);
+  // back to everyone holding the pane
+  await portalApi(db, GM, 'pushPolicySave', { policy: { IMPREST: null } }, NOW);
+  assert.deepEqual((await portalApi(db, OPS, 'pushKey', {}, NOW)).topics, ['IMPREST']);
+  // the requester's own steps are never a broadcast and never narrowed
+  assert.deepEqual(topicsFor(STAFF, { IMPREST: [], IMPREST_FUND: [] }), ['IMPREST_MINE']);
+  await assert.rejects(portalApi(db, GM, 'pushPolicySave', { policy: { IMPREST_MINE: ['GM'] } }, NOW), /isiyojulikana|Unknown topic/);
+  // who may: the approval pane; never a view-only code, which may still look
+  await assert.rejects(portalApi(db, STAFF, 'pushPolicySave', { policy: { IMPREST: ['GM'] } }, NOW), /haujafunguliwa|not open to your role/);
+  await assert.rejects(portalApi(db, AUDITOR, 'pushPolicySave', { policy: { IMPREST: ['GM'] } }, NOW), /kuangalia tu|view-only/);
+  assert.ok((await portalApi(db, AUDITOR, 'pushPolicy', {}, NOW)).policy);
+});
+
 test('push: nothing on = nothing sent, said in the answer; a phone the service says is gone is dropped', async () => {
   const t = tables(); const db = db_(t);
   const quiet = await askOne(db);

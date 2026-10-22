@@ -3106,6 +3106,17 @@ the server's words, as the figures change: no role, nights on a role with no rat
 the request ("I fill the days for Accommodation, jumla doesn't count and submit button doesn't
 work" was a total of 0 under an unpriced role, explained only after the tap).
 
+**Who hears the broadcast alerts** ("Imprest push notifications to roles I choose only. There
+is a privacy concern"): the approval pane carries a card, *Arifa za simu za imprest: nani
+anapokea*, with the two broadcast topics (a new request and a retirement, to the approval pane;
+approved and awaiting payment, to the report pane). Each is open to every holder of its pane, as
+before, or narrowed to the roles ticked. The list lives in `settings` under `IMPREST_PUSH_ROLES`
+(`pushPolicy`, `pushPolicySave` in `api/_lib/push.js`, the save audited) and is honoured where a
+phone subscribes, where the app polls, and at send time by the role each code holds at that
+moment, so it applies to phones registered long ago. ADMIN is left out of a narrowed topic unless
+ticked; an empty list silences the topic; a requester's own steps are never narrowed. A role left
+out of every topic is not asked to allow alerts at opening, in a browser or in the app.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

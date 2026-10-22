@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-22-d';
+var BUILD = '2026-10-22-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1544,6 +1544,9 @@ function pushEnable_(){
          + '/ Notification permission was refused; allow it in the browser settings and try again.' };
     }
     return srv('pushKey', {}).then(function(k){
+      /* A role the approver left out of every topic (push.js policy) has nothing to subscribe
+         to: said, not attempted -- the server would refuse the subscription anyway. */
+      if (k && Array.isArray(k.topics) && !k.topics.length) return { ok: false, none: true, note: 'Arifa za imprest hazijafunguliwa kwa wadhifa wako. / Imprest alerts are not open to your role.' };
       if (!k || !k.publicKey) return { ok: false, note: (k && k.note) || 'Funguo za arifa hazipo. / Push keys missing.' };
       return pushReg_().then(function(reg){
         return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes_(k.publicKey) });
@@ -1616,11 +1619,17 @@ function pushAsk_(){
   if (perm === 'granted') {
     pushCurrent_().then(function(sub){
       if (sub) { pushBarHide_(); return; }
-      return pushEnable_().then(function(r){ if (r.ok) pushBarHide_(); else pushBarDraw_('ask', r.note); });
+      return pushEnable_().then(function(r){ if (r.ok || r.none) pushBarHide_(); else pushBarDraw_('ask', r.note); });
     });
     return;
   }
-  pushBarDraw_(perm === 'denied' ? 'denied' : 'ask', '');
+  /* A ROLE THE APPROVER LEFT OUT IS NOT NAGGED. The policy (push.js) can narrow a topic to the
+     roles chosen; a code holding the pane but not the role would otherwise be asked, allow, and
+     be refused. One read, only on an opening that would draw the bar. */
+  srv('pushKey', {}).then(function(k){
+    if (k && Array.isArray(k.topics) && !k.topics.length) { pushBarHide_(); return; }
+    pushBarDraw_(perm === 'denied' ? 'denied' : 'ask', '');
+  }).catch(function(){ pushBarDraw_(perm === 'denied' ? 'denied' : 'ask', ''); });
 }
 /* INSIDE THE HOPE CALLS APP the phone IS the subscription.
      "I thought we allow notification even from app too"
@@ -1639,7 +1648,12 @@ function pushApkRegister_(){
   srv('pushSubscribe', { sub: { endpoint: 'apk:' + id }, ua: navigator.userAgent.slice(0, 160) }).then(function(){
     try { sessionStorage.setItem(PUSH_APK_KEY, id); } catch (e) {}
     pushBarHide_();
-  }).catch(function(e){ pushBarDraw_('apk', String((e && e.message) || e)); });
+  }).catch(function(e){
+    var m = String((e && e.message) || e);
+    // a role the approver left out of every topic: nothing to register, nothing to say
+    if (/Hakuna arifa|No notification topic/.test(m)) { try { sessionStorage.setItem(PUSH_APK_KEY, id); } catch (x) {} pushBarHide_(); return; }
+    pushBarDraw_('apk', m);
+  });
 }
 function pushBarDraw_(kind, note){
   var bar = $('#pushBar'); if (!bar) return;
@@ -6665,6 +6679,33 @@ function wireForms(){
           .catch(function(e){ b.disabled=false; toast(String(e.message||e), true); });
       };
     });
+  })();
+
+  /* WHO HEARS THE IMPREST PHONE ALERTS -- the card under the rate table (imprest module). Per
+     broadcast topic: "everyone holding that pane" saves null, "these roles only" saves the ticked
+     list (an empty one silences the topic). Saved through pushPolicySave (push.js), applied by
+     the server at once. */
+  (function(){
+    var save = document.getElementById('ppSave');
+    if (!save) return;
+    var paint = function(name){
+      var box = document.querySelector('[data-pp="' + name.slice(3) + '"]'), on = document.querySelector('input[name="' + name + '"]:checked');
+      if (box) box.style.opacity = on && on.value === 'only' ? '1' : '0.45';
+    };
+    Array.prototype.forEach.call(document.querySelectorAll('input[name^="pp_"]'), function(r){ r.onchange = function(){ paint(r.name); }; });
+    save.onclick = function(){
+      var policy = {};
+      Array.prototype.forEach.call(document.querySelectorAll('[data-pp]'), function(box){
+        var t = box.getAttribute('data-pp'), on = document.querySelector('input[name="pp_' + t + '"]:checked');
+        policy[t] = on && on.value === 'only'
+          ? Array.prototype.map.call(box.querySelectorAll('input[data-ppr]:checked'), function(c){ return c.value; })
+          : null;
+      });
+      save.disabled = true;
+      srv('pushPolicySave', { policy: policy })
+        .then(function(){ toast('Imehifadhiwa: arifa za imprest zinaenda kwa wadhifa uliochagua. / Saved: imprest alerts go to the roles chosen.'); render({ force:true }); })
+        .catch(function(e){ save.disabled = false; toast(String(e.message||e), true); });
+    };
   })();
 }
 

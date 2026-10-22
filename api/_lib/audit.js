@@ -70,6 +70,9 @@ export const AUDITED = new Set([
   /* PHONE NOTIFICATIONS. Turning a handset on or off is a write under a code, so it is logged
      like one -- and, being here, is refused to a view-only code like every other write. */
   'pushSubscribe', 'pushUnsubscribe',
+  /* Who hears the imprest broadcast alerts -- a privacy setting, so its every change is logged
+     under the code that made it. */
+  'pushPolicySave',
 ]);
 
 /** The ONLY argument fields that ever reach the table. Anything not named here is dropped --
