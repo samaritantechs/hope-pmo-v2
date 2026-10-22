@@ -2059,7 +2059,22 @@ test('imprest alerts are asked for at every opening of the portal, until this ph
     'asked with the bell, a breath after the first screen -- never a request that screen waits for');
   const ask = app.slice(app.indexOf('function pushAsk_'), app.indexOf('function pushBarDraw_'));
   assert.ok(/if \(!S\.me \|\| !impTab_\(\)\) \{ pushBarHide_\(\); return; \}/.test(ask), 'only a code holding an imprest pane is asked');
-  assert.ok(/if \(pushLater_\(\)\) return;/.test(ask) && /if \(inApk_\(\)\) \{ pushBarDraw_\('apk', ''\); return; \}/.test(ask), 'Later is honoured; the APK gets the Chrome hand-off');
+  assert.ok(/if \(pushLater_\(\)\) return;/.test(ask) && /if \(inApk_\(\)\) \{ pushApkRegister_\(\); return; \}/.test(ask), 'Later is honoured; inside the APK the phone registers itself');
+  /* "I thought we allow notification even from app too": the app is a subscription of its own kind, polled natively. */
+  const apk = app.slice(app.indexOf('function pushApkRegister_'), app.indexOf('function pushBarDraw_'));
+  assert.ok(/srv\('pushSubscribe', \{ sub: \{ endpoint: 'apk:' \+ id \}, ua:/.test(apk), 'registered under apk:<device id>, the id the device register knows');
+  assert.ok(/sessionStorage\.getItem\(PUSH_APK_KEY\) === id/.test(apk) && /if \(!id\) \{ pushBarDraw_\('apk', ''\); return; \}/.test(apk),
+    'once per sitting; an app too old to carry a device id is shown the Chrome way instead');
+  const java = readFileSync(join(PUBLIC, '..', 'android', 'app', 'src', 'main', 'java', 'com', 'samaritantechs', 'hopecalls', 'AlertPoller.java'), 'utf-8');
+  assert.ok(/body\.put\("fn", "pushPending"\)/.test(java) && /"alertSince"/.test(java) && /IMPORTANCE_HIGH/.test(java), 'the app polls pushPending, remembers the newest `at`, and draws loudly');
+  const hint = page('imprest');
+  assert.ok(/hauna kiwango cha malazi bado/.test(hint) && /String\(S\.me\.role\|\|''\)\.toUpperCase\(\)/.test(hint), 'a role the approver has not priced is explained under the box');
+  /* "It must be of existing and of user logged in": the box opens on the signed-in code's own
+     role when the approver has priced it, and the core's recalc() at wire time reads that
+     option's data-rate into the rate field without a change event. */
+  assert.ok(/\(mine\?' selected':''\)/.test(hint) && /wadhifa wako \/ your role/.test(hint), 'the signed-in role is preselected and labelled as theirs');
+  const wire = readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
+  assert.ok(/\['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'\]\.forEach[^]*?\n\s*recalc\(\);/.test(wire), 'the rate preview is computed once on draw, so the preselected role fills the rate without a tap');
   assert.ok(/if \(perm === 'granted'\) \{[^]*?if \(sub\) \{ pushBarHide_\(\); return; \}[^]*?return pushEnable_\(\)\.then/.test(ask),
     'permission already given: subscribed quietly, no bar');
   assert.ok(/pushBarDraw_\(perm === 'denied' \? 'denied' : 'ask', ''\);/.test(ask), 'not yet asked: the bar; refused: the bar with the way back');

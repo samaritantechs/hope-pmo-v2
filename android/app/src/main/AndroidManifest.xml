@@ -23,6 +23,9 @@
          without this; bundled into the app's one combined permission ask alongside call log,
          location and camera, see requestMissingPermissions. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The imprest-alert job (AlertJobService) is persisted so it survives a reboot; Android
+         requires this permission for a persisted job. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- The KYC photo/signature/thumbprint capture screens (openCameraOverlay_ in app.html) call
          getUserMedia() for a live camera feed, never a gallery picker. Without this declared, a
          WebView's PermissionRequest for it is refused with no OS prompt at all; see
@@ -38,9 +41,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.HopeCalls">
+        <!-- singleTop: a tap on an imprest alert while the app is open reaches onNewIntent and
+             opens the request in the page already on screen, instead of stacking a second copy
+             of the whole app. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -55,6 +62,14 @@
             android:name=".OfficerLocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+
+        <!-- The background half of the imprest alerts: a periodic JobScheduler job that asks the
+             portal for this code's queued alerts about every fifteen minutes. See AlertPoller
+             and AlertJobService. -->
+        <service
+            android:name=".AlertJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <!-- The downloaded APK is handed to the installer as a content:// URI; a file:// one
              throws FileUriExposedException on Android 7+. -->

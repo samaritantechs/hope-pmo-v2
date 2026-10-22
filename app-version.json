@@ -1,6 +1,6 @@
 {
-  "versionCode": 18,
-  "versionName": "1.9.5",
-  "notes": "Arifa ya kudumu sasa inasema tu 'HOPE PMO inasasisha data' na haitoi sauti wala mtetemo. / The standing notification now only says 'HOPE PMO is auto updating data', silently.",
+  "versionCode": 19,
+  "versionName": "1.10.0",
+  "notes": "Arifa za imprest sasa zinafika ndani ya app: ombi jipya, idhini na malipo yanayokuhusu, hata app ikiwa imefungwa. / Imprest alerts now arrive inside the app: new requests, decisions and payments that concern you, even with the app closed.",
   "apkUrl": "https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk"
 }

@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-22-a';
+var BUILD = '2026-10-22-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1605,7 +1605,7 @@ function pushAsk_(){
   var bar = $('#pushBar'); if (!bar) return;
   if (!S.me || !impTab_()) { pushBarHide_(); return; }
   if (pushLater_()) return;
-  if (inApk_()) { pushBarDraw_('apk', ''); return; }
+  if (inApk_()) { pushApkRegister_(); return; }
   if (!window.PushManager || !navigator.serviceWorker) {
     var ios = /iPhone|iPad/.test(navigator.userAgent)
       && !(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) && !navigator.standalone;
@@ -1622,6 +1622,25 @@ function pushAsk_(){
   }
   pushBarDraw_(perm === 'denied' ? 'denied' : 'ask', '');
 }
+/* INSIDE THE HOPE CALLS APP the phone IS the subscription.
+     "I thought we allow notification even from app too"
+   An Android WebView has no push service, so the app registers itself in the same register as a
+   browser would, under apk:<device id> (the id the device register already knows), and the
+   server queues this code's alerts for it instead of pushing (push.js). The app polls that queue
+   natively, every two minutes while open and every fifteen in the background, and draws each
+   alert on the phone's own tray (AlertPoller.java). Registered once per sitting, quietly; the
+   bar appears only when the registration fails or the app is too old to carry a device id. */
+var PUSH_APK_KEY = 'hopeApkPush';
+function pushApkRegister_(){
+  var nb = androidBridge_(), id = '';
+  try { id = nb ? String(nb.getDeviceId() || '') : ''; } catch (e) {}
+  if (!id) { pushBarDraw_('apk', ''); return; }
+  try { if (sessionStorage.getItem(PUSH_APK_KEY) === id) { pushBarHide_(); return; } } catch (e) {}
+  srv('pushSubscribe', { sub: { endpoint: 'apk:' + id }, ua: navigator.userAgent.slice(0, 160) }).then(function(){
+    try { sessionStorage.setItem(PUSH_APK_KEY, id); } catch (e) {}
+    pushBarHide_();
+  }).catch(function(e){ pushBarDraw_('apk', String((e && e.message) || e)); });
+}
 function pushBarDraw_(kind, note){
   var bar = $('#pushBar'); if (!bar) return;
   var tab = impTab_();
@@ -1637,8 +1656,8 @@ function pushBarDraw_(kind, note){
       + '/ This browser has refused notifications for this site. Open the browser\'s Site settings, allow Notifications, then tap Try again.';
     btns = '<button class="btn sm good" id="pushBarOn">Jaribu tena / Try again</button>';
   } else if (kind === 'apk') {
-    body = 'Ndani ya app ya HOPE Calls arifa za imprest hazifiki. Fungua mfumo kwenye Chrome ya simu hii, ingia kwa msimbo wako na uruhusu arifa hapo \u2014 Chrome huzileta hata app ikiwa imefungwa. '
-      + '/ Inside the HOPE Calls app imprest alerts cannot arrive. Open the system in this phone\'s Chrome, sign in with your code and allow alerts there; Chrome delivers them even with the app closed.';
+    body = 'Simu hii haikuweza kusajiliwa kwa arifa ndani ya app \u2014 sasisha app ya HOPE Calls itakapoomba, kisha fungua mfumo tena. Hadi hapo, fungua mfumo kwenye Chrome ya simu hii, ingia kwa msimbo wako na uruhusu arifa hapo. '
+      + '/ This phone could not be registered for alerts inside the app; update HOPE Calls when it asks, then open the system again. Until then, open the system in this phone\'s Chrome, sign in with your code and allow alerts there.';
     btns = '<button class="btn sm good" id="pushBarChrome">Fungua kwenye Chrome / Open in Chrome</button>';
   } else if (kind === 'ios') {
     body = 'iPhone: weka portal kwenye Home Screen kwanza (Share \u2192 Add to Home Screen), kisha ruhusu arifa ukiifungua kutoka hapo. '

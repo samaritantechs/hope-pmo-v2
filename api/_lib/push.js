@@ -85,11 +85,49 @@ function computeKeys_() {
 
 /* ------------------------------------------------------------------ the register of phones */
 const subKey_ = code => PUSH_SUB_PREFIX + K(code);
-const validSub_ = s => !!(s && typeof s === 'object' && typeof s.endpoint === 'string'
+const webSub_ = s => !!(s && typeof s === 'object' && typeof s.endpoint === 'string'
   && /^https:\/\/\S+$/.test(s.endpoint) && s.endpoint.length <= 1024
   && s.keys && typeof s.keys === 'object'
   && typeof s.keys.p256dh === 'string' && s.keys.p256dh.length >= 16 && s.keys.p256dh.length <= 256
   && typeof s.keys.auth === 'string' && s.keys.auth.length >= 8 && s.keys.auth.length <= 128);
+/* THE HOPE CALLS APP IS A PHONE TOO.
+     "I thought we allow notification even from app too"
+   An Android WebView has no push service: no PushManager, no Notification, nothing for Google's
+   push service to deliver to. So the app registers itself in the SAME register under its own
+   endpoint, apk:<device id> (HopeCallsBridge.getDeviceId, the id the device register already
+   knows), and a send to such a row goes into a QUEUE under PUSH_Q_<CODE> (settings) instead of
+   to a push service. The app itself asks for the queue (pushPending) every two minutes while it
+   is open and every fifteen in the background (AlertJobService), and draws each item on the
+   phone's own tray. One keyed read of one small row per poll; the topics rule is the one the
+   browser's subscription obeys, because it is the same row. */
+const apkSub_ = s => !!(s && typeof s === 'object' && typeof s.endpoint === 'string'
+  && /^apk:[A-Za-z0-9_-]{6,64}$/.test(s.endpoint));
+const validSub_ = s => webSub_(s) || apkSub_(s);
+export const PUSH_Q_PREFIX = 'PUSH_Q_';
+const MAX_Q = 30;                   // items kept per code: a day's imprest steps, not a history
+const Q_TTL_MS = 24 * 3600 * 1000;  // an alert older than a day is stale on any tray
+const qKey_ = code => PUSH_Q_PREFIX + K(code);
+function parseQ_(value) {
+  try { const v = JSON.parse(String(value || '[]')); return Array.isArray(v) ? v.filter(x => x && typeof x === 'object' && x.at) : []; }
+  catch (e) { return []; }
+}
+async function readQ_(db, code) {
+  const { data, error } = await db.from('settings').select('value').eq('key', qKey_(code)).maybeSingle();
+  if (error) throw new Error(error.message);
+  return parseQ_(data && data.value);
+}
+/** Appends one alert to a code's queue: trimmed to a day and to MAX_Q, the item id unique per
+    send so the app can never draw the same alert twice. */
+async function enqueue_(db, code, payload) {
+  const now = Date.now();   // wall clock on purpose: the phone compares it with the `at` it last drew
+  const items = (await readQ_(db, code)).filter(x => now - Number(x.at) < Q_TTL_MS);
+  items.push({ id: now + '-' + Math.random().toString(36).slice(2, 8), at: now,
+    title: S_(payload && payload.title, 120), body: S_(payload && payload.body, 400),
+    url: S_(payload && payload.url, 300), tag: S_(payload && payload.tag, 80) });
+  while (items.length > MAX_Q) items.shift();
+  const { error } = await db.from('settings').upsert({ key: qKey_(code), value: JSON.stringify(items) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+}
 function parseSubs_(value) {
   try {
     const v = JSON.parse(String(value || '[]'));
@@ -141,8 +179,10 @@ export async function pushSubscribe(db, user, args, nowMs) {
   const asked = (Array.isArray(a.topics) && a.topics.length ? a.topics : may).map(K);
   const topics = [...new Set(asked.filter(t => may.includes(t)))];
   if (!topics.length) forbid('Hakuna arifa iliyofunguliwa kwa wadhifa wako. / No notification topic is open to your role.');
-  const row = { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
-    topics, ua: S_(a.ua, 160), at: new Date(nowMs || Date.now()).toISOString() };
+  const row = apkSub_(sub)
+    ? { endpoint: sub.endpoint, kind: 'apk', topics, ua: S_(a.ua, 160), at: new Date(nowMs || Date.now()).toISOString() }
+    : { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth },
+        topics, ua: S_(a.ua, 160), at: new Date(nowMs || Date.now()).toISOString() };
   const subs = (await readSubs_(db, user.code)).filter(s => s.endpoint !== row.endpoint);
   subs.push(row);
   while (subs.length > MAX_SUBS) subs.shift();
@@ -156,6 +196,23 @@ export async function pushUnsubscribe(db, user, args) {
   await writeSubs_(db, user.code, subs);
   return { ok: true, devices: subs.length };
 }
+/** THE APP'S OWN POLL. The alerts queued for this code since `since` (ms), and how often to ask
+    again: two minutes for an approver's phone, ten for anyone else's, zero (do not ask) for a
+    code that holds no imprest pane or has no app registered. Read-only: nothing is acknowledged
+    on the server, the phone remembers the last `at` it drew. */
+export async function pushPending(db, user, args) {
+  const a = args || {};
+  const since = Number(a.since) || 0;
+  const may = topicsFor(user);
+  let subs = [];
+  try { subs = await readSubs_(db, user.code); } catch (e) { /* no settings table: no app registered */ }
+  const registered = subs.some(s => s.kind === 'apk');
+  const interval = !may.length || !registered ? 0 : (may.includes('IMPREST') ? 120 : 600);
+  if (!interval) return { ok: true, items: [], interval: 0, now: Date.now() };
+  const items = (await readQ_(db, user.code)).filter(x => Number(x.at) > since).sort((x, y) => Number(x.at) - Number(y.at));
+  return { ok: true, items, interval, now: Date.now() };
+}
+
 /** A push to this code's own handsets, so the switch can be proven from the phone itself. */
 export async function pushTest(db, user, _args, nowMs) {
   const subs = await readSubs_(db, user.code);
@@ -207,16 +264,25 @@ const withTimeout_ = (p, ms) => new Promise((res, rej) => {
   Promise.resolve(p).then(v => { clearTimeout(t); res(v); }, e => { clearTimeout(t); rej(e); });
 });
 async function sendTo_(db, targets, payload, opts) {
-  const k = vapidKeys();
-  if (!k) return { sent: 0, failed: 0, reason: 'funguo za arifa hazipo / push keys not configured' };
-  const subject = env('VAPID_SUBJECT') || DEFAULT_SUBJECT;
-  const body = JSON.stringify(payload || {});
   const deadline = Date.now() + ((opts && opts.budgetMs) || FANOUT_BUDGET_MS);
   let sent = 0, failed = 0;
   const reasons = [];
+  /* The app's rows first: one queue write per code that has the app registered, whatever the
+     number of handsets -- each of them reads the same queue. No signing key is needed for it. */
+  const apkCodes = [...new Set(targets.filter(t => t.subs.some(s => s.kind === 'apk')).map(t => t.code))];
+  await Promise.all(apkCodes.map(async code => {
+    try { await enqueue_(db, code, payload); sent++; }
+    catch (e) { failed++; reasons.push('app queue: ' + String((e && e.message) || e).slice(0, 80)); }
+  }));
+  const webTargets = targets.map(t => ({ code: t.code, subs: t.subs.filter(s => s.kind !== 'apk') })).filter(t => t.subs.length);
+  if (!webTargets.length) return { sent, failed, reason: failed ? [...new Set(reasons)].join('; ').slice(0, 200) : '' };
+  const k = vapidKeys();
+  if (!k) return { sent, failed: failed + webTargets.reduce((n, t) => n + t.subs.length, 0), reason: 'funguo za arifa hazipo / push keys not configured' };
+  const subject = env('VAPID_SUBJECT') || DEFAULT_SUBJECT;
+  const body = JSON.stringify(payload || {});
   const gone = new Map();                 // code -> endpoints the push service no longer knows
   const jobs = [];
-  for (const t of targets) for (const s of t.subs) jobs.push({ code: t.code, sub: s });
+  for (const t of webTargets) for (const s of t.subs) jobs.push({ code: t.code, sub: s });
   await Promise.all(jobs.map(async j => {
     const left = deadline - Date.now();
     if (left <= 500) { failed++; reasons.push('muda umeisha / out of time'); return; }

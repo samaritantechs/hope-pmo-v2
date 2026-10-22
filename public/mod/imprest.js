@@ -386,8 +386,18 @@ VIEWS.impreq = function(){
         + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
         + '<div style="flex:1;min-width:160px" class="fld"><label>Wadhifa / Role *</label><select id="imqRole">'
           + '<option value="">— chagua / choose —</option>'
-          + roles.map(function(r){ return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'">'+esc(r.role)+' · malazi '+money(r.rate)+'/siku</option>'; }).join('')
-          + '</select></div>'
+          /* "It must be of existing and of user logged in": the box opens on the signed-in code's
+             own role whenever the approver has priced it, so the requester confirms rather than
+             chooses. Another listed role can still be picked. */
+          + roles.map(function(r){ var mine = String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase();
+              return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'"'+(mine?' selected':'')+'>'+esc(r.role)+' · malazi '+money(r.rate)+'/siku'+(mine?' (wadhifa wako / your role)':'')+'</option>'; }).join('')
+          + '</select>'
+          /* "am not seeing role here": the list is the approver's rate table, nothing else, so a
+             role the approver has not priced is not on it. Say so under the box, with the way out. */
+          + ((roles.length && !roles.some(function(r){ return String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase(); }))
+            ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa wako (' + esc(S.me.role||'') + ') hauna kiwango cha malazi bado — chagua wadhifa uliopo au muombe mwidhinishaji auongeze kwenye Idhini ya imprest → Viwango. '
+              + '/ Your role (' + esc(S.me.role||'') + ') has no nightly rate yet — pick a listed role or ask the approver to add yours under Imprest approval → Rates.</div>' : '')
+          + '</div>'
         + '<div style="flex:1;min-width:140px" class="fld"><label>Njia ya malipo / Payment mode</label><select id="imqPay">'
           + IMPREST_PAY_MODES.map(function(p){ return '<option>'+esc(p)+'</option>'; }).join('')+'</select></div>'
         + '<div style="flex:1;min-width:160px" class="fld"><label>Namba ya akaunti / Account No or MOMO</label><input id="imqAcct"></div>'
