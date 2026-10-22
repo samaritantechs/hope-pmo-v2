@@ -1944,7 +1944,7 @@ test('the portal modules: each parses, each view is mapped once, the core guards
   assert.ok(/if \(window\.wireDevices\) wireDevices\(\);/.test(core) && /if \(window\.bpWire_\) bpWire_\(\);/.test(core) && /pres: function\(\)\{ if \(window\.presStop\) presStop\(\); \}/.test(core)
     && /S\.workspace === 'hopeloan' && window\.wireLnCs_/.test(core), 'the core\'s early calls into module code are guarded');
   assert.ok(/go\(impTab \|\| lastView_\(\) \|\| firstAllowed_\(\) \|\| 'noaccess'\)/.test(core) && /store\('hopeLastView', view\)/.test(core), 'opening lands on the last tab');
-  assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); \}, 2500\)/.test(core), 'the tips, announcement and bell follow the first screen, not race it');
+  assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); pushAsk_\(\); \}, 2500\)/.test(core), 'the tips, announcement, bell and the imprest-alerts ask follow the first screen, not race it');
   const vercel = JSON.parse(readFileSync(join(PUBLIC, '..', 'vercel.json'), 'utf-8'));
   assert.ok(vercel.headers.some(h => h.source === '/mod/(.*)' && h.headers.some(x => x.key === 'Cache-Control' && /no-cache/.test(x.value))), 'modules are served like the page: revalidated, never stale');
   // The whole point. 977 KB before; the core must not grow back to that without somebody noticing.
@@ -2048,6 +2048,30 @@ test('phone notifications: the bell offers the switch to the approval pane, the 
   assert.ok(!/addEventListener\('fetch'/.test(sw) && !/caches\./.test(sw), 'and caches nothing -- the crisis worker owns that');
   assert.ok(vercel.headers.some(h => h.source === '/push-sw.js' && h.headers.some(x => x.key === 'Cache-Control' && /no-cache/.test(x.value))), 'the worker file is never served stale');
   new Function(sw);
+});
+
+/* ASKED AT EVERY OPENING -- "Web browser visitation and app should all ask to allow notifications so that we sure to push
+   imprest notifications". The bell's switch waited to be found; the bar under the title asks until the phone is on. */
+test('imprest alerts are asked for at every opening of the portal, until this phone is on', () => {
+  const app = appSrc();
+  assert.ok(/<div class="pushBar" id="pushBar" role="status"><\/div>/.test(app), 'a bar under the title, not only the bell');
+  assert.ok(/pushBarHide_\(\);\s*\/\/[^\n]*\n\s*setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); pushAsk_\(\); \}, 2500\);/.test(app),
+    'asked with the bell, a breath after the first screen -- never a request that screen waits for');
+  const ask = app.slice(app.indexOf('function pushAsk_'), app.indexOf('function pushBarDraw_'));
+  assert.ok(/if \(!S\.me \|\| !impTab_\(\)\) \{ pushBarHide_\(\); return; \}/.test(ask), 'only a code holding an imprest pane is asked');
+  assert.ok(/if \(pushLater_\(\)\) return;/.test(ask) && /if \(inApk_\(\)\) \{ pushBarDraw_\('apk', ''\); return; \}/.test(ask), 'Later is honoured; the APK gets the Chrome hand-off');
+  assert.ok(/if \(perm === 'granted'\) \{[^]*?if \(sub\) \{ pushBarHide_\(\); return; \}[^]*?return pushEnable_\(\)\.then/.test(ask),
+    'permission already given: subscribed quietly, no bar');
+  assert.ok(/pushBarDraw_\(perm === 'denied' \? 'denied' : 'ask', ''\);/.test(ask), 'not yet asked: the bar; refused: the bar with the way back');
+  assert.ok(/if \(ios\) pushBarDraw_\('ios', ''\); else pushBarHide_\(\);/.test(ask), 'an iPhone off the Home Screen is told Safari\'s rule; a browser that cannot push is not nagged');
+  assert.ok(/sessionStorage\.setItem\(PUSH_LATER_KEY, '1'\)/.test(app) && /sessionStorage\.getItem\(PUSH_LATER_KEY\) === '1'/.test(app)
+    && !/localStorage\.[gs]etItem\(PUSH_LATER_KEY/.test(app) && !/store\(PUSH_LATER_KEY/.test(app), 'Later lasts one sitting: the next opening asks again');
+  assert.ok(/get\('push'\) === '1'/.test(app) && /return !pushWantsAsk_\(\) && sessionStorage/.test(app), '?push=1 asks at once, however many Laters came before');
+  assert.ok(/window\.open\(location\.origin \+ '\/dashboard\?push=1', '_blank'\)/.test(app), 'the Chrome hand-off carries the ask with it');
+  assert.ok(/Site settings \\u2192 Notifications/.test(app) && /Jaribu tena \/ Try again/.test(app), 'a refusal says where to allow it and offers a retry');
+  assert.equal(app.split('Notification.requestPermission()').length - 1, 1, 'one place asks the browser (pushEnable_), shared by the bell and the bar');
+  assert.ok(/function pushOn_\(\)\{[^]*?pushEnable_\(\)\.then\(function\(r\)\{[^]*?pushBarHide_\(\);/.test(app), 'the bell\'s switch uses it too, and clears the bar when it succeeds');
+  assert.ok(/function inApk_\(\)\{ return !!\(window\.HopeCalls \|\| \/HopeCalls\/i\.test\(navigator\.userAgent \|\| ''\)\); \}/.test(app), 'the APK is recognised the way canPrintHere already does');
 });
 
 /* WHERE THE OFFICER IS -- "A field officer has run with 567k today ... no any field officer appearing there in 300+ company

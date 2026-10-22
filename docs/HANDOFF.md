@@ -3039,5 +3039,41 @@ re-open. See [OPERATIONS.md](../OPERATIONS.md#when-something-breaks).
 
 ---
 
+## Part 21 — Imprest alerts: asked for at every opening, not only in the bell
+
+> "Web browser visitation and app should all ask to allow notifications so that we sure to
+> push imprest notifications"
+
+The phone notification for an imprest (Part 14 onward: Web Push, `api/_lib/push.js`,
+`public/push-sw.js`) had one switch, inside the bell. Most people never opened the bell, so
+their phones were never subscribed and every imprest went to email alone.
+
+**Now the portal asks on its own.** Every opening by a code that holds an imprest pane (Omba,
+Idhini or Ripoti) draws a bar under the title — *Ruhusu arifa za imprest kwenye simu hii* —
+until that phone is on (`pushAsk_` in `app.html`, run with the bell a breath after the first
+screen):
+
+| The phone is | What happens |
+|---|---|
+| permission given, but this browser not subscribed (new phone, cleared site data, rotated key) | subscribed quietly, no bar |
+| never asked | the bar, with **Ruhusu / Allow**; the browser's own question comes from that tap |
+| refused | the bar says where in the browser's site settings to allow it, with **Jaribu tena** |
+| inside the HOPE Calls app | the bar hands the portal to Chrome on the same phone (**Fungua kwenye Chrome**), because an Android WebView has no push service at all |
+| an iPhone not on the Home Screen | Safari's rule: add it to the Home Screen first |
+
+**Baadaye / Later lasts one sitting.** It is kept in session storage, so the next opening asks
+again — the same rule the app keeps for its own permission dialog. `?push=1` on the address,
+which is how the Chrome hand-off arrives, asks at once.
+
+**The app's side was already there.** `MainActivity.requestMissingPermissions` asks the OS
+notification permission at every launch on Android 13 and later. That permission is for the
+app's own tray (the standing "auto updating data" line); it does not give the WebView a push
+service, which is why the hand-off to Chrome exists. No APK change, no version bump.
+
+The bell's switch stays, and both it and the bar go through one enabling flow (`pushEnable_`),
+so there is one place that asks the browser and one that files the subscription.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*
