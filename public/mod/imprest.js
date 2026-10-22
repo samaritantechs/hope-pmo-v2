@@ -348,6 +348,12 @@ VIEWS.impreq = function(){
   return srv('imprestMine', {}).then(function(d){
     if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
     var rows = d.rows||[], roles = d.roles||[];
+    /* The signed-in code's own role, and whether the approver has priced it. It is on the box
+       either way (below); only the nights wait on a rate. canPrice: the viewer holds the pane
+       the rate is set on, so the way out is one tap, not a message to somebody else. */
+    var myRole = String(S.me.role||'').trim().toUpperCase();
+    var myRow = roles.filter(function(r){ return String(r.role||'').trim().toUpperCase() === myRole; })[0] || null;
+    var canPrice = S.me.role === 'ADMIN' || (S.me.tabs||[]).indexOf('impappr') >= 0;
     var appr = rows.filter(function(r){ return r.status==='approved'; });
     var toRetire = appr.filter(function(r){ return !r.retiredAt; });
     var spent = appr.reduce(function(s,r){ return s+(r.retiredAt?(r.retireTotal||0):0); }, 0);
@@ -364,8 +370,8 @@ VIEWS.impreq = function(){
       + kpi('Nimetumia / Spent (retired)', money(spent))
       + kpi('Ya kurejeshwa / To refund', money(toRefund), '', toRefund?'good':'')
       + '</div>'
-      + (roles.length ? '' : '<div class="note bad" style="margin:8px 0">Mwidhinishaji bado hajaweka viwango vya wadhifa (malazi kwa siku). Muombe aweke kwenye Idhini ya imprest → Viwango. '
-        + '/ The approver has not set any role rates yet — ask them to add one under Imprest approval → Rates.</div>')
+      + (roles.length ? '' : '<div class="note" style="margin:8px 0">Hakuna viwango vya malazi bado: safari bila siku za malazi (nauli, mafuta, chakula) inaombeka sasa; siku za malazi zinasubiri mwidhinishaji aweke kiwango cha wadhifa wako kwenye Idhini ya imprest → Viwango. '
+        + '/ No nightly rates yet: a trip without nights (fares, fuel, meals) can be requested now; nights wait for the approver to set your role\'s rate under Imprest approval → Rates.</div>')
       /* ONE IMPREST AT A TIME -- "if one requests and got unretired imprest, tell them to retire
          previous approved imprests first!" The server refuses the request (imprestRequest,
          imprest.js); this says so up front, in the server's own words, and closes the button
@@ -386,17 +392,27 @@ VIEWS.impreq = function(){
         + '</div><div class="row" style="display:flex;gap:8px;flex-wrap:wrap">'
         + '<div style="flex:1;min-width:160px" class="fld"><label>Wadhifa / Role *</label><select id="imqRole">'
           + '<option value="">— chagua / choose —</option>'
-          /* "It must be of existing and of user logged in": the box opens on the signed-in code's
-             own role whenever the approver has priced it, so the requester confirms rather than
-             chooses. Another listed role can still be picked. */
-          + roles.map(function(r){ var mine = String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase();
+          /* "It must be of existing and of user logged in": the box always carries the signed-in
+             code's own role, first and selected, whether or not the approver has priced it. Priced,
+             the nightly rate fills from it at once; unpriced, it says so on the option and the
+             nights (only the nights) wait on the approver -- the server accepts the requester's
+             own role for a trip without nights (imprestRequest, api/_lib/imprest.js). The other
+             priced roles follow and can still be picked. */
+          + (myRole && !myRow
+              ? '<option value="'+esc(myRole)+'" data-rate="0" selected>'+esc(myRole)+' · hakuna kiwango cha malazi bado / no nightly rate yet (wadhifa wako / your role)</option>' : '')
+          + roles.map(function(r){ var mine = String(r.role||'').trim().toUpperCase() === myRole;
               return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'"'+(mine?' selected':'')+'>'+esc(r.role)+' · malazi '+money(r.rate)+'/siku'+(mine?' (wadhifa wako / your role)':'')+'</option>'; }).join('')
           + '</select>'
-          /* "am not seeing role here": the list is the approver's rate table, nothing else, so a
-             role the approver has not priced is not on it. Say so under the box, with the way out. */
-          + ((roles.length && !roles.some(function(r){ return String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase(); }))
-            ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa wako (' + esc(S.me.role||'') + ') hauna kiwango cha malazi bado — chagua wadhifa uliopo au muombe mwidhinishaji auongeze kwenye Idhini ya imprest → Viwango. '
-              + '/ Your role (' + esc(S.me.role||'') + ') has no nightly rate yet — pick a listed role or ask the approver to add yours under Imprest approval → Rates.</div>' : '')
+          /* "am not seeing role here" / "I fill the days for Accommodation, jumla doesn't count":
+             an unpriced role multiplies nights by nothing. Say so under the box, with the way out
+             -- one tap to the Rates table for a viewer who holds it, a message for the rest. */
+          + (myRole && (!myRow || !(Number(myRow.rate) > 0))
+            ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa wako (' + esc(myRole) + ') hauna kiwango cha malazi bado: nauli na gharama nyingine zinaombeka, siku za malazi zinasubiri kiwango. '
+              + '/ Your role (' + esc(myRole) + ') has no nightly rate yet: fares and other costs can be requested, nights wait for the rate. '
+              + (canPrice ? '<a href="#" onclick="go(\'impappr\');return false"><b>Weka kiwango sasa / Set the rate now &rarr;</b></a>'
+                          : 'Muombe mwidhinishaji akiweke kwenye Idhini ya imprest → Viwango. / Ask the approver to set it under Imprest approval → Rates.')
+              + '</div>' : '')
+          + (!myRole ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Kodi yako haina wadhifa — chagua wadhifa uliopo. / Your code has no role — pick a listed role.</div>' : '')
           + '</div>'
         + '<div style="flex:1;min-width:140px" class="fld"><label>Njia ya malipo / Payment mode</label><select id="imqPay">'
           + IMPREST_PAY_MODES.map(function(p){ return '<option>'+esc(p)+'</option>'; }).join('')+'</select></div>'
@@ -423,12 +439,14 @@ VIEWS.impreq = function(){
           }).join('')
         + '<div style="display:flex;justify-content:space-between;align-items:center;margin:10px 0 4px;font-size:15px"><b>JUMLA / TOTAL</b><b id="imqTotal">0</b></div>'
         + '<div class="fld"><label>Madhumuni ya safari / Objectives — purpose of trip *</label><textarea id="imqPurpose" rows="3"></textarea></div>'
-        /* WHY THE BUTTON IS CLOSED travels on the button itself (data-closed), and the core's
-           wiring (wireForms, app.html) writes the one line under it -- for the gate, for a rate
-           table nobody has filled, and for a figure that is not a whole number. data-blocked stays
-           for a core older than this module. */
-        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+((roles.length && !blocked)?'':' disabled')
-          + (blocked ? ' data-blocked="1" data-closed="blocked"' : (!roles.length ? ' data-closed="rates"' : '')) + '>'
+        /* WHY THE BUTTON IS CLOSED travels on the button itself (data-closed) for the gate, and
+           the core's wiring (wireForms, app.html) writes the one line under it -- for the gate,
+           for a figure that is not a whole number, for no role, for nights on a role with no
+           rate, and for a request with no costs on it. An empty rate table no longer closes the
+           form: the requester's own role is on the box and a trip without nights goes through.
+           data-blocked stays for a core older than this module. */
+        + '<button class="btn w" id="imqSend" style="margin-top:6px"'+(blocked?' disabled':'')
+          + (blocked ? ' data-blocked="1" data-closed="blocked"' : '') + '>'
           + (blocked ? 'Retire imprest ya awali kwanza / Retire the previous imprest first' : 'Tuma ombi / Submit request') + '</button>'
         + '<div id="imqWhy" class="note bad" style="display:none;margin-top:6px"></div>'
         /* The last submit's confirmation, carried across the redraw that follows it (S.imqFlash, set

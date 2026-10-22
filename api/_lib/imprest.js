@@ -249,8 +249,14 @@ export async function imprestRequest(db, user, args, nowMs) {
   const rateRows = await readRoles_(db);
   if (rateRows === null) bad(IMP_NOT_READY);
   const rateRow = rateRows.find(r => K(r.role) === imprestRole);
-  if (!rateRow) bad('Wadhifa huo hauna kiwango bado -- mwidhinishaji aweke kwanza. / That role has no rate yet; ask the approver to add it.');
-  const accomRate = num(rateRow.accommodation_per_day);
+  /* THE REQUESTER'S OWN ROLE IS ALWAYS ACCEPTED -- "It must be of existing and of user logged
+     in": the form opens on the signed-in code's role whether or not the approver has priced it,
+     and a trip without nights (fare, fuel, meals) must not be refused for a rate it never uses.
+     Nights are still never priced at zero (below), and any OTHER unpriced role is still refused:
+     nobody borrows a rate by naming a role the approver has not set. */
+  const ownRole = !rateRow && imprestRole === K(user.role);
+  if (!rateRow && !ownRole) bad('Wadhifa huo hauna kiwango bado -- mwidhinishaji aweke kwanza. / That role has no rate yet; ask the approver to add it.');
+  const accomRate = rateRow ? num(rateRow.accommodation_per_day) : 0;
 
   const fareTrips = intNN(a.fareTrips), farePerTrip = intNN(a.farePerTrip), accomDays = intNN(a.accomDays);
   if (fareTrips === null || farePerTrip === null || accomDays === null) {
@@ -264,7 +270,9 @@ export async function imprestRequest(db, user, args, nowMs) {
     return { desc, amt };
   });
   if (accomDays > 0 && accomRate === 0) {
-    bad('Wadhifa huu una kiwango cha malazi 0 -- mwidhinishaji aweke kiwango kwanza. / This role\'s nightly rate is 0; ask the approver to set it before claiming nights.');
+    bad(rateRow
+      ? 'Wadhifa huu una kiwango cha malazi 0 -- mwidhinishaji aweke kiwango kwanza. / This role\'s nightly rate is 0; ask the approver to set it before claiming nights.'
+      : 'Wadhifa wako hauna kiwango cha malazi bado -- mwidhinishaji aweke kwenye Idhini ya imprest -> Viwango, au weka siku 0. / Your role has no nightly rate yet -- the approver sets it under Imprest approval -> Rates, or claim 0 nights.');
   }
   const fareAmount = fareTrips * farePerTrip;
   const accomAmount = accomDays * accomRate;
