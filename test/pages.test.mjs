@@ -731,7 +731,7 @@ test('the imprest request page closes the form while an approved imprest is unre
   const view = app.slice(app.indexOf('VIEWS.impreq = function'), app.indexOf('VIEWS.impappr = function'));
   assert.ok(/var blocked = !!\(d\.unretired && d\.unretired\.length\);/.test(view), 'the gate is the server\'s list, not a client guess');
   assert.ok(/esc\(d\.unretiredNote \|\| ''\)/.test(view), 'and the sentence is the server\'s own');
-  assert.ok(/\(roles\.length && !blocked\)\?'':' disabled'/.test(view) && /data-blocked="1"/.test(view), 'the button is closed and marked');
+  assert.ok(/\(blocked\?' disabled':''\)/.test(view) && /data-blocked="1"/.test(view), 'the button is closed and marked');
   assert.ok(/send\.getAttribute\('data-blocked'\) === '1'/.test(app), 'the live-preview recalculation cannot reopen it');
 });
 
@@ -2068,13 +2068,22 @@ test('imprest alerts are asked for at every opening of the portal, until this ph
   const java = readFileSync(join(PUBLIC, '..', 'android', 'app', 'src', 'main', 'java', 'com', 'samaritantechs', 'hopecalls', 'AlertPoller.java'), 'utf-8');
   assert.ok(/body\.put\("fn", "pushPending"\)/.test(java) && /"alertSince"/.test(java) && /IMPORTANCE_HIGH/.test(java), 'the app polls pushPending, remembers the newest `at`, and draws loudly');
   const hint = page('imprest');
-  assert.ok(/hauna kiwango cha malazi bado/.test(hint) && /String\(S\.me\.role\|\|''\)\.toUpperCase\(\)/.test(hint), 'a role the approver has not priced is explained under the box');
+  assert.ok(/hauna kiwango cha malazi bado/.test(hint) && /var myRole = String\(S\.me\.role\|\|''\)\.trim\(\)\.toUpperCase\(\);/.test(hint), 'a role the approver has not priced is explained under the box');
   /* "It must be of existing and of user logged in": the box opens on the signed-in code's own
      role when the approver has priced it, and the core's recalc() at wire time reads that
      option's data-rate into the rate field without a change event. */
   assert.ok(/\(mine\?' selected':''\)/.test(hint) && /wadhifa wako \/ your role/.test(hint), 'the signed-in role is preselected and labelled as theirs');
   const wire = readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
   assert.ok(/\['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'\]\.forEach[^]*?\n\s*recalc\(\);/.test(wire), 'the rate preview is computed once on draw, so the preselected role fills the rate without a tap');
+  /* "I fill the days for Accommodation, jumla doesn't count and submit button doesn't work": an
+     unpriced own role is still on the box, first and selected; nights on it, no costs and no
+     role close the button with the server's reason before the tap; an empty rate table no
+     longer closes the form. */
+  assert.ok(/myRole && !myRow\s*\?\s*'<option value="'\+esc\(myRole\)\+'" data-rate="0" selected>/.test(hint), 'an unpriced own role is on the box, first and selected');
+  assert.ok(/Weka kiwango sasa \/ Set the rate now/.test(hint) && /go\(\\'impappr\\'\)/.test(hint), 'a viewer who holds the Rates table is one tap from setting the rate');
+  assert.ok(!/data-closed="rates"/.test(hint), 'an empty rate table no longer closes the form');
+  assert.ok(/if \(!roleName\) closed = 'role';\s*else if \(days > 0 && !rate\) closed = 'norate';\s*else if \(total <= 0\) closed = 'nocost';/.test(wire), 'no role, nights with no rate, and no costs close the button before the tap');
+  assert.ok(/closed === 'norate' \? 'Wadhifa huu \(' \+ roleName \+ '\) hauna kiwango cha malazi bado/.test(wire), 'the nights-with-no-rate reason names the role and the way out');
   assert.ok(/if \(perm === 'granted'\) \{[^]*?if \(sub\) \{ pushBarHide_\(\); return; \}[^]*?return pushEnable_\(\)\.then/.test(ask),
     'permission already given: subscribed quietly, no bar');
   assert.ok(/pushBarDraw_\(perm === 'denied' \? 'denied' : 'ask', ''\);/.test(ask), 'not yet asked: the bar; refused: the bar with the way back');
@@ -2267,11 +2276,13 @@ test('the imprest form: every closed state says why under the button, the confir
   assert.ok(/var closed = send\.getAttribute\('data-closed'\) \|\| \(send\.getAttribute\('data-blocked'\) === '1' \? 'blocked' : ''\);/.test(wire), 'the closed state is read off the button, old attribute included');
   assert.ok(/send\.disabled = invalid \|\| !!closed;/.test(wire), 'a missing rate table keeps it closed -- recalc no longer re-opens it');
   assert.ok(/Namba nzima tu \(bila nukta au koma\)/.test(wire) && /Retire imprest ya awali kwanza: bofya ombi hilo/.test(wire) && /hajaweka viwango vya wadhifa/.test(wire), 'three reasons, in words');
-  assert.ok(/why\.textContent = reason; why\.style\.display = reason \? 'block' : 'none';/.test(wire), 'written under the button, hidden when there is none');
+  assert.ok(/why\.textContent = reason; why\.className = 'note' \+ \(closed === 'nocost' \? '' : ' bad'\); why\.style\.display = reason \? 'block' : 'none';/.test(wire), 'written under the button, hidden when there is none; the empty-form state said quietly');
   assert.ok(/b\.textContent = 'Inatuma\\u2026 \/ Sending\\u2026';/.test(wire) && /b\.textContent = label;/.test(wire), 'the button says Sending while the request is out, and gets its label back on failure');
   assert.ok(/S\.imqFlash = \{ html: html, bad: !d\.emailed \};/.test(wire) && /toast\('Ombi limetumwa/.test(wire) && /render\(\{ force:true \}\);/.test(wire), 'the confirmation is handed to the next draw and said as a toast');
   const mod = page('imprest');
-  assert.ok(/data-closed="blocked"/.test(mod) && /data-closed="rates"/.test(mod) && /data-blocked="1"/.test(mod), 'the module marks why the button is closed, old attribute kept for an older core');
+  /* The 'rates' closure left with the own-role fallback (a trip without nights goes through on
+     an empty rate table); the core computes the live reasons instead -- pinned further down. */
+  assert.ok(/data-closed="blocked"/.test(mod) && /data-blocked="1"/.test(mod), 'the module marks why the button is closed, old attribute kept for an older core');
   assert.ok(/<div id="imqWhy" class="note bad" style="display:none;margin-top:6px"><\/div>/.test(mod), 'and gives the reason its line');
   assert.ok(/var flash = S\.imqFlash \|\| null; S\.imqFlash = null;/.test(mod) && /\(flash \? flash\.html : ''\)/.test(mod), 'the flash is drawn once and forgotten');
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');

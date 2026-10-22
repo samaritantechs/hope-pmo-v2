@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-22-b';
+var BUILD = '2026-10-22-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6538,12 +6538,14 @@ function wireForms(){
     };
     var recalc = function(){
       invalid = false;
-      var rate = rateOf();
-      var fare = num('imqTrips')*num('imqTrip'), accom = num('imqDays')*rate;
+      var rate = rateOf(), days = num('imqDays');
+      var fare = num('imqTrips')*num('imqTrip'), accom = days*rate;
       var others = num('imqO1a')+num('imqO2a')+num('imqO3a');
+      var total = fare+accom+others;
+      var roleSel = document.getElementById('imqRole'), roleName = roleSel ? String(roleSel.value || '') : '';
       var rateEl = document.getElementById('imqRate'), fareEl = document.getElementById('imqFare'), accomEl = document.getElementById('imqAccom');
       if (rateEl) rateEl.value = money(rate); if (fareEl) fareEl.value = money(fare); if (accomEl) accomEl.value = money(accom);
-      document.getElementById('imqTotal').textContent = invalid?'\u2014':money(fare+accom+others);
+      document.getElementById('imqTotal').textContent = invalid?'\u2014':money(total);
       /* A CLOSED BUTTON SAYS WHY. "GMO is saying he can't submit imprest request that the button
          ain't working": a figure with a decimal point greyed the button with nothing on screen
          but a red border, the unretired-imprest gate relabelled it, and a missing rate table was
@@ -6551,14 +6553,28 @@ function wireForms(){
          request went up with no role and came back refused. Every closed state now has one line
          under the button, and the rate-table state stays closed. */
       var closed = send.getAttribute('data-closed') || (send.getAttribute('data-blocked') === '1' ? 'blocked' : '');
+      /* THE SERVER'S OWN REFUSALS, SAID BEFORE THE TAP. "I fill the days for Accommodation,
+         jumla doesn't count and submit button doesn't work": nights on a role the approver has
+         not priced multiply by nothing, and a request with no costs is refused -- both used to
+         arrive as a red line only after the tap, under a total of 0 that explained nothing. The
+         same three tests imprestRequest applies (api/_lib/imprest.js), in its words, as the
+         figures change. nocost is the plain state of an empty form, so it is said quietly. */
+      if (!closed && !invalid) {
+        if (!roleName) closed = 'role';
+        else if (days > 0 && !rate) closed = 'norate';
+        else if (total <= 0) closed = 'nocost';
+      }
       var reason = invalid
         ? 'Namba nzima tu (bila nukta au koma) \u2014 angalia uwanja wenye mstari mwekundu. / Whole numbers only (no decimal point or comma) \u2014 see the field marked red.'
         : closed === 'blocked' ? 'Retire imprest ya awali kwanza: bofya ombi hilo kwenye orodha hapa chini \u2192 Retire. / Retire the previous imprest first: tap it in the list below \u2192 Retire.'
         : closed === 'rates' ? 'Mwidhinishaji bado hajaweka viwango vya wadhifa. / The approver has not set any role rates yet.'
+        : closed === 'role' ? 'Chagua wadhifa. / Choose a role.'
+        : closed === 'norate' ? 'Wadhifa huu (' + roleName + ') hauna kiwango cha malazi bado \u2014 mwidhinishaji aweke kwenye Idhini ya imprest \u2192 Viwango, au weka siku 0. / This role (' + roleName + ') has no nightly rate yet \u2014 the approver sets it under Imprest approval \u2192 Rates, or claim 0 nights.'
+        : closed === 'nocost' ? 'Ombi halina gharama yoyote bado \u2014 weka nauli, siku za malazi au gharama nyingine. / The request has no costs on it yet \u2014 enter fares, nights or other costs.'
         : '';
       send.disabled = invalid || !!closed;
       var why = document.getElementById('imqWhy');
-      if (why){ why.textContent = reason; why.style.display = reason ? 'block' : 'none'; }
+      if (why){ why.textContent = reason; why.className = 'note' + (closed === 'nocost' ? '' : ' bad'); why.style.display = reason ? 'block' : 'none'; }
     };
     ['imqRole','imqTrips','imqTrip','imqDays','imqO1a','imqO2a','imqO3a'].forEach(function(id){
       var el = document.getElementById(id); if (el){ el.oninput=recalc; el.onchange=recalc; }

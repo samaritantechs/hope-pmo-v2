@@ -84,6 +84,29 @@ test('a role with no rate refuses the request rather than pricing nights at zero
   }, NOW), /hauna kiwango|has no rate/);
 });
 
+/* "It must be of existing and of user logged in" / "I fill the days for Accommodation, jumla
+   doesn't count and submit button doesn't work": the signed-in code's own role is accepted
+   before the approver has priced it, for a trip without nights; nights still wait on the rate. */
+test('the requester\'s own unpriced role: a trip without nights goes through, nights wait on the approver, another unpriced role is still refused', async () => {
+  const db = db_();
+  const r = await portalApi(db, STAFF, 'imprestRequest', {
+    fullName: 'John', email: 'john@x.com', imprestRole: 'field', travelDate: TODAY,
+    purpose: 'fuel run', fareTrips: 1, farePerTrip: 5000,
+  }, NOW);
+  assert.equal(r.total, 5000);
+  assert.equal(r.accomRate, 0, 'stamped at zero, never invented');
+  const mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.equal(mine.rows[0].imprestRole, 'FIELD', 'the row carries the role as the code holds it');
+  await assert.rejects(portalApi(db, STAFF2, 'imprestRequest', {
+    fullName: 'Mary', email: 'mary@x.com', imprestRole: 'field', travelDate: TODAY,
+    purpose: 'x', fareTrips: 1, farePerTrip: 5000, accomDays: 2,
+  }, NOW), /hauna kiwango cha malazi bado|no nightly rate yet/, 'nights on an unpriced own role are refused, in the words the form repeats');
+  await assert.rejects(portalApi(db, STAFF2, 'imprestRequest', {
+    fullName: 'Mary', email: 'mary@x.com', imprestRole: 'gm', travelDate: TODAY,
+    purpose: 'x', fareTrips: 1, farePerTrip: 5000,
+  }, NOW), /hauna kiwango bado|has no rate yet/, 'somebody else\'s unpriced role is no way in');
+});
+
 /* ===================================================================== THE ASK */
 test('the request is costed from its parts, and refuses what it must', async () => {
   const db = db_();

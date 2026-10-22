@@ -3094,11 +3094,16 @@ background. Both are scheduled when a portal code signs in on the handset and ca
 signs out, so a handset that is only ever HOPE Calls never polls. A poll is a read; the phone
 remembers the newest `at` it drew (`alertSince`). APK 1.10.0 (versionCode 19) carries it.
 
-**The role box on the request form** lists the approver's rate table and nothing else, so a
-role the approver has not priced is not on it ("am not seeing role here"). It opens on the
-signed-in code's own role when that role is priced ("It must be of existing and of user logged
-in"), and the core's preview computes the nightly rate from that option at draw time; a role
-with no rate is explained under the box, with the way out (Imprest approval → Rates).
+**The role box on the request form** always carries the signed-in code's own role, first and
+selected, whether or not the approver has priced it ("It must be of existing and of user logged
+in"), followed by the approver's priced roles. Priced, the core's preview computes the nightly
+rate from that option at draw time. Unpriced, the option says so, the hint under the box offers
+the Rates table in one tap to a viewer who holds it, and the server accepts the requester's own
+role for a trip without nights (`imprestRequest`): nights are still never priced at zero, and
+any other unpriced role is still refused. The button says why it is closed before the tap, in
+the server's words, as the figures change: no role, nights on a role with no rate, no costs on
+the request ("I fill the days for Accommodation, jumla doesn't count and submit button doesn't
+work" was a total of 0 under an unpriced role, explained only after the tap).
 
 ---
 
