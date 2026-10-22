@@ -147,11 +147,82 @@ async function writeSubs_(db, code, subs) {
     : await db.from('settings').delete().eq('key', key);
   if (r && r.error) throw new Error(r.error.message);
 }
-/** The topics this person may hear: every one whose tab they hold; an ADMIN, all of them. */
-export function topicsFor(user) {
+/** WHO HEARS A BROADCAST TOPIC.
+      "Imprest push notifications to roles I choose only. There is a privacy concern."
+    A request carries a name, amounts and a destination. By default it reaches every code that
+    holds the approval pane and every admin; an approval every code with the report pane. The
+    approver can narrow each broadcast topic to a list of roles, kept in settings:
+        IMPREST_PUSH_ROLES = { "IMPREST": ["GM", "ADMIN"], "IMPREST_FUND": ["FINANCE"] }
+    A topic absent from it (null) is open to every holder of its pane, as before. A list is
+    exact: a role not on it hears nothing of that topic, ADMIN included; an empty list silences
+    the topic. IMPREST_MINE is never narrowed -- it is the requester's own row and nobody else's.
+    Honoured in two places: where a phone subscribes or polls (topicsFor, so a phone is never
+    offered a topic it would not hear) and AT SEND TIME (pushTopic, by the role each code holds
+    at that moment), so a list changed today applies to a phone subscribed last month. One keyed
+    read of one settings row, memoised thirty seconds per database client; never on /api/upload
+    or /api/call. */
+export const PUSH_POLICY_KEY = 'IMPREST_PUSH_ROLES';
+export const BROADCAST_TOPICS = ['IMPREST', 'IMPREST_FUND'];
+const POLICY_TTL_MS = 30000;
+const policyCache = new WeakMap();
+export function parsePolicy(value) {
+  let v;
+  try { v = JSON.parse(String(value == null ? '' : value) || '{}'); } catch (e) { v = {}; }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) v = {};
+  const out = {};
+  for (const t of BROADCAST_TOPICS) {
+    const list = v[t];
+    out[t] = Array.isArray(list) ? [...new Set(list.map(K).filter(Boolean))] : null;
+  }
+  return out;
+}
+async function readPolicy_(db, fresh) {
+  const at = Date.now();
+  const hit = policyCache.get(db);
+  if (!fresh && hit && (at - hit.at) < POLICY_TTL_MS) return hit.policy;
+  let policy = parsePolicy('');
+  try {
+    const { data, error } = await db.from('settings').select('value').eq('key', PUSH_POLICY_KEY).maybeSingle();
+    if (!error) policy = parsePolicy(data && data.value);
+  } catch (e) { /* no settings table yet: every topic open, as before */ }
+  policyCache.set(db, { at, policy });
+  return policy;
+}
+/** The topics this person may hear: every one whose tab they hold (an ADMIN, all of them),
+    narrowed by the policy where it names the topic. */
+export function topicsFor(user, policy) {
   if (!user) return [];
   const have = user.tabs || [];
-  return Object.keys(PUSH_TOPICS).filter(t => K(user.role) === 'ADMIN' || PUSH_TOPICS[t].some(tab => have.includes(tab)));
+  const role = K(user.role);
+  return Object.keys(PUSH_TOPICS).filter(t => {
+    if (!(role === 'ADMIN' || PUSH_TOPICS[t].some(tab => have.includes(tab)))) return false;
+    const only = policy && policy[t];
+    return !Array.isArray(only) || only.includes(role);
+  });
+}
+/** The approver's reading and writing of the policy (the Idhini ya imprest pane). */
+export async function pushPolicy(db) {
+  return { ok: true, policy: await readPolicy_(db, true), topics: BROADCAST_TOPICS.slice() };
+}
+export async function pushPolicySave(db, user, args) {
+  const a = args && args.policy;
+  if (!a || typeof a !== 'object' || Array.isArray(a)) bad('policy is required');
+  for (const t of Object.keys(a)) {
+    if (!BROADCAST_TOPICS.includes(t)) bad('Arifa isiyojulikana: ' + S_(t, 40) + ' / Unknown topic: ' + S_(t, 40));
+  }
+  const clean = {};
+  for (const t of BROADCAST_TOPICS) {
+    const v = a[t];
+    if (v == null) { clean[t] = null; continue; }
+    if (!Array.isArray(v)) bad('Orodha ya wadhifa inatakiwa kwa ' + t + '. / A list of roles is required for ' + t + '.');
+    const roles = [...new Set(v.map(x => K(x).slice(0, 60)).filter(Boolean))];
+    if (roles.length > 50) bad('Wadhifa wengi mno. / Too many roles.');
+    clean[t] = roles;
+  }
+  const { error } = await db.from('settings').upsert({ key: PUSH_POLICY_KEY, value: JSON.stringify(clean) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  policyCache.delete(db);
+  return { ok: true, policy: clean };
 }
 
 /* ------------------------------------------------------------------ the portal's four calls */
@@ -163,7 +234,7 @@ export async function pushKey(db, user) {
   try { subs = await readSubs_(db, user.code); } catch (e) { /* no settings table yet: none */ }
   return {
     publicKey: k ? k.publicKey : null,
-    topics: topicsFor(user), devices: subs.length,
+    topics: topicsFor(user, await readPolicy_(db)), devices: subs.length,
     note: k ? '' : 'Funguo za arifa hazipo kwenye deployment (SUPABASE_SERVICE_ROLE_KEY au VAPID_*). '
       + '/ No push keys on the deployment (SUPABASE_SERVICE_ROLE_KEY or VAPID_*).',
   };
@@ -175,7 +246,7 @@ export async function pushSubscribe(db, user, args, nowMs) {
   const sub = a.sub || a.subscription;
   if (!validSub_(sub)) bad('Usajili wa arifa haukueleweka -- jaribu tena. / The push subscription is malformed; try again.');
   /* No topics named = everything this code may hear. The bell does not choose; the tabs do. */
-  const may = topicsFor(user);
+  const may = topicsFor(user, await readPolicy_(db));
   const asked = (Array.isArray(a.topics) && a.topics.length ? a.topics : may).map(K);
   const topics = [...new Set(asked.filter(t => may.includes(t)))];
   if (!topics.length) forbid('Hakuna arifa iliyofunguliwa kwa wadhifa wako. / No notification topic is open to your role.');
@@ -203,7 +274,7 @@ export async function pushUnsubscribe(db, user, args) {
 export async function pushPending(db, user, args) {
   const a = args || {};
   const since = Number(a.since) || 0;
-  const may = topicsFor(user);
+  const may = topicsFor(user, await readPolicy_(db));
   let subs = [];
   try { subs = await readSubs_(db, user.code); } catch (e) { /* no settings table: no app registered */ }
   const registered = subs.some(s => s.kind === 'apk');
@@ -240,7 +311,23 @@ export async function pushTopic(db, topic, payload, opts) {
       subs: parseSubs_(r.value).filter(s => (s.topics || []).map(K).includes(want)) }))
     .filter(t => t.subs.length);
   if (!targets.length) return { sent: 0, failed: 0, reason: 'hakuna simu iliyowashwa / no phone has alerts on' };
-  return sendTo_(db, targets, payload, opts);
+  /* THE POLICY, AT SEND TIME: by the role each code holds now, not the one it held when the
+     phone was registered. A code the register does not know (deleted, renamed) holds no role
+     and so hears nothing of a narrowed topic -- closed, not open, when in doubt. */
+  const only = BROADCAST_TOPICS.includes(want) ? (await readPolicy_(db))[want] : null;
+  let kept = targets;
+  if (Array.isArray(only)) {
+    const roleOf = new Map();
+    try {
+      const rows2 = await fetchAll(() => db.from('access_codes').select('code, role').in('code', targets.map(t => t.code)));
+      for (const r of rows2 || []) roleOf.set(K(r.code), K(r.role));
+    } catch (e) {
+      return { sent: 0, failed: 0, reason: 'wadhifa haukusomeka / roles could not be read: ' + String((e && e.message) || e).slice(0, 80) };
+    }
+    kept = targets.filter(t => only.includes(roleOf.get(K(t.code)) || ''));
+    if (!kept.length) return { sent: 0, failed: 0, reason: 'hakuna simu ya wadhifa uliochaguliwa iliyowashwa / no phone of a chosen role is on' };
+  }
+  return sendTo_(db, kept, payload, opts);
 }
 /** ONE code's handsets, for the topic -- how a requester hears about their OWN request and
     nobody else's. Same answer shape as pushTopic; never throws. */

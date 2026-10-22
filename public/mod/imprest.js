@@ -474,9 +474,46 @@ VIEWS.impreq = function(){
 /* ---------- IDHINI YA IMPREST: the GM's queue, the rate table, and the decision ---------- */
 var IMPQ_STATE = 'pending';
 
+/* WHO HEARS THE IMPREST PHONE ALERTS -- "Imprest push notifications to roles I choose only.
+   There is a privacy concern." Two broadcast topics, each either open to every holder of its
+   pane (the default) or narrowed to the roles ticked; the server keeps the list in settings and
+   applies it where a phone subscribes, where the app polls, and when the alert is sent
+   (push.js). A requester's own steps are not a broadcast and are not on this card. The Save
+   button is wired in app.html. */
+var IMPREST_PUSH_TOPICS = [
+  { key: 'IMPREST', label: 'Ombi jipya na retirement / New request and retirement', pane: 'Idhini ya imprest / Imprest approval' },
+  { key: 'IMPREST_FUND', label: 'Imeidhinishwa, inasubiri malipo / Approved, awaiting payment', pane: 'Ripoti ya imprest / Imprest report' },
+];
+function imprestPushPolicyCard_(pp, allRoles, roles){
+  if (!pp || !pp.policy) return '';   // a server without the policy yet: nothing to offer, nothing to break
+  var policy = pp.policy;
+  var names = allRoles.slice();
+  roles.forEach(function(r){ if (names.indexOf(r.role) < 0) names.push(r.role); });
+  IMPREST_PUSH_TOPICS.forEach(function(t){ (policy[t.key] || []).forEach(function(r){ if (names.indexOf(r) < 0) names.push(r); }); });
+  if (names.indexOf('ADMIN') < 0) names.push('ADMIN');
+  names.sort();
+  return '<div class="card" style="padding:12px;margin:10px 0"><div class="card-h">Arifa za simu za imprest: nani anapokea / Imprest phone alerts: who receives'
+    + '<span class="sub">taarifa ya ombi (jina, kiasi, mahali) iende kwa wadhifa uliochagua tu / a request\'s details (name, amounts, destination) reach only the roles you choose</span></div>'
+    + IMPREST_PUSH_TOPICS.map(function(t){
+        var only = policy[t.key], narrowed = Array.isArray(only);
+        return '<div style="margin:8px 0 10px"><b>' + esc(t.label) + '</b> <span class="mut" style="font-size:10.5px">(' + esc(t.pane) + ')</span>'
+          + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:4px;font-size:12px">'
+          + '<label><input type="radio" name="pp_' + t.key + '" value="all"' + (narrowed ? '' : ' checked') + '> Wote wenye ukurasa huo / everyone holding that pane</label>'
+          + '<label><input type="radio" name="pp_' + t.key + '" value="only"' + (narrowed ? ' checked' : '') + '> Wadhifa hizi tu / these roles only</label></div>'
+          + '<div data-pp="' + t.key + '" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:12px;opacity:' + (narrowed ? '1' : '0.45') + '">'
+          + names.map(function(n){ return '<label style="white-space:nowrap"><input type="checkbox" data-ppr="' + t.key + '" value="' + esc(n) + '"' + (narrowed && only.indexOf(n) >= 0 ? ' checked' : '') + '> ' + esc(n) + '</label>'; }).join('')
+          + '</div></div>';
+      }).join('')
+    + '<button class="btn sm" id="ppSave">Hifadhi / Save</button>'
+    + '<div class="mut" style="font-size:10.5px;margin-top:6px">Wadhifa lazima pia uwe na ukurasa huo kwenye Nafasi na ruhusa; ADMIN pia huachwa nje asipochaguliwa; orodha tupu inanyamazisha arifa hiyo. Inatumika mara moja, hata kwa simu zilizosajiliwa zamani. Hatua za ombi la mtu mwenyewe humfikia mwombaji tu. '
+    + '/ A role must also hold that pane under Roles & access; ADMIN too is left out unless ticked; an empty list silences that alert. Applies at once, even to phones registered long ago. A requester\'s own steps reach the requester only.</div>'
+    + '</div>';
+}
+
 VIEWS.impappr = function(){
-  return Promise.all([srv('imprestQueue', { state: IMPQ_STATE }), srv('imprestRoles', {})]).then(function(a){
-    var d = a[0], roles = (a[1].roles||[]), allRoles = (a[1].all||[]);
+  return Promise.all([srv('imprestQueue', { state: IMPQ_STATE }), srv('imprestRoles', {}),
+      srv('pushPolicy', {}).catch(function(){ return null; })]).then(function(a){
+    var d = a[0], roles = (a[1].roles||[]), allRoles = (a[1].all||[]), pp = a[2];
     if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
     var rows = d.rows||[], c = d.counts||{};
     var pick = function(k){ return 'go(\'impappr\')'; };
@@ -512,7 +549,8 @@ VIEWS.impappr = function(){
             + '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa haupo? Muongeze kwenye Misimbo/Nafasi kisha rudi hapa. '
             + '/ Role not listed? Add it under Teams & Staff / Access codes first, then come back.</div>';
         })()
-      + '</div>';
+      + '</div>'
+      + imprestPushPolicyCard_(pp, allRoles, roles);
     S.rows = rows;
     S.cols = [col('at','Tarehe / Timestamp','dt'), col('fullName','Jina / Name'), col('imprestRole','Wadhifa / Role'),
       col('travelDate','Safari / Travel','date'), col('destination','Mahali / Destination'),

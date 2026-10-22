@@ -2085,6 +2085,12 @@ test('imprest alerts are asked for at every opening of the portal, until this ph
      one input, one button, the approval pane's own server function -- and the form redraws. */
   assert.ok(/<input id="imqSetRate" type="number" min="1" step="1"/.test(hint) && /id="imqSetRateBtn" data-role="' \+ esc\(myRole\) \+ '"/.test(hint), 'the figure box and the button carry the signed-in role');
   assert.ok(/getElementById\('imqSetRateBtn'\)[^]*?srv\('imprestRoleSave', \{ role: role, rate: rate \}\)[^]*?render\(\{ force:true \}\)/.test(wire), 'the core saves it through imprestRoleSave and redraws the form priced');
+  /* "Imprest push notifications to roles I choose only. There is a privacy concern." */
+  assert.ok(/srv\('pushPolicy', \{\}\)\.catch/.test(hint) && /function imprestPushPolicyCard_\(/.test(hint) && /data-ppr="' \+ t\.key \+ '"/.test(hint),
+    'the approval pane carries the who-hears card: a radio pair and a role list per broadcast topic');
+  assert.ok(/getElementById\('ppSave'\)[^]*?srv\('pushPolicySave', \{ policy: policy \}\)/.test(wire), 'saved through pushPolicySave');
+  assert.ok(/if \(k && Array\.isArray\(k\.topics\) && !k\.topics\.length\) \{ pushBarHide_\(\); return; \}/.test(ask), 'a role the approver left out is not asked to allow alerts');
+  assert.ok(/if \(r\.ok \|\| r\.none\) pushBarHide_\(\);/.test(ask) && /Hakuna arifa\|No notification topic/.test(apk), 'nor told anything when the permission was already given, in a browser or in the app');
   assert.ok(!/data-closed="rates"/.test(hint), 'an empty rate table no longer closes the form');
   assert.ok(/if \(!roleName\) closed = 'role';\s*else if \(days > 0 && !rate\) closed = 'norate';\s*else if \(total <= 0\) closed = 'nocost';/.test(wire), 'no role, nights with no rate, and no costs close the button before the tap');
   assert.ok(/closed === 'norate' \? 'Wadhifa huu \(' \+ roleName \+ '\) hauna kiwango cha malazi bado/.test(wire), 'the nights-with-no-rate reason names the role and the way out');
