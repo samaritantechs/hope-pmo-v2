@@ -387,7 +387,13 @@ VIEWS.impreq = function(){
         + '<div style="flex:1;min-width:160px" class="fld"><label>Wadhifa / Role *</label><select id="imqRole">'
           + '<option value="">— chagua / choose —</option>'
           + roles.map(function(r){ return '<option value="'+esc(r.role)+'" data-rate="'+r.rate+'">'+esc(r.role)+' · malazi '+money(r.rate)+'/siku</option>'; }).join('')
-          + '</select></div>'
+          + '</select>'
+          /* "am not seeing role here": the list is the approver's rate table, nothing else, so a
+             role the approver has not priced is not on it. Say so under the box, with the way out. */
+          + ((roles.length && !roles.some(function(r){ return String(r.role||'').toUpperCase() === String(S.me.role||'').toUpperCase(); }))
+            ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa wako (' + esc(S.me.role||'') + ') hauna kiwango cha malazi bado — chagua wadhifa uliopo au muombe mwidhinishaji auongeze kwenye Idhini ya imprest → Viwango. '
+              + '/ Your role (' + esc(S.me.role||'') + ') has no nightly rate yet — pick a listed role or ask the approver to add yours under Imprest approval → Rates.</div>' : '')
+          + '</div>'
         + '<div style="flex:1;min-width:140px" class="fld"><label>Njia ya malipo / Payment mode</label><select id="imqPay">'
           + IMPREST_PAY_MODES.map(function(p){ return '<option>'+esc(p)+'</option>'; }).join('')+'</select></div>'
         + '<div style="flex:1;min-width:160px" class="fld"><label>Namba ya akaunti / Account No or MOMO</label><input id="imqAcct"></div>'

@@ -327,10 +327,64 @@ public class MainActivity extends Activity {
         // stops showing the dialog once a user has picked "Don't ask again"; short of that, this
         // re-asks every time rather than making them dig through Settings.
         requestMissingPermissions();
-        web.loadUrl(startUrl());
+        // A tap on an imprest alert (AlertPoller) carries the request's own address; otherwise
+        // the launcher, as always.
+        String fromAlert = alertUrl_(getIntent());
+        web.loadUrl(fromAlert != null ? fromAlert : startUrl());
         // Ask the portal whether a newer build exists. Off the UI thread, failures ignored --
         // an update check must never be the reason the app does not open.
         Updater.checkInBackground(this, startUrl());
+    }
+
+    /* ---- IMPREST ALERTS WHILE THE APP IS ON SCREEN (AlertPoller; the background half is
+       AlertJobService). Polled on the server's own clock -- it answers with the interval, two
+       minutes for an approver, ten for a requester, zero for a code that hears nothing -- and
+       only between onResume and onPause, so a backgrounded app costs nothing here. */
+    private final android.os.Handler alertHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private boolean alertLoopOn = false;
+    private final Runnable alertTick = new Runnable() {
+        @Override public void run() {
+            if (!alertLoopOn) return;
+            new Thread(() -> {
+                int interval = AlertPoller.pollNow(MainActivity.this);
+                final long next = interval > 0 ? interval * 1000L : (interval < 0 ? 5 * 60 * 1000L : 0L);
+                if (next > 0) alertHandler.postDelayed(alertTick, next);
+            }).start();
+        }
+    };
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        alertLoopOn = true;
+        alertHandler.removeCallbacks(alertTick);
+        alertHandler.post(alertTick);
+    }
+
+    @Override
+    protected void onPause() {
+        alertLoopOn = false;
+        alertHandler.removeCallbacks(alertTick);
+        super.onPause();
+    }
+
+    /** The app is singleTop: a tap on an alert while it is open arrives here rather than as a
+        second copy of the activity, and the request opens in the page already on screen. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String url = alertUrl_(intent);
+        if (url != null) web.loadUrl(url);
+    }
+
+    /** The portal address an alert's tap named, on the configured server -- or null. Only a
+        path on our own server is honoured, never an address the extra could point elsewhere. */
+    private String alertUrl_(Intent intent) {
+        if (intent == null) return null;
+        String u = intent.getStringExtra(AlertPoller.EXTRA_URL);
+        if (u == null || !u.startsWith("/") || u.startsWith("//")) return null;
+        return startUrl().replaceAll("/+$", "") + u;
     }
 
     /**
@@ -493,6 +547,11 @@ public class MainActivity extends Activity {
     void startOrStopLocationService_(String code) {
         String c = code == null ? "" : code.trim();
         prefs.edit().putString("officerCode", c).apply();
+        /* The imprest-alert poll follows the same sign-in: scheduled for a code, cancelled on
+           sign-out, and asked once right away so a GM who has just signed in is not fifteen
+           minutes from the first alert. The server decides whether this code hears anything. */
+        if (c.isEmpty()) AlertJobService.cancel(this);
+        else { AlertJobService.schedule(this); new Thread(() -> AlertPoller.pollNow(this)).start(); }
         Intent svc = new Intent(this, OfficerLocationService.class);
         if (c.isEmpty()) { stopService(svc); return; }
         if (!hasLocationPermission()) return;   // nothing to track with -- the next sign-in after Allow starts it

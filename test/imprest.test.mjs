@@ -417,6 +417,55 @@ test('push: whoever holds an imprest pane subscribes from the bell, and hears on
   assert.ok(!db._dump('settings').some(x => x.key === 'PUSH_SUB_GM1'));
 });
 
+/* "I thought we allow notification even from app too" -- the HOPE Calls app registers as apk:<device> in the same register
+   and is served a queue it polls (pushPending), since a WebView has no push service. */
+test('push: the HOPE Calls app registers as apk:<device> and is served a queue instead of a push', async () => {
+  const t = tables(); const db = db_(t);
+  const APK = { endpoint: 'apk:a1b2c3d4e5f6' };
+  await assert.rejects(portalApi(db, NOTAB, 'pushSubscribe', { sub: APK }, NOW), /haujafunguliwa|not open to your role/);
+  const r = await portalApi(db, GM, 'pushSubscribe', { sub: APK, ua: 'HopeCalls/1.10' }, NOW);
+  assert.equal(r.devices, 1); assert.deepEqual(r.topics, ['IMPREST']);
+  assert.equal(subsOf(db, 'GM1')[0].kind, 'apk'); assert.equal(subsOf(db, 'GM1')[0].endpoint, APK.endpoint);
+  await assert.rejects(portalApi(db, GM, 'pushSubscribe', { sub: { endpoint: 'apk:x' } }, NOW), /haukueleweka|malformed/, 'a device id too short to be one');
+  // nothing queued yet; the poll says how often to ask: an approver's phone every two minutes
+  let p = await portalApi(db, GM, 'pushPending', { since: 0 }, NOW);
+  assert.deepEqual(p.items, []); assert.equal(p.interval, 120); assert.ok(p.now);
+  // a request: no push service is involved, the alert lands in the code's queue, counted as sent
+  const req = await askOne(db, STAFF, { destination: 'Mtwara' });
+  assert.equal(req.pushed, 1); assert.equal(req.pushNote, '');
+  assert.equal(pushes.length, 0, 'nothing went to a push service');
+  const q = db._dump('settings').find(x => x.key === 'PUSH_Q_GM1');
+  assert.ok(q, 'the queue row exists, one per code');
+  p = await portalApi(db, GM, 'pushPending', { since: 0 }, NOW);
+  assert.equal(p.items.length, 1);
+  assert.match(p.items[0].title, /imprest/i); assert.match(p.items[0].body, /JOHN OFFICER/);
+  assert.equal(p.items[0].url, '/dashboard?imp=' + req.id); assert.equal(p.items[0].tag, 'imprest-' + req.id);
+  assert.ok(p.items[0].at && p.items[0].id);
+  // the phone remembers the last `at` it drew: nothing comes twice, and the server writes nothing on a poll
+  const before = JSON.stringify(db._dump('settings'));
+  const later = await portalApi(db, GM, 'pushPending', { since: p.items[0].at }, NOW);
+  assert.deepEqual(later.items, []);
+  assert.equal(JSON.stringify(db._dump('settings')), before, 'a poll is a read');
+  // a requester's phone asks every ten minutes; a code with no app registered is told not to ask at all
+  await portalApi(db, STAFF, 'pushSubscribe', { sub: { endpoint: 'apk:s1s1s1s1' } }, NOW);
+  assert.equal((await portalApi(db, STAFF, 'pushPending', {}, NOW)).interval, 600);
+  assert.equal((await portalApi(db, REP, 'pushPending', {}, NOW)).interval, 0);
+  await assert.rejects(portalApi(db, NOTAB, 'pushPending', {}, NOW), /haujafunguliwa|not open to your role/);
+  // a browser and the app on the same code: the browser is pushed, the app is queued, both counted
+  await portalApi(db, GM, 'pushSubscribe', { sub: SUB(1) }, NOW);
+  const req2 = await askOne(db, STAFF, { destination: 'Lindi' });
+  assert.equal(req2.pushed, 2); assert.equal(pushes.length, 1);
+  assert.equal((await portalApi(db, GM, 'pushPending', { since: 0 }, NOW)).items.length, 2);
+  // the Test button reaches the app's queue the same way
+  const tst = await portalApi(db, GM, 'pushTest', {}, NOW);
+  assert.equal(tst.sent, 2);
+  assert.equal((await portalApi(db, GM, 'pushPending', { since: 0 }, NOW)).items.length, 3);
+  // off: the app row goes like any other
+  await portalApi(db, GM, 'pushUnsubscribe', { endpoint: APK.endpoint }, NOW);
+  assert.ok(!subsOf(db, 'GM1').some(s => s.kind === 'apk'));
+  assert.equal((await portalApi(db, GM, 'pushPending', {}, NOW)).interval, 0, 'no app registered: stop asking');
+});
+
 test('push: a new request buzzes every approver phone that is on -- and only those', async () => {
   const t = tables();
   t.access_codes.push({ code: 'GM2', name: 'SECOND GM', role: 'GM', teams: null, tabs: ['impappr'] });

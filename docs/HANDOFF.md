@@ -3073,6 +3073,27 @@ service, which is why the hand-off to Chrome exists. No APK change, no version b
 The bell's switch stays, and both it and the bar go through one enabling flow (`pushEnable_`),
 so there is one place that asks the browser and one that files the subscription.
 
+### The app's own channel
+
+> "I thought we allow notification even from app too"
+
+A WebView has no push service, so Web Push can never reach the HOPE Calls app. The app is
+therefore a subscription of its own kind: when the portal runs inside it for a code holding an
+imprest pane, the page registers the handset in the same register as a browser would, under
+`apk:<device id>` (`pushApkRegister_` in `app.html`; the id is the one the device register
+already knows). A send to such a row goes into a queue, `PUSH_Q_<CODE>` in `settings`, instead
+of to a push service (`enqueue_` in `api/_lib/push.js`; a day deep, thirty items at most).
+
+The app asks for that queue natively (`AlertPoller.java`, one POST to `/api/portal` with
+`fn: 'pushPending'`, answered from one small settings row) and draws each item on the phone's
+tray on a high-importance channel, a tap opening the request in the portal. How often is the
+server's call: it answers with `interval`, two minutes for an approver's code, ten for a
+requester's, zero for a code that hears nothing. `MainActivity` polls on that clock while the
+app is on screen; `AlertJobService`, a persisted JobScheduler job, every fifteen minutes in the
+background. Both are scheduled when a portal code signs in on the handset and cancelled when it
+signs out, so a handset that is only ever HOPE Calls never polls. A poll is a read; the phone
+remembers the newest `at` it drew (`alertSince`). APK 1.10.0 (versionCode 19) carries it.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

@@ -39,7 +39,7 @@ import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustments
 import { imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund } from './imprest.js';
 /* PHONE NOTIFICATIONS -- the bell's switch and the subscription it keeps. See _lib/push.js. */
-import { pushKey, pushSubscribe, pushUnsubscribe, pushTest } from './push.js';
+import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, pushPending } from './push.js';
 
 /** Narrow a query to the teams the caller may see, or leave it alone for somebody who sees
     everything. scoped() still runs afterwards -- it is the rule, and a filter that quietly
@@ -9783,7 +9783,7 @@ const FN = {
   imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
   /* PHONE NOTIFICATIONS -- turned on and off from the bell. See _lib/push.js. */
-  pushKey, pushSubscribe, pushUnsubscribe, pushTest,
+  pushKey, pushSubscribe, pushUnsubscribe, pushTest, pushPending,
   officerBeat, officerLocationsList,
 };
 
@@ -10186,6 +10186,9 @@ const FN_TAB = {
      which steps each pane's holder hears. A topic for another screen adds its tab here too. */
   pushKey: ['impreq', 'impappr', 'imprep'], pushSubscribe: ['impreq', 'impappr', 'imprep'],
   pushUnsubscribe: ['impreq', 'impappr', 'imprep'], pushTest: ['impreq', 'impappr', 'imprep'],
+  /* The HOPE Calls app's own poll for the alerts queued to its code (AlertPoller.java): the same
+     three panes, because the same register decides what it hears. */
+  pushPending: ['impreq', 'impappr', 'imprep'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the
