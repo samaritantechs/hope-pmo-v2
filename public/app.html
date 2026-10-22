@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-22-c';
+var BUILD = '2026-10-22-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6607,6 +6607,25 @@ function wireForms(){
         toast('Ombi limetumwa \u00B7 ' + money(d.total) + ' TZS. / Request sent.');
         render({ force:true });
       }).catch(function(e){ b.disabled=false; b.textContent = label; say(String(e.message||e), true); });
+    };
+  })();
+
+  /* THE RATE, SET FROM THE REQUEST FORM. "Totals and submission not yet": a viewer who holds
+     the Rates table (admin, approver) found their own role unpriced on the form, and the way out
+     was a detour to another pane. The box under the role (imprest module) takes the figure; this
+     saves it through the same server function and table the approval pane uses, and redraws the
+     form priced, so the nights total at once. */
+  (function(){
+    var b = document.getElementById('imqSetRateBtn');
+    if (!b) return;
+    b.onclick = function(){
+      var role = b.getAttribute('data-role') || '', box = document.getElementById('imqSetRate');
+      var rate = box ? box.value : '';
+      if (rate === '' || rate == null) { toast('Andika kiwango cha malazi kwa siku. / Enter the nightly rate.', true); if (box) box.focus(); return; }
+      b.disabled = true;
+      srv('imprestRoleSave', { role: role, rate: rate })
+        .then(function(){ toast('Kiwango kimehifadhiwa / Rate saved · ' + role + ' · ' + money(Number(rate) || 0) + '/siku'); render({ force:true }); })
+        .catch(function(e){ b.disabled = false; toast(String(e.message||e), true); });
     };
   })();
 

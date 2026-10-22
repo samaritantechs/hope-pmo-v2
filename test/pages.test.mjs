@@ -2081,6 +2081,10 @@ test('imprest alerts are asked for at every opening of the portal, until this ph
      longer closes the form. */
   assert.ok(/myRole && !myRow\s*\?\s*'<option value="'\+esc\(myRole\)\+'" data-rate="0" selected>/.test(hint), 'an unpriced own role is on the box, first and selected');
   assert.ok(/Weka kiwango sasa \/ Set the rate now/.test(hint) && /go\(\\'impappr\\'\)/.test(hint), 'a viewer who holds the Rates table is one tap from setting the rate');
+  /* "Totals and submission not yet": the rate is set on the form itself by a viewer who may --
+     one input, one button, the approval pane's own server function -- and the form redraws. */
+  assert.ok(/<input id="imqSetRate" type="number" min="1" step="1"/.test(hint) && /id="imqSetRateBtn" data-role="' \+ esc\(myRole\) \+ '"/.test(hint), 'the figure box and the button carry the signed-in role');
+  assert.ok(/getElementById\('imqSetRateBtn'\)[^]*?srv\('imprestRoleSave', \{ role: role, rate: rate \}\)[^]*?render\(\{ force:true \}\)/.test(wire), 'the core saves it through imprestRoleSave and redraws the form priced');
   assert.ok(!/data-closed="rates"/.test(hint), 'an empty rate table no longer closes the form');
   assert.ok(/if \(!roleName\) closed = 'role';\s*else if \(days > 0 && !rate\) closed = 'norate';\s*else if \(total <= 0\) closed = 'nocost';/.test(wire), 'no role, nights with no rate, and no costs close the button before the tap');
   assert.ok(/closed === 'norate' \? 'Wadhifa huu \(' \+ roleName \+ '\) hauna kiwango cha malazi bado/.test(wire), 'the nights-with-no-rate reason names the role and the way out');

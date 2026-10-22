@@ -409,8 +409,15 @@ VIEWS.impreq = function(){
           + (myRole && (!myRow || !(Number(myRow.rate) > 0))
             ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Wadhifa wako (' + esc(myRole) + ') hauna kiwango cha malazi bado: nauli na gharama nyingine zinaombeka, siku za malazi zinasubiri kiwango. '
               + '/ Your role (' + esc(myRole) + ') has no nightly rate yet: fares and other costs can be requested, nights wait for the rate. '
-              + (canPrice ? '<a href="#" onclick="go(\'impappr\');return false"><b>Weka kiwango sasa / Set the rate now &rarr;</b></a>'
-                          : 'Muombe mwidhinishaji akiweke kwenye Idhini ya imprest → Viwango. / Ask the approver to set it under Imprest approval → Rates.')
+              /* "Totals and submission not yet": a viewer who holds the Rates table sets the rate
+                 HERE, on the form -- the same server function and table the approval pane uses
+                 (imprestRoleSave; wired in app.html) -- and the form redraws priced. */
+              + (canPrice
+                  ? '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:5px">'
+                    + '<input id="imqSetRate" type="number" min="1" step="1" placeholder="TZS kwa siku / per night" style="width:150px;font-size:12px">'
+                    + '<button class="btn sm good" id="imqSetRateBtn" data-role="' + esc(myRole) + '">Weka kiwango sasa / Set the rate now</button>'
+                    + '<a href="#" onclick="go(\'impappr\');return false" style="font-size:10.5px">viwango vyote / all rates &rarr;</a></div>'
+                  : 'Muombe mwidhinishaji akiweke kwenye Idhini ya imprest → Viwango. / Ask the approver to set it under Imprest approval → Rates.')
               + '</div>' : '')
           + (!myRole ? '<div class="mut" style="font-size:10.5px;margin-top:4px">Kodi yako haina wadhifa — chagua wadhifa uliopo. / Your code has no role — pick a listed role.</div>' : '')
           + '</div>'
