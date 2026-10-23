@@ -1925,6 +1925,11 @@ test('the Fraud Detector: a nav under Legal, admin-granted, its module lists cas
   const mod = page('fraud');
   assert.ok(/^VIEWS\.fraud = function/m.test(mod) && /srv\('fraudCases', \{\}\)/.test(mod), 'one call');
   assert.ok(/col\('approvedDate', 'Imeidhinishwa \/ Approved', 'date'\)/.test(mod) && /ONROW = function\(r\)\{ frCard_\(r\._case\); \}/.test(mod), 'the list, a tap opens the card');
+  /* "have the sorts on top by team by type etc": the controls repaint the loaded cases, no second read */
+  assert.ok(/function frSet_\(k, v\)\{ FR\[k\] = v; frDraw_\(\); paint\(true\); \}/.test(mod), 'a pick is a repaint, not a request');
+  for (const key of ['team', 'officer', 'strength', 'kind', 'sort']) assert.ok(mod.includes("frSelect_('" + key + "'"), 'a control for ' + key);
+  assert.ok(/FR\.kind === 'own' && !c\.ownDefault/.test(mod) && /FR\.sort === 'links'/.test(mod) && /FR\.sort === 'team'/.test(mod), 'filtered by link kind, sorted by team or links');
+  assert.ok((mod.match(/srv\('fraudCases'/g) || []).length === 1, 'still one call');
   assert.ok(/Mkopo huu \/ This loan/.test(mod) && /Mkopo mwingine \/ Other loan/.test(mod) && /drawer\(html, \{ wide: true \}\)/.test(mod), 'this loan beside the linked one, wide');
   assert.ok(/MKOPO WAKE WA AWALI \/ OWN EARLIER LOAN/.test(mod) && /KWA NAMBA \/ BY NUMBER/.test(mod) && /KWA JINA \/ BY NAME/.test(mod), 'the link kinds are said');
   const sql = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'fraud.js'), 'utf-8');

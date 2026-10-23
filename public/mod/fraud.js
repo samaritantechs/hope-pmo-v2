@@ -80,37 +80,96 @@ function frCard_(c){
 function frChipCls_(r){ return r.strong ? 'bad' : 'warn'; }
 function frChipText_(r){ return r.strong ? 'KWA NAMBA / NUMBER' : 'KWA JINA / NAME'; }
 
+/* THE CONTROLS ON TOP -- "have the sorts on top by team by type etc". The cases are already on
+   the page (one read, kept a minute on the server), so every pick here is a repaint, not a
+   request: team, the officer who prepared the loan, strength, the kind of link, and the order.
+   The counters follow the pick, with "x / N" saying how much of the book is on screen. */
+var FR = { cases: [], meta: {}, team: '', officer: '', strength: '', kind: '', sort: 'new' };
+function frSet_(k, v){ FR[k] = v; frDraw_(); paint(true); }
+function frReset_(){ FR.team = ''; FR.officer = ''; FR.strength = ''; FR.kind = ''; FR.sort = 'new'; frDraw_(); paint(true); }
+function frFiltered_(){
+  return FR.cases.filter(function(c){
+    if (FR.team && (c.team || '') !== FR.team) return false;
+    if (FR.officer && (c.createdBy || '') !== FR.officer) return false;
+    if (FR.strength === 'phone' && !c.strong) return false;
+    if (FR.strength === 'name' && c.strong) return false;
+    if (FR.kind === 'loan' && !c.nLoans) return false;
+    if (FR.kind === 'def' && !c.nDefaults) return false;
+    if (FR.kind === 'own' && !c.ownDefault) return false;
+    return true;
+  });
+}
+function frSorted_(list){
+  var when = function(c){ return String(c.approvedDate || '') + '|' + String(c.createdAt || ''); };
+  var newest = function(a, b){ return when(a) > when(b) ? -1 : when(a) < when(b) ? 1 : 0; };
+  var out = list.slice();
+  if (FR.sort === 'old') out.sort(function(a, b){ return -newest(a, b); });
+  else if (FR.sort === 'team') out.sort(function(a, b){ return String(a.team || '').localeCompare(String(b.team || '')) || newest(a, b); });
+  else if (FR.sort === 'officer') out.sort(function(a, b){ return String(a.createdBy || '').localeCompare(String(b.createdBy || '')) || newest(a, b); });
+  else if (FR.sort === 'amount') out.sort(function(a, b){ return (b.principal || 0) - (a.principal || 0) || newest(a, b); });
+  else if (FR.sort === 'links') out.sort(function(a, b){ return (b.nLinks || 0) - (a.nLinks || 0) || newest(a, b); });
+  else out.sort(newest);
+  return out;
+}
+function frCounts_(key){
+  var m = {};
+  FR.cases.forEach(function(c){ var k = c[key] || ''; if (k) m[k] = (m[k] || 0) + 1; });
+  return Object.keys(m).sort().map(function(k){ return { k: k, n: m[k] }; });
+}
+function frSelect_(key, label, allLabel, opts){
+  return '<div class="fld" style="min-width:150px"><label>' + label + '</label><select onchange="frSet_(\'' + key + '\', this.value)">'
+    + '<option value="">' + allLabel + '</option>'
+    + opts.map(function(o){ return '<option value="' + esc(o.v) + '"' + (FR[key] === o.v ? ' selected' : '') + '>' + esc(o.t) + '</option>'; }).join('')
+    + '</select></div>';
+}
+function frDraw_(){
+  var d = FR.meta, scanned = d.scanned || {}, deck = d.deck || {};
+  var shown = frSorted_(frFiltered_());
+  var strong = shown.filter(function(c){ return c.strong; }).length;
+  var ownDef = shown.filter(function(c){ return c.ownDefault; }).length;
+  var picked = !!(FR.team || FR.officer || FR.strength || FR.kind);
+  HEAD = '<div class="kpis">'
+    + kpi('Kesi / Cases', money(shown.length) + (picked ? ' <span class="mut" style="font-size:12px">/ ' + money(FR.cases.length) + '</span>' : ''), 'mikopo iliyoidhinishwa yenye kiungo / approved loans with a link', shown.length ? 'bad' : 'good')
+    + kpi('Kwa namba / By number', money(strong), 'namba ya simu inayorudia / a phone number that recurs', strong ? 'bad' : '')
+    + kpi('Kwa jina tu / By name only', money(shown.length - strong), 'jina linalorudia, bila namba / a name that recurs, no number', '')
+    + kpi('Wana deni la awali / Own earlier loan in default', money(ownDef), 'wameidhinishwa wakiwa na mkopo kwenye defaults / approved while their earlier loan is on the sheet', ownDef ? 'bad' : '')
+    + kpi('Mikopo iliyopitiwa / Loans scanned', money(scanned.loans || 0), (d.stages || []).join(', '))
+    + kpi('Defaults sheet', money(scanned.defaults || 0), deck.date ? 'deki ya / deck of ' + esc(deck.date) : 'hakuna deki ya sasa / no current deck', deck.date ? '' : 'warn')
+    + '</div>'
+    + '<div class="card" style="padding:10px;margin:8px 0"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+    + frSelect_('team', 'Timu / Team', 'Zote / All (' + money(FR.cases.length) + ')', frCounts_('team').map(function(o){ return { v: o.k, t: o.k + ' (' + o.n + ')' }; }))
+    + frSelect_('officer', 'Aliyeandaa / Created by', 'Wote / All', frCounts_('createdBy').map(function(o){ return { v: o.k, t: o.k + ' (' + o.n + ')' }; }))
+    + frSelect_('strength', 'Nguvu / Strength', 'Zote / All', [{ v: 'phone', t: 'Kwa namba / By number' }, { v: 'name', t: 'Kwa jina tu / By name only' }])
+    + frSelect_('kind', 'Aina ya kiungo / Link kind', 'Zote / All', [{ v: 'loan', t: 'Mkopo mwingine / Other loan' }, { v: 'def', t: 'Defaults sheet' }, { v: 'own', t: 'Mkopo wake wa awali / Own earlier loan' }])
+    + frSelect_('sort', 'Panga / Sort', 'Mpya kwanza / Newest first', [{ v: 'old', t: 'Za zamani kwanza / Oldest first' }, { v: 'team', t: 'Timu / Team' }, { v: 'officer', t: 'Aliyeandaa / Created by' }, { v: 'amount', t: 'Kiasi kikubwa / Largest first' }, { v: 'links', t: 'Viungo vingi / Most links' }])
+    + '<button class="btn sm ghost" onclick="frReset_()">Futa vichujio / Clear</button>'
+    + '<span class="mut" style="font-size:11.5px">Zinaonyeshwa / Showing <b>' + money(shown.length) + '</b> / ' + money(FR.cases.length) + '</span>'
+    + '</div></div>'
+    + '<div class="note">Kanuni / The rule: mkopo ulioidhinishwa huwa <b>kesi</b> ikiwa jina au namba ya <b>mteja, mpokeaji au mdhamini</b> wake inaonekana kwenye mkopo mwingine ulioidhinishwa wa mteja mwingine (safu yoyote kati ya tatu), au kwenye <b>defaults sheet ya sasa</b> (mteja mwingine, au mkopo wake wa awali ambao bado una deni). Mikopo ya awali ya mteja huyo huyo si kiungo. Namba = kiungo imara; jina pekee = dhaifu (majina ya neno moja hayalinganishwi). '
+    + '/ An approved loan is a <b>case</b> when a name or number of its <b>customer, receiver or guarantor</b> appears on another customer\'s approved loan (any of the three columns), or on the <b>current defaults sheet</b> (another customer, or this customer\'s own earlier loan still owing). A customer\'s own earlier loans are not a link. A number is a strong link; a name alone is weak (one-word names are not compared).'
+    + (d.scope && d.scope.length ? ' <b>Upeo / Scope:</b> timu zako tu, pande zote mbili / your teams only, on both sides (' + esc(d.scope.join(', ')) + ').' : '')
+    + '</div>';
+  S.rows = shown.map(function(c){
+    return {
+      approvedDate: c.approvedDate, ref: c.ref, name: c.name, team: c.team, createdBy: c.createdBy || '', receiver: c.receiver || '', guarantor: c.guarantor || '',
+      links: money(c.nLinks) + ' · ' + (c.links || []).slice(0, 2).map(function(l){
+        return frParty_(l.mine).split(' / ')[0] + ' ' + l.value + ' = ' + frParty_(l.theirs).split(' / ')[0] + ' ' + (l.t === 'loan' ? 'REF ' + (l.with.ref || '') : 'defaults ' + (l.with.ref || '')) + (l.own ? ' (wake)' : '');
+      }).join('; ') + (c.nLinks > 2 ? '; …' : ''),
+      strong: c.strong, ownDefault: c.ownDefault, principal: c.principal, _case: c,
+    };
+  });
+  S.cols = [col('approvedDate', 'Imeidhinishwa / Approved', 'date'), col('ref', 'REF'), col('name', 'Mteja / Customer'), col('team', 'Timu / Team'),
+    col('createdBy', 'Aliyeandaa / Created by'), col('receiver', 'Mpokeaji / Receiver'), col('guarantor', 'Mdhamini / Guarantor'),
+    { key: 'principal', label: 'Kiasi / Principal', kind: 'money' },
+    col('links', 'Viungo / Links'),
+    { key: 'strong', label: 'Nguvu / Strength', kind: 'chip', chip: frChipCls_, get: frChipText_ }];
+  ONROW = function(r){ frCard_(r._case); };
+}
+
 VIEWS.fraud = function(){
   return srv('fraudCases', {}).then(function(d){
-    var cases = d.cases || [], scanned = d.scanned || {}, deck = d.deck || {};
-    var strong = cases.filter(function(c){ return c.strong; }).length;
-    var ownDef = cases.filter(function(c){ return c.ownDefault; }).length;
-    HEAD = '<div class="kpis">'
-      + kpi('Kesi / Cases', money(cases.length), 'mikopo iliyoidhinishwa yenye kiungo / approved loans with a link', cases.length ? 'bad' : 'good')
-      + kpi('Kwa namba / By number', money(strong), 'namba ya simu inayorudia / a phone number that recurs', strong ? 'bad' : '')
-      + kpi('Kwa jina tu / By name only', money(cases.length - strong), 'jina linalorudia, bila namba / a name that recurs, no number', '')
-      + kpi('Wana deni la awali / Own earlier loan in default', money(ownDef), 'wameidhinishwa wakiwa na mkopo kwenye defaults / approved while their earlier loan is on the sheet', ownDef ? 'bad' : '')
-      + kpi('Mikopo iliyopitiwa / Loans scanned', money(scanned.loans || 0), (d.stages || []).join(', '))
-      + kpi('Defaults sheet', money(scanned.defaults || 0), deck.date ? 'deki ya / deck of ' + esc(deck.date) : 'hakuna deki ya sasa / no current deck', deck.date ? '' : 'warn')
-      + '</div>'
-      + '<div class="note">Kanuni / The rule: mkopo ulioidhinishwa huwa <b>kesi</b> ikiwa jina au namba ya <b>mteja, mpokeaji au mdhamini</b> wake inaonekana kwenye mkopo mwingine ulioidhinishwa wa mteja mwingine (safu yoyote kati ya tatu), au kwenye <b>defaults sheet ya sasa</b> (mteja mwingine, au mkopo wake wa awali ambao bado una deni). Mikopo ya awali ya mteja huyo huyo si kiungo. Namba = kiungo imara; jina pekee = dhaifu (majina ya neno moja hayalinganishwi). '
-      + '/ An approved loan is a <b>case</b> when a name or number of its <b>customer, receiver or guarantor</b> appears on another customer\'s approved loan (any of the three columns), or on the <b>current defaults sheet</b> (another customer, or this customer\'s own earlier loan still owing). A customer\'s own earlier loans are not a link. A number is a strong link; a name alone is weak (one-word names are not compared). Mpya kwanza / Newest first.'
-      + (d.scope && d.scope.length ? ' <b>Upeo / Scope:</b> timu zako tu / your teams only (' + esc(d.scope.join(', ')) + ').' : '')
-      + '</div>';
-    S.rows = cases.map(function(c){
-      return {
-        approvedDate: c.approvedDate, ref: c.ref, name: c.name, team: c.team, receiver: c.receiver || '', guarantor: c.guarantor || '',
-        links: money(c.nLinks) + ' · ' + (c.links || []).slice(0, 2).map(function(l){
-          return frParty_(l.mine).split(' / ')[0] + ' ' + l.value + ' = ' + frParty_(l.theirs).split(' / ')[0] + ' ' + (l.t === 'loan' ? 'REF ' + (l.with.ref || '') : 'defaults ' + (l.with.ref || '')) + (l.own ? ' (wake)' : '');
-        }).join('; ') + (c.nLinks > 2 ? '; …' : ''),
-        strong: c.strong, ownDefault: c.ownDefault, principal: c.principal, _case: c,
-      };
-    });
-    S.cols = [col('approvedDate', 'Imeidhinishwa / Approved', 'date'), col('ref', 'REF'), col('name', 'Mteja / Customer'), col('team', 'Timu / Team'),
-      col('receiver', 'Mpokeaji / Receiver'), col('guarantor', 'Mdhamini / Guarantor'),
-      { key: 'principal', label: 'Kiasi / Principal', kind: 'money' },
-      col('links', 'Viungo / Links'),
-      { key: 'strong', label: 'Nguvu / Strength', kind: 'chip', chip: frChipCls_, get: frChipText_ }];
-    ONROW = function(r){ frCard_(r._case); };
+    FR.cases = d.cases || [];
+    FR.meta = { scanned: d.scanned || {}, deck: d.deck || {}, scope: d.scope, stages: d.stages || [] };
+    frDraw_();
   }).catch(function(e){ HEAD = '<div class="msg bad">' + esc(String(e.message || e)) + '</div>'; S.rows = []; S.cols = []; ONROW = null; });
 };

@@ -3145,10 +3145,15 @@ loan's own row: another customer's name or number, or the customer's own earlier
 owing when this one was approved. A link by number is strong, by name alone weak; both are
 kept, labelled. Cases are sorted newest first by approved date.
 
-**The screen**: the list (approved date, REF, customer, team, receiver, guarantor, principal,
-the first two links in words, strength), a tap opening the card: this loan's parties beside
-each linked loan's and each defaults row's, the matching fields marked, the own-earlier-loan
-case badged. Links are capped at thirty per case and the rest counted.
+**The screen**: the counters, then the controls ("have the sorts on top by team by type etc"):
+team, the officer who prepared the loan, strength, the kind of link (another loan, the defaults
+sheet, the customer's own earlier loan) and the order (newest, oldest, team, officer, largest,
+most links). Every pick is a repaint of the cases already on the page, not a second read, and
+the counters follow it with "x / N". Then the list (approved date, REF, customer, team, created
+by, receiver, guarantor, principal, the first two links in words, strength), a tap opening the
+card: this loan's parties beside each linked loan's and each defaults row's, the matching
+fields marked, the own-earlier-loan case badged. Links are capped at thirty per case and the
+rest counted.
 
 **Reads**: two, both team-scoped at the database (a scoped code compares its own teams' loans
 against its own teams' loans and defaults, and the screen says so), kept a minute per scope by
