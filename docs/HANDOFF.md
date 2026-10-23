@@ -3119,5 +3119,43 @@ out of every topic is not asked to allow alerts at opening, in a browser or in t
 
 ---
 
+## Part 22 — The Fraud Detector
+
+> "For what we've gone through, brother I need a new nav 'Fraud Detector' where every approved
+> loan with a number or name among customer, guarantor or receiver that still exists in an
+> another approved of the three columns or in the current defaults sheet, auto list the case
+> list that will open card details containing previous involved loan details vs current.
+> Autosorted newest to oldest"
+
+What Vwawa and Tunduma looked like in the book was never visible loan by loan: one receiver
+number collecting several customers' disbursements, a guarantor who was somebody else's
+customer, a customer approved again while their earlier loan sat in default. The Fraud
+Detector (`public/mod/fraud.js`, the nav under Legal) lays the parties of every approved loan
+side by side and lists the ones that touch.
+
+**The rule, in one place** (`detect` in `api/_lib/fraud.js`): the parties of a loan are its
+customer (name, contact, momo), its receiver (name, momo) and its guarantor (name, contact). A
+number is compared as `normPhone` writes it, the last nine digits; a name as its letters,
+uppercased, and only when it has two words and six letters, because a lone JOHN matches half
+the book. A **case** is an approved loan (the sales stages) with at least one **link**: a party
+of *another customer's* approved loan, any of the three columns against any of the three (the
+customer's own earlier loans are not a link; a repeat customer is the ordinary business); or a
+row of the **current defaults sheet** (the latest current deck, every weekday) that is not the
+loan's own row: another customer's name or number, or the customer's own earlier loan still
+owing when this one was approved. A link by number is strong, by name alone weak; both are
+kept, labelled. Cases are sorted newest first by approved date.
+
+**The screen**: the list (approved date, REF, customer, team, receiver, guarantor, principal,
+the first two links in words, strength), a tap opening the card: this loan's parties beside
+each linked loan's and each defaults row's, the matching fields marked, the own-earlier-loan
+case badged. Links are capped at thirty per case and the rest counted.
+
+**Reads**: two, both team-scoped at the database (a scoped code compares its own teams' loans
+against its own teams' loans and defaults, and the screen says so), kept a minute per scope by
+the answer cache. Nothing on `/api/upload` or `/api/call`. Granted like `audit`: admins from
+the start, a role when ticked under Roles & access.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

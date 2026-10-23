@@ -736,7 +736,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1,
+  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1,
   advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-22-e';
+var BUILD = '2026-10-23-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -998,6 +998,12 @@ var NAV = [
   { id:'advrep',      div:'mgmt', label:'Ripoti ya advance / Advance report', ic:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>' },
   { id:'advstaff',    div:'mgmt', label:'Wafanyakazi (HR) / HR staff data', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   { id:'legal',       label:'Legal / Demand Notices', ic:'<path d="M3 6l9-3 9 3"/><path d="M6 9v7a6 6 0 0 0 12 0V9"/><path d="M3 6l3 3M21 6l-3 3"/>' },
+  /* THE FRAUD DETECTOR -- "every approved loan with a number or name among customer, guarantor
+     or receiver that still exists in an another approved of the three columns or in the current
+     defaults sheet", listed newest first, a tap opening the loan beside each one it is linked
+     to (public/mod/fraud.js; the rule in api/_lib/fraud.js). Granted like `audit`: admins from
+     the start, then whoever the tab is ticked for. */
+  { id:'fraud',       label:'Fraud Detector', ic:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/><path d="M11 8v3.5M11 14.5h.01"/>' },
   { id:'restructure', label:'Loan Restructuring', ic:'<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>' },
   { id:'credit',      label:'Credit Analysts', ic:'<path d="M3 3v18h18"/><path d="M7 14l3-4 3 3 5-6"/>' },
   /* THE CREDIT INFO PANE, directly under the analysts it summarises. It reads the SAME answer
@@ -1270,7 +1276,7 @@ function buildNav(){
    opened; the three places that could run earlier are guarded (window.wireDevices, bpWire_,
    presStop). */
 var MOD_OF = { deduct:'deduct', advreq:'advance', advappr:'advance', advrep:'advance', advstaff:'advance',
-  legal:'legal', adjust:'adjust', impreq:'imprest', impappr:'imprest', imprep:'imprest',
+  legal:'legal', fraud:'fraud', adjust:'adjust', impreq:'imprest', impappr:'imprest', imprep:'imprest',
   devlock:'devices', devunlock:'devices', teams:'admin', settings:'admin', bonusplan:'bonusplan', present:'present',
   /* THE REPORTS AND ANALYSIS SCREENS -- read, not worked: the month report and team trend,
      PAR, the audit report, Reports, commission and its month, calls, the credit boards, Best
