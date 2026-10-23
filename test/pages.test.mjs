@@ -1938,6 +1938,8 @@ test('the Fraud Detector: a nav under Legal, admin-granted, its module lists cas
   assert.ok(/fraudFind:1/.test(core), 'a read');
   assert.ok(/Mkopo huu \/ This loan/.test(mod) && /Mkopo mwingine \/ Other loan/.test(mod) && /drawer\(html, \{ wide: true \}\)/.test(mod), 'this loan beside the linked one, wide');
   assert.ok(/MKOPO WAKE WA AWALI \/ OWN EARLIER LOAN/.test(mod) && /KWA NAMBA \/ BY NUMBER/.test(mod) && /KWA JINA \/ BY NAME/.test(mod), 'the link kinds are said');
+  /* "add default so we see defaulted amount of each of the two in case in defaulters": a Default row, both columns */
+  assert.ok(/Deni \/ Default \(defaults sheet\)<\/td>' \+ frDefCell_\(c\.def\) \+ frDefCell_\(isLoan \? w\.def : w\)/.test(mod) && /THIS LOAN IS ON THE DEFAULTS SHEET/.test(mod), 'each of the two loans\' own row of the sheet, side by side');
   const sql = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'fraud.js'), 'utf-8');
   assert.ok(/cachedAnswer\(db, 'fraud', user, nowMs/.test(sql) && /\.in\('team', teamMatchList\(teams\)\)/.test(sql) && /teams, columns: DEF_COLS/.test(sql), 'cached a minute per scope, both reads team-scoped at the database');
 });

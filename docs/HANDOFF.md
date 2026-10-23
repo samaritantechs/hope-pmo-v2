@@ -3153,7 +3153,12 @@ the counters follow it with "x / N". Then the list (approved date, REF, customer
 by, receiver, guarantor, principal, the first two links in words, strength), a tap opening the
 card: this loan's parties beside each linked loan's and each defaults row's, the matching
 fields marked, the own-earlier-loan case badged. Links are capped at thirty per case and the
-rest counted.
+rest counted. Every loan the card shows, the case and each loan it is linked to, carries its
+*own* row of the current defaults sheet as `def` (arrears, DC, status, balance; null when it is
+not on the sheet), so the card's **Default** row lays the two defaulted amounts side by side
+("add default so we see defaulted amount of each of the two in case in defaulters"); a case
+that is itself on the sheet is badged at the top of its card. The own row is never a link; it
+is the loan's present state.
 
 **The look-up before approval** ("the search in here will help credit analysts to search a
 number among the list before approval - but return active customer even if not in the list -
