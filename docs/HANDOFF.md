@@ -3155,10 +3155,26 @@ card: this loan's parties beside each linked loan's and each defaults row's, the
 fields marked, the own-earlier-loan case badged. Links are capped at thirty per case and the
 rest counted.
 
+**The look-up before approval** ("the search in here will help credit analysts to search a
+number among the list before approval - but return active customer even if not in the list -
+for search character only"): a box in the control bar asks the whole book, not the cases
+(`fraudFind`): the typed characters against every approved loan's six party fields and the
+defaults sheet's four. Digits find a number containing them, a local 0712… or a 255712… read
+as the same nine digits; letters find a name containing them; three characters at least. The
+answer opens in the drawer, led by the **latest appearance** in the approved loans ("search
+return latest appearance of the searched no in previous approved info - whether holding
+previous fraud already or not"): the newest loan the characters sit on, said whole, badged
+"already holds a case" with a link to the card, or "no case yet". Then every loan, newest
+first, each with the fields it was found in, its stage and a KESI chip when it is on the case
+list (a tap opens the card); then the sheet rows with status, DC, arrears and balance; or a
+green "not in the book". The same book as the case list, so a number that is clean here is
+clean in the detector too.
+
 **Reads**: two, both team-scoped at the database (a scoped code compares its own teams' loans
 against its own teams' loans and defaults, and the screen says so), kept a minute per scope by
-the answer cache. Nothing on `/api/upload` or `/api/call`. Granted like `audit`: admins from
-the start, a role when ticked under Roles & access.
+the answer cache and shared by the list and the look-up. Nothing on `/api/upload` or
+`/api/call`. Granted like `audit`: admins from the start, a role when ticked under Roles &
+access.
 
 ---
 
