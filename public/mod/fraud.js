@@ -20,11 +20,22 @@ function frBadge_(l){
     ? '<span class="chip bad" style="font-size:10px">KWA NAMBA / BY NUMBER</span>'
     : '<span class="chip warn" style="font-size:10px">KWA JINA / BY NAME</span>';
 }
+/* THE DEFAULTED AMOUNT OF EACH OF THE TWO -- "on the rows of customer card add default so we see
+   defaulted amount of each of the two in case in defaulters". Every loan the server sends (the
+   case and each linked loan) carries `def`: its own row of the current defaults sheet, or null.
+   The card lays the two side by side on a Default row: arrears in red with DC and status, or
+   "not on the sheet". When the other side IS a defaults row, that row is its own default. */
+function frDefCell_(d){
+  if (!d) return '<td class="mut">— haipo kwenye defaults / not on the sheet</td>';
+  return '<td style="color:#B42318;font-weight:700">TZS ' + money(d.arrears) + ' <span class="mut" style="font-weight:400">· DC ' + esc(d.dc == null ? '—' : d.dc)
+    + (d.status ? ' · ' + esc(d.status) : '') + (d.daysElapsed != null ? ' · siku ' + esc(d.daysElapsed) : '') + '</span></td>';
+}
+function frDefShort_(d){ return d ? 'deni / default TZS ' + money(d.arrears) + (d.dc != null ? ' · DC ' + esc(d.dc) : '') : ''; }
 /** One line per link, for the list and the card head. */
 function frLinkLine_(l){
   var w = l.with || {};
   var where = l.t === 'loan'
-    ? 'mkopo REF ' + esc(w.ref || '?') + ' (' + esc(w.name || '') + (w.team ? ' · ' + esc(w.team) : '') + (w.approvedDate ? ' · ' + frWhen_(w.approvedDate) : '') + ')'
+    ? 'mkopo REF ' + esc(w.ref || '?') + ' (' + esc(w.name || '') + (w.team ? ' · ' + esc(w.team) : '') + (w.approvedDate ? ' · ' + frWhen_(w.approvedDate) : '') + (w.def ? ' · ' + frDefShort_(w.def) : '') + ')'
     : (l.own ? 'MKOPO WAKE WA AWALI kwenye defaults / THEIR OWN EARLIER LOAN on defaults, REF ' : 'defaults sheet REF ') + esc(w.ref || '?')
       + ' (' + esc(w.name || '') + (w.team ? ' · ' + esc(w.team) : '') + (w.status ? ' · ' + esc(w.status) : '') + (w.dc != null ? ' · DC ' + esc(w.dc) : '') + ')';
   return frParty_(l.mine) + ' <b>' + esc(l.value) + '</b> = ' + frParty_(l.theirs) + ' kwenye / on ' + where;
@@ -48,6 +59,9 @@ function frCompare_(c, l){
     + row('Mdhamini / Guarantor', c.guarantor, w.guarantor, l.kind === 'name' && (l.mine === 'guarantor' || l.theirs === 'guarantor'))
     + row('Simu ya mdhamini / Guarantor phone', c.guarantorContact, w.guarantorContact, l.kind === 'phone' && (l.mine === 'guarantor' || l.theirs === 'guarantor'))
     + row('Timu / Team', c.team, w.team, false)
+    // the defaulted amount of each of the two: this loan's own row of the sheet beside the other's
+    + '<tr><td class="mut">Deni / Default (defaults sheet)</td>' + frDefCell_(c.def) + frDefCell_(isLoan ? w.def : w) + '</tr>'
+    + row('Salio / Balance', c.def ? money(c.def.balance) : '—', isLoan ? (w.def ? money(w.def.balance) : '—') : money(w.balance), false)
     + (isLoan
         ? row('Bidhaa / Product', c.product, w.product, false)
           + row('Kiasi / Principal', money(c.principal), money(w.principal), false)
@@ -55,9 +69,7 @@ function frCompare_(c, l){
           + row('Imetolewa / Disbursed', frWhen_(c.disbDate), frWhen_(w.disbDate), false)
           + row('Hali / Stage', c.stage, w.stage, false)
           + row('Aliyeandaa / Created by', c.createdBy, w.createdBy, false)
-        : row('Hali / Status', c.stage, w.status + (w.dc != null ? ' · DC ' + w.dc : '') + (w.daysElapsed != null ? ' · siku ' + w.daysElapsed : ''), false)
-          + row('Madeni / Arrears', '', money(w.arrears), false)
-          + row('Salio / Balance', '', money(w.balance), false)
+        : row('Hali / Status', c.stage + (c.def ? ' · ' + c.def.status : ''), w.status + (w.dc != null ? ' · DC ' + w.dc : '') + (w.daysElapsed != null ? ' · siku ' + w.daysElapsed : ''), false)
           + row('Imetolewa / Disbursed', frWhen_(c.disbDate), frWhen_(w.disbDate), false));
   return '<div class="card" style="padding:10px;margin:8px 0">'
     + '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:6px">' + frBadge_(l)
@@ -71,6 +83,10 @@ function frCard_(c){
     + '<div class="hint" style="margin-bottom:8px">REF ' + esc(c.ref || '') + (c.docket ? ' · docket ' + esc(c.docket) : '') + ' · ' + esc(c.team || '')
     + ' · ' + esc(c.product || '') + ' · TZS ' + money(c.principal) + ' · imeidhinishwa / approved ' + frWhen_(c.approvedDate)
     + (c.approvedBy ? ' na / by ' + esc(c.approvedBy) : '') + (c.createdBy ? ' · imeandaliwa na / created by ' + esc(c.createdBy) : '') + '</div>'
+    + (c.def
+        ? '<div style="margin-bottom:8px"><span class="chip bad">MKOPO HUU UKO KWENYE DEFAULTS / THIS LOAN IS ON THE DEFAULTS SHEET · TZS ' + money(c.def.arrears)
+          + (c.def.dc != null ? ' · DC ' + esc(c.def.dc) : '') + (c.def.status ? ' · ' + esc(c.def.status) : '') + '</span></div>'
+        : '')
     + '<div class="note" style="margin-bottom:8px"><b>' + money(c.nLinks) + ' viungo / links</b> · ' + money(c.nLoans) + ' mikopo mingine / other loans · '
     + money(c.nDefaults) + ' kwenye defaults / on the defaults sheet'
     + (c.more ? ' · ' + money(c.more) + ' hazijaonyeshwa / not shown' : '') + '</div>'

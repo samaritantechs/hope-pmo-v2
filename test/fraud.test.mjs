@@ -110,9 +110,15 @@ test('the rule: another customer\'s loan by number or name, the defaults sheet, 
   assert.equal(l3.nLinks, 3);
   assert.equal(l3.links[0].kind, 'phone', 'strong links first');
   assert.ok(!l3.links.some(x => x.t === 'def' && x.with.ref === '11002000031'), 'the loan\'s own row on the sheet is not a link');
+  // "add default so we see defaulted amount of each of the two": each loan carries its OWN row of the sheet, or null
+  assert.deepEqual([l3.def.status, l3.def.dc, l3.def.arrears, l3.def.balance, l3.def.deckDate], ['Defaulter', 2, 120000, 400000, '2026-10-22'], 'GRACE\'s loan is itself on the sheet');
+  assert.equal(byNo.with.def, null, 'JOSEPH\'s loan, on the other side of her card, is not');
+  assert.equal(l4.def, null, 'AMINA\'s new loan is not on the sheet; her earlier one is (the own-default link)');
   assert.ok(!l3.links.some(x => x.with.ref === '11002000051' || (x.with.name || '') === 'ALEX ISAYA' && x.t === 'loan'), 'an unapproved loan is neither a case nor a link');
   // L2: JOSEPH -- L3's receiver number and guarantor name, and his guarantor HALIMA is a chronic defaulter
   assert.equal(l2.nLoans, 1); assert.equal(l2.ownDefault, false);
+  assert.equal(l2.def, null, 'JOSEPH\'s own loan is not on the sheet');
+  assert.equal(l2.links.find(x => x.t === 'loan').with.def.dc, 2, 'but GRACE\'s, on the other side of his card, is -- the two defaulted amounts sit side by side');
   // two rows of the sheet: HALIMA's own loan (his guarantor is a chronic defaulter, by number and name), and
   // GRACE's loan, where a JOSEPH MWITA stands as guarantor (by name only)
   assert.equal(l2.nDefaults, 2);
@@ -173,6 +179,7 @@ test('the look-up: the typed characters against the whole book -- a number in an
   const amina = await portalApi(db, ADMIN, 'fraudFind', { q: '0712000001' }, NOW);
   assert.deepEqual(amina.hits.map(h => h.t + ':' + h.with.ref), ['loan:11002000012', 'loan:11002000011', 'def:11002000011'], 'a number that is on the sheet is found there too');
   assert.deepEqual(amina.hits[0].where.map(w => w.party + ':' + w.field), ['customer:contact', 'customer:momo', 'receiver:momo'], 'every field it sits in');
+  assert.equal(amina.hits[0].with.def, null); assert.equal(amina.hits[1].with.def.arrears, 120000, 'each loan found carries its own row of the sheet too');
   assert.equal((await portalApi(db, ADMIN, 'fraudFind', { q: '0744000000' }, NOW)).total, 0, 'a clean number is clean');
   await assert.rejects(portalApi(db, ADMIN, 'fraudFind', { q: '07' }, NOW), /angalau|at least/);
   await assert.rejects(portalApi(db, ADMIN, 'fraudFind', { q: 'MW' }, NOW), /angalau|at least/);

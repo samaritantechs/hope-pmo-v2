@@ -109,12 +109,26 @@ const loanSummary = l => ({
   approvedBy: S_(l.approved_by), createdBy: S_(l.created_by), recommendedBy: S_(l.recommended_by),
   createdAt: l.created_at || null,
 });
-const defSummary = d => ({
-  ref: S_(d.ref), docket: S_(d.docket_no), team: S_(d.team), name: S_(d.full_name), contact: S_(d.contact),
-  guarantor: S_(d.guarantor_name), guarantorContact: S_(d.guarantor_contact),
+/** A loan's own standing on the sheet, without the parties: what the card's "Default" row shows. */
+const defState = d => ({
   status: S_(d.status), dc: d.dc == null ? null : num(d.dc), daysElapsed: d.days_elapsed == null ? null : num(d.days_elapsed),
   arrears: num(d.arrears), balance: num(d.balance), disbDate: d.disb_date || null, deckDate: d.snapshot_date || null,
 });
+const defSummary = d => ({
+  ref: S_(d.ref), docket: S_(d.docket_no), team: S_(d.team), name: S_(d.full_name), contact: S_(d.contact),
+  guarantor: S_(d.guarantor_name), guarantorContact: S_(d.guarantor_contact), ...defState(d),
+});
+/** THE DEFAULTED AMOUNT OF EACH LOAN ("add default so we see defaulted amount of each of the two
+    in case in defaulters"): the sheet's rows by ref, so every loan the card shows -- the case and
+    each loan it is linked to -- carries its OWN row of the current defaults sheet as `def`
+    (arrears, DC, status, balance), or null when it is not on the sheet. The own row is never a
+    link (detect skips it); it is the loan's present state, laid beside the other loan's. */
+function sheetByRef(defaults) {
+  const m = new Map();
+  for (const d of defaults) { const r = digits(d.ref); if (r) m.set(r, d); }
+  return m;
+}
+const withOwnRow = (summary, ref, sheet) => { const d = sheet.get(ref); return { ...summary, def: d ? defState(d) : null }; };
 
 /** The rule itself, over rows already read: exported so the test can hand it a book and the
     screen's function can hand it the database's. */
@@ -125,6 +139,7 @@ export function detect(loans, defaults) {
   loans.forEach((l, i) => loanKeys[i].forEach(k => add(k.key, { t: 'loan', i, party: k.party })));
   defaults.forEach((d, j) => keysOf(partiesOfDefault(d)).forEach(k => add(k.key, { t: 'def', j, party: k.party })));
   const refs = loans.map(loanRef), dockets = loans.map(loanDocket);
+  const sheet = sheetByRef(defaults);
   const cases = [];
   loans.forEach((l, i) => {
     const links = [], seen = new Set();
@@ -136,7 +151,7 @@ export function detect(loans, defaults) {
           const id = 'L|' + loans[e.i].id + '|' + k.party + '|' + e.party + '|' + k.key;
           if (seen.has(id)) continue;
           seen.add(id);
-          links.push({ t: 'loan', kind: k.kind, mine: k.party, theirs: e.party, value: k.value, own: false, with: loanSummary(loans[e.i]) });
+          links.push({ t: 'loan', kind: k.kind, mine: k.party, theirs: e.party, value: k.value, own: false, with: withOwnRow(loanSummary(loans[e.i]), refs[e.i], sheet) });
         } else {
           const d = defaults[e.j], dRef = digits(d.ref);
           if (dRef && dRef === refs[i]) continue;                            // the loan's own row on the sheet
@@ -154,7 +169,7 @@ export function detect(loans, defaults) {
     const loanIds = new Set(links.filter(x => x.t === 'loan').map(x => x.with.id));
     const defRefs = new Set(links.filter(x => x.t === 'def').map(x => x.with.ref));
     cases.push({
-      ...loanSummary(l),
+      ...withOwnRow(loanSummary(l), refs[i], sheet),
       strong: links.some(x => x.kind === 'phone'),
       ownDefault: links.some(x => x.t === 'def' && x.own),
       nLoans: loanIds.size, nDefaults: defRefs.size, nLinks: links.length,
@@ -224,13 +239,13 @@ export async function fraudFind(db, user, args, nowMs = Date.now()) {
   const has = isNumber
     ? v => { const d = S_(v).replace(/\D/g, ''); return !!d && d.includes(q); }
     : v => S_(v).toUpperCase().replace(/[^A-Z\s]/g, ' ').replace(/\s+/g, ' ').includes(q);
-  const hits = [];
+  const hits = [], sheet = sheetByRef(book.deck.rows || []);
   for (const l of book.loans) {
     const fields = isNumber
       ? [['customer', 'contact', l.contact], ['customer', 'momo', l.momo], ['receiver', 'momo', l.recipient_momo], ['guarantor', 'contact', l.guarantor_contact]]
       : [['customer', 'name', l.full_name], ['receiver', 'name', l.recipient_full_name], ['guarantor', 'name', l.guarantor_name]];
     const where = fields.filter(f => has(f[2])).map(f => ({ party: f[0], field: f[1], value: S_(f[2]) }));
-    if (where.length) hits.push({ t: 'loan', where, with: loanSummary(l) });
+    if (where.length) hits.push({ t: 'loan', where, with: withOwnRow(loanSummary(l), loanRef(l), sheet) });
   }
   for (const d of book.deck.rows || []) {
     const fields = isNumber
