@@ -736,7 +736,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1,
+  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1, fraudFind:1,
   advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, staffRoster:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-23-b';
+var BUILD = '2026-10-23-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.

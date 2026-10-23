@@ -1930,6 +1930,12 @@ test('the Fraud Detector: a nav under Legal, admin-granted, its module lists cas
   for (const key of ['team', 'officer', 'strength', 'kind', 'sort']) assert.ok(mod.includes("frSelect_('" + key + "'"), 'a control for ' + key);
   assert.ok(/FR\.kind === 'own' && !c\.ownDefault/.test(mod) && /FR\.sort === 'links'/.test(mod) && /FR\.sort === 'team'/.test(mod), 'filtered by link kind, sorted by team or links');
   assert.ok((mod.match(/srv\('fraudCases'/g) || []).length === 1, 'still one call');
+  /* "the search in here will help credit analysts to search a number among the list before approval - but return
+     active customer even if not in the list": the look-up asks the whole book, and says when nothing carries it */
+  assert.ok(/<input id="frQ"/.test(mod) && /srv\('fraudFind', \{ q: q \}\)/.test(mod) && /function frFindDrawer_\(d\)/.test(mod), 'the look-up box asks the whole book');
+  assert.ok(/Haipo kwenye kitabu/.test(mod) && /Mikopo iliyoidhinishwa \/ Approved loans \(/.test(mod) && /Defaults sheet \(/.test(mod), 'a clean answer, or the loans and the sheet rows');
+  assert.ok(/LATEST APPEARANCE IN APPROVED LOANS/.test(mod) && /ALREADY HOLDS A CASE/.test(mod) && /NO CASE YET/.test(mod), 'the latest appearance leads, case or no case');
+  assert.ok(/fraudFind:1/.test(core), 'a read');
   assert.ok(/Mkopo huu \/ This loan/.test(mod) && /Mkopo mwingine \/ Other loan/.test(mod) && /drawer\(html, \{ wide: true \}\)/.test(mod), 'this loan beside the linked one, wide');
   assert.ok(/MKOPO WAKE WA AWALI \/ OWN EARLIER LOAN/.test(mod) && /KWA NAMBA \/ BY NUMBER/.test(mod) && /KWA JINA \/ BY NAME/.test(mod), 'the link kinds are said');
   const sql = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'fraud.js'), 'utf-8');

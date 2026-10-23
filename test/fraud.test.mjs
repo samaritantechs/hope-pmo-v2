@@ -154,6 +154,34 @@ test('a number on many loans: the links are capped and the rest counted; a loan 
   assert.ok(cases.every((c, i) => i === 0 || String(c.approvedDate) <= String(cases[i - 1].approvedDate)), 'newest first');
 });
 
+/* "the search in here will help credit analysts to search a number among the list before approval - but
+   return active customer even if not in the list - for search character only" */
+test('the look-up: the typed characters against the whole book -- a number in any spelling, a name in any case; loans first, newest first, then the sheet; scoped; at least three characters', async () => {
+  const db = fakeDb(tables());
+  const byNo = await portalApi(db, ADMIN, 'fraudFind', { q: '0799 000 099' }, NOW);
+  assert.equal(byNo.kind, 'number'); assert.equal(byNo.total, 2);
+  assert.deepEqual(byNo.hits.map(h => [h.t, h.with.ref, h.where.map(w => w.party + ':' + w.field).join()]),
+    [['loan', '11002000031', 'receiver:momo'], ['loan', '11002000021', 'receiver:momo']], 'both receivers, newest first; the pending loan is not in the book');
+  assert.deepEqual((await portalApi(db, ADMIN, 'fraudFind', { q: '+255799000099' }, NOW)).hits.map(h => h.with.ref), ['11002000031', '11002000021'], 'the same number in international spelling');
+  const run = await portalApi(db, ADMIN, 'fraudFind', { q: '000099' }, NOW);
+  assert.deepEqual(run.hits.map(h => h.t + ':' + h.with.ref + ':' + h.where[0].party), ['loan:11002000031:receiver', 'loan:11002000021:receiver', 'def:11009000011:guarantor'],
+    'any run of digits -- the two receivers, and the sheet row whose guarantor number ends the same way');
+  const byName = await portalApi(db, ADMIN, 'fraudFind', { q: 'mwita' }, NOW);
+  assert.equal(byName.kind, 'name');
+  assert.deepEqual(byName.hits.map(h => [h.t, h.with.ref, h.where.map(w => w.party).join()]),
+    [['loan', '11002000031', 'guarantor'], ['loan', '11002000021', 'customer'], ['def', '11002000031', 'guarantor']], 'his own loan, the loan he guarantees, and the sheet row where he stands guarantor');
+  const amina = await portalApi(db, ADMIN, 'fraudFind', { q: '0712000001' }, NOW);
+  assert.deepEqual(amina.hits.map(h => h.t + ':' + h.with.ref), ['loan:11002000012', 'loan:11002000011', 'def:11002000011'], 'a number that is on the sheet is found there too');
+  assert.deepEqual(amina.hits[0].where.map(w => w.party + ':' + w.field), ['customer:contact', 'customer:momo', 'receiver:momo'], 'every field it sits in');
+  assert.equal((await portalApi(db, ADMIN, 'fraudFind', { q: '0744000000' }, NOW)).total, 0, 'a clean number is clean');
+  await assert.rejects(portalApi(db, ADMIN, 'fraudFind', { q: '07' }, NOW), /angalau|at least/);
+  await assert.rejects(portalApi(db, ADMIN, 'fraudFind', { q: 'MW' }, NOW), /angalau|at least/);
+  // scoped: the GMO's teams only
+  const gmo = await portalApi(db, GMO, 'fraudFind', { q: '0799000099' }, NOW);
+  assert.deepEqual(gmo.hits.map(h => h.with.ref), ['11002000021']); assert.deepEqual(gmo.scope, ['KONGOWE']);
+  await assert.rejects(portalApi(db, NOTAB, 'fraudFind', { q: '0799000099' }, NOW), /haujafunguliwa|not open to your role/);
+});
+
 test('no deck, no loans: an empty, honest answer', async () => {
   const t = tables(); t.defaulter_snapshots = []; t.loans = [];
   const r = await portalApi(fakeDb(t), ADMIN, 'fraudCases', {}, NOW);

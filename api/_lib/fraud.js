@@ -166,9 +166,10 @@ export function detect(loans, defaults) {
   return cases;
 }
 
-/** The screen's one call. */
-export async function fraudCases(db, user, _args, nowMs = Date.now()) {
-  return cachedAnswer(db, 'fraud', user, nowMs, async () => {
+/** THE BOOK, read once a minute per scope and shared by the case list and the look-up: every
+    approved loan this code may see, and the current defaults deck. */
+async function readBook_(db, user, nowMs) {
+  return cachedAnswer(db, 'fraudbook', user, nowMs, async () => {
     const teams = user.teams && user.teams.length ? user.teams : null;
     const [loans, deck] = await Promise.all([
       fetchAll(() => {
@@ -179,13 +180,70 @@ export async function fraudCases(db, user, _args, nowMs = Date.now()) {
       latestDeckAnyWeekday(db, 'defaulter_snapshots', { snapshot_type: 'current' },
         { notAfter: todayKey(nowMs), teams, columns: DEF_COLS }),
     ]);
-    const cases = detect(loans || [], deck.rows || []);
+    return { loans: loans || [], deck, teams: teams ? teams.slice() : null };
+  });
+}
+
+/** The screen's list. */
+export async function fraudCases(db, user, _args, nowMs = Date.now()) {
+  return cachedAnswer(db, 'fraud', user, nowMs, async () => {
+    const book = await readBook_(db, user, nowMs);
+    const cases = detect(book.loans, book.deck.rows || []);
     return {
       ok: true, cases,
-      scanned: { loans: (loans || []).length, defaults: (deck.rows || []).length },
-      deck: { date: deck.date || null, weekdays: deck.weekdays || [] },
-      scope: teams ? teams.slice() : null,
+      scanned: { loans: book.loans.length, defaults: (book.deck.rows || []).length },
+      deck: { date: book.deck.date || null, weekdays: book.deck.weekdays || [] },
+      scope: book.teams,
       stages: SALES_STAGES.slice(),
     };
   });
+}
+
+/** THE LOOK-UP BEFORE APPROVAL.
+      "the search in here will help credit analysts to search a number among the list before
+       approval - but return active customer even if not in the list - for search character only"
+    The typed characters against the WHOLE book this code may see, not only the cases: every
+    approved loan's six party fields and the defaults sheet's four. Digits typed find a number
+    containing them (a local 0712… or a 255712… is read as the same nine digits); letters find a
+    name containing them. The same book as the case list, so a number that is clean here is
+    clean in the detector too. Loans first, newest first, then the sheet; capped, and the total
+    said. */
+export const FIND_MIN = 3, FIND_MAX = 100;
+export async function fraudFind(db, user, args, nowMs = Date.now()) {
+  const raw = S_(args && args.q).slice(0, 80);
+  const bare = raw.replace(/[\s\-+().]/g, '');
+  const isNumber = /^\d+$/.test(bare);
+  const q = isNumber
+    ? (/^255\d{9}$/.test(bare) ? bare.slice(3) : /^0\d{9}$/.test(bare) ? bare.slice(1) : bare)
+    : raw.toUpperCase().replace(/[^A-Z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (q.length < FIND_MIN) {
+    const e = new Error('Andika angalau herufi au tarakimu ' + FIND_MIN + '. / Type at least ' + FIND_MIN + ' letters or digits.');
+    e.status = 400; throw e;
+  }
+  const book = await readBook_(db, user, nowMs);
+  const has = isNumber
+    ? v => { const d = S_(v).replace(/\D/g, ''); return !!d && d.includes(q); }
+    : v => S_(v).toUpperCase().replace(/[^A-Z\s]/g, ' ').replace(/\s+/g, ' ').includes(q);
+  const hits = [];
+  for (const l of book.loans) {
+    const fields = isNumber
+      ? [['customer', 'contact', l.contact], ['customer', 'momo', l.momo], ['receiver', 'momo', l.recipient_momo], ['guarantor', 'contact', l.guarantor_contact]]
+      : [['customer', 'name', l.full_name], ['receiver', 'name', l.recipient_full_name], ['guarantor', 'name', l.guarantor_name]];
+    const where = fields.filter(f => has(f[2])).map(f => ({ party: f[0], field: f[1], value: S_(f[2]) }));
+    if (where.length) hits.push({ t: 'loan', where, with: loanSummary(l) });
+  }
+  for (const d of book.deck.rows || []) {
+    const fields = isNumber
+      ? [['customer', 'contact', d.contact], ['guarantor', 'contact', d.guarantor_contact]]
+      : [['customer', 'name', d.full_name], ['guarantor', 'name', d.guarantor_name]];
+    const where = fields.filter(f => has(f[2])).map(f => ({ party: f[0], field: f[1], value: S_(f[2]) }));
+    if (where.length) hits.push({ t: 'def', where, with: defSummary(d) });
+  }
+  hits.sort((a, b) => ((a.t === 'def') - (b.t === 'def'))
+    || String(b.with.approvedDate || b.with.deckDate || '').localeCompare(String(a.with.approvedDate || a.with.deckDate || '')));
+  return {
+    ok: true, q: raw, kind: isNumber ? 'number' : 'name', hits: hits.slice(0, FIND_MAX), total: hits.length,
+    scanned: { loans: book.loans.length, defaults: (book.deck.rows || []).length },
+    deck: { date: book.deck.date || null }, scope: book.teams,
+  };
 }

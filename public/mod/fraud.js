@@ -84,7 +84,7 @@ function frChipText_(r){ return r.strong ? 'KWA NAMBA / NUMBER' : 'KWA JINA / NA
    the page (one read, kept a minute on the server), so every pick here is a repaint, not a
    request: team, the officer who prepared the loan, strength, the kind of link, and the order.
    The counters follow the pick, with "x / N" saying how much of the book is on screen. */
-var FR = { cases: [], meta: {}, team: '', officer: '', strength: '', kind: '', sort: 'new' };
+var FR = { cases: [], meta: {}, team: '', officer: '', strength: '', kind: '', sort: 'new', q: '' };
 function frSet_(k, v){ FR[k] = v; frDraw_(); paint(true); }
 function frReset_(){ FR.team = ''; FR.officer = ''; FR.strength = ''; FR.kind = ''; FR.sort = 'new'; frDraw_(); paint(true); }
 function frFiltered_(){
@@ -144,6 +144,16 @@ function frDraw_(){
     + frSelect_('sort', 'Panga / Sort', 'Mpya kwanza / Newest first', [{ v: 'old', t: 'Za zamani kwanza / Oldest first' }, { v: 'team', t: 'Timu / Team' }, { v: 'officer', t: 'Aliyeandaa / Created by' }, { v: 'amount', t: 'Kiasi kikubwa / Largest first' }, { v: 'links', t: 'Viungo vingi / Most links' }])
     + '<button class="btn sm ghost" onclick="frReset_()">Futa vichujio / Clear</button>'
     + '<span class="mut" style="font-size:11.5px">Zinaonyeshwa / Showing <b>' + money(shown.length) + '</b> / ' + money(FR.cases.length) + '</span>'
+    + '</div>'
+    /* THE LOOK-UP BEFORE APPROVAL -- "the search in here will help credit analysts to search a
+       number among the list before approval - but return active customer even if not in the
+       list - for search character only". Against the whole book (fraudFind), not the cases on
+       the page; the answer opens in the drawer (frFindDrawer_). */
+    + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid #e5e7eb">'
+    + '<div class="fld" style="flex:1;min-width:230px"><label>Angalia kabla ya idhini / Check before approval — namba au jina / a number or a name</label>'
+    + '<input id="frQ" value="' + esc(FR.q || '') + '" placeholder="0712… au / or JINA" onkeydown="if (event.key === \'Enter\') frFind_()"></div>'
+    + '<button class="btn sm" onclick="frFind_()">Tafuta kwenye kitabu chote / Search the whole book</button>'
+    + '<span class="mut" style="font-size:11px">mikopo yote iliyoidhinishwa na defaults sheet, si kesi tu / every approved loan and the defaults sheet, not only the cases</span>'
     + '</div></div>'
     + '<div class="note">Kanuni / The rule: mkopo ulioidhinishwa huwa <b>kesi</b> ikiwa jina au namba ya <b>mteja, mpokeaji au mdhamini</b> wake inaonekana kwenye mkopo mwingine ulioidhinishwa wa mteja mwingine (safu yoyote kati ya tatu), au kwenye <b>defaults sheet ya sasa</b> (mteja mwingine, au mkopo wake wa awali ambao bado una deni). Mikopo ya awali ya mteja huyo huyo si kiungo. Namba = kiungo imara; jina pekee = dhaifu (majina ya neno moja hayalinganishwi). '
     + '/ An approved loan is a <b>case</b> when a name or number of its <b>customer, receiver or guarantor</b> appears on another customer\'s approved loan (any of the three columns), or on the <b>current defaults sheet</b> (another customer, or this customer\'s own earlier loan still owing). A customer\'s own earlier loans are not a link. A number is a strong link; a name alone is weak (one-word names are not compared).'
@@ -164,6 +174,70 @@ function frDraw_(){
     col('links', 'Viungo / Links'),
     { key: 'strong', label: 'Nguvu / Strength', kind: 'chip', chip: frChipCls_, get: frChipText_ }];
   ONROW = function(r){ frCard_(r._case); };
+}
+
+function frFind_(){
+  var box = document.getElementById('frQ'), q = box ? String(box.value || '').trim() : '';
+  if (q.length < 3) { toast('Andika angalau herufi au tarakimu 3. / Type at least 3 letters or digits.', true); if (box) box.focus(); return; }
+  FR.q = q;
+  var btn = document.querySelector('button[onclick="frFind_()"]'); if (btn) btn.disabled = true;
+  srv('fraudFind', { q: q }).then(function(d){ if (btn) btn.disabled = false; frFindDrawer_(d); })
+    .catch(function(e){ if (btn) btn.disabled = false; toast(String(e.message || e), true); });
+}
+function frFindDrawer_(d){
+  var hits = d.hits || [], byId = {};
+  FR.cases.forEach(function(c){ byId[c.id] = c; });
+  var loanHits = hits.filter(function(h){ return h.t === 'loan'; }), defHits = hits.filter(function(h){ return h.t === 'def'; });
+  var found = function(h){ return h.where.map(function(w){ return frParty_(w.party).split(' / ')[0] + ' ' + (w.field === 'name' ? 'jina' : w.field === 'momo' ? 'momo' : 'simu') + ' <b>' + esc(w.value) + '</b>'; }).join(', '); };
+  var html = '<h3 style="margin:0 0 2px">Matokeo / Results · “' + esc(d.q || '') + '”</h3>'
+    + '<div class="hint" style="margin-bottom:8px">' + (d.kind === 'number' ? 'namba / a number' : 'jina / a name') + ' · '
+    + money(d.total || 0) + ' ' + (d.total === 1 ? 'mahali / place' : 'mahali / places') + ' kwenye mikopo ' + money((d.scanned || {}).loans || 0)
+    + ' iliyoidhinishwa na defaults sheet ' + ((d.deck || {}).date ? 'ya ' + esc(d.deck.date) : '') + ' / in ' + money((d.scanned || {}).loans || 0)
+    + ' approved loans and the defaults sheet' + (d.scope && d.scope.length ? ' · timu zako tu / your teams only' : '')
+    + ((d.total || 0) > hits.length ? ' · ' + money(hits.length) + ' zinaonyeshwa / shown' : '') + '</div>';
+  if (!hits.length) {
+    html += '<div class="note" style="background:#ecfdf3;border-color:#abefc6">✅ Haipo kwenye kitabu: hakuna mkopo ulioidhinishwa wala mstari wa defaults sheet wenye “' + esc(d.q || '') + '”. '
+      + '/ Not in the book: no approved loan and no defaults-sheet row carries “' + esc(d.q || '') + '”.</div>';
+  }
+  /* THE LATEST APPEARANCE FIRST -- "search return latest appearance of the searched no in
+     previous approved info - whether holding previous fraud already or not". The newest
+     approved loan the characters sit on, said whole, with whether it already holds a case. */
+  if (loanHits.length) {
+    var top = loanHits[0], tw = top.with, tc = byId[tw.id];
+    html += '<div class="card" style="padding:10px;margin:6px 0 10px;border-left:4px solid ' + (tc ? '#B42318' : '#0B2A6B') + '">'
+      + '<div class="mut" style="font-size:10.5px;letter-spacing:.3px">MARA YA MWISHO KUONEKANA KWENYE MIKOPO ILIYOIDHINISHWA / LATEST APPEARANCE IN APPROVED LOANS</div>'
+      + '<div style="font-size:15px;font-weight:700;margin:2px 0">' + esc(tw.name || '') + ' · REF ' + esc(tw.ref || '') + '</div>'
+      + '<div style="font-size:12px">' + found(top) + ' · ' + esc(tw.team || '') + ' · ' + esc(tw.stage || '')
+      + ' · imeidhinishwa / approved ' + frWhen_(tw.approvedDate) + (tw.approvedBy ? ' na / by ' + esc(tw.approvedBy) : '')
+      + (tw.createdBy ? ' · imeandaliwa na / created by ' + esc(tw.createdBy) : '') + ' · TZS ' + money(tw.principal) + '</div>'
+      + '<div style="margin-top:5px">' + (tc
+          ? '<span class="chip bad">INA KESI TAYARI / ALREADY HOLDS A CASE · ' + money(tc.nLinks) + ' viungo</span> '
+            + '<a href="#" onclick="frCard_(FR.cases.filter(function(x){ return x.id === \'' + esc(tw.id) + '\'; })[0]);return false">fungua kesi / open the case &rarr;</a>'
+          : '<span class="chip warn">HAINA KESI BADO / NO CASE YET</span> <span class="mut" style="font-size:11px">lakini namba au jina lipo kwenye mkopo huu / but the characters sit on this loan</span>')
+      + (loanHits.length > 1 ? ' <span class="mut" style="font-size:11px">· mikopo mingine ' + money(loanHits.length - 1) + ' hapa chini / ' + money(loanHits.length - 1) + ' earlier loan(s) below</span>' : '')
+      + '</div></div>';
+  }
+  if (loanHits.length) {
+    html += '<h4 style="margin:10px 0 4px">Mikopo iliyoidhinishwa / Approved loans (' + money(loanHits.length) + ')</h4>'
+      + '<div class="scroll"><table><thead><tr><th>Ilipatikana kama / Found as</th><th>Mteja / Customer</th><th>REF</th><th>Timu / Team</th><th>Hali / Stage</th><th>Imeidhinishwa / Approved</th><th class="r">Kiasi / Principal</th><th>Kesi / Case</th></tr></thead><tbody>'
+      + loanHits.map(function(h){ var w = h.with, c = byId[w.id];
+          return '<tr' + (c ? ' style="cursor:pointer" onclick="frCard_(FR.cases.filter(function(x){ return x.id === \'' + esc(w.id) + '\'; })[0])"' : '') + '>'
+            + '<td>' + found(h) + '</td><td>' + esc(w.name || '') + '</td><td>' + esc(w.ref || '') + '</td><td>' + esc(w.team || '') + '</td>'
+            + '<td>' + esc(w.stage || '') + '</td><td>' + frWhen_(w.approvedDate) + (w.approvedBy ? ' · ' + esc(w.approvedBy) : '') + '</td><td class="r">' + money(w.principal) + '</td>'
+            + '<td>' + (c ? '<span class="chip ' + (c.strong ? 'bad' : 'warn') + '">KESI · ' + money(c.nLinks) + ' viungo</span>' : '<span class="mut">—</span>') + '</td></tr>'; }).join('')
+      + '</tbody></table></div>';
+  }
+  if (defHits.length) {
+    html += '<h4 style="margin:10px 0 4px">Defaults sheet (' + money(defHits.length) + ')</h4>'
+      + '<div class="scroll"><table><thead><tr><th>Ilipatikana kama / Found as</th><th>Mteja / Customer</th><th>REF</th><th>Timu / Team</th><th>Hali / Status</th><th class="r">DC</th><th class="r">Madeni / Arrears</th><th class="r">Salio / Balance</th></tr></thead><tbody>'
+      + defHits.map(function(h){ var w = h.with;
+          return '<tr><td>' + found(h) + '</td><td>' + esc(w.name || '') + '</td><td>' + esc(w.ref || '') + '</td><td>' + esc(w.team || '') + '</td>'
+            + '<td>' + esc(w.status || '') + '</td><td class="r">' + (w.dc == null ? '—' : esc(w.dc)) + '</td><td class="r">' + money(w.arrears) + '</td><td class="r">' + money(w.balance) + '</td></tr>'; }).join('')
+      + '</tbody></table></div>';
+  }
+  html += '<div class="mut" style="font-size:10.5px;margin-top:8px">Kitabu hiki ni mikopo iliyoidhinishwa (approved, pending_disb, disbursed, funded, closed) na deki ya sasa ya defaults; maombi ambayo hayajaidhinishwa hayamo. '
+    + '/ The book is the approved loans and the current defaults deck; applications not yet approved are not in it.</div>';
+  drawer(html, { wide: true });
 }
 
 VIEWS.fraud = function(){
