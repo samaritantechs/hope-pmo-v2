@@ -31,7 +31,7 @@ const PUBLIC = new URL('../public/', import.meta.url).pathname;
    core first, so every slice that starts and ends inside one module still works; a slice that
    starts in a module and ends in the core bounds itself with page('name') instead. */
 const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
-const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports'];
+const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud'];
 const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
 const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
@@ -1906,6 +1906,29 @@ test('advance routing: Roles & access takes the approver role, the code form the
     assert.ok(sql.includes(col), 'RUN-ME-045 adds ' + col);
   }
   assert.ok(sql.split('\n').length < 100, 'under 100 lines');
+});
+
+/* THE FRAUD DETECTOR -- "I need a new nav 'Fraud Detector' where every approved loan with a
+   number or name among customer, guarantor or receiver that still exists in an another approved
+   of the three columns or in the current defaults sheet, auto list the case list that will open
+   card details containing previous involved loan details vs current. Autosorted newest to oldest".
+   The rule is on the server (api/_lib/fraud.js, tested in test/fraud.test.mjs); here: the tab
+   exists, is granted like audit, maps to its module, and the module draws the list and the card. */
+test('the Fraud Detector: a nav under Legal, admin-granted, its module lists cases newest first and opens the side-by-side card', async () => {
+  const core = appCore();
+  assert.ok(/\{ id:'fraud',\s+label:'Fraud Detector'/.test(core), 'the nav entry');
+  assert.ok(core.indexOf("{ id:'legal',") < core.indexOf("{ id:'fraud',"), 'directly under Legal');
+  assert.ok(/fraud:'fraud'/.test(core.match(/var MOD_OF = \{([\s\S]*?)\};/)[1]), 'mapped to its module');
+  assert.ok(/fraudCases:1/.test(core), 'a read, so the client cache survives it');
+  const { ADMIN_TABS, EXTRA_TABS, USER_TABS } = await import('../api/_lib/auth.js');
+  assert.ok(ADMIN_TABS.includes('fraud') && EXTRA_TABS.includes('fraud') && !USER_TABS.includes('fraud'), 'admins from the start, roles when ticked');
+  const mod = page('fraud');
+  assert.ok(/^VIEWS\.fraud = function/m.test(mod) && /srv\('fraudCases', \{\}\)/.test(mod), 'one call');
+  assert.ok(/col\('approvedDate', 'Imeidhinishwa \/ Approved', 'date'\)/.test(mod) && /ONROW = function\(r\)\{ frCard_\(r\._case\); \}/.test(mod), 'the list, a tap opens the card');
+  assert.ok(/Mkopo huu \/ This loan/.test(mod) && /Mkopo mwingine \/ Other loan/.test(mod) && /drawer\(html, \{ wide: true \}\)/.test(mod), 'this loan beside the linked one, wide');
+  assert.ok(/MKOPO WAKE WA AWALI \/ OWN EARLIER LOAN/.test(mod) && /KWA NAMBA \/ BY NUMBER/.test(mod) && /KWA JINA \/ BY NAME/.test(mod), 'the link kinds are said');
+  const sql = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'fraud.js'), 'utf-8');
+  assert.ok(/cachedAnswer\(db, 'fraud', user, nowMs/.test(sql) && /\.in\('team', teamMatchList\(teams\)\)/.test(sql) && /teams, columns: DEF_COLS/.test(sql), 'cached a minute per scope, both reads team-scoped at the database');
 });
 
 /* SCREENS THAT LOAD WHEN THEIR TAB OPENS -- "We can't load everything from there, these
