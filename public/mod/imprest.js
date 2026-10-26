@@ -237,7 +237,15 @@ function imprestDetailsDrawer_(r, opts){
         + '<div>Salio / Balance: <span class="chip '+imprestBalanceCls_(r)+'">'+esc(imprestBalanceText_(r))+'</span></div>'
         + '<button class="btn sm ghost" style="margin-top:6px" data-impp="'+esc(r.id)+'">Picha za risiti / Receipt photos</button>'
       : (opts.canRetire && r.mine && r.status==='approved'
-          ? '<button class="btn w" style="margin-top:10px" id="imRetireBtn" data-imr-id="'+esc(r.id)+'">Jaza retirement / File retirement</button>'
+          /* FUNDED BEFORE RETIRED -- "someone shouldn't be able to make retirement unless the
+             imprest was funded". The server refuses (imprestRetire, imprest.js); the button is
+             not drawn, and the server's own sentence -- how many are unfunded, and whom to see --
+             stands where it would have been. */
+          ? (r.fundedAmount==null
+              ? '<div class="note bad" style="margin-top:10px;display:block">⛔ <b>Retirement imefungwa / Retirement is closed.</b> '
+                + esc(opts.unfundedNote || 'Imprest hii haijarekodiwa kuwa imelipwa. Wasiliana na uhasibu irekodiwe kuwa imelipwa, kisha jaza retirement. / This imprest is not recorded as funded yet: check with Accounts to record it as funded before you file the retirement.')
+                + '</div>'
+              : '<button class="btn w" style="margin-top:10px" id="imRetireBtn" data-imr-id="'+esc(r.id)+'">Jaza retirement / File retirement</button>')
           : ''))
     + (opts.canFund && r.status==='approved'
       ? '<h4 style="margin:12px 0 4px">Weka kilicholipwa / Record what was funded</h4>'
@@ -359,6 +367,9 @@ VIEWS.impreq = function(){
     var spent = appr.reduce(function(s,r){ return s+(r.retiredAt?(r.retireTotal||0):0); }, 0);
     var toRefund = appr.reduce(function(s,r){ return s+(r.retireBalance!=null&&r.retireBalance>0?r.retireBalance:0); }, 0);
     var blocked = !!(d.unretired && d.unretired.length);
+    var unfunded = d.unfunded || [];
+    /* Every unretired one is also unfunded: "tap → Retire" would send them to a closed door. */
+    var retireClosed = blocked && d.unretired.every(function(id){ return unfunded.indexOf(id) >= 0; });
     var flash = S.imqFlash || null; S.imqFlash = null;
     /* THE PERSONAL DASHBOARD -- "dashboards of applications per signed in user". Built here,
        from the same rows the history table below already holds: no second read for it. */
@@ -378,8 +389,16 @@ VIEWS.impreq = function(){
          so nobody fills the whole form to be told at the end. The list below is where they
          retire: tap the row, then Retire. */
       + (blocked ? '<div class="note bad" style="margin:8px 0;display:block">⛔ <b>Ombi jipya limefungwa / New requests are closed.</b> '
-        + esc(d.unretiredNote || '') + '<br><span style="font-size:11.5px">Bofya ombi hilo kwenye orodha hapa chini &rarr; Retire. '
-        + '/ Tap that request in the list below &rarr; Retire.</span></div>' : '')
+        + esc(d.unretiredNote || '') + '<br><span style="font-size:11.5px">'
+        + (retireClosed
+            ? 'Retirement imefungwa hadi uhasibu warekodi malipo — tazama hapa chini. / Retirement is closed until Accounts records the funding; see below.'
+            : 'Bofya ombi hilo kwenye orodha hapa chini &rarr; Retire. / Tap that request in the list below &rarr; Retire.')
+        + '</span></div>' : '')
+      /* FUNDED BEFORE RETIRED -- "hit them with 'you have 3 unfunded imprests, check the account
+         to record them funded before you make the retirement!'" The server's own sentence
+         (imprestMine → unfundedNote, the one imprestRetire refuses with), said up front. */
+      + (unfunded.length ? '<div class="note bad" style="margin:8px 0;display:block">⛔ <b>Retirement imefungwa / Retirement is closed.</b> '
+        + esc(d.unfundedNote || '') + '</div>' : '')
       + '<div class="card"><div class="card-h">Ombi jipya / New imprest request'
         + '<span class="sub">chanya = gharama halisi / positive costs, seva inahesabu upya kwa kiwango cha wadhifa / the server recomputes at the role\'s own rate</span></div>'
         + '<div class="cleanbox">'
@@ -467,7 +486,7 @@ VIEWS.impreq = function(){
       {key:'approved', label:'Imeidhinishwa / Approved', kind:'money'},
       {key:'retireTotal', label:'Halisi / Actual', kind:'money'},
       col('comment','Maoni / Comment')];
-    ONROW = function(r){ imprestDetailsDrawer_(r, { canRetire:true }); };
+    ONROW = function(r){ imprestDetailsDrawer_(r, { canRetire:true, unfundedNote: d.unfundedNote || '' }); };
   });
 };
 

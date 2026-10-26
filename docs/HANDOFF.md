@@ -3181,6 +3181,34 @@ the answer cache and shared by the list and the look-up. Nothing on `/api/upload
 `/api/call`. Granted like `audit`: admins from the start, a role when ticked under Roles &
 access.
 
+## Part 23 — Imprest: funded before retired
+
+> "Am having a hard time to check in on the accountant (she ain't filling the funded amounts
+> on imprests), so someone shouldn't be able to make retirement unless the imprest was funded
+> — hit them with 'you have 3 unfunded imprests, check the account to record them funded
+> before you make the retirement!'"
+
+The accountant's one write (`imprestFund`: `funded_amount`, from the Ripoti tab) was nobody's
+problem but hers, so it went unwritten. The retirement is the one step every traveller must
+take — the next request waits on it (`imprestRequest`'s one-imprest-at-a-time gate) — so it is
+now the door that a missing funded amount closes, in front of the person who can walk over to
+Accounts.
+
+**The rule, in one place** (`unfundedOf_` / `isUnfunded_`, `api/_lib/imprest.js`): an
+approved request, not yet retired, whose `funded_amount` is still null. The same null the
+report's *Bado kulipwa / Not funded* counts and the drawer's *bado / not yet* shows. **0 is a
+recorded figure** and opens the door. A retirement filed before this rule on money never
+recorded is not counted: nothing of theirs waits on it.
+
+| Where | What it does |
+|---|---|
+| `imprestRetire` | refuses, ahead of the form, with the requester's whole debt: *Una imprest 2 zilizoidhinishwa ambazo hazijarekodiwa kuwa zimelipwa (date place · TZS …; …). Wasiliana na uhasibu zirekodiwe kuwa zimelipwa, kisha jaza retirement. / You have 2 unfunded imprests: check with Accounts to record them as funded before you file the retirement.* The list is read only on the way to a refusal; a retirement that goes through costs no read it did not cost before, and one whose money was recorded between the page and the tap goes through. |
+| `imprestMine` | returns `unfunded` (ids) and `unfundedNote` (that sentence) beside `unretired` / `unretiredNote`, from the rows it already holds. |
+| Omba imprest (`public/mod/imprest.js`) | a red *Retirement imefungwa / Retirement is closed* note up front with the sentence; the row's drawer draws the note where the *Jaza retirement* button would be. When every unretired imprest is also unfunded, the "new requests are closed" note no longer says "tap → Retire" but "closed until Accounts records the funding". |
+
+Nothing on `/api/upload` or `/api/call`; no migration; the Ripoti tab is unchanged — it is
+where the door is opened.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

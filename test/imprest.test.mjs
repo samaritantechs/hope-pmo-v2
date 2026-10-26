@@ -175,6 +175,7 @@ test('a new request is refused while an approved imprest is unretired, and allow
   await portalApi(db, STAFF2, 'imprestRequest', { fullName: 'Mary', email: 'm@x.com',
     imprestRole: 'field officer', travelDate: TODAY, purpose: 'y', accomDays: 1 }, NOW);
 
+  await portalApi(db, REP, 'imprestFund', { id: first.id, amount: 40000 }, NOW); // the retirement waits on Accounts (below)
   await portalApi(db, STAFF, 'imprestRetire', { id: first.id, accomActual: 30000, photos: [RECEIPT] }, NOW);
   const third = await ask({ destination: 'TANGA' });
   assert.ok(third.id, 'retired: the gate opens again');
@@ -307,6 +308,7 @@ test('an approved request is retired once, with a receipt, and its balance follo
   const db = db_();
   const r = await askOne(db, STAFF, { accomDays: 2 }); // 2*20000 = 40000
   await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true, approvedAmount: 40000 }, NOW);
+  await portalApi(db, REP, 'imprestFund', { id: r.id, amount: 40000 }, NOW); // the retirement waits on Accounts (below)
 
   await assert.rejects(portalApi(db, STAFF, 'imprestRetire',
     { id: r.id, accomActual: 40000, photos: [] }, NOW), /picha moja ya risiti|receipt photo/);
@@ -331,6 +333,55 @@ test('retirement is refused for a pending or someone else\'s request', async () 
   await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW);
   await assert.rejects(portalApi(db, STAFF2, 'imprestRetire',
     { id: r.id, accomActual: 1000, photos: [RECEIPT] }, NOW), /Ombi halipo|no longer exists/);
+});
+
+/* FUNDED BEFORE RETIRED -- "someone shouldn't be able to make retirement unless the imprest was
+   funded -- hit them with 'you have 3 unfunded imprests, check the account to record them funded
+   before you make the retirement!'" The refusal counts the requester's own unfunded (approved,
+   unretired) imprests; the page is told the same; 0 is a recorded figure and opens the door. */
+test('a retirement waits on Accounts recording the funding: refused with the count of every unfunded imprest, open on 0', async () => {
+  const t = tables();
+  // Retired before this rule, the money never recorded: nothing of John's waits on it, so it is not counted.
+  t.imprest_requests.push({ id: '00000000-0000-4000-8000-000000000001', staff_code: 'S1', staff_name: 'JOHN OFFICER',
+    status: 'approved', approved_amount: 5000, travel_date: '2026-06-01', destination: 'OLD', requested_at: '2026-05-30T09:00:00Z',
+    retired_at: '2026-06-02T09:00:00Z', retire_total: 5000, retire_balance: 0 });
+  const db = db_(t);
+  const ask = extra => portalApi(db, STAFF, 'imprestRequest', { fullName: 'John', email: 'j@x.com',
+    imprestRole: 'field officer', travelDate: TODAY, purpose: 'x', accomDays: 1, ...extra }, NOW);
+  const a = await ask({ destination: 'MTWARA' });
+  const b = await ask({ destination: 'LINDI', travelDate: '2026-07-27' });
+  await portalApi(db, GM, 'imprestDecide', { id: a.id, approve: true }, NOW);
+  await portalApi(db, GM, 'imprestDecide', { id: b.id, approve: true }, NOW);
+
+  await assert.rejects(portalApi(db, STAFF, 'imprestRetire', { id: a.id, accomActual: 20000, photos: [RECEIPT] }, NOW),
+    /hazijarekodiwa kuwa zimelipwa[\s\S]*You have 2 unfunded imprests: check with Accounts to record them as funded before you file the retirement/,
+    'refused, counting both -- not the one retired before the rule');
+  let mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unfunded, [a.id, b.id], 'the page is told which, by travel date');
+  assert.match(mine.unfundedNote, /2 unfunded imprests/);
+  assert.match(mine.unfundedNote, /MTWARA[\s\S]*LINDI/);
+  assert.doesNotMatch(mine.unfundedNote, /OLD/);
+  // The gate comes first: a form with no receipt is refused for the funding, not for the receipt.
+  await assert.rejects(portalApi(db, STAFF, 'imprestRetire', { id: a.id, accomActual: 20000, photos: [] }, NOW), /unfunded/);
+
+  await portalApi(db, REP, 'imprestFund', { id: a.id, amount: 0 }, NOW);
+  const ret = await portalApi(db, STAFF, 'imprestRetire', { id: a.id, accomActual: 20000, photos: [RECEIPT] }, NOW);
+  assert.equal(ret.total, 20000, '0 is a recorded figure: the retirement goes through');
+  mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unfunded, [b.id]);
+  await assert.rejects(portalApi(db, STAFF, 'imprestRetire', { id: b.id, accomActual: 20000, photos: [RECEIPT] }, NOW),
+    /haijarekodiwa kuwa imelipwa[\s\S]*You have 1 unfunded imprest: check with Accounts to record it as funded/,
+    'singular, once one is left');
+  // Mary's unfunded imprest is not John's debt.
+  const m = await portalApi(db, STAFF2, 'imprestRequest', { fullName: 'Mary', email: 'm@x.com',
+    imprestRole: 'field officer', travelDate: TODAY, purpose: 'y', accomDays: 1 }, NOW);
+  await portalApi(db, GM, 'imprestDecide', { id: m.id, approve: true }, NOW);
+  await portalApi(db, REP, 'imprestFund', { id: b.id, amount: 20000 }, NOW);
+  await portalApi(db, STAFF, 'imprestRetire', { id: b.id, accomActual: 20000, photos: [RECEIPT] }, NOW);
+  mine = await portalApi(db, STAFF, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unfunded, []); assert.equal(mine.unfundedNote, '');
+  mine = await portalApi(db, STAFF2, 'imprestMine', {}, NOW);
+  assert.deepEqual(mine.unfunded, [m.id]);
 });
 
 /* ===================================================================== REPORT AND FUNDING */
