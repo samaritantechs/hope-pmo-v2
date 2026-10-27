@@ -223,6 +223,39 @@ const unretiredNote_ = rows => 'Una imprest ' + rows.length + ' iliyoidhinishwa 
   + '). Retire hiyo kwanza, kisha omba. / You have ' + rows.length + ' approved imprest'
   + (rows.length === 1 ? '' : 's') + ' not yet retired. Retire the previous one first, then request.';
 
+/* FUNDED BEFORE RETIRED: NO RETIREMENT ON AN IMPREST ACCOUNTS HAS NOT RECORDED AS FUNDED.
+
+     "Am having a hard time to check in on the accountant (she ain't filling the funded amounts
+      on imprests), so someone shouldn't be able to make retirement unless the imprest was
+      funded -- hit them with 'you have 3 unfunded imprests, check the account to record them
+      funded before you make the retirement!'"
+
+   The retirement is the one step every traveller must take (the next request waits on it,
+   above), so it is the one place a missing funded_amount is certain to be noticed -- by the
+   person who can walk over to Accounts, rather than on a report nobody opens. The rule, in one
+   place: an APPROVED request, not yet retired, whose funded_amount is still null -- the same
+   null the report's toFund and the drawer's "bado / not yet" read, so "unfunded" means one
+   thing everywhere. 0 is a recorded figure and opens the door. A retirement filed before this
+   rule on money never recorded is not counted: nothing of theirs waits on it. The refusal
+   counts the requester's whole debt, not the one row, so the sentence is the one the page
+   shows (imprestMine) and the one the tap is refused with (imprestRetire). */
+const isUnfunded_ = r => String(r.status) === 'approved' && r.funded_amount == null && r.retire_total == null;
+const UNFUNDED_COLS = 'id, travel_date, destination, approved_amount, funded_amount, retire_total';
+async function unfundedOf_(db, code) {
+  const rows = await fetchAll(() => db.from('imprest_requests').select(UNFUNDED_COLS)
+    .eq('staff_code', code || '~none~').eq('status', 'approved').is('funded_amount', null).is('retire_total', null));
+  return rows.sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
+}
+const unfundedNote_ = rows => {
+  const n = rows.length, one = n === 1;
+  return 'Una imprest ' + n + (one ? ' iliyoidhinishwa ambayo haijarekodiwa kuwa imelipwa (' : ' zilizoidhinishwa ambazo hazijarekodiwa kuwa zimelipwa (')
+    + rows.map(r => (r.travel_date ? String(r.travel_date).slice(0, 10) : '?') + (r.destination ? ' ' + r.destination : '')
+      + ' · TZS ' + money0(num(r.approved_amount))).join('; ')
+    + '). Wasiliana na uhasibu ' + (one ? 'irekodiwe kuwa imelipwa' : 'zirekodiwe kuwa zimelipwa') + ', kisha jaza retirement. '
+    + '/ You have ' + n + ' unfunded imprest' + (one ? '' : 's') + ': check with Accounts to record '
+    + (one ? 'it' : 'them') + ' as funded before you file the retirement.';
+};
+
 /* --------------------------------------------------------------------------------- THE ASK
    "impRequest": staff_code is stamped from the SESSION, never trusted from the form; the
    accommodation rate is LOOKED UP from imprest_roles and stamped, never taken from the form's
@@ -355,9 +388,15 @@ export async function imprestMine(db, user) {
      would refuse. `unretired` carries the ids, `unretiredNote` the sentence the refusal uses. */
   const owed = rows.filter(r => String(r.status) === 'approved' && r.retire_total == null)
     .sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
+  /* The other gate, the same way: the retirements this page cannot open yet, through the test
+     imprestRetire applies, in the sentence it refuses with. */
+  const unfunded = rows.filter(isUnfunded_)
+    .sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
   return { ok: true, roles: roles.roles || [],
     unretired: owed.map(r => String(r.id)),
     unretiredNote: owed.length ? unretiredNote_(owed) : '',
+    unfunded: unfunded.map(r => String(r.id)),
+    unfundedNote: unfunded.length ? unfundedNote_(unfunded) : '',
     rows: rows.map(r => impRow(r, user.code)).sort((x, y) => (y.at || 0) - (x.at || 0)) };
 }
 
@@ -527,6 +566,16 @@ export async function imprestRetire(db, user, args, nowMs) {
   if (!row || String(row.staff_code || '') !== String(user.code || '')) bad('Ombi halipo. / That request no longer exists.');
   if (String(row.status) !== 'approved') bad('Retirement ni ya ombi lililoidhinishwa tu. / Only an approved request can be retired.');
   if (row.retire_total != null) bad('Ombi hili tayari lina retirement. / This request has already been retired.');
+  /* FUNDED BEFORE RETIRED (unfundedOf_ above), ahead of the form so a person who cannot retire
+     is told that and not sent back for a receipt. Decided on the row already in hand; the list
+     behind the sentence is read only on the way to a refusal, so a retirement that goes through
+     costs no read it did not cost before. Read fresh, on the requester's code: if Accounts
+     recorded the money between the page and the tap, the row is no longer on the list and the
+     retirement goes through. */
+  if (isUnfunded_(row)) {
+    const owed = await unfundedOf_(db, user.code);
+    if (owed.some(r => String(r.id) === id)) bad(unfundedNote_(owed));
+  }
 
   const fare = intNN(a.fareActual), accom = intNN(a.accomActual);
   const o1 = intNN(a.other1Actual), o2 = intNN(a.other2Actual), o3 = intNN(a.other3Actual);
