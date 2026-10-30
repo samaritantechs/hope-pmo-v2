@@ -372,6 +372,29 @@ export const LOAN_STAGE_RPC = {
   },
 };
 
+/* db/RUN-ME-047-loan-totals-by-team.sql, transcribed: one row per team with the count and the
+   TOTAL LOAN (P+I) of every sale at the stages handed in, team-scoped upper-cased and trimmed. */
+export const LOAN_TOTALS_RPC = {
+  loan_totals_by_team(store, a = {}) {
+    const rows = store.loans ? store.loans.rows : [];
+    const up = v => String(v == null ? '' : v).trim().toUpperCase();
+    const want = a.p_teams ? a.p_teams.map(up) : null;
+    const stages = a.p_stages ? a.p_stages.map(String) : null;
+    const by = new Map();
+    for (const r of rows) {
+      if (stages && !stages.includes(String(r.stage == null ? '' : r.stage))) continue;
+      if (want && !want.includes(up(r.team))) continue;
+      const k = r.team == null ? null : r.team;
+      let g = by.get(k);
+      if (!g) { g = { team: k, loans: 0, loan_amt: 0, first_day: null }; by.set(k, g); }
+      g.loans++; g.loan_amt += Number(r.loan_amt) || 0;
+      const d = r.disb_date || r.approved_date;
+      if (d && (!g.first_day || String(d) < g.first_day)) g.first_day = String(d).slice(0, 10);
+    }
+    return [...by.values()];
+  },
+};
+
 /* db/RUN-ME-017-expected-phone-window.sql, transcribed. One row per DISTINCT customer on any
    today/tomorrow expected sheet dated on or after p_from -- the two-week window the phone
    index reads as ONE trip instead of fourteen days of raw sheet pages. */

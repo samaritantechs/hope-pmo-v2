@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -330,7 +330,14 @@ const BUDGETS = [
   ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  6,  1000,  6, 1000],
   ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 10,  1500,  9, 1200],
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
-  ['Portfolio at Risk',       'par',                 {}, ADMIN,  5,   800,  5,  800],
+  /* 5 -> 6 migrated, 5 -> 7 until then (2026-10-30): the all-time PAR's denominator -- every
+     sale's total loan (P+I), per team -- is one grouped call (RUN-ME-047). Before that is
+     pasted the call comes back "no such function" and the sales' team and amount columns are
+     read instead: the failed call and the read, two trips and every sale row (2,540 on this
+     fixture, 800 -> 3,500; tens of thousands on the live book, and the screen says so). That
+     is the cost of not pasting RUN-ME-047, measured here so it stays visible; the migrated
+     world keeps 800. */
+  ['Portfolio at Risk',       'par',                 {}, ADMIN,  7,  3500,  6,  800],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
   /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
      the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
@@ -462,7 +469,7 @@ const WORLDS = [
   /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
      counts collapse into one grouped call the same way the team-day sums do, and a budget that
      leaves that out is measuring a deployment nobody is running. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC } }, 6, 7],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {
@@ -1422,7 +1429,7 @@ function reuploadedBook() {
 
 const REUPLOAD_WORLDS = [
   ['migration not run yet', undefined],
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC } }],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC } }],
 ];
 
 test('speed: a week uploaded twice is not read twice', async () => {

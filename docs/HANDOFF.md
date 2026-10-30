@@ -3247,6 +3247,42 @@ parts under 900,000 characters, and each part **one statement** of data-modifyin
 (teams created and loans referencing them in the same statement; the foreign key is checked
 at the statement's end and sees them), whose result row is the receipt.
 
+**What the history showed at its join** (CHECK-1 / CHECK-2, read-only, in the scratchpad):
+the table is continuous from 17 April 2024 to 1 July 2026 (the export's end), empty from
+2 July to 1 August 2026, and continuous again from 3 August 2026 on the daily Approved uploads
+(stage `approved`, no disbursement date). Tuesday 25 August 2026 holds nothing; 24 September
+reads low. April 2026 is about 1,600 loans short (the 30,000-row export cap). Two more exports
+close it: 1 April–31 July 2026 and 1 August–30 October 2026, each under the cap; the second
+also stamps the disbursement date onto the rows the daily uploads filed, which is what the
+Audit report's "PAR > 30 for loans disbursed in the month" reads.
+
+## Part 25 — All-time PAR on the Portfolio at Risk tab
+
+> "the todays defaulter is already the alltime defaulter so comparing it to total loan
+> (principle+interest) by all team and grand total is alltime par per team and company"
+> "i said P+I since we use total loan in getting par not principle, so if there is a total
+> loan column, we live with it"
+
+The deck's PAR (arrears over the defaulters' own balance) says how bad the defaults are, not
+how much of what a team was ever lent is overdue. Today's deck is every defaulter there is,
+whenever they borrowed; with the sales history in the loans table (Part 24) the other
+denominator exists: the **total loan (P+I, the `loan_amt` column) of every sale the team ever
+made**. Arrears over that is the team's **all-time PAR**; the grand total is the company's.
+
+**One rule for "a sale"**: a row at any `SALES_STAGES` stage (`approved` onward), the same
+list the dashboard's sales figure uses, handed to the database so it is not spelled twice.
+
+| Where | What |
+|---|---|
+| `db/RUN-ME-047-loan-totals-by-team.sql` | `loan_totals_by_team(p_teams, p_stages)`: one row per team — loans, total loan, first day — team-scoped at the database (upper-cased, trimmed, like `loan_stage_counts`). Optional: without it the tab reads every sale's team and amount and adds them here, and says so on the screen. |
+| `loanTotalsByTeam` (`api/_lib/portal-core.js`) | the RPC, else the fallback; kept a minute per scope by the answer cache. |
+| `par` | each team row carries `loans`, `totalLoan`, `parAll`; a team lent to with nobody in default today is listed at 0% (the best row, not a missing one); `totals.parAll` is the company's; `allTime` says how much was lent, since when, and whether the database summed it. |
+| PAR tab (`public/mod/reports.js`) | a *PAR all-time* card, three Orodha columns (Loans all-time, Total loan all-time (P+I), PAR all-time %), the foot line, and the note while RUN-ME-047 is not pasted. `BUILD 2026-10-30-a`. |
+
+Budget: `par` 5 → 6 trips in `test/speed.test.mjs`, reason in the diff. Nothing on
+`/api/upload` or `/api/call`. The whole-book figure the Audit report was waiting for (task 7)
+is this same denominator; the Audit panel still reads cohorts and the month-end deck as before.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
