@@ -3827,12 +3827,54 @@ function paidCount(r) {
   return Math.min(12, Math.max(0, pc));
 }
 
+/* ALL-TIME PAR.
+
+     "the todays defaulter is already the alltime defaulter so comparing it to total loan
+      (principle+interest) by all team and grand total is alltime par per team and company"
+
+   The deck's PAR (arrears over the balance still owed by the defaulters) says how bad the
+   defaults are. It cannot say how much of what a team was EVER lent is now overdue, because
+   its denominator is the defaulters' own balance. Today's deck is every defaulter there is,
+   whenever they borrowed -- so against the TOTAL LOAN (principal + interest, the LOAN AMT
+   column) of every sale the team ever made, the same arrears are the team's all-time PAR, and
+   the grand total is the company's. The denominator exists since the sales history from
+   17 April 2024 went into the loans table (SALES-HISTORY parts, 2026-10-30).
+
+   TOTAL LOAN, NOT PRINCIPAL -- "i said P+I since we use total loan in getting par not
+   principle". A sale is a row at any SALES_STAGES stage: the same rule the dashboard's sales
+   figure uses, handed to the database so it lives in one place.
+
+   SUMMED BY THE DATABASE (db/RUN-ME-047-loan-totals-by-team.sql): one journey, one row per
+   team, team-scoped there. Until that function is pasted, the rows come down and are added
+   here, and the screen says so -- the tab must work in the un-migrated state like every other.
+   Kept a minute per scope by the answer cache: it changes only when a sale is uploaded. */
+async function loanTotalsByTeam(db, user, nowMs) {
+  return cachedAnswer(db, 'loanTotalsByTeam', user, nowMs, async () => {
+    const teams = user.teams;
+    const t = upperTeams(teams);
+    const { data, error } = await rpcAll(db, 'loan_totals_by_team', { p_teams: t.length ? t : null, p_stages: SALES_STAGES });
+    if (!error && Array.isArray(data)) {
+      return { rows: data.map(r => ({ team: r.team, loans: num(r.loans), totalLoan: num(r.loan_amt), firstDay: r.first_day || null })), light: true };
+    }
+    const rows = await fetchAll(() => onTeams(db.from('loans').select('team, loan_amt, disb_date, approved_date').in('stage', SALES_STAGES), teams));
+    const by = {};
+    for (const r of rows) {
+      const b = bucket(by, K(r.team), { team: r.team, loans: 0, totalLoan: 0, firstDay: null });
+      b.loans++; b.totalLoan += num(r.loan_amt);
+      const d = r.disb_date || r.approved_date;
+      if (d && (!b.firstDay || String(d) < String(b.firstDay))) b.firstDay = String(d).slice(0, 10);
+    }
+    return { rows: Object.values(by).map(({ key, ...b }) => b), light: false };
+  });
+}
+
 async function par(db, user, _args, nowMs) {
   const snap = await defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs) });
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
   const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
   const teamBranch = await branchByTeam(db);
+  const lent = await loanTotalsByTeam(db, user, nowMs);
   const byStatus = {}, byTeam = {};
   let totArrears = 0, totBalance = 0, totLoan = 0;
   for (const r of rows) {
@@ -3847,18 +3889,36 @@ async function par(db, user, _args, nowMs) {
     if (!byStatus[st]) byStatus[st] = { status: st, customers: 0, arrears: 0 };
     byStatus[st].customers++; byStatus[st].arrears += arr;
     const t = r.team || '(no team)';
-    if (!byTeam[t]) byTeam[t] = { team: t, customers: 0, arrears: 0, balance: 0, loanSum: 0 };
-    byTeam[t].customers++; byTeam[t].arrears += arr; byTeam[t].balance += bal; byTeam[t].loanSum += loan;
+    const bt = bucket(byTeam, K(t), { team: t, customers: 0, arrears: 0, balance: 0, loanSum: 0, loans: 0, totalLoan: 0 });
+    bt.customers++; bt.arrears += arr; bt.balance += bal; bt.loanSum += loan;
+  }
+  /* Every sale ever made, laid under the team's arrears. A team that was lent to and has no
+     defaulter today is listed too, at 0%: that is the best row on the board, not a missing one. */
+  let lentLoans = 0, lentTotal = 0, firstDay = null;
+  for (const l of lent.rows) {
+    const bt = bucket(byTeam, K(l.team || '(no team)'), { team: l.team || '(no team)', customers: 0, arrears: 0, balance: 0, loanSum: 0, loans: 0, totalLoan: 0 });
+    bt.loans += l.loans; bt.totalLoan += l.totalLoan;
+    lentLoans += l.loans; lentTotal += l.totalLoan;
+    if (l.firstDay && (!firstDay || l.firstDay < firstDay)) firstDay = l.firstDay;
   }
   const finish = b => ({ customers: b.customers, arrears: b.arrears, balance: b.balance,
     avgLoan: b.customers ? Math.round(b.loanSum / b.customers) : 0,
     par: pctOf(b.arrears, b.balance), share: pctOf(b.arrears, totArrears) });
+  const allTime = b => ({ loans: b.loans, totalLoan: b.totalLoan, parAll: b.totalLoan > 0 ? pctOf(b.arrears, b.totalLoan) : null });
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
     byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
-    byTeam: Object.values(byTeam).map(t => ({ team: t.team, branch: teamBranch.get(K(t.team)) || null, ...finish(t) })).sort((a, b) => b.arrears - a.arrears),
+    byTeam: Object.values(byTeam).map(({ key, ...t }) => ({ team: t.team, branch: teamBranch.get(K(t.team)) || null, ...finish(t), ...allTime(t) }))
+      .sort((a, b) => b.arrears - a.arrears || b.totalLoan - a.totalLoan),
     totals: { customers: rows.length, arrears: totArrears, balance: totBalance,
-      avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance) } };
+      avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance),
+      loans: lentLoans, totalLoan: lentTotal, parAll: lentTotal > 0 ? pctOf(totArrears, lentTotal) : null },
+    /* The all-time denominator, said out loud: how much was ever lent, since when, and whether
+       the database summed it or this server did (which is the sign RUN-ME-047 is not pasted). */
+    allTime: { loans: lentLoans, totalLoan: lentTotal, since: firstDay, light: lent.light,
+      note: lent.light ? null
+        : 'Jumla ya mikopo imejumlishwa hapa seva kutoka kwenye safu zote — endesha db/RUN-ME-047-loan-totals-by-team.sql ili database ijumlishe. '
+          + '/ The all-time totals were summed on this server from every sale row — run db/RUN-ME-047-loan-totals-by-team.sql to have the database sum them.' } };
 }
 
 /* =====================================================================================

@@ -348,17 +348,24 @@ VIEWS.monthreport = function(){
 /* PAR reads two ways and the meeting uses both: how OLD the arrears are, and how BIG the
    loans behind them are. The second is what gets acted on -- it says where the overdue money
    is concentrated -- so it leads. */
+/* AND THE ALL-TIME PAR: today's deck is every defaulter there is, so its arrears over the TOTAL
+   LOAN (P+I) of everything the team was ever lent, from the loans table, is the team's all-time
+   PAR; the grand total is the company's. The total loan column, never the principal. */
 VIEWS.par = function(){
   return srv('par').then(function(d){
-    var t = d.totals;
+    var t = d.totals, at = d.allTime || {};
     HEAD = '<div class="kpis">'
       + kpi('At-risk arrears', money(t.arrears), 'overdue across defaulters', 'bad')
       + kpi('Outstanding balance', money(t.balance), 'remaining portfolio in default')
       + kpi('Portfolio at risk', pct(t.par), 'arrears ÷ outstanding balance',
             (t.par>=50?'bad':(t.par>=25?'warnc':'')))
+      + kpi('PAR all-time', t.parAll == null ? '—' : pct(t.parAll),
+            'arrears ÷ total loan (P+I) ever lent: TZS ' + money(at.totalLoan) + ' on ' + money(at.loans) + ' loans' + (at.since ? ' since ' + at.since : ''),
+            (t.parAll>=10?'bad':(t.parAll>=5?'warnc':'')))
       + kpi('Defaulters', money(t.customers), d.weekday+' · '+(d.date||''))
       + kpi('Average principal', money(t.avgLoan), 'mean principal in default (interest stripped)')
       + '</div>'
+      + (at.note ? '<div class="note">' + esc(at.note) + '</div>' : '')
       + board('pBand','Kwa ukubwa wa mkopo / By principal band','where the overdue money sits by loan size', d.byBand,
           [col('band','Band (principal)'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
            {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
@@ -373,9 +380,12 @@ VIEWS.par = function(){
     S.rows = d.byTeam;
     S.cols = [col('branch','Branch'), col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
       {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
-      col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true}];
+      col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true},
+      col('loans','Loans all-time','num'), col('totalLoan','Total loan all-time (P+I)','money'),
+      {key:'parAll', label:'PAR all-time %', kind:'pct', lowGood:true, title:'Arrears ya leo ÷ jumla ya mikopo (P+I) iliyowahi kutolewa kwa timu / today\'s arrears over everything ever lent to the team'}];
     ONROW = null;
-    S.foot = 'Defaulters: '+money(t.customers)+' · Arrears: TZS '+money(t.arrears)+' · PAR: '+pct(t.par);
+    S.foot = 'Defaulters: '+money(t.customers)+' · Arrears: TZS '+money(t.arrears)+' · PAR: '+pct(t.par)
+      + ' · Total loan all-time: TZS '+money(t.totalLoan)+' ('+money(t.loans)+' loans) · PAR all-time: '+(t.parAll == null ? '—' : pct(t.parAll));
   });
 };
 

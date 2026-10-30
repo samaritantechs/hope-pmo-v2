@@ -3209,6 +3209,80 @@ recorded is not counted: nothing of theirs waits on it.
 Nothing on `/api/upload` or `/api/call`; no migration; the Ripoti tab is unchanged — it is
 where the door is opened.
 
+## Part 24 — A docket is the customer's, not the loan's
+
+Found while writing the 2024–2026 sales history in by SQL (35,672 disbursed loans, one row
+per LOAN ID): **5,705 dockets carry more than one loan.** The LOAN ID is the docket's digits
+with the track number on the end — docket `5-221-81653` is loans `5221816532` and
+`5221816534` — so a repeat borrower's second, third and fourth loans all share the one docket.
+
+`reconcileLoanIds` (`api/upload.js`) matched an incoming loan to an existing row by LOAN ID
+*or by docket*, took the first match as the keeper, and the upsert then wrote the incoming
+loan onto that row. For a repeat borrower whose previous loan was already in the table, the
+approvals file carrying their new loan found the old one by its docket and **wrote the new
+loan over it**: the earlier sale gone from its week, from the audit's cohorts, from the fraud
+look-up — with "1 relinked" in the receipt, which read as success. The daily approvals export
+carries `DOCKET #`, so this ran on every upload.
+
+**The rule now**: the docket identifies a loan only on rows that have **no LOAN ID yet** (an
+application filed before approval — the case the reconciliation exists for), and only on the
+**same track** (a blank track on either side still matches, as before). A row that already
+carries a LOAN ID is matched on that LOAN ID alone. Two tests pin it: a fourth loan arriving
+over the customer's second is a new loan, nothing relinked, nothing deleted; a docket-keyed
+application is taken only by the approval of its own track.
+
+No reads added to `/api/upload`; the same three look-ups, read differently.
+
+**The history itself** went in through the SQL editor (`SALES-HISTORY-2024-04-to-2026-07-part-NN-of-14.sql`,
+in the session's scratchpad, not in the repo): the same identity (`md5(LOAN ID)`), the same
+columns `importLoans` maps, the same team filing and stub-creation the upload does, the same
+`upload_date` / `upload_batch` stamp; existing rows updated in place by the digits of their
+LOAN ID, docket-keyed application rows relinked on docket + track, everything else inserted.
+Two things the Supabase editor does that a file for it has to respect: it **cuts a query at
+1,000,000 characters** (the first cut, 1.32 MB a part, died at character 999,999 with
+"unterminated quoted string"), and it **appends `ALTER TABLE … ENABLE ROW LEVEL SECURITY`**
+after anything that creates a table — `create temp table` and `select … into temp` alike,
+the latter mis-read as a table called `temp`, which rolled the whole script back. Hence
+parts under 900,000 characters, and each part **one statement** of data-modifying CTEs
+(teams created and loans referencing them in the same statement; the foreign key is checked
+at the statement's end and sees them), whose result row is the receipt.
+
+**What the history showed at its join** (CHECK-1 / CHECK-2, read-only, in the scratchpad):
+the table is continuous from 17 April 2024 to 1 July 2026 (the export's end), empty from
+2 July to 1 August 2026, and continuous again from 3 August 2026 on the daily Approved uploads
+(stage `approved`, no disbursement date). Tuesday 25 August 2026 holds nothing; 24 September
+reads low. April 2026 is about 1,600 loans short (the 30,000-row export cap). Two more exports
+close it: 1 April–31 July 2026 and 1 August–30 October 2026, each under the cap; the second
+also stamps the disbursement date onto the rows the daily uploads filed, which is what the
+Audit report's "PAR > 30 for loans disbursed in the month" reads.
+
+## Part 25 — All-time PAR on the Portfolio at Risk tab
+
+> "the todays defaulter is already the alltime defaulter so comparing it to total loan
+> (principle+interest) by all team and grand total is alltime par per team and company"
+> "i said P+I since we use total loan in getting par not principle, so if there is a total
+> loan column, we live with it"
+
+The deck's PAR (arrears over the defaulters' own balance) says how bad the defaults are, not
+how much of what a team was ever lent is overdue. Today's deck is every defaulter there is,
+whenever they borrowed; with the sales history in the loans table (Part 24) the other
+denominator exists: the **total loan (P+I, the `loan_amt` column) of every sale the team ever
+made**. Arrears over that is the team's **all-time PAR**; the grand total is the company's.
+
+**One rule for "a sale"**: a row at any `SALES_STAGES` stage (`approved` onward), the same
+list the dashboard's sales figure uses, handed to the database so it is not spelled twice.
+
+| Where | What |
+|---|---|
+| `db/RUN-ME-047-loan-totals-by-team.sql` | `loan_totals_by_team(p_teams, p_stages)`: one row per team — loans, total loan, first day — team-scoped at the database (upper-cased, trimmed, like `loan_stage_counts`). Optional: without it the tab reads every sale's team and amount and adds them here, and says so on the screen. |
+| `loanTotalsByTeam` (`api/_lib/portal-core.js`) | the RPC, else the fallback; kept a minute per scope by the answer cache. |
+| `par` | each team row carries `loans`, `totalLoan`, `parAll`; a team lent to with nobody in default today is listed at 0% (the best row, not a missing one); `totals.parAll` is the company's; `allTime` says how much was lent, since when, and whether the database summed it. |
+| PAR tab (`public/mod/reports.js`) | a *PAR all-time* card, three Orodha columns (Loans all-time, Total loan all-time (P+I), PAR all-time %), the foot line, and the note while RUN-ME-047 is not pasted. `BUILD 2026-10-30-a`. |
+
+Budget: `par` 5 → 6 trips in `test/speed.test.mjs`, reason in the diff. Nothing on
+`/api/upload` or `/api/call`. The whole-book figure the Audit report was waiting for (task 7)
+is this same denominator; the Audit panel still reads cohorts and the month-end deck as before.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

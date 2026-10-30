@@ -508,6 +508,44 @@ test('PAR bands customers by days in arrears', async () => {
   assert.equal(d.totals.arrears, 1700);
 });
 
+/* ALL-TIME PAR -- "the todays defaulter is already the alltime defaulter so comparing it to
+   total loan (principle+interest) by all team and grand total is alltime par per team and
+   company". The denominator is the TOTAL LOAN column (P+I) of every sale the team ever made
+   ("i said P+I since we use total loan in getting par not principle"), summed by the database
+   (RUN-ME-047) or, until that is pasted, here -- and the two worlds must agree. */
+test('PAR all-time: today\'s arrears over everything ever lent, per team and for the company', async () => {
+  const { LOAN_TOTALS_RPC } = await import('./snapshot-totals-rpc.mjs');
+  const t = tables();
+  t.loans = [
+    // KONGOWE: two sales, 9,000 lent in all (P+I); an application that is not a sale yet
+    { id: 'l1', team: 'KONGOWE', stage: 'approved',  principal_amt: 4000, loan_amt: 6000, approved_date: '2026-07-21', full_name: 'L1' },
+    { id: 'l3', team: 'KONGOWE', stage: 'disbursed', principal_amt: 2000, loan_amt: 3000, approved_date: '2026-07-20', disb_date: '2024-04-17', full_name: 'L3' },
+    { id: 'l4', team: 'KONGOWE', stage: 'unassigned', requested_amt: 50000, loan_amt: 70000, full_name: 'L4' },
+    // MBAGALA: one sale of 4,000
+    { id: 'l2', team: 'Mbagala', stage: 'approved', principal_amt: 3000, loan_amt: 4000, approved_date: '2026-07-22', full_name: 'L2' },
+    // TUNDUMA: lent to, and nobody in default today -- the best row on the board
+    { id: 'l5', team: 'TUNDUMA', stage: 'approved', principal_amt: 4000, loan_amt: 5000, approved_date: '2026-07-23', full_name: 'L5' },
+  ];
+  for (const [world, db] of [['migrated', fakeDb(t, { rpc: { ...LOAN_TOTALS_RPC } })], ['not yet migrated', fakeDb(t)]]) {
+    const d = await portalApi(db, ADMIN, 'par', {}, NOW);
+    const by = Object.fromEntries(d.byTeam.map(r => [r.team.toUpperCase(), r]));
+    assert.equal(by.KONGOWE.arrears, 900, world);
+    assert.equal(by.KONGOWE.loans, 2, world + ': the application is not a sale');
+    assert.equal(by.KONGOWE.totalLoan, 9000, world + ': the total loan column, P+I');
+    assert.equal(by.KONGOWE.parAll, 10, world + ': 900 over 9,000');
+    assert.equal(by.MBAGALA.totalLoan, 4000, world + ': the registry spelling and the deck\'s are one team');
+    assert.equal(by.MBAGALA.parAll, 20, world);
+    assert.equal(by.TUNDUMA.customers, 0, world + ': listed although nobody is in default');
+    assert.equal(by.TUNDUMA.parAll, 0, world);
+    assert.equal(d.totals.totalLoan, 18000, world);
+    assert.equal(d.totals.loans, 4, world);
+    assert.equal(d.totals.parAll, 9.4, world + ': the company, 1,700 over 18,000');
+    assert.equal(d.allTime.since, '2024-04-17', world + ': the earliest sale on the book');
+    assert.equal(d.allTime.light, world === 'migrated', world);
+    assert.equal(!!d.allTime.note, world !== 'migrated', world + ': the un-migrated state says so');
+  }
+});
+
 /* THE WEEKLY REPORT WAS HANDING OUT EVERY TEAM'S SIGN-IN CODE.
    `teamRows` went out as readTeamsAll() returns it: every team in the company, every column,
    to anybody who could open the report. The scope alone was wrong -- no other screen shows an
