@@ -3238,9 +3238,14 @@ in the session's scratchpad, not in the repo): the same identity (`md5(LOAN ID)`
 columns `importLoans` maps, the same team filing and stub-creation the upload does, the same
 `upload_date` / `upload_batch` stamp; existing rows updated in place by the digits of their
 LOAN ID, docket-keyed application rows relinked on docket + track, everything else inserted.
-The editor cuts a query at 1,000,000 characters and appends `ALTER TABLE … ENABLE ROW LEVEL
-SECURITY` after any `create table` it sees — hence parts under 900,000 characters and scratch
-tables made with `select … into temp`.
+Two things the Supabase editor does that a file for it has to respect: it **cuts a query at
+1,000,000 characters** (the first cut, 1.32 MB a part, died at character 999,999 with
+"unterminated quoted string"), and it **appends `ALTER TABLE … ENABLE ROW LEVEL SECURITY`**
+after anything that creates a table — `create temp table` and `select … into temp` alike,
+the latter mis-read as a table called `temp`, which rolled the whole script back. Hence
+parts under 900,000 characters, and each part **one statement** of data-modifying CTEs
+(teams created and loans referencing them in the same statement; the foreign key is checked
+at the statement's end and sees them), whose result row is the receipt.
 
 ---
 
