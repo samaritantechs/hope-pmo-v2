@@ -493,23 +493,42 @@ export async function reconcileLoanIds(db, records) {
   await pull('docket_no', records.map(r => r.docket_no));
   await pull('full_name', records.map(r => r.full_name));
 
+  /* A DOCKET IS THE CUSTOMER'S, NOT THE LOAN'S. The LOAN ID is the docket's digits with the
+     track number on the end (5-221-81653 -> 5221816532, 5221816534), so a repeat borrower's
+     second, third and fourth loans all carry the one docket. Matching on the docket alone made
+     every one of them "the same loan": an approvals file carrying the customer's new loan found
+     their previous loan by its docket, took that row as the keeper, and the upsert then wrote
+     the new loan OVER the old one -- the earlier sale silently gone from its week, from the
+     audit's cohorts and from the fraud look-up. One disbursed-loans export alone had 5,705
+     dockets carrying more than one loan.
+     The docket identifies a loan only on the rows that have NO LOAN ID yet (an application
+     filed before approval, the case this reconciliation exists for), and only on the same
+     track: a track that differs is the customer's other loan. */
   const byLoanId = new Map(), byDocket = new Map(), byName = new Map();
   for (const e of existing) {
     if (T(e.loan_id)) byLoanId.set(T(e.loan_id), e);
-    if (T(e.docket_no)) byDocket.set(T(e.docket_no), e);
+    else if (T(e.docket_no)) {
+      const k = T(e.docket_no);
+      if (!byDocket.has(k)) byDocket.set(k, []);
+      byDocket.get(k).push(e);
+    }
     if (T(e.full_name)) {
       const k = T(e.full_name);
       if (!byName.has(k)) byName.set(k, []);
       byName.get(k).push(e);
     }
   }
+  const sameTrack = (e, r) => !T(e.track_no) || !T(r.track_no) || T(e.track_no) === T(r.track_no);
 
   let relinked = 0; const twinIds = new Set();
   const out = records.map(r => {
     // Strong identities first, in the same order loanId itself prefers them.
     const strong = [];
     if (T(r.loan_id) && byLoanId.has(T(r.loan_id))) strong.push(byLoanId.get(T(r.loan_id)));
-    if (T(r.docket_no) && byDocket.has(T(r.docket_no))) strong.push(byDocket.get(T(r.docket_no)));
+    if (T(r.docket_no)) {
+      const app = (byDocket.get(T(r.docket_no)) || []).find(e => sameTrack(e, r));
+      if (app) strong.push(app);
+    }
     let keeper = strong[0] || null;
     if (!keeper && T(r.full_name) && T(r.track_no)) {
       keeper = (byName.get(T(r.full_name)) || []).find(e => T(e.track_no) === T(r.track_no)

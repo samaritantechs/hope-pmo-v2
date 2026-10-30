@@ -3209,6 +3209,39 @@ recorded is not counted: nothing of theirs waits on it.
 Nothing on `/api/upload` or `/api/call`; no migration; the Ripoti tab is unchanged — it is
 where the door is opened.
 
+## Part 24 — A docket is the customer's, not the loan's
+
+Found while writing the 2024–2026 sales history in by SQL (35,672 disbursed loans, one row
+per LOAN ID): **5,705 dockets carry more than one loan.** The LOAN ID is the docket's digits
+with the track number on the end — docket `5-221-81653` is loans `5221816532` and
+`5221816534` — so a repeat borrower's second, third and fourth loans all share the one docket.
+
+`reconcileLoanIds` (`api/upload.js`) matched an incoming loan to an existing row by LOAN ID
+*or by docket*, took the first match as the keeper, and the upsert then wrote the incoming
+loan onto that row. For a repeat borrower whose previous loan was already in the table, the
+approvals file carrying their new loan found the old one by its docket and **wrote the new
+loan over it**: the earlier sale gone from its week, from the audit's cohorts, from the fraud
+look-up — with "1 relinked" in the receipt, which read as success. The daily approvals export
+carries `DOCKET #`, so this ran on every upload.
+
+**The rule now**: the docket identifies a loan only on rows that have **no LOAN ID yet** (an
+application filed before approval — the case the reconciliation exists for), and only on the
+**same track** (a blank track on either side still matches, as before). A row that already
+carries a LOAN ID is matched on that LOAN ID alone. Two tests pin it: a fourth loan arriving
+over the customer's second is a new loan, nothing relinked, nothing deleted; a docket-keyed
+application is taken only by the approval of its own track.
+
+No reads added to `/api/upload`; the same three look-ups, read differently.
+
+**The history itself** went in through the SQL editor (`SALES-HISTORY-2024-04-to-2026-07-part-NN-of-14.sql`,
+in the session's scratchpad, not in the repo): the same identity (`md5(LOAN ID)`), the same
+columns `importLoans` maps, the same team filing and stub-creation the upload does, the same
+`upload_date` / `upload_batch` stamp; existing rows updated in place by the digits of their
+LOAN ID, docket-keyed application rows relinked on docket + track, everything else inserted.
+The editor cuts a query at 1,000,000 characters and appends `ALTER TABLE … ENABLE ROW LEVEL
+SECURITY` after any `create table` it sees — hence parts under 900,000 characters and scratch
+tables made with `select … into temp`.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

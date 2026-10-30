@@ -1308,6 +1308,53 @@ test('two different loans for the same customer are never confused', async () =>
   assert.equal(rec.merged, 0);
 });
 
+/* A DOCKET IS THE CUSTOMER'S, NOT THE LOAN'S: the LOAN ID is the docket's digits plus the track
+   (5-221-81653 -> 5221816532, 5221816534), so every repeat loan shares its predecessors' docket.
+   The docket-only match took the customer's previous loan as the keeper of the new one, and the
+   upsert wrote the new loan over the old: a sale gone from its week, a cohort short of a loan. */
+test('a repeat loan never lands on the customer\'s earlier loan, even though they share a docket', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  const second = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['5-221-81653', '5221816532', 'DAVID KENES CHISONGA', '0741024456', '2', 'VWAWA', '250000', '12/3/2026'],
+  ], 'approved');
+  const db = fakeDb({ loans: second });
+  const fourth = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['5-221-81653', '5221816534', 'DAVID KENES CHISONGA', '0741024456', '4', 'VWAWA', '200000', '13/8/2026'],
+  ], 'approved');
+  const rec = await reconcileLoanIds(db, fourth);
+  assert.equal(rec.relinked, 0, 'the fourth loan is a new loan, not the second one again');
+  assert.equal(rec.merged, 0, 'nothing is deleted');
+  assert.equal(rec.records[0].id, fourth[0].id, 'it keeps its own identity');
+  assert.equal(db._dump('loans').length, 1, 'the second loan is still there');
+});
+
+test('an application row keyed on the docket is taken only on the same track', async () => {
+  const { importLoans } = await import('../api/_lib/importers.js');
+  const { reconcileLoanIds } = await import('../api/upload.js');
+  // The customer's track-2 application is in, filed under the docket (no LOAN ID yet).
+  const applied = importLoans([
+    ['DOCKET #', 'FULL NAME', 'CONTACT #', 'TRACK', 'TEAM', 'REQUESTED AMT'],
+    ['5-221-81653', 'DAVID KENES CHISONGA', '0741024456', '2', 'VWAWA', '250000'],
+  ], 'unassigned');
+  const db = fakeDb({ loans: applied });
+  // Track 4 approved: a different loan of the same customer. Track 2 approved: the same loan.
+  const t4 = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['5-221-81653', '5221816534', 'DAVID KENES CHISONGA', '4', 'VWAWA', '200000', '13/8/2026'],
+  ], 'approved');
+  assert.equal((await reconcileLoanIds(db, t4)).relinked, 0, 'another track is another loan');
+  const t2 = importLoans([
+    ['DOCKET #', 'LOAN ID', 'FULL NAME', 'TRACK', 'TEAM', 'PRINCIPAL AMT', 'APPROVED DATE'],
+    ['5-221-81653', '5221816532', 'DAVID KENES CHISONGA', '2', 'VWAWA', '250000', '12/3/2026'],
+  ], 'approved');
+  const rec = await reconcileLoanIds(db, t2);
+  assert.equal(rec.relinked, 1, 'the same track is the application grown up');
+  assert.equal(rec.records[0].id, applied[0].id);
+});
+
 test('the lenient phone match redirects but never deletes', async () => {
   const { importLoans } = await import('../api/_lib/importers.js');
   const { reconcileLoanIds } = await import('../api/upload.js');
