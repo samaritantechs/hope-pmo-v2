@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-30-a';
+var BUILD = '2026-10-31-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3315,6 +3315,33 @@ function exportBoard(id, kind){
     + '</tbody></table></body></html>';
   download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');
 }
+/* THE WEEK'S LEGAL REPORT, off the [Report] button on the "Legal recovery — this week" board:
+   "exports the whole week report with Legal, Team, Customer etc columns so that we could export
+   the whole report that generated that summary". The server lists every noticed customer in
+   scope under the lawyer whose code holds the team, with the notice, what it demanded and what
+   was paid Monday to Sunday -- the very rows the board is summed from, so a filter on the
+   Legal officer column in Excel adds up to the board's row. Fetched when tapped, never with
+   the dashboard; written through the same Excel writer as every board. */
+var LEGAL_REPORT_COLS = [
+  col('officer','Legal officer'), col('team','Team'), col('full_name','Customer'), col('ref','REF#'), col('contact','Contact'),
+  col('notice_id','Kumb.Na. / Notice'), col('notice_date','Notice date'), col('owed','Owed at notice','money'),
+  col('paid_today','Paid today','money'), col('paid','Paid this week','money'), {key:'pct', label:'Rec %', kind:'pct'},
+  col('payments','Payments','num'), col('first_paid','First paid'), col('last_paid','Last paid'), col('days','Payments by day')];
+function legalWeekReport_(btn){
+  if (btn) btn.disabled = true;
+  toast('Inatayarisha ripoti ya wiki… / Preparing the week\'s report…');
+  srv('legalWeekReport', { weekOf: S.args.weekOf || '' }).then(function(r){
+    if (btn) btn.disabled = false;
+    if (r && r.on === false && r.note) { toast(r.note, true); return; }
+    if (!r || !r.rows || !r.rows.length) { toast('Hakuna mteja mwenye notisi wiki hii. / No noticed customer in this week\'s scope.', true); return; }
+    var id = 'legalWeekReportX';
+    BOARDS[id] = { title: 'Legal recovery — week of ' + r.from + ' to ' + r.to + ' — report', rows: r.rows, cols: LEGAL_REPORT_COLS };
+    exportBoard(id, 'xls');
+  }).catch(function(e){
+    if (btn) btn.disabled = false;
+    toast('Ripoti haikupatikana / the report did not load: ' + String((e && e.message) || e), true);
+  });
+}
 function loading(){ $('#view').innerHTML = '<div class="sk"></div>'; }
 /** A failure has to READ like a failure. This printed the raw server payload straight onto the
     screen, so a backend error came out as a page of JSON -- unreadable, alarming, and it leaked
@@ -3844,12 +3871,18 @@ VIEWS.dashboard = function(){
                       [col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
                        col('owed','Owed at notice','money'),
                        {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
-                       {key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','owed']}], sumRow(b.legal || [], ['teams','customers','owed','recovered']))
+                       {key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','owed']}], sumRow(b.legal || [], ['teams','customers','owed','recovered']),
+                      /* [Report]: the whole week's rows behind these sums -- lawyer, team, customer, REF#,
+                         notice, owed, paid -- as one Excel file. Read on the tap (legalWeekReport_). */
+                      { buttons: '<button class="btn sm ghost" id="legalWeekReport" title="Ripoti ya wiki, mteja kwa mteja / the week\'s rows, customer by customer">Report</button> ' })
           + creditRecoveryBoard(creditRec && creditRec.metrics)
-          + boardPair('bCrdT','Credit analysts — today','sales% · recovery% · performance = avg of the two', b.creditToday,
-                      'bCrdW','Credit analysts — this week','sales% · recovery% · performance', b.creditWeek,
-                      [col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amt','money'),
-                       col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['apps','amount'])
+          /* SALES % IS AGAINST THE TEAMS THEY HOLD -- "they are judged by no of teams they have so
+             if its 25,000,000 week target and has 5 teams then its 125m". Teams and Target sit on
+             the board so the percentage can be checked by eye; today's target is a seventh. */
+          + boardPair('bCrdT','Credit analysts — today','teams held · target = weekly target × teams ÷ 7 · sales % ÷ target · recovery % · performance = avg of the two', b.creditToday,
+                      'bCrdW','Credit analysts — this week','teams held · target = weekly target × teams · sales % ÷ target · recovery % · performance', b.creditWeek,
+                      [col('analyst','Analyst'), col('teams','Teams','num'), col('apps','Apps','num'), col('amount','Amt','money'), col('target','Target','money'),
+                       col('salesPct','Sales %','pct'), col('recPct','Rec %','pct'), col('perf','Perf','pct')], ['teams','apps','amount','target'])
           // "Call agents" here means the CUSTOMER SERVICE agents named on loan applications --
           // each application carries a CREATED BY agent id. How many phone calls a field
           // officer made is a different question and lives on the Call Reports tab.
@@ -3874,6 +3907,8 @@ VIEWS.dashboard = function(){
                   sumRow(b.fuStatus, ['customers','arrears']));
         var host = document.getElementById('boards');
         if (host) { host.innerHTML = extra; wireBar(); }
+        var lwr = document.getElementById('legalWeekReport');
+        if (lwr) lwr.onclick = function(e){ e.stopPropagation(); legalWeekReport_(lwr); };
       }).catch(function(){
         var host = document.getElementById('boards');
         if (host) host.innerHTML = '<div class="msg bad">Officer boards could not load.</div>';
@@ -4837,7 +4872,9 @@ var BOARDS = {};
 /* `totalRow` may still be given explicitly -- several boards know something autoTotals cannot,
    such as a percentage whose denominator is not on the table. Passing `false` says this board
    genuinely has nothing to total. Omitting it gets the automatic one. */
-function board(id, title, sub, rows, cols, totalRow){
+/* `opts.buttons`: a board's own extra button(s), drawn BEFORE Excel / JPG / CSV -- the legal
+   week board's [Report], which exports the customer rows behind the sums. Wired by the caller. */
+function board(id, title, sub, rows, cols, totalRow, opts){
   BOARDS[id] = { title: title, rows: rows, cols: cols };
   if (totalRow === undefined) {
     totalRow = autoTotals(rows, cols);           // already carries its percentage cells
@@ -4853,7 +4890,8 @@ function board(id, title, sub, rows, cols, totalRow){
   }
   return '<div class="card" id="'+id+'"><div class="card-h">'+esc(title)
     + (sub ? '<span style="font-weight:400;color:var(--mut);font-size:12px">'+esc(sub)+'</span>' : '')
-    + '<span class="sub"><button class="btn sm ghost" data-xls="'+id+'">Excel</button>'
+    + '<span class="sub">' + ((opts && opts.buttons) || '')
+    + '<button class="btn sm ghost" data-xls="'+id+'">Excel</button>'
     + ' <button class="btn sm ghost" data-jpg="'+id+'">JPG</button>'
     + ' <button class="btn sm ghost" data-csv="'+id+'">CSV</button></span></div>'
     // The total row is remembered so a re-sort can redraw the board without recomputing it.

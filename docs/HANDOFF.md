@@ -3285,5 +3285,40 @@ is this same denominator; the Audit panel still reads cohorts and the month-end 
 
 ---
 
+## Part 26 — The week's legal report, and the credit analysts' target per team held
+
+> "At Legal recovery — this week … Add a button [Report] before the 3 Excel JPG CSV which
+> exports the whole week report with Legal, Team, Customer etc columns so that we could export
+> the whole report that generated that summary from officer boards at dashboard."
+
+The week board is sums per lawyer. **[Report]** on that board downloads the rows the sums are
+made of: one row per noticed customer in scope under the lawyer whose code holds the team
+(or "(unassigned)"), with team, customer, REF#, contact, Kumb.Na., notice date, owed at
+notice, paid today, paid this week, Rec %, number of payments, first and last payment, and
+the payments day by day. Filter the Excel on *Legal officer* and the column totals are the
+board's row.
+
+| Where | What |
+|---|---|
+| `legalLines_` (`api/_lib/portal-core.js`) | the one listing both the board and the report are built from: `legalBoard_` sums it per lawyer (`slot` keeps two lawyers of one name apart). One rule, so the two cannot disagree. |
+| `legalWeekReport` | the rows for the chosen week (`weekOf`, like the boards), team-scoped at the database and by `scoped()`; `on: false` with the RUN-ME-041 note when the ledger is not there (the register still lists, payments at 0). Permission: `dashboard` only. Read on the tap, never with the dashboard. |
+| `board(…, opts)` (`public/app.html`) | `opts.buttons` draws a board's own button(s) before Excel / JPG / CSV; `legalWeekReport_` fetches and writes the rows through the same `.xls` writer every board uses (`exportBoard`). `BUILD 2026-10-31-a`. |
+
+> "Credit analysts — this week · sales% · recovery% · performance at sales - they are judged by
+> no of teams they have so if its 25,000,000 week target and has 5 teams then its 125m for the
+> generated sales% performance"
+
+The dashboard's credit boards measured every analyst against ONE team's weekly target. Now
+an analyst's target is **the weekly target × the teams Teams & Staff lists under them on the
+credit column** (within the viewer's scope); today's board takes a seventh of it. Teams naming
+no analyst count under "(unassigned)"; an analyst the approvals file names who is on no team's
+credit column is measured against one team's target. Both boards and the deck's credit slide
+now carry *Teams* and *Target* so the percentage can be checked by eye. The Credit tab's own
+per-analyst sales % (`credit`) already multiplied by the analyst's teams; it counts the teams
+whose count 1–6 book the analyst carries, which is the same set whenever every held team has
+defaulters.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

@@ -3169,6 +3169,86 @@ test('the legal recovery board credits each lawyer with the payments of the noti
   const dashOff = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW);
   assert.equal(dashOff.legal.on, false);
   assert.match(dashOff.legal.note, /RUN-ME-041a/);
+
+  /* THE WEEK'S REPORT BEHIND THE BOARD -- "Add a button [Report] ... which exports the whole
+     week report with Legal, Team, Customer etc columns so that we could export the whole report
+     that generated that summary". One row per noticed customer under the lawyer whose code
+     holds the team: the SAME lines the board is summed from, so per officer they add up to
+     the board's row, customers, owed, today's and the week's payments alike. */
+  const rep = await portalApi(fakeDb(t), ADMIN, 'legalWeekReport', {}, NOW);
+  assert.equal(rep.on, true); assert.equal(rep.note, null);
+  assert.equal(rep.from, MON); assert.equal(rep.to, '2026-07-26'); assert.equal(rep.today, TODAY);
+  assert.equal(rep.rows.length, b.legalCustomers, 'every noticed customer in scope, paid or not');
+  for (const r of b.legal) {
+    const mine = rep.rows.filter(x => x.officer === r.officer);
+    assert.equal(mine.length, r.customers, r.officer + ': one row per customer');
+    assert.equal(mine.reduce((s, x) => s + x.owed, 0), r.owed, r.officer + ': owed adds up to the board');
+    assert.equal(mine.reduce((s, x) => s + x.paid, 0), r.recovered, r.officer + ': the week adds up to the board');
+    assert.equal(mine.reduce((s, x) => s + x.paid_today, 0), r.tRecovered, r.officer + ': today adds up to the board');
+  }
+  const r555 = rep.rows.find(x => x.ref === '555');
+  assert.equal(r555.officer, 'JOAKIMU ISSA'); assert.equal(r555.team, 'KONGOWE');
+  assert.equal(r555.notice_date, '2026-07-10', 'the latest notice'); assert.equal(r555.owed, 800);
+  assert.equal(r555.paid_today, 300); assert.equal(r555.paid, 400); assert.equal(r555.pct, 50);
+  assert.equal(r555.payments, 2); assert.equal(r555.first_paid, MON); assert.equal(r555.last_paid, TODAY);
+  assert.equal(r555.days, MON + ' 100 · ' + TODAY + ' 300', 'the payments one by one, oldest first');
+  assert.equal(rep.rows[rep.rows.length - 1].officer, '(unassigned)', 'the unheld team last');
+  assert.equal(rep.rows.find(x => x.ref === '777').team, 'NOWHERE');
+  assert.deepEqual(rep.unheld, ['NOWHERE']); assert.deepEqual(rep.allTeams, ['RHOBI MSIRA']);
+  assert.equal(rep.totals.customers, 3); assert.equal(rep.totals.owed, 1300);
+  assert.equal(rep.totals.paid, 470); assert.equal(rep.totals.paidToday, 370);
+  // Scoped like the board: KONGOWE's leader gets KONGOWE's rows and nobody else's.
+  const repG = await portalApi(fakeDb(t), GMO, 'legalWeekReport', {}, NOW);
+  assert.deepEqual(repG.rows.map(x => [x.officer, x.ref]), [['JOAKIMU ISSA', '555']]);
+  // Without the ledger the register still lists, with no payments, and the answer says why.
+  const repOff = await portalApi(db, ADMIN, 'legalWeekReport', {}, NOW);
+  assert.equal(repOff.on, false); assert.match(repOff.note, /RUN-ME-041a/);
+  assert.equal(repOff.rows.find(x => x.ref === '555').paid, 0);
+  assert.equal(repOff.rows.find(x => x.ref === '555').owed, 800);
+  // A chosen week reads that week: nothing of this week's payments lands in last week's report.
+  const repPrev = await portalApi(fakeDb(t), ADMIN, 'legalWeekReport', { weekOf: '2026-07-15' }, NOW);
+  assert.equal(repPrev.from, '2026-07-13');
+  assert.equal(repPrev.rows.find(x => x.ref === '555').paid, 999, 'p3, last week\'s payment');
+  // The dashboard's button, nowhere else: a code holding only the Legal tab is refused.
+  await assert.rejects(() => portalApi(fakeDb(t), { ...GMO, tabs: ['legal'] }, 'legalWeekReport', {}, NOW), e => e.status === 403);
+});
+
+/* THE CREDIT ANALYSTS' TARGET IS PER TEAM HELD -- "they are judged by no of teams they have so if
+   its 25,000,000 week target and has 5 teams then its 125m for the generated sales% performance".
+   The weekly target times the teams Teams & Staff lists under the analyst on the credit column,
+   within the viewer's scope; today's board takes a seventh of it. */
+test('a credit analyst\'s sales % on the officer boards is against the weekly target times the teams listed under them', async () => {
+  const book = tables();
+  book.settings = book.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '200000' }]);
+  for (const tm of book.teams) tm.credit = 'ANALYST A';                              // KONGOWE and MBAGALA: two teams held
+  book.loans = [{ id: 'x1', team: 'KONGOWE', stage: 'approved', principal_amt: 400000, approved_date: TODAY, approved_by: 'ANALYST A', created_by: 'NEEMA CS' }];
+  const d = await portalApi(dbWithRpc(book), ADMIN, 'officerBoards', {}, NOW);
+  const wk = d.creditWeek.find(r => r.analyst === 'ANALYST A');
+  assert.equal(wk.teams, 2, 'the teams the credit column lists under them');
+  assert.equal(wk.target, 400000, '200,000 a week times two teams');
+  assert.equal(wk.salesPct, 100, '400,000 sold against 400,000');
+  const today = d.creditToday.find(r => r.analyst === 'ANALYST A');
+  assert.equal(today.teams, 2);
+  assert.equal(today.target, Math.round(400000 / 7), 'a seventh of the week\'s, for the day');
+  assert.equal(today.salesPct, 700);
+  // One team held: the same sale is twice as good.
+  const one = tables();
+  one.settings = one.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '200000' }]);
+  one.loans = book.loans;
+  const d1 = await portalApi(dbWithRpc(one), ADMIN, 'officerBoards', {}, NOW);
+  const wk1 = d1.creditWeek.find(r => r.analyst === 'ANALYST A');
+  assert.equal(wk1.teams, 1); assert.equal(wk1.target, 200000); assert.equal(wk1.salesPct, 200);
+  // Scoped: KONGOWE's leader sees the analyst against KONGOWE alone.
+  const dG = await portalApi(dbWithRpc(book), GMO, 'officerBoards', {}, NOW);
+  const wkG = dG.creditWeek.find(r => r.analyst === 'ANALYST A');
+  assert.equal(wkG.teams, 1); assert.equal(wkG.target, 200000); assert.equal(wkG.salesPct, 200);
+  // A team naming no analyst: its sales stand under "(unassigned)" against one team's target.
+  const none = tables();
+  none.settings = none.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '200000' }]);
+  none.loans = [{ id: 'x2', team: 'MBAGALA', stage: 'approved', principal_amt: 100000, approved_date: TODAY, approved_by: 'NOBODY', created_by: 'NEEMA CS' }];
+  const dN = await portalApi(dbWithRpc(none), ADMIN, 'officerBoards', {}, NOW);
+  const un = dN.creditWeek.find(r => r.analyst === '(unassigned)');
+  assert.equal(un.teams, 1, 'MBAGALA names no analyst'); assert.equal(un.target, 200000); assert.equal(un.salesPct, 50);
 });
 
 test('upload status says what is still missing for today', async () => {
