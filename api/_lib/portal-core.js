@@ -9823,7 +9823,7 @@ const FN = {
   deductions, addDeduction, hrDeduction,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
-  dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards,
+  dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
@@ -10180,6 +10180,8 @@ const WRITE_FNS = new Set([...AUDITED, 'stampWeek', 'rebuildFollowup']);
 const FN_TAB = {
   dashboard: ['dashboard'], dashboardFull: ['dashboard', 'present'], orodhaJudge: ['dashboard', 'present'],
   dashboardProbe: ['dashboard', 'present'], officerBoards: ['dashboard', 'present'],
+  // The customer rows behind the week's legal board: the dashboard's own button, nowhere else.
+  legalWeekReport: ['dashboard'],
   recoveryByCredit: ['dashboard'],
   // The customers behind a recovery tile -- the tile's own screens, nothing more.
   recoveryCustomers: ['dashboard', 'present'],
@@ -12910,39 +12912,91 @@ function legalTotals_(notices, ledger, today, mon, sun) {
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
     credit code that merely holds the legal tab is NOT a lawyer here, which is what "its mixed
     with recovery and credit right now" was. */
-function legalBoard_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName) {
-  const on = Array.isArray(ledger);
+/* THE CUSTOMER LINES UNDER EACH LAWYER -- the one listing that BOTH the board (sums per
+   officer) and the week's report (one row per customer) are built from, so the report's rows
+   add up to the board's row to the shilling. A customer stands under every lawyer whose code
+   holds their team, exactly as the board has always counted them (`slot` tells two lawyers of
+   one name apart); a customer on a team no legal code holds stands under "(unassigned)". */
+function legalLines_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName) {
   const lawyers = (codeRows || []).filter(c => isLegalRole(c.role, legalRoleName));
   const roster = lawyers
     .filter(c => c.teams && c.teams.length)
     .filter(c => !user.teams || c.teams.some(t => teamAllowed(user, t)))
     .map(c => ({ name: c.name, teams: c.teams }));
   const allTeams = lawyers.filter(c => !c.teams || !c.teams.length).map(c => c.name).sort();
-  const { latest, sums } = legalFold_(notices, ledger, today, mon, sun);
+  const { latest, sums, paid } = legalFold_(notices, ledger, today, mon, sun);
   const held = new Set();
-  const rows = roster.map(p => {
+  const lines = [];
+  const line = (slot, officer, c) => {
+    const s = sums(c.ref);
+    lines.push({ slot, officer, ref: c.ref, team: c.team, name: c.name, contact: c.contact, noticeId: c.noticeId, date: c.date,
+      owed: c.owed, tPaid: s.t, paid: s.w, pays: [...(paid.get(c.ref) || new Map()).values()] });
+  };
+  roster.forEach((p, i) => {
     const mine = new Set(p.teams.map(K));
-    let customers = 0, owed = 0, tRecovered = 0, recovered = 0;
     for (const c of latest.values()) {
       if (!mine.has(K(c.team))) continue;
       held.add(c.ref);
-      const s = sums(c.ref);
-      customers++; owed += c.owed; tRecovered += s.t; recovered += s.w;
+      line(i, p.name, c);
     }
-    return { officer: p.name, teams: p.teams.length, customers, owed, tRecovered, tPct: pctOf(tRecovered, owed),
-      recovered, pct: pctOf(recovered, owed) };
   });
   const unheld = [...latest.values()].filter(c => !held.has(c.ref));
-  if (unheld.length) {
-    let owed = 0, tRecovered = 0, recovered = 0;
-    for (const c of unheld) { const s = sums(c.ref); owed += c.owed; tRecovered += s.t; recovered += s.w; }
-    rows.push({ officer: '(unassigned)', teams: new Set(unheld.map(c => K(c.team))).size, customers: unheld.length, owed,
-      tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) });
+  for (const c of unheld) line(-1, '(unassigned)', c);
+  return { roster, allTeams, lines, customers: latest.size, unheldCount: unheld.length,
+    unheldTeams: [...new Set(unheld.map(c => c.team || '').filter(Boolean))].sort() };
+}
+function legalBoard_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName) {
+  const on = Array.isArray(ledger);
+  const L = legalLines_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName);
+  const sumOf = (slot, officer, teams) => {
+    let customers = 0, owed = 0, tRecovered = 0, recovered = 0;
+    for (const l of L.lines) {
+      if (l.slot !== slot) continue;
+      customers++; owed += l.owed; tRecovered += l.tPaid; recovered += l.paid;
+    }
+    return { officer, teams, customers, owed, tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) };
+  };
+  const rows = L.roster.map((p, i) => sumOf(i, p.name, p.teams.length));
+  if (L.unheldCount) {
+    rows.push(sumOf(-1, '(unassigned)', new Set(L.lines.filter(l => l.slot === -1).map(l => K(l.team))).size));
   }
   // Best weekly share first; an officer with no figure sorts last, never as a beaten zero.
   rows.sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct) || String(a.officer).localeCompare(String(b.officer)));
-  return { rows, on, note: on ? null : LEGAL_NOTE, allTeams, customers: latest.size,
-    unheld: [...new Set(unheld.map(c => c.team || '').filter(Boolean))].sort() };
+  return { rows, on, note: on ? null : LEGAL_NOTE, allTeams: L.allTeams, customers: L.customers, unheld: L.unheldTeams };
+}
+/** THE WEEK'S LEGAL REPORT -- "Add a button [Report] before the 3 Excel JPG CSV which exports
+    the whole week report with Legal, Team, Customer etc columns so that we could export the
+    whole report that generated that summary from officer boards at dashboard".
+    One row per noticed customer in scope under the lawyer whose code holds the team, with what
+    the letter demanded and what was paid Monday to Sunday of the chosen week (and today): the
+    SAME lines the board is summed from (legalLines_), so a filter on the officer column adds
+    up to the board's row. Read on the button only, never with the dashboard: three small
+    trips (codes and settings are memoised reads), and nothing on the upload or call paths. */
+async function legalWeekReport(db, user, args, nowMs = Date.now()) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const today = todayKey(asOf.ms), mon = weekMondayKey(asOf.ms), sun = addDaysKey(mon, 6);
+  const [codeRows, cfgS, notices, ledger] = await Promise.all([
+    readCodesAll(db, nowMs),
+    settingsMany(db, [LEGAL_ROLE_KEY]),
+    fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, full_name, contact, notice_id, notice_date, arrears_at_notice'), user.teams)),
+    legalLedgerWeek_(db, mon, sun),
+  ]);
+  const L = legalLines_(codeRows, scoped(user, notices), ledger, user, today, mon, sun, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
+  const rows = L.lines.map(l => {
+    const pays = l.pays.filter(p => p.day >= mon && p.day <= sun).sort((a, b) => a.day.localeCompare(b.day));
+    return { officer: l.officer, team: l.team, ref: l.ref, full_name: l.name, contact: l.contact, notice_id: l.noticeId, notice_date: l.date,
+      owed: l.owed, paid_today: l.tPaid, paid: l.paid, pct: pctOf(l.paid, l.owed), payments: pays.length,
+      first_paid: pays.length ? pays[0].day : '', last_paid: pays.length ? pays[pays.length - 1].day : '',
+      days: pays.map(p => p.day + ' ' + Math.round(p.amount).toLocaleString('en-US')).join(' · ') };
+  });
+  // By lawyer as the board names them, "(unassigned)" last; within a lawyer the biggest payer first.
+  rows.sort((a, b) => (a.officer === '(unassigned)') - (b.officer === '(unassigned)')
+    || String(a.officer).localeCompare(String(b.officer)) || b.paid - a.paid || String(a.full_name).localeCompare(String(b.full_name)));
+  const on = Array.isArray(ledger);
+  return { weekOf: mon, from: mon, to: sun, today, on, note: on ? null : LEGAL_NOTE, rows,
+    totals: { customers: rows.length, owed: rows.reduce((s, r) => s + r.owed, 0), paid: rows.reduce((s, r) => s + r.paid, 0),
+      paidToday: rows.reduce((s, r) => s + r.paid_today, 0) },
+    allTeams: L.allTeams, unheld: L.unheldTeams };
 }
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
@@ -13290,6 +13344,20 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      officerOf answers the string '(unassigned)' when a team has none, which is the honest
      end of the line -- an ID is never printed. */
   const analystFor = l => analystNames[K(l.approved_by || '')] || officerOf(teamBy, l.team, 'credit');
+  /* THE TARGET IS PER TEAM HELD -- "they are judged by no of teams they have so if its
+     25,000,000 week target and has 5 teams then its 125m for the generated sales% performance".
+     An analyst's target is the weekly target TIMES the teams Teams & Staff lists under them on
+     the credit column, within the viewer's scope. It used to be one team's target for
+     everybody, so an analyst holding five teams read five times better than one holding one.
+     Teams naming no analyst count under "(unassigned)"; an analyst the approvals file names
+     who is on no team's credit column is measured against one team's target, never against
+     nothing. Both are printed on the board (teams, target) so the percentage can be checked. */
+  const teamsHeld = {};
+  for (const t of teamRows || []) {
+    if (!teamAllowed(user, t.team)) continue;
+    const who = K(nameOrNull(t.credit) || '(unassigned)');
+    teamsHeld[who] = (teamsHeld[who] || 0) + 1;
+  }
 
   function creditBoard(from, to) {
     const m = {};
@@ -13302,15 +13370,16 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       if (l.team) b.teams[K(l.team)] = 1;
     }
     const span = Math.max(1, Math.round((Date.parse(to) - Date.parse(from)) / 86400000) + 1);
-    const target = weeklyTarget * (span / 7);
     return Object.values(m).map(b => {
       // Their recovery share: the movement on the teams whose files they actually processed.
       let ini = 0, cur = 0, unc = 0;
       for (const r of iniToday) if (b.teams[K(r.team)]) ini += num(r.arrears_amt);
       for (const r of curToday) if (b.teams[K(r.team)]) cur += num(r.arrears_amt);
       for (const r of myExp) if (b.teams[K(r.team)]) unc += num(r.uncollected_amt);
+      const teams = teamsHeld[K(b.key)] || 0;
+      const target = weeklyTarget * (span / 7) * Math.max(teams, 1);
       const salesPct = pctOf(b.amount, target), recPct = pctOf(ini - cur, unc);
-      return { analyst: b.key, apps: b.apps, amount: b.amount, salesPct, recPct,
+      return { analyst: b.key, teams, apps: b.apps, amount: b.amount, target: Math.round(target), salesPct, recPct,
         perf: (salesPct == null && recPct == null) ? null : Math.round(((salesPct || 0) + (recPct || 0)) / 2 * 10) / 10 };
     }).sort((a, b) => b.apps - a.apps);
   }
