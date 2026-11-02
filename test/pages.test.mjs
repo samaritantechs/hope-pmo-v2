@@ -1572,6 +1572,11 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   // The OPM board is one of d.sections -- the server lists GMO, MANAGER, BIKE, OPM -- and every board is drawn by board(), so its headers sort.
   assert.ok(/sec\.role === 'OPM'/.test(view) && /the whole assigned book of their teams/.test(view), 'the OPM board says what it holds');
   assert.ok(/return board\('xd_'\+sec\.role/.test(view), 'drawn by board(), so the headers sort');
+  // "Add an OPM column on the three role boards too": after the name, text, sortable like any header; not on the OPM board itself.
+  assert.ok(/\.concat\(opm \? \[\] : \[\{key:'opm', label:'OPM', kind:'text'/.test(view), 'the OPM column on the three role boards only');
+  assert.ok(view.indexOf("key:'opm', label:'OPM'") < view.indexOf("col('teams','Teams','num')"), 'right after the leader\'s name');
+  assert.ok(/\{leader:'', opm:'', teams:''/.test(view), 'blank on the total row');
+  assert.ok(!/var BUILD = '2026-11-02-g'/.test(app), 'BUILD moved again');
   const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
   assert.ok(/export const REPORT_ROLES = \['GMO', 'MANAGER', 'BIKE', 'OPM'\]/.test(expdf));
   assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');

@@ -12382,6 +12382,7 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
   assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE', 'OPM'], 'the OPM board after the three roles');
   const boss = d.sections.find(s => s.role === 'MANAGER').rows[0];
   assert.equal(boss.leader, 'BOSS'); assert.equal(boss.inCalls, true);
+  assert.equal(boss.opm, 'OPM O', 'the OPM of the teams this leader holds, on the role boards');
   // Three calls: today's two dials to A2 (one number, one day), the guarantor's number, and the
   // replacement number -- matched by the number, with no REF on the call. Not: A1, last week, Juma's.
   assert.equal(boss.calls, 3); assert.equal(boss.dials, 4); assert.equal(boss.talk, 255);
@@ -12397,6 +12398,7 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
   assert.deepEqual(opm.rows.map(r => r.leader), ['OPM O']);
   assert.equal(opm.rows[0].customers, 3); assert.equal(opm.rows[0].initial, 6000); assert.equal(opm.rows[0].recovered, 900);
   assert.equal(opm.rows[0].calls, 0); assert.equal(opm.rows[0].inCalls, false);
+  assert.equal(opm.rows[0].opm, undefined, 'no OPM column on the OPM board itself');
   assert.equal(opm.totals.customers, 3);
   // The card says the same numbers as the row, by the one rule -- and opens for an OPM too.
   const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
@@ -12409,4 +12411,5 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
   const d2 = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
   assert.equal(d2.sections.find(s => s.role === 'OPM').rows[0].leader, '(unassigned)');
   assert.equal(d2.sections.find(s => s.role === 'OPM').unassigned, 1);
+  assert.equal(d2.sections.find(s => s.role === 'MANAGER').rows[0].opm, '(unassigned)', 'and the role boards say so in their OPM column');
 });

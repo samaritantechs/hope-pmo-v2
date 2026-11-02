@@ -296,9 +296,11 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
     const mine = role === 'OPM' ? all : all.filter(r => r.role === role);
     const by = {};
     for (const r of mine) {
-      const b = bucket(by, role === 'OPM' ? r.opm : r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, rows: [] });
+      const b = bucket(by, role === 'OPM' ? r.opm : r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, opms: {}, rows: [] });
       b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered; b.rows.push(r);
       if (r.team) b.teams[K(r.team)] = r.team;
+      // "Add an OPM column on the three role boards too": the OPM(s) of the teams this leader holds.
+      if (r.opm && r.opm !== '(unassigned)') b.opms[K(r.opm)] = r.opm;
     }
     for (const b of Object.values(by)) books.push({ key: role + '|' + K(b.key), leader: b.key, rows: b.rows });
     return { role, by, mine };
@@ -307,6 +309,7 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
   const { work, inCalls } = await weekWork(db, books, win.weekOf, win.weekEnd);
   const sections = built.map(({ role, by, mine }) => {
     const rows = Object.values(by).map(b => { const w = work[role + '|' + K(b.key)] || {}; return { leader: b.key,
+      opm: role === 'OPM' ? undefined : (Object.values(b.opms).sort().join(', ') || '(unassigned)'),
       teams: Object.keys(b.teams).length, customers: b.customers,
       calls: w.calls || 0, dials: w.dials || 0, talk: w.talk || 0, comments: w.comments || 0,
       inCalls: !!inCalls[K(b.key)],

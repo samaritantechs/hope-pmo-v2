@@ -3436,6 +3436,11 @@ roster carry; a name that would break the or-grammar is matched exactly). Never 
 leader. A name not registered in HOPE Calls reads 0 in grey (`inCalls:false`). The weekly
 email is unchanged.
 
+**And an OPM column on the three role boards** ("Add an OPM column on the three role boards
+too: all columns sortable as usual"): right after the leader's name, the OPM of the teams that
+leader holds — more than one, comma-separated; none, `(unassigned)` in red. Text, so it sorts
+like any header. Not on the By OPM board, where it would repeat the name.
+
 | Where | What |
 |---|---|
 | `weekWork`, `REPORT_ROLES`, `expdfReport`, `expdfLeader` (`api/_lib/expdf.js`) | the rule, the four boards, the rows' `calls` / `dials` / `talk` / `comments` / `inCalls`, section totals; `expdfCore` rows carry `opm`. |
