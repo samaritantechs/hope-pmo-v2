@@ -31,7 +31,7 @@ const PUBLIC = new URL('../public/', import.meta.url).pathname;
    core first, so every slice that starts and ends inside one module still works; a slice that
    starts in a module and ends in the core bounds itself with page('name') instead. */
 const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
-const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud'];
+const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud', 'checklist'];
 const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
 const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
@@ -1214,7 +1214,7 @@ test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, 
   const nav = JSON.parse(JSON.stringify(ctx.NAV)), order = JSON.parse(JSON.stringify(ctx.MGMT_ORDER));
   const mgmt = nav.filter(n => n.div === 'mgmt').map(n => n.id);
   const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'impreq', 'impappr', 'imprep', 'deduct',
-    'commission', 'bonusplan', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
+    'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
   assert.deepEqual(order, expected, 'the management division, in its own order');
   for (const id of expected) assert.ok(mgmt.includes(id), id + ' is flagged div:mgmt');
   for (const id of mgmt) assert.ok(order.includes(id) || nav.find(n => n.id === id).hidden, id + ' is flagged but not placed (hidden ones ride on their screen)');
@@ -1464,10 +1464,18 @@ test('the daily bonus plan tab is wired, admin-grantable, and makes no server ca
   assert.ok(/VIEWS\.bonusplan = function/.test(app), 'the screen exists');
   assert.ok(/VC_SKIP = \{[^}]*bonusplan:1/.test(app), 'its boxes are never replayed from the view cache');
   assert.ok(/wireForms\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint, once its module is in');
-  const code = page('bonusplan').slice(page('bonusplan').indexOf('BONASI YA KILA SIKU / DAILY BONUS PLAN'));
+  /* THE PREVIEW still reads nothing and saves nothing. What sits above it on the same tab now
+     is the Daily Checklist's task editor (mod/checklist.js, loaded on the spot), which does
+     read its plan -- so the promise is pinned on the preview's own code, which ends where the
+     view function begins. */
+  const bp = page('bonusplan');
+  const code = bp.slice(bp.indexOf('BONASI YA KILA SIKU / DAILY BONUS PLAN'), bp.indexOf('VIEWS.bonusplan = function'));
   assert.ok(code.length > 5000, 'the extractor found the preview');
   assert.ok(!/\bsrv\(|\bfetch\(|XMLHttpRequest|localStorage|sessionStorage/.test(code),
     'the preview reads nothing and saves nothing');
+  const view = bp.slice(bp.indexOf('VIEWS.bonusplan = function'));
+  assert.ok(/modLoad_\('checklist'\)[\s\S]*ckPlanLoad_\(\)/.test(view), 'the tab opens the Daily Checklist task editor (its module) above the preview');
+  assert.ok(!/\bsrv\(|\bfetch\(/.test(view), 'the view itself still calls nothing; the editor module does the one read');
   assert.ok(/RASIMU \/ DRAFT/.test(code) && /EXAMPLE FIGURES ONLY/.test(code), 'and it says plainly that the figures are examples');
   // Grantable like `audit`: admins hold it, nobody else until it is ticked on their role.
   process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
@@ -1475,6 +1483,42 @@ test('the daily bonus plan tab is wired, admin-grantable, and makes no server ca
   const { USER_TABS, ADMIN_TABS, EXTRA_TABS, ALL_TABS } = await import('../api/_lib/auth.js');
   assert.ok(ADMIN_TABS.includes('bonusplan') && EXTRA_TABS.includes('bonusplan') && ALL_TABS.includes('bonusplan'));
   assert.ok(!USER_TABS.includes('bonusplan'), 'not handed to every code');
+});
+
+/* THE DAILY CHECKLIST -- "MONDAY | ACTIVITY | CHECKBOX CutOff 00:00 HRS | CAMERA (icon) & View
+   Button ... for leaders at a tab 'Daily Checklist' ... manage tasks per role at my bonasi tab".
+   The window is the leader's own day; the tasks are set per role on the bonus tab; every stamp
+   is the server's. */
+test('the daily checklist tab is wired, grantable, worked in the app, and stamped by the server', async () => {
+  const app = appSrc();
+  assert.ok(/\{ id:'checklist',\s+div:'mgmt', label:'Daily Checklist \/ Orodha ya Kazi za Siku'/.test(app), 'the nav entry, in HOPE Management');
+  assert.ok(/MOD_OF = \{[\s\S]*?checklist:'checklist'/.test(app), 'its screen lives in its own module');
+  assert.ok(/VC_SKIP = \{[^}]*checklist:1/.test(app), 'its live boxes are never replayed from the view cache');
+  const src = page('checklist');
+  assert.ok(/VIEWS\.checklist = function/.test(src), 'the screen exists');
+  for (const fn of ['checklist', 'checklistTick', 'checklistPhoto', 'checklistPhotoGet', 'checklistPlan', 'checklistPlanSave']) {
+    assert.ok(src.includes("srv('" + fn + "'"), 'the screen calls ' + fn);
+  }
+  // The window the GM drew: the weekday as heading, ACTIVITY, CHECKBOX with its cut-off, CAMERA & VIEW.
+  assert.ok(/ACTIVITY \/ KAZI/.test(src) && /CHECKBOX/.test(src) && /CAMERA &amp; VIEW/.test(src), 'the three columns');
+  assert.ok(/'CutOff ' \+ c \+ ' HRS'/.test(src), 'the cut-off beside the checkbox, as drawn');
+  assert.ok(/MONDAY/.test(src) && /JUMATATU/i.test(src), 'the weekday heading, in both languages');
+  // The camera opens inside the app, and the photo is shrunk on the phone before it is sent.
+  assert.ok(/accept="image\/\*" capture="environment"/.test(src), 'the camera input is in-app capture');
+  assert.ok(/toDataURL\('image\/jpeg'/.test(src) && /CK_PHOTO_MAX = 200\*1024/.test(src), 'shrunk on the phone to the server\'s 200KB ceiling');
+  // NO STAMP IS MADE ON THE PHONE: the page never writes a time of its own into a tick or a photo.
+  assert.ok(!/toISOString|Date\.now\(|new Date\(\)/.test(src), 'the screen stamps nothing -- the server does');
+  // The editor is per role and per weekday, saved whole.
+  assert.ok(/checklistPlanSave', \{ role: CK\.role, days: ckDays_\(\) \}/.test(src), 'one role\'s week is saved together');
+  assert.ok(/00:00 = siku nzima/.test(src), 'the editor says what 00:00 means');
+  // Grantable like `audit`: admins hold it, nobody else until it is ticked on their role.
+  process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
+  const { USER_TABS, ADMIN_TABS, EXTRA_TABS, ALL_TABS } = await import('../api/_lib/auth.js');
+  assert.ok(ADMIN_TABS.includes('checklist') && EXTRA_TABS.includes('checklist') && ALL_TABS.includes('checklist'));
+  assert.ok(!USER_TABS.includes('checklist'), 'not handed to every code');
+  const { AUDITED } = await import('../api/_lib/audit.js');
+  for (const fn of ['checklistPlanSave', 'checklistTick', 'checklistPhoto']) assert.ok(AUDITED.has(fn), fn + ' is audited');
 });
 
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {

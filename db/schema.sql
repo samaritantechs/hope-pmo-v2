@@ -401,6 +401,27 @@ create table if not exists imprest_photos (
   unique (request_id, seq)
 );
 
+/* RUN-ME-048 -- the Daily Checklist's entries (a leader's tick, server-stamped, and their photo).
+   The tasks themselves live in settings (key DAILY_CHECKLIST), per role and weekday. */
+create table if not exists checklist_entries (
+  id          uuid primary key default gen_random_uuid(),
+  day         date not null,
+  weekday     text,
+  code        text not null,
+  name        text,
+  role        text,
+  item_id     text not null,
+  activity    text,
+  cutoff      text,
+  ticked_at   timestamptz,
+  late        boolean not null default false,
+  photo       text,
+  photo_bytes integer,
+  photo_at    timestamptz,
+  created_at  timestamptz not null default now(),
+  unique (code, day, item_id)
+);
+
 create table if not exists complaints (
   id uuid primary key default gen_random_uuid(),
   ref text, team text,

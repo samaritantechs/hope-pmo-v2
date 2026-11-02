@@ -38,6 +38,7 @@ import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustments
    own tables, not a helper this file's other logic reaches into. */
 import { imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund } from './imprest.js';
+import { checklistPlan, checklistPlanSave, checklist, checklistTick, checklistPhoto, checklistPhotoGet } from './checklist.js';
 /* PHONE NOTIFICATIONS -- the bell's switch and the subscription it keeps. See _lib/push.js. */
 import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, pushPending, pushPolicy, pushPolicySave } from './push.js';
 import { fraudCases, fraudFind } from './fraud.js';
@@ -9869,6 +9870,8 @@ const FN = {
   /* IMPREST -- ask, decide, fund, retire, review. See _lib/imprest.js. */
   imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
   imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
+  /* THE DAILY CHECKLIST -- the plan (per role, per weekday) and a leader's own day. See _lib/checklist.js. */
+  checklistPlan, checklistPlanSave, checklist, checklistTick, checklistPhoto, checklistPhotoGet,
   /* PHONE NOTIFICATIONS -- turned on and off from the bell. See _lib/push.js. */
   pushKey, pushSubscribe, pushUnsubscribe, pushTest, pushPending, pushPolicy, pushPolicySave,
   fraudCases, fraudFind,
@@ -10270,6 +10273,12 @@ const FN_TAB = {
   imprestQueue: ['impappr'], imprestDecide: ['impappr'],
   imprestRetire: ['impreq'],
   imprestPhotos: ['impreq', 'impappr', 'imprep'],
+  /* THE DAILY CHECKLIST. The plan is managed where the bonus is (bonusplan); the day is worked
+     on its own tab (checklist); a photo opens for its owner from the tab, and for the GM from
+     the board -- so either tab opens it, and the function itself checks whose it is. */
+  checklistPlan: ['bonusplan'], checklistPlanSave: ['bonusplan'],
+  checklist: ['checklist'], checklistTick: ['checklist'], checklistPhoto: ['checklist'],
+  checklistPhotoGet: ['checklist', 'bonusplan'],
   imprestReport: ['imprep'], imprestFund: ['imprep'],
   /* PHONE NOTIFICATIONS -- "all imprest processes send browser / device notifications". The
      switch is offered to whoever holds any imprest pane; PUSH_TOPICS (_lib/push.js) decides

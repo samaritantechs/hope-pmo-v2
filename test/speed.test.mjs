@@ -183,6 +183,8 @@ function counting(tables, opts) {
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
 // Ticked for the ordinary screens -- see the note beside GMO in portal.test.mjs.
 const OFFICER = { code: 'O', name: 'OFFICER', role: 'GMO', teams: [TEAMS[0]], tabs: USER_TABS.slice() };
+// A recycling leader who has been granted the Daily Checklist tab -- the person that screen is for.
+const LEADER = { code: 'L', name: 'LEADER', role: 'GMO', teams: [TEAMS[0]], tabs: USER_TABS.concat(['checklist']) };
 // A holder of the advance report who is not an admin: the report is their desk's, not the zone's.
 const ADV_DESK = { code: 'G', name: 'GMO G', role: 'GMO', teams: [TEAMS[0]], tabs: ['advrep'] };
 
@@ -414,6 +416,12 @@ const BUDGETS = [
      fixture request is OFFICER's own (90 of 900), plus the rate table and its two-table name
      union for the "add a rate" autocomplete. Measured: 5 trips / 135 rows. */
   ['Imprest: my history',     'imprestMine',   {}, OFFICER, 6,  200,  6,  200],
+  /* THE DAILY CHECKLIST: the plan (one settings row) and the person's own handful of entries;
+     the admin also reads the day's entries for everybody. Measured on this fixture, which has
+     no entries yet: the cost is the shape, not the size. */
+  ['Daily checklist (leader)', 'checklist',    {}, LEADER, 3,   50, 3,   50],
+  ['Daily checklist (GM)',    'checklist',     {}, ADMIN,  4,   50, 4,   50],
+  ['Daily checklist plan',    'checklistPlan', {}, ADMIN,  4,   50, 4,   50],
   ['Calls report',            'callReport',          {}, ADMIN,  6,   200,  6,  200],
   ['Teams & Staff',           'teams',               {}, ADMIN,  5,   200,  5,  200],
   ['Access codes (Settings)', 'accessCodes',         {}, ADMIN,  5,   100,  5,  100],

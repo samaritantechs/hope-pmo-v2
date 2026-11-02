@@ -67,6 +67,10 @@ export const AUDITED = new Set([
      same line every other write here gets. */
   'imprestRequest', 'imprestDecide', 'imprestRetire', 'imprestFund',
   'imprestRoleSave', 'imprestRoleDelete',
+  /* THE DAILY CHECKLIST. A tick is a leader's claim about their own day, stamped by the server;
+     a photo is the proof; the plan is what every leader of a role is measured against. All
+     three are writes under a code, so all three get the line. */
+  'checklistPlanSave', 'checklistTick', 'checklistPhoto',
   /* PHONE NOTIFICATIONS. Turning a handset on or off is a write under a code, so it is logged
      like one -- and, being here, is refused to a view-only code like every other write. */
   'pushSubscribe', 'pushUnsubscribe',
