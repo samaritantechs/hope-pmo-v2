@@ -1577,6 +1577,12 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(view.indexOf("key:'opm', label:'OPM'") < view.indexOf("col('teams','Teams','num')"), 'right after the leader\'s name');
   assert.ok(/\{leader:'', opm:'', teams:''/.test(view), 'blank on the total row');
   assert.ok(!/var BUILD = '2026-11-02-g'/.test(app), 'BUILD moved again');
+  // "All the names became blue yet underperforming rows should turn red": the row's verdict beats the link's blue.
+  assert.ok(/td\.bad a\.tel\{color:var\(--bad\)\}/.test(app) && /td\.good a\.tel\{color:var\(--ok\)\}/.test(app), 'a tappable name takes the cell\'s red or green');
+  assert.ok(app.indexOf('td.bad a.tel{') > app.indexOf('a.tel{color:var(--b600)'), 'declared after the link rule, so it wins at equal weight too');
+  assert.ok(/key:'leader', label:sec\.role, kind:'tap', tap:'xdLeader_', nameCol:true/.test(view), 'the leader column is a name column under the colour rule (its key is not in NAME_KEYS)');
+  assert.ok(/\(NAME_KEYS\[c\.key\] \|\| c\.nameCol\) && ctx\.avgCol/.test(app), 'which cellCls_ honours');
+  assert.ok(!/var BUILD = '2026-11-02-h'/.test(app), 'BUILD moved once more');
   const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
   assert.ok(/export const REPORT_ROLES = \['GMO', 'MANAGER', 'BIKE', 'OPM'\]/.test(expdf));
   assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');

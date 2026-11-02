@@ -211,6 +211,12 @@
   .teampick-act{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   .tblfoot{padding:10px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--mut);background:var(--b50)}
   a.tel{color:var(--b600);text-decoration:none}
+  /* "All the names became blue yet underperforming rows should turn red." A name that opens a
+     card is a link, and a link's blue was beating the row's verdict: the cell the colour rule
+     marks bad (a leader below the board's line) kept a blue name. The verdict wins; the name is
+     still a link. */
+  td.bad a.tel{color:var(--bad)}
+  td.good a.tel{color:var(--ok)}
   tr.taprow td{cursor:pointer}
   tr.taprow:hover td{background:var(--b50)}
 
@@ -759,7 +765,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-02-h';
+var BUILD = '2026-11-02-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4319,7 +4325,11 @@ VIEWS.expdfrep = function(){
               + (opm ? ' · orodha yote ya timu zake / the whole assigned book of their teams' : '')
               + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : ''),
             sec.rows,
-            [{key:'leader', label:sec.role, kind:'tap', tap:'xdLeader_',
+            /* nameCol: the leader's name is judged by the colour rule like a team's or an OPM's
+               on every other board -- red below the board's Rec % line, green at target
+               ("underperforming rows should turn red"). The key is `leader`, which NAME_KEYS
+               does not list, so the column says so itself. */
+            [{key:'leader', label:sec.role, kind:'tap', tap:'xdLeader_', nameCol:true,
               data:function(r){ return r.leader && r.leader!=='(unassigned)' ? { role: sec.role, leader: r.leader } : null; },
               cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }}]
             // "Add an OPM column on the three role boards too": the OPM of the teams this leader holds.

@@ -3441,6 +3441,12 @@ too: all columns sortable as usual"): right after the leader's name, the OPM of 
 leader holds — more than one, comma-separated; none, `(unassigned)` in red. Text, so it sorts
 like any header. Not on the By OPM board, where it would repeat the name.
 
+**A tappable name keeps the row's colour** ("All the names became blue yet underperforming
+rows should turn red"): the leader column is a name column under the colour rule
+(`NAME_KEYS` / `cellCls_`), so a leader below the board's Rec % line gets a `bad` cell — but
+the name inside is an `a.tel` link, whose blue beat the cell's red. `td.bad a.tel` and
+`td.good a.tel` in `public/app.html` let the verdict win on every board with a tap column.
+
 | Where | What |
 |---|---|
 | `weekWork`, `REPORT_ROLES`, `expdfReport`, `expdfLeader` (`api/_lib/expdf.js`) | the rule, the four boards, the rows' `calls` / `dials` / `talk` / `comments` / `inCalls`, section totals; `expdfCore` rows carry `opm`. |
