@@ -3387,7 +3387,7 @@ missing (recovery then reads 0). An "(unassigned)" row opens nothing.
 | Where | What |
 |---|---|
 | `expdfLeader` (`api/_lib/expdf.js`) | the card's one read: the same deck reads as the report, then the leader's HOPE Calls ids by name, their week's portfolio calls, their week's comments — keyed reads, on the tap only, never with the report. Permission: `expdfrep`. The portal wrapper `expdfLeaderWeek` applies the same week rule (`asOfWeek`) as the report. |
-| `xdLeader_` (`public/app.html`) | the drawer; the leader column on the three boards is a `kind:'tap'` cell (a new cell kind in `cellHtml`: a name that opens a card, exports as text). `BUILD 2026-11-02-c`. |
+| `xdLeader_` (`public/app.html`) | the drawer; the leader column on the three boards is a `kind:'tap'` cell (a new cell kind in `cellHtml`: a name that opens a card, exports as text). Its values ride as `data-tap-<key>`, never bare `data-<key>`: `wireForms()` wires every `[data-role]` element to the role editor after each paint, and the first build's `data-role="MANAGER"` had its tap silently replaced — blue and dead. `BUILD 2026-11-02-d`. |
 | `test/speed.test.mjs` | the card's budget stated beside the report's. |
 
 ---

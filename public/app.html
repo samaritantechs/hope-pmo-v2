@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-02-c';
+var BUILD = '2026-11-02-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1994,12 +1994,17 @@ function cellHtml(r, c){
      telHref has always used. */
   if (c.kind==='tel') return txt ? '<a class="tel" href="tel:'+esc(telHref_(txt))+'" onclick="event.stopPropagation()">'+esc(txt)+'</a>' : '';
   /* A NAME THAT OPENS A CARD. `c.tap` names the global function that gets the anchor; `c.data(r)`
-     gives the data-* it carries, or null for a row that has nothing to open (an unassigned
-     leader). The text exports as text, like any other cell. */
+     gives the values it carries, or null for a row that has nothing to open (an unassigned
+     leader). The text exports as text, like any other cell.
+     THE VALUES RIDE AS data-tap-<key>, NEVER AS BARE data-<key>: wireForms() wires every
+     element carrying data-role, data-agent or data-staff to the Teams & Staff editors after
+     each paint, and a leader's name that carried data-role="MANAGER" had its tap silently
+     replaced by the role editor's -- blue, and dead. A prefix of its own keeps it out of
+     every other wiring's selector. */
   if (c.kind==='tap') {
     var dt = txt && c.data ? c.data(r) : null;
     if (!dt) return esc(txt);
-    var attrs = Object.keys(dt).map(function(k){ return ' data-'+k+'="'+esc(dt[k])+'"'; }).join('');
+    var attrs = Object.keys(dt).map(function(k){ return ' data-tap-'+k+'="'+esc(dt[k])+'"'; }).join('');
     return '<a class="tel" href="#"'+attrs+' onclick="event.preventDefault();event.stopPropagation();'+c.tap+'(this)">'+esc(txt)+'</a>';
   }
   return esc(txt);
@@ -4309,7 +4314,7 @@ VIEWS.expdfrep = function(){
    show how many portfolio calls they made among the expected defaulters and added comments and
    recovery earned". One read, on the tap, for the week the report is showing. */
 function xdLeader_(el){
-  var role = el.getAttribute('data-role'), leader = el.getAttribute('data-leader');
+  var role = el.getAttribute('data-tap-role'), leader = el.getAttribute('data-tap-leader');
   if (!leader) return;
   drawer('<h3>'+esc(leader)+' <span class="chip ok">'+esc(role)+'</span></h3><div class="sk"></div>', { wide: true });
   srv('expdfLeader', { role: role, leader: leader, weekOf: S.args.weekOf || '' }).then(function(d){

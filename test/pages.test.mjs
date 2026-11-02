@@ -1537,6 +1537,15 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   // The tappable cell kind exports as text and never carries data for a null row.
   const cell = app.slice(app.indexOf('function cellHtml('), app.indexOf('function isNum('));
   assert.ok(/c\.kind==='tap'/.test(cell) && /if \(!dt\) return esc\(txt\);/.test(cell));
+  /* ITS VALUES RIDE UNDER A PREFIX OF THEIR OWN. wireForms() wires every [data-role], [data-agent]
+     and [data-staff] element to the Teams & Staff editors after each paint; a leader's name
+     that carried data-role="MANAGER" had its tap replaced by the role editor's -- blue and
+     dead on the live report. The prefix keeps the tap out of every other wiring's selector. */
+  assert.ok(/' data-tap-'\+k\+'="'/.test(cell), 'tap values are data-tap-<key>, never bare data-<key>');
+  assert.ok(/getAttribute\('data-tap-role'\)/.test(view) && /getAttribute\('data-tap-leader'\)/.test(view), 'the card reads the prefixed attributes');
+  const wired = [...app.matchAll(/querySelectorAll\('\[(data-[a-z]+)\]'\)/g)].map(m => m[1]);
+  assert.ok(wired.includes('data-role'), 'the role wiring this guards against is still there');
+  assert.ok(!wired.some(a => a.startsWith('data-tap-')), 'nothing else wires data-tap-* elements');
 });
 
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
