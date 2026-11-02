@@ -1554,6 +1554,19 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   assert.ok(/tr\.taprow td\{cursor:pointer\}/.test(app), 'the row shows it can be tapped');
 });
 
+/* "System SW/EN popups can be swiped away please! because they hinder operation, one has to wait
+   until it disappears." The tip (Vidokezo, in the chosen language) ignored the pointer. */
+test('the tip and the toast close on a tap or a swipe, not only on their own clock', () => {
+  const app = appSrc();
+  assert.ok(/#tip\.show\{opacity:1;transform:none;pointer-events:auto;cursor:pointer;touch-action:none\}/.test(app), 'a shown tip takes the pointer, and a flick on it does not scroll the page');
+  assert.ok(/#tip\{[^}]*pointer-events:none/.test(app), 'a hidden tip still lets the pointer through to the page');
+  const w = app.slice(app.indexOf('/* A POPUP YOU CAN FLICK AWAY'), app.indexOf("$('#menuBtn').onclick"));
+  assert.ok(/el\.addEventListener\('click', hide\)/.test(w) && /addEventListener\('touchmove'/.test(w) && /> 24/.test(w), 'a tap and a 24px flick both close it');
+  assert.ok(/flickAway\(\$\('#tip'\)/.test(w) && /clearTimeout\(S\.tipHide\)/.test(w), 'the tip, with its clock cleared so a stale timer cannot cut the next tip short');
+  assert.ok(/flickAway\(\$\('#toast'\)/.test(w) && /clearTimeout\(toast\._t\)/.test(w), 'the toast closes the same way');
+  assert.ok(!/var BUILD = '2026-11-02-e'/.test(app), 'BUILD moved');
+});
+
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
   const app = appSrc();
   const src = app.slice(app.indexOf('var BP = null;'), app.indexOf('function bpState_()'));

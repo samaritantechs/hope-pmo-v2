@@ -3390,6 +3390,21 @@ missing (recovery then reads 0). An "(unassigned)" row opens nothing.
 | `xdLeader_` (`public/app.html`) | the drawer; the leader column on the three boards is a `kind:'tap'` cell (a new cell kind in `cellHtml`: a name that opens a card, exports as text). Its values ride as `data-tap-<key>`, never bare `data-<key>`: `wireForms()` wires every `[data-role]` element to the role editor after each paint, and the first build's `data-role="MANAGER"` had its tap silently replaced — blue and dead. `BUILD 2026-11-02-d`. |
 | `test/speed.test.mjs` | the card's budget stated beside the report's. |
 
+## Part 29 — The tip and the toast close on a tap or a swipe
+
+> "System SW/EN popups can be swiped away please! because they hinder operation, one has to
+> wait until it disappears."
+
+The tip (Vidokezo / Tips, shown in the chosen language every few minutes and on the bulb
+button) sat over the bottom-right corner for its hold time (Settings → hints: `holdSec`) and
+ignored the pointer (`pointer-events:none`), so a leader working that corner waited it out.
+Now a shown tip takes the pointer: a tap closes it, and so does a swipe of 24px in any
+direction; `touch-action:none` on it keeps the flick from scrolling the page underneath. The
+toast (the three-second "saved" / error strip) closes the same way. Hidden, the tip still lets
+the pointer through. One wiring, `flickAway` beside the `#tipBtn` handler in `public/app.html`;
+the tip's own timer is cleared on a manual close so a stale timer cannot cut the next tip
+short. The call app has no tips; its toast is unchanged.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
