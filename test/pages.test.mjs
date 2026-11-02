@@ -1521,6 +1521,24 @@ test('the daily checklist tab is wired, grantable, worked in the app, and stampe
   for (const fn of ['checklistPlanSave', 'checklistTick', 'checklistPhoto']) assert.ok(AUDITED.has(fn), fn + ' is audited');
 });
 
+/* THE CARD BEHIND A LEADER'S NAME ON THE EXP.DEF REPORT -- "tapping a name of gmo, manager or
+   bike should open card to show how many portfolio calls they made among the expected defaulters
+   and added comments and recovery earned". The name is a tappable cell on all three boards; the
+   card is one read, on the tap, for the week the report shows. */
+test('the exp.def report: a leader\'s name opens their card of calls, comments and recovery', () => {
+  const app = appCore();
+  const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
+  assert.ok(/key:'leader', label:sec\.role, kind:'tap', tap:'xdLeader_'/.test(view), 'the leader column is tappable on every role board');
+  assert.ok(/r\.leader!=='\(unassigned\)' \? \{ role: sec\.role, leader: r\.leader \} : null/.test(view), 'an unassigned row opens nothing');
+  assert.ok(/function xdLeader_\(el\)/.test(view), 'the card function sits with the report');
+  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'one read, the report\'s own week');
+  for (const label of ['Portfolio calls', 'Comments', 'Recovered']) assert.ok(view.includes(label), 'the card shows ' + label);
+  assert.ok(/HOPE Calls under this name/.test(view), 'it says when the name is not registered in HOPE Calls');
+  // The tappable cell kind exports as text and never carries data for a null row.
+  const cell = app.slice(app.indexOf('function cellHtml('), app.indexOf('function isNum('));
+  assert.ok(/c\.kind==='tap'/.test(cell) && /if \(!dt\) return esc\(txt\);/.test(cell));
+});
+
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
   const app = appSrc();
   const src = app.slice(app.indexOf('var BP = null;'), app.indexOf('function bpState_()'));

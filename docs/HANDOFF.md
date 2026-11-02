@@ -3358,6 +3358,38 @@ the photo. Nothing can be ticked for yesterday.
 **What the GM does first:** run RUN-ME-048; on the Daily Bonus Plan tab set each role's week;
 on Roles & access tick *checklist* for the roles that work it (GMO, Manager, OPM …).
 
+## Part 28 — The card behind a leader's name on the Exp.Def Report
+
+> "At expected defaulter report .. as per an individual - tapping a name of gmo, manager or
+> bike should open card to show how many portfolio calls they made among the expected
+> defaulters and added comments and recovery earned."
+
+The report says what each leader's book is worth and what came back. Tapping the leader's
+name on any of the three boards (GMO, MANAGER, BIKE) now opens a card that says what they
+**did** about it in the week the report is showing:
+
+- **Customers** — the rows of the rotation under that name and role, read exactly as the
+  report reads them (weekly, as of the chosen week's Friday).
+- **Portfolio calls** — the leader's own calls from HOPE Calls, portfolio only, matched to
+  those customers by the REF the sync stamped or by the number dialled (the customer's or the
+  guarantor's). Counted the way the Calls report counts: one number per day is one call, with
+  the dials beside it, the customers reached, and the talk time. A call to somebody else's
+  customer does not count here.
+- **Comments** — the follow-up comments written under that name in the week on those
+  customers, with the newest status and comment on each row and the latest ten listed.
+- **Recovered** — the week's recovery on that book, with Rec % and how many customers paid.
+
+One row per customer under it (calls, dials, last call, comments, last status and comment,
+initial, arrears now, recovered), sortable like any board. The card says when nobody is
+registered in HOPE Calls under that name (calls then read 0) and when the Monday deck is
+missing (recovery then reads 0). An "(unassigned)" row opens nothing.
+
+| Where | What |
+|---|---|
+| `expdfLeader` (`api/_lib/expdf.js`) | the card's one read: the same deck reads as the report, then the leader's HOPE Calls ids by name, their week's portfolio calls, their week's comments — keyed reads, on the tap only, never with the report. Permission: `expdfrep`. The portal wrapper `expdfLeaderWeek` applies the same week rule (`asOfWeek`) as the report. |
+| `xdLeader_` (`public/app.html`) | the drawer; the leader column on the three boards is a `kind:'tap'` cell (a new cell kind in `cellHtml`: a name that opens a card, exports as text). `BUILD 2026-11-02-c`. |
+| `test/speed.test.mjs` | the card's budget stated beside the report's. |
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

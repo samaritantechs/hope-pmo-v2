@@ -12281,3 +12281,66 @@ test('daily checklist: a hand-typed DAILY_CHECKLIST setting cannot take the tab 
   // Late is read on the EAT clock: NOW is 12:00 EAT.
   assert.equal(isLate('11:59', NOW), true); assert.equal(isLate('12:00', NOW), false); assert.equal(isLate('00:00', NOW), false); assert.equal(isLate('', NOW), false);
 });
+
+/* =====================================================================================
+   THE CARD BEHIND A LEADER'S NAME ON THE EXP.DEF REPORT -- expdfLeader.
+
+     "tapping a name of gmo, manager or bike should open card to show how many portfolio
+      calls they made among the expected defaulters and added comments and recovery earned."
+
+   BOSS is KONGOWE's manager; in the expdf fixture A2 (initial 2,000, now 1,500) is in the
+   MANAGER bucket. BOSS's calls and comments are matched to A2 by REF or by the number dialled;
+   a portfolio call to somebody else's customer, another officer's comment, and a call outside
+   the week are not theirs.
+   ===================================================================================== */
+test('expdf leader card: the leader\'s own calls and comments on their own customers, and the recovery, for the week', async () => {
+  const t = expdfTables();
+  for (const r of t.defaulter_snapshots) r.guarantor_contact = '07150000' + r.ref;   // a real deck carries the guarantor's number
+  t.call_users.push({ user_id: 'UB', name: 'Boss', team: 'KONGOWE', role: 'MANAGER', is_leader: true });   // case differs on purpose
+  t.call_logs.push(
+    { id: 'b1', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 120, portfolio: true, outcome: 'CONNECTED' },
+    { id: 'b2', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 30, portfolio: true, outcome: 'MISSED' },   // same number, same day: one call, two dials
+    { id: 'b3', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071500002', ref: null, call_date: YEST, duration: 60, portfolio: true, outcome: 'CONNECTED' },  // the guarantor's number (07150000A2 in the deck, digits 071500002), no ref stamped
+    { id: 'b4', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: TODAY, duration: 90, portfolio: true, outcome: 'CONNECTED' },  // BIKE's customer: not on this card
+    { id: 'b5', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: '2026-07-10', duration: 200, portfolio: true, outcome: 'CONNECTED' }, // last week
+    { id: 'b6', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '799000000', ref: null, call_date: TODAY, duration: 400, portfolio: false, outcome: 'CONNECTED' },   // not portfolio
+    { id: 'j1', user_id: 'U1', officer: 'JUMA G', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 50, portfolio: true, outcome: 'CONNECTED' });  // somebody else's call
+  t.followup_comments.push(
+    { id: 'cb1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ataleta Jumatatu', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: TODAY + 'T07:00:00Z' },
+    { id: 'cb2', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'hapatikani', fu_status: 'HANA USHIRIKIANO', created_by: 'BOSS', created_at: YEST + 'T09:00:00Z' },
+    { id: 'cb3', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'si wangu', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: TODAY + 'T07:00:00Z' },      // BIKE's customer
+    { id: 'cb4', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'wiki iliyopita', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: '2026-07-10T07:00:00Z' }, // last week
+    { id: 'cj1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ya Juma', fu_status: 'AMETOA AHADI', created_by: 'JUMA G', created_at: TODAY + 'T08:00:00Z' });    // somebody else's
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
+  assert.equal(d.leader, 'BOSS'); assert.equal(d.role, 'MANAGER');
+  assert.equal(d.weekOf, MON); assert.equal(d.weekEnd, '2026-07-26'); assert.equal(d.inCalls, true);
+  assert.deepEqual(d.rows.map(r => r.ref), ['A2'], 'the manager\'s own book, nobody else\'s');
+  const t2 = d.totals;
+  assert.equal(t2.customers, 1); assert.equal(t2.initial, 2000); assert.equal(t2.arrears, 1500);
+  assert.equal(t2.recovered, 500); assert.equal(t2.pct, 25); assert.equal(t2.recoveredCustomers, 1);
+  // Calls: today's two dials to A2 are ONE call; yesterday's call to the guarantor's number counts
+  // by the number dialled; BIKE's customer, last week, the non-portfolio call and Juma's call do not.
+  assert.equal(t2.calls, 2); assert.equal(t2.dials, 3); assert.equal(t2.talk, 210); assert.equal(t2.connected, 2);
+  assert.equal(t2.reached, 1);
+  assert.equal(d.rows[0].calls, 2); assert.equal(d.rows[0].dials, 3); assert.equal(d.rows[0].lastCall, TODAY);
+  // Comments: two of BOSS's on A2 this week; the newest is carried on the row.
+  assert.equal(t2.comments, 2); assert.equal(t2.commented, 1);
+  assert.equal(d.rows[0].comments, 2); assert.equal(d.rows[0].lastComment, 'ataleta Jumatatu'); assert.equal(d.rows[0].lastStatus, 'AMETOA AHADI');
+  assert.deepEqual(d.recent.map(c => c.comment), ['ataleta Jumatatu', 'hapatikani']);
+  // The same name, a different role: BIKE BEE's card holds A1 and none of BOSS's work.
+  const bike = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW);
+  assert.deepEqual(bike.rows.map(r => r.ref), ['A1']);
+  assert.equal(bike.inCalls, false, 'not registered in HOPE Calls under that name');
+  assert.equal(bike.totals.calls, 0); assert.equal(bike.totals.comments, 0); assert.equal(bike.totals.recovered, 400);
+  // A past week is read as it stood on its Friday, like the report; the windows move with it.
+  const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', weekOf: '2026-07-15' }, NOW);
+  assert.equal(past.weekOf, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19'); assert.equal(past.pastWeek, true);
+  assert.equal(past.rows.length, 0, 'no deck that week in this fixture');
+  // Refused in words: a role that is not one of the three, and the unassigned bucket.
+  await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'OPM', leader: 'BOSS' }, NOW), e => e.status === 400);
+  await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: '(unassigned)' }, NOW), e => e.status === 400);
+  // The report's own tab gates it.
+  const noTab = { code: 'N', name: 'NOBODY', role: 'OFFICER', teams: ['KONGOWE'], tabs: ['dashboard'] };
+  await assert.rejects(portalApi(db, noTab, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW), e => e.status === 403);
+});

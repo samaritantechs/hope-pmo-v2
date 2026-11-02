@@ -337,6 +337,11 @@ const BUDGETS = [
      be pasted by hand, and this screen must work without one. */
   ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  7,  1100,  7, 1100],
   ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 10,  1500,  9, 1200],
+  /* The card behind a leader's name on that report: the same five deck reads, then the leader's
+     HOPE Calls ids, their week's portfolio calls and their week's comments -- three keyed reads,
+     on the tap only. Measured with a leader nobody has registered (two of the three reads are
+     then not made) and stated at the full shape. */
+  ['Rotation report: one leader', 'expdfLeader', { role: 'MANAGER', leader: 'MGR TEAM01' }, ADMIN, 10, 1500, 9, 1200],
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
   /* 5 -> 6 migrated, 5 -> 7 until then (2026-10-30): the all-time PAR's denominator -- every
      sale's total loan (P+I), per team -- is one grouped call (RUN-ME-047). Before that is
