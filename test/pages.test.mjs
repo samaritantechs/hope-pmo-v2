@@ -1554,6 +1554,31 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   assert.ok(/tr\.taprow td\{cursor:pointer\}/.test(app), 'the row shows it can be tapped');
 });
 
+/* "At Exp.Def Report: Have sort headers of By OPM, Add columns of No of calls + duration (calls
+   among the assigned expected customer, guarantor & ana namba nyingine in them), and no of
+   comments : Between customers and initial columns" */
+test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers and Initial, and a By OPM board', () => {
+  const app = appSrc();
+  const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
+  const cols = view.slice(view.indexOf("col('teams','Teams','num')"), view.indexOf("col('pct','Rec %','pct')"));
+  const at = s => cols.indexOf(s);
+  assert.ok(at("col('customers','Customers','num')") >= 0 && at("key:'calls', label:'Calls', kind:'num'") >= 0 && at("key:'talk', label:'Talk', kind:'dur'") >= 0
+    && at("key:'comments', label:'Comments', kind:'num'") >= 0 && at("col('initial','Initial','money')") >= 0, 'the five columns exist');
+  assert.ok(at("col('customers','Customers','num')") < at("key:'calls'") && at("key:'calls'") < at("key:'talk'") && at("key:'talk'") < at("key:'comments'")
+    && at("key:'comments'") < at("col('initial','Initial','money')"), 'in that order: Customers, Calls, Talk, Comments, Initial');
+  assert.ok(/calls:sec\.totals\.calls, talk:sec\.totals\.talk, comments:sec\.totals\.comments/.test(view), 'the total row carries the three');
+  assert.ok(/r\.inCalls===false \? 'mut'/.test(view), 'a name not registered in HOPE Calls reads grey');
+  assert.ok(/ANA NAMBA NYINGINE/.test(cols), 'the Calls header says what a call is, replacement numbers included');
+  // The OPM board is one of d.sections -- the server lists GMO, MANAGER, BIKE, OPM -- and every board is drawn by board(), so its headers sort.
+  assert.ok(/sec\.role === 'OPM'/.test(view) && /the whole assigned book of their teams/.test(view), 'the OPM board says what it holds');
+  assert.ok(/return board\('xd_'\+sec\.role/.test(view), 'drawn by board(), so the headers sort');
+  const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
+  assert.ok(/export const REPORT_ROLES = \['GMO', 'MANAGER', 'BIKE', 'OPM'\]/.test(expdf));
+  assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');
+  assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view), 'the three weekly recovered cards stay three: an OPM card would count the same customers twice');
+  assert.ok(!/var BUILD = '2026-11-02-f'/.test(app), 'BUILD moved');
+});
+
 /* "System SW/EN popups can be swiped away please! because they hinder operation, one has to wait
    until it disappears." The tip (Vidokezo, in the chosen language) ignored the pointer. */
 test('the tip and the toast close on a tap or a swipe, not only on their own clock', () => {

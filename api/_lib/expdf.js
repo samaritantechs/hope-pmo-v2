@@ -1,6 +1,6 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
-import { todayKey, currentWeekday, weekMondayKey, isoWeekday } from './time.js';
+import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
 import { num } from './recovery.js';
 
@@ -35,6 +35,10 @@ import { assignFor, assignStrategy, ROLE_COLS } from './assign.js';
    so a leader's number on this screen reconciles with the dashboard rather than being a
    second, differently-computed truth. */
 export const RECYCLE_ROLES = ['GMO', 'MANAGER', 'BIKE'];
+/* The report's boards: the three recycling roles, then the OPM -- who is assigned nothing by
+   the rotation but answers for every team under them, so their board is the whole assigned
+   book of their teams. "Have sort headers of By OPM". */
+export const REPORT_ROLES = ['GMO', 'MANAGER', 'BIKE', 'OPM'];
 
 export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
   const today = todayKey(nowMs), wd = currentWeekday(nowMs), mon = weekMondayKey(nowMs);
@@ -76,7 +80,8 @@ export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
         phase: a.phase, role: a.role, cycle: a.label,
         primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
         onToday: primary === dayIdx || secondary === dayIdx,
-        leader: (team[ROLE_COLS[a.role]] || '(unassigned)') };
+        leader: (team[ROLE_COLS[a.role]] || '(unassigned)'),
+        opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
     });
   return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0 };
 }
@@ -143,28 +148,175 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
       .sort((a, b) => b.arrears - a.arrears) };
 }
 
+/* =======================================================================================
+   THE WEEK'S WORK ON A BOOK, LEADER BY LEADER -- one definition, read by the report's columns
+   and by the card behind a name, so the two can never disagree.
+
+     "Add columns of No of calls + duration (calls among the assigned expected customer,
+      guarantor & ana namba nyingine in them), and no of comments"
+
+   A CALL is one number per day (the Calls report's own rule; the dials sit beside it),
+   portfolio only, made from the HOPE Calls account(s) registered under the leader's name, to
+   one of the book's customers: by the REF the sync stamped, or by the number dialled -- the
+   customer's, the guarantor's, or a replacement number an officer recorded under ANA NAMBA
+   NYINGINE (followup_comments.new_number). A COMMENT is one written under the leader's name
+   in the week on one of those customers. A call to somebody else's customer counts nowhere.
+
+   Four reads for the whole report, whatever its size: the HOPE Calls roster (two columns; a
+   name is matched without regard to case, which .in() cannot do -- `Boss` and `BOSS` are one
+   person), the leaders' portfolio calls of the week, the replacement numbers (only when there
+   are calls to match), and the leaders' comments of the week. A single book -- the card --
+   reads the roster by that one name. */
+const nine_ = v => { const s = String(v == null ? '' : v).replace(/\D/g, ''); return s.length >= 9 ? s.slice(-9) : (s || null); };
+const likeSafe_ = s => String(s).replace(/[%_\\]/g, m => '\\' + m);
+// A name that would break PostgREST's or=(...) grammar is matched exactly instead.
+const orSafe_ = s => !/[,()"\\]/.test(String(s));
+function bad_(msg) { const e = new Error(msg); e.status = 400; throw e; }
+const per_ = () => ({ calls: new Set(), dials: 0, talk: 0, lastCall: null, comments: 0, lastComment: null, lastStatus: null, lastAt: null });
+
+export async function weekWork(db, books, weekOf, weekEnd) {
+  const work = {};
+  for (const b of books) work[b.key] = { dayNums: new Set(), dials: 0, talk: 0, connected: new Set(), called: new Set(),
+    comments: 0, commented: new Set(), per: {}, recent: [] };
+  const named = books.filter(b => b.leader && b.leader !== '(unassigned)' && b.rows.length);
+  const byName = {};
+  for (const b of named) (byName[K(b.leader)] = byName[K(b.leader)] || []).push(b);
+  const names = Object.keys(byName);
+  const inCalls = {};
+  if (!names.length) return { work: finish_(work), inCalls };
+
+  // 1. Whose calls: the HOPE Calls accounts under those names.
+  let users = [];
+  try {
+    users = names.length === 1
+      ? await fetchAll(() => db.from('call_users').select('user_id, name').ilike('name', likeSafe_(named[0].leader)))
+      : await fetchAll(() => db.from('call_users').select('user_id, name'));
+  } catch (e) { users = []; }
+  const idBooks = {}, spellings = {};
+  for (const u of users) {
+    const k = K(u.name);
+    if (!byName[k] || !u.user_id) continue;
+    inCalls[k] = true;
+    (idBooks[u.user_id] = idBooks[u.user_id] || []).push(...byName[k]);
+    (spellings[k] = spellings[k] || new Set()).add(String(u.name));
+  }
+  const ids = Object.keys(idBooks);
+
+  // 2. Their portfolio calls of the week.
+  let calls = [];
+  if (ids.length) {
+    try {
+      calls = await fetchAll(() => db.from('call_logs').select('user_id, phone, ref, call_date, duration, outcome')
+        .in('user_id', ids).gte('call_date', weekOf).lte('call_date', weekEnd).eq('portfolio', true));
+    } catch (e) { calls = []; }
+  }
+  // 3. The replacement numbers officers recorded (ANA NAMBA NYINGINE), so a call to one counts
+  //    for the customer it was recorded under even where the sync did not stamp the REF.
+  const altByRef = {};
+  if (calls.length) {
+    let alts = [];
+    try { alts = await fetchAll(() => db.from('followup_comments').select('ref, new_number').not('new_number', 'is', null).neq('new_number', '')); } catch (e) { alts = []; }
+    for (const a of alts) { const r = K(a.ref), d = nine_(a.new_number); if (r && d) (altByRef[r] = altByRef[r] || []).push(d); }
+  }
+  const index = b => {
+    if (b._idx) return b._idx;
+    const refSet = new Set(), byPhone = {};
+    for (const r of b.rows) {
+      const ref = K(r.ref); refSet.add(ref);
+      for (const ph of [r.contact, r.guarantor_contact].concat(altByRef[ref] || [])) { const n = nine_(ph); if (n && !byPhone[n]) byPhone[n] = ref; }
+    }
+    return (b._idx = { refSet, byPhone });
+  };
+  for (const c of calls) {
+    for (const b of (idBooks[c.user_id] || [])) {
+      const { refSet, byPhone } = index(b);
+      const ref = refSet.has(K(c.ref)) ? K(c.ref) : (byPhone[nine_(c.phone)] || null);
+      if (!ref) continue;
+      const w = work[b.key], key = String(c.call_date) + '|' + nine_(c.phone);
+      const p = w.per[ref] || (w.per[ref] = per_());
+      p.calls.add(key); p.dials++; p.talk += num(c.duration);
+      if (!p.lastCall || String(c.call_date) > p.lastCall) p.lastCall = String(c.call_date);
+      w.dayNums.add(key); w.dials++; w.talk += num(c.duration); w.called.add(ref);
+      if (K(c.outcome) === 'CONNECTED') w.connected.add(key);
+    }
+  }
+
+  // 4. Their comments of the week, under any spelling of the name the roster or the teams table carries.
+  const clauses = [], exact = new Set();
+  for (const b of named) {
+    const all = new Set([String(b.leader), K(b.leader)].concat([...(spellings[K(b.leader)] || [])]));
+    for (const s of all) { if (orSafe_(s)) clauses.push('created_by.ilike.' + likeSafe_(s)); else exact.add(s); }
+  }
+  let comments = [];
+  try {
+    let q = db.from('followup_comments').select('ref, full_name, comment, fu_status, promise_date, promise_amt, created_by, created_at')
+      .gte('created_at', weekOf + 'T00:00:00+03:00').lte('created_at', weekEnd + 'T23:59:59+03:00');
+    q = clauses.length ? q.or([...new Set(clauses)].join(',')) : q.in('created_by', [...exact]);
+    comments = await fetchAll(() => q);
+  } catch (e) { comments = []; }
+  for (const c of comments) {
+    for (const b of (byName[K(c.created_by)] || [])) {
+      const { refSet } = index(b); const ref = K(c.ref);
+      if (!refSet.has(ref)) continue;
+      const w = work[b.key], p = w.per[ref] || (w.per[ref] = per_());
+      p.comments++;
+      if (!p.lastAt || String(c.created_at) > p.lastAt) { p.lastAt = String(c.created_at); p.lastComment = c.comment || null; p.lastStatus = c.fu_status || null; }
+      w.comments++; w.commented.add(ref);
+      w.recent.push({ ref: c.ref, full_name: c.full_name || null, comment: c.comment || '', fu_status: c.fu_status || null,
+        promise_date: c.promise_date || null, promise_amt: c.promise_amt == null ? null : num(c.promise_amt), created_at: c.created_at });
+    }
+  }
+  return { work: finish_(work), inCalls };
+}
+function finish_(work) {
+  const out = {};
+  for (const k of Object.keys(work)) {
+    const w = work[k];
+    w.recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    out[k] = { calls: w.dayNums.size, dials: w.dials, talk: w.talk, connected: w.connected.size, reached: w.called.size,
+      comments: w.comments, commented: w.commented.size, per: w.per, recent: w.recent };
+  }
+  return out;
+}
+const bookWeek_ = (nowMs, weekOf, weekEnd) => {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || '')) ? String(weekOf) : weekMondayKey(nowMs);
+  return { weekOf: from, weekEnd: /^\d{4}-\d{2}-\d{2}$/.test(String(weekEnd || '')) ? String(weekEnd) : addDaysKey(from, 6) };
+};
+
 /** The management view: every GMO / MANAGER / BIKE with their own book and their own recovery,
-    daily or for the week. This is what says which of the three categories is actually working
-    its rotation and which is not. */
-export async function expdfReport(db, user, { weekly = false, day = null } = {}, nowMs) {
+    and every OPM with the whole assigned book of their teams, daily or for the week -- each
+    with the week's calls, talk time and comments beside the customers they hold. This is what
+    says which category, and which person, is actually working the rotation and which is not. */
+export async function expdfReport(db, user, { weekly = false, day = null, weekOf = null, weekEnd = null } = {}, nowMs) {
   const core = await expdfCore(db, user, nowMs, { weekly });
   const onScope = r => (weekly ? true : (day === 'all' ? true : r.onToday));
-  const sections = RECYCLE_ROLES.map(role => {
-    const mine = core.rows.filter(r => r.role === role && onScope(r));
+  const all = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && onScope(r));
+  const books = [];
+  const built = REPORT_ROLES.map(role => {
+    const mine = role === 'OPM' ? all : all.filter(r => r.role === role);
     const by = {};
     for (const r of mine) {
-      const b = bucket(by, r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {} });
-      b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered;
+      const b = bucket(by, role === 'OPM' ? r.opm : r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, rows: [] });
+      b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered; b.rows.push(r);
       if (r.team) b.teams[K(r.team)] = r.team;
     }
-    const rows = Object.values(by).map(b => ({ leader: b.key,
-      teams: Object.keys(b.teams).length, customers: b.customers,
-      arrears: b.arrears, initial: b.initial, recovered: b.recovered,
-      pct: pctOf(b.recovered, b.initial) })).sort((a, b) => b.recovered - a.recovered);
-    return { role, rows, totals: sumExpdf(mine), unassigned: rows.filter(r => r.leader === '(unassigned)').length };
+    for (const b of Object.values(by)) books.push({ key: role + '|' + K(b.key), leader: b.key, rows: b.rows });
+    return { role, by, mine };
   });
-  const all = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && onScope(r));
-  return { weekly, weekday: core.weekday, date: core.date, weekOf: weekMondayKey(nowMs),
+  const win = bookWeek_(nowMs, weekOf, weekEnd);
+  const { work, inCalls } = await weekWork(db, books, win.weekOf, win.weekEnd);
+  const sections = built.map(({ role, by, mine }) => {
+    const rows = Object.values(by).map(b => { const w = work[role + '|' + K(b.key)] || {}; return { leader: b.key,
+      teams: Object.keys(b.teams).length, customers: b.customers,
+      calls: w.calls || 0, dials: w.dials || 0, talk: w.talk || 0, comments: w.comments || 0,
+      inCalls: !!inCalls[K(b.key)],
+      arrears: b.arrears, initial: b.initial, recovered: b.recovered,
+      pct: pctOf(b.recovered, b.initial) }; }).sort((a, b) => b.recovered - a.recovered);
+    const sum = f => rows.reduce((s, r) => s + r[f], 0);
+    return { role, rows, totals: { ...sumExpdf(mine), calls: sum('calls'), dials: sum('dials'), talk: sum('talk'), comments: sum('comments') },
+      unassigned: rows.filter(r => r.leader === '(unassigned)').length };
+  });
+  return { weekly, weekday: core.weekday, date: core.date, weekOf: win.weekOf,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     sections, totals: sumExpdf(all) };
 }
@@ -178,84 +330,30 @@ export async function expdfReport(db, user, { weekly = false, day = null } = {},
       defaulters and added comments and recovery earned."
 
    The report says what each leader's book is worth and what came back. This says what they
-   DID about it: the portfolio calls they made to those customers (and their guarantors) in the
-   week, the follow-up comments they wrote on them, and the recovery earned -- customer by
-   customer, so a leader with a good recovery and no calls, or many calls and no recovery, is
-   visible as such.
-
-   THE SAME BOOK AS THE ROW THEY TAPPED: the rotation's rows for that role and that name, read
-   as the report reads them (weekly, as of the chosen week). Calls are the leader's own, from
-   HOPE Calls, matched to those customers by the REF the sync stamped or by the number dialled
-   (customer's or guarantor's); comments are the ones written under that name. A call to
-   somebody else's customer is not counted here. Read on the tap only, never with the report. */
-const nine_ = v => { const s = String(v == null ? '' : v).replace(/\D/g, ''); return s.length >= 9 ? s.slice(-9) : (s || null); };
-const likeSafe_ = s => String(s).replace(/[%_\\]/g, m => '\\' + m);
-function bad_(msg) { const e = new Error(msg); e.status = 400; throw e; }
-
+   DID about it, customer by customer, so a leader with a good recovery and no calls, or many
+   calls and no recovery, is visible as such. THE SAME BOOK AS THE ROW THEY TAPPED: the
+   rotation's rows for that role and that name -- for an OPM, every assigned row of their
+   teams -- read as the report reads them, and the week's work by the one definition above.
+   Read on the tap only, never with the report. */
 export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd } = {}, nowMs) {
   const R = K(role), L = String(leader == null ? '' : leader).trim();
-  if (!RECYCLE_ROLES.includes(R)) bad_('Chagua GMO, MANAGER au BIKE. / Pick GMO, MANAGER or BIKE.');
+  if (!REPORT_ROLES.includes(R)) bad_('Chagua GMO, MANAGER, BIKE au OPM. / Pick GMO, MANAGER, BIKE or OPM.');
   if (!L || L === '(unassigned)') bad_('Chagua kiongozi aliyetajwa. / Pick a named leader.');
   const core = await expdfCore(db, user, nowMs, { weekly: true });
-  const rows = core.rows.filter(r => r.role === R && K(r.leader) === K(L));
-  const refSet = new Set(rows.map(r => K(r.ref)));
-  const byPhone = {};
-  for (const r of rows) {
-    for (const ph of [r.contact, r.guarantor_contact]) { const n = nine_(ph); if (n && !byPhone[n]) byPhone[n] = K(r.ref); }
-  }
-  const per = {};
-  for (const r of rows) per[K(r.ref)] = { calls: new Set(), dials: 0, talk: 0, lastCall: null, comments: 0, lastComment: null, lastStatus: null, lastAt: null };
-
-  // Their calls, from HOPE Calls: the user ids registered under that name, then the week's portfolio calls.
-  let users = [];
-  try { users = await fetchAll(() => db.from('call_users').select('user_id, name').ilike('name', likeSafe_(L))); } catch (e) { users = []; }
-  const ids = users.map(u => u.user_id).filter(Boolean);
-  let calls = [];
-  if (ids.length) {
-    try {
-      calls = await fetchAll(() => db.from('call_logs').select('user_id, phone, ref, call_date, duration, outcome')
-        .in('user_id', ids).gte('call_date', weekOf).lte('call_date', weekEnd).eq('portfolio', true));
-    } catch (e) { calls = []; }
-  }
-  const dayNums = new Set(), connected = new Set();
-  let dials = 0, talk = 0;
-  for (const c of calls) {
-    const ref = refSet.has(K(c.ref)) ? K(c.ref) : (byPhone[nine_(c.phone)] || null);
-    if (!ref) continue;
-    const p = per[ref]; const key = String(c.call_date) + '|' + nine_(c.phone);
-    p.calls.add(key); p.dials++; p.talk += num(c.duration);
-    if (!p.lastCall || String(c.call_date) > p.lastCall) p.lastCall = String(c.call_date);
-    dayNums.add(key); dials++; talk += num(c.duration);
-    if (K(c.outcome) === 'CONNECTED') connected.add(key);
-  }
-
-  // Their comments, written under that name in the week, on those customers.
-  let comments = [];
-  try {
-    comments = await fetchAll(() => db.from('followup_comments').select('ref, full_name, comment, fu_status, promise_date, promise_amt, created_at')
-      .ilike('created_by', likeSafe_(L)).gte('created_at', weekOf + 'T00:00:00+03:00').lte('created_at', weekEnd + 'T23:59:59+03:00'));
-  } catch (e) { comments = []; }
-  const recent = [];
-  for (const c of comments) {
-    const ref = K(c.ref);
-    if (!refSet.has(ref)) continue;
-    const p = per[ref]; p.comments++;
-    if (!p.lastAt || String(c.created_at) > p.lastAt) { p.lastAt = String(c.created_at); p.lastComment = c.comment || null; p.lastStatus = c.fu_status || null; }
-    recent.push({ ref: c.ref, full_name: c.full_name || null, comment: c.comment || '', fu_status: c.fu_status || null,
-      promise_date: c.promise_date || null, promise_amt: c.promise_amt == null ? null : num(c.promise_amt), created_at: c.created_at });
-  }
-  recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
-
-  const out = rows.map(r => { const p = per[K(r.ref)]; return {
+  const rows = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && (R === 'OPM' ? K(r.opm) === K(L) : (r.role === R && K(r.leader) === K(L))));
+  const win = bookWeek_(nowMs, weekOf, weekEnd);
+  const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd);
+  const w = work.one;
+  const out = rows.map(r => { const p = w.per[K(r.ref)] || per_(); return {
     ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, cycle: r.cycle, status: r.status,
     initial: r.initial, arrears: r.arrears, recovered: r.recovered,
     calls: p.calls.size, dials: p.dials, talk: p.talk, lastCall: p.lastCall,
     comments: p.comments, lastComment: p.lastComment, lastStatus: p.lastStatus }; })
     .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
   const t = sumExpdf(rows);
-  return { role: R, leader: L, weekOf, weekEnd, inCalls: ids.length > 0, hasBaseline: core.hasBaseline,
+  return { role: R, leader: L, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
     totals: { ...t, recoveredCustomers: rows.filter(r => r.recovered > 0).length,
-      calls: dayNums.size, dials, talk, connected: connected.size,
-      reached: out.filter(r => r.calls > 0).length, comments: recent.length, commented: out.filter(r => r.comments > 0).length },
-    rows: out, recent: recent.slice(0, 10) };
+      calls: w.calls, dials: w.dials, talk: w.talk, connected: w.connected,
+      reached: w.reached, comments: w.comments, commented: w.commented },
+    rows: out, recent: w.recent.slice(0, 10) };
 }

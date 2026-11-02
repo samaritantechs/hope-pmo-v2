@@ -336,12 +336,21 @@ const BUDGETS = [
      Defaulters Followup. The database cannot hand the pairing over without a function that has to
      be pasted by hand, and this screen must work without one. */
   ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  7,  1100,  7, 1100],
-  ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 10,  1500,  9, 1200],
-  /* The card behind a leader's name on that report: the same five deck reads, then the leader's
-     HOPE Calls ids, their week's portfolio calls and their week's comments -- three keyed reads,
-     on the tap only. Measured with a leader nobody has registered (two of the three reads are
-     then not made) and stated at the full shape. */
-  ['Rotation report: one leader', 'expdfLeader', { role: 'MANAGER', leader: 'MGR TEAM01' }, ADMIN, 10, 1500, 9, 1200],
+  /* 10 -> 14 trips and 1,500 -> 2,000 rows (2026-11-02): every board row now carries the week's
+     calls, talk and comments ("Add columns of No of calls + duration ... and no of comments"),
+     by the card's own rule, for the whole report in FOUR reads whatever its size: the HOPE
+     Calls roster (two columns, a few hundred rows -- the teams table and the roster spell a
+     name in different cases and .in() is exact-case), the leaders' portfolio calls of the
+     week, the replacement numbers recorded under ANA NAMBA NYINGINE (only when there are
+     calls to match), and the leaders' comments of the week. Never one read per leader. This
+     fixture names no leader with a book, so none of the four is made here; the ceiling is the
+     live shape. */
+  ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 14,  2000,  13, 1700],
+  /* The card behind a leader's name on that report: the same five deck reads, then the week's
+     work by the same four reads as the report (the roster read by that one name). Measured with
+     a leader nobody has registered (the calls and replacement-number reads are then not made)
+     and stated at the full shape. */
+  ['Rotation report: one leader', 'expdfLeader', { role: 'MANAGER', leader: 'MGR TEAM01' }, ADMIN, 11, 1500, 10, 1200],
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
   /* 5 -> 6 migrated, 5 -> 7 until then (2026-10-30): the all-time PAR's denominator -- every
      sale's total loan (P+I), per team -- is one grouped call (RUN-ME-047). Before that is

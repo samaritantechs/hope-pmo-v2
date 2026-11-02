@@ -10643,7 +10643,7 @@ async function settingNum(db, key, dflt) {
    arrows. The weekly email keeps calling expdfReport directly, on this week. */
 async function expdfReportWeek(db, user, args, nowMs = Date.now()) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
-  const d = await expdfReport(db, user, { ...(args || {}), weekly: true }, asOf.ms);
+  const d = await expdfReport(db, user, { ...(args || {}), weekly: true, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6) }, asOf.ms);
   return { ...d, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6), asOfDate: todayKey(asOf.ms),
     pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future };
 }
