@@ -12131,3 +12131,153 @@ test('advance routing: the approver role on Roles & access, the named supervisor
   const oldDept = await portalApi(old, ADMIN, 'saveRole', { role: 'credit', tabs: 'advreq', approverCode: 'A' }, NOW);
   assert.equal(oldDept.approverCode, undefined); assert.deepEqual(oldDept.tabs, ['advreq']); assert.match(oldDept.note, /RUN-ME-046/);
 });
+
+/* =====================================================================================
+   THE DAILY CHECKLIST -- api/_lib/checklist.js.
+
+     "MONDAY | ACTIVITY | CHECKBOX CutOff 00:00 HRS | CAMERA (icon) & View Button ... for
+      leaders at a tab 'Daily Checklist' ... I should be able to manage tasks per role at my
+      bonasi tab"
+
+   The plan is a setting written from the bonus tab, per role and weekday; a leader's day is
+   their role's tasks on that weekday, each tick stamped by the SERVER and judged against the
+   cut-off; a photo is proof, kept off every list and opened one at a time. NOW is Friday
+   2026-07-24 09:00Z, which is 12:00 on the EAT clock -- the clock every stamp is read on.
+   ===================================================================================== */
+const CK_LEADER = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: USER_TABS.concat(['checklist']) };
+const CK_OTHER = { code: 'H', name: 'HALIMA H', role: 'GMO', teams: ['MBAGALA'], tabs: USER_TABS.concat(['checklist']) };
+const CK_PLAN = { role: 'gmo', days: { FRI: [
+  { activity: 'Ukaguzi wa gari', cutoff: '10:00' },                      // before noon EAT: a tick now is late
+  { activity: 'Kukagua Nyumba', cutoff: '13:00' },                       // after noon: on time
+  { activity: '  Kukagua vifaa vya   kazi kwenye gari ', cutoff: '' },   // no cut-off: all day
+  { activity: '', cutoff: '09:00' } ] } };                               // an empty row is dropped, not saved
+const CK_PNG = 'data:image/png;base64,' + Buffer.alloc(1500, 7).toString('base64');
+const ckDb = (opts) => { const t = tables(); t.roles.push({ role: 'GMO', tabs: [] }); return fakeDb(t, opts); };
+
+test('daily checklist: the plan is managed per role and weekday from the bonus tab, and keeps its ids', async () => {
+  const db = ckDb();
+  const saved = await portalApi(db, ADMIN, 'checklistPlanSave', CK_PLAN, NOW);
+  assert.equal(saved.role, 'GMO', 'the role is upper-cased');
+  assert.equal(saved.days.FRI.length, 3, 'the empty row is dropped');
+  assert.deepEqual(saved.days.FRI.map(i => i.activity), ['Ukaguzi wa gari', 'Kukagua Nyumba', 'Kukagua vifaa vya kazi kwenye gari']);
+  assert.deepEqual(saved.days.FRI.map(i => i.cutoff), ['10:00', '13:00', '00:00'], 'no cut-off reads 00:00');
+  assert.ok(saved.days.FRI.every(i => /^t[a-z0-9]+$/.test(i.id)), 'every task has an id');
+  const plan = await portalApi(db, ADMIN, 'checklistPlan', {}, NOW);
+  assert.deepEqual(plan.plan.roles.GMO.FRI, saved.days.FRI);
+  assert.ok(plan.roles.includes('GMO') && plan.roles.includes('ADMIN'), 'the editor offers the roles the system knows');
+  // Correcting a task's wording keeps its id, so a tick already made against it still points at it.
+  const again = await portalApi(db, ADMIN, 'checklistPlanSave', { role: 'GMO', days: { FRI: [
+    { id: saved.days.FRI[0].id, activity: 'Ukaguzi wa gari (asubuhi)', cutoff: '10:00' }, saved.days.FRI[1], saved.days.FRI[2]] } }, NOW);
+  assert.equal(again.days.FRI[0].id, saved.days.FRI[0].id);
+  assert.equal(again.days.FRI[0].activity, 'Ukaguzi wa gari (asubuhi)');
+  // A cut-off that is not a time is refused, in words, before anything is written.
+  await assert.rejects(portalApi(db, ADMIN, 'checklistPlanSave', { role: 'GMO', days: { MON: [{ activity: 'x', cutoff: '7.30' }] } }, NOW),
+    e => e.status === 400 && /7\.30/.test(e.message));
+  await assert.rejects(portalApi(db, ADMIN, 'checklistPlanSave', { days: {} }, NOW), e => e.status === 400);
+  // Managed where the bonus is: a leader without that tab cannot change their own list.
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPlanSave', CK_PLAN, NOW), e => e.status === 403);
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPlan', {}, NOW), e => e.status === 403);
+});
+
+test('daily checklist: a leader sees their role\'s tasks for the weekday and every tick is stamped and judged by the server', async () => {
+  const db = ckDb();
+  await portalApi(db, ADMIN, 'checklistPlanSave', CK_PLAN, NOW);
+  let d = await portalApi(db, CK_LEADER, 'checklist', {}, NOW);
+  assert.equal(d.date, TODAY); assert.equal(d.weekday, 'FRI'); assert.equal(d.today, true);
+  assert.equal(d.role, 'GMO'); assert.equal(d.serverTime, '12:00', 'the EAT clock, not UTC');
+  assert.equal(d.rows.length, 3); assert.equal(d.planned, true); assert.equal(d.notReady, false);
+  assert.equal(d.board, null, 'a leader gets no board of everybody');
+  assert.ok(d.rows.every(r => r.ticked === false && r.photo === false));
+  const [early, later, allDay] = d.rows.map(r => r.id);
+  const t1 = await portalApi(db, CK_LEADER, 'checklistTick', { item_id: early, on: true }, NOW);
+  assert.equal(t1.ticked, true); assert.equal(t1.late, true, '12:00 is after the 10:00 cut-off');
+  assert.equal(t1.ticked_at, new Date(NOW).toISOString(), 'the stamp is the server\'s own clock');
+  const t2 = await portalApi(db, CK_LEADER, 'checklistTick', { item_id: later, on: true }, NOW);
+  assert.equal(t2.late, false, '12:00 is before 13:00');
+  const t3 = await portalApi(db, CK_LEADER, 'checklistTick', { item_id: allDay, on: true }, NOW);
+  assert.equal(t3.late, false, '00:00 means all day, never late');
+  const u = await portalApi(db, CK_LEADER, 'checklistTick', { item_id: later, on: false }, NOW);
+  assert.equal(u.ticked, false);
+  assert.equal(db._dump('checklist_entries').length, 2, 'an untick with no photo removes the row');
+  d = await portalApi(db, CK_LEADER, 'checklist', {}, NOW);
+  assert.equal(d.done, 2); assert.equal(d.late, 1);
+  assert.equal(d.rows[0].late, true); assert.equal(d.rows[1].ticked, false); assert.equal(d.rows[2].ticked, true);
+  // Not on today's list: refused. (Monday's tasks are not Friday's; a made-up id is nobody's.)
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistTick', { item_id: 'tnope' }, NOW), e => e.status === 400);
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistTick', {}, NOW), e => e.status === 400);
+  // Yesterday is read, not worked; tomorrow is today.
+  const y = await portalApi(db, CK_LEADER, 'checklist', { date: '2026-07-23' }, NOW);
+  assert.equal(y.today, false); assert.equal(y.weekday, 'THU'); assert.equal(y.planned, false);
+  const tm = await portalApi(db, CK_LEADER, 'checklist', { date: '2026-07-25' }, NOW);
+  assert.equal(tm.date, TODAY);
+  // Another leader of the same role sees the same tasks and none of JUMA's ticks.
+  const o = await portalApi(db, CK_OTHER, 'checklist', {}, NOW);
+  assert.equal(o.rows.length, 3); assert.equal(o.done, 0);
+  // The GM's board: one line per person, against that role's count for the weekday.
+  const g = await portalApi(db, ADMIN, 'checklist', {}, NOW);
+  assert.equal(g.canSeeAll, true);
+  assert.deepEqual(g.board.map(b => [b.name, b.role, b.done, b.missing, b.late, b.photos, b.total]), [['JUMA G', 'GMO', 2, 1, 1, 0, 3]]);
+  assert.equal(g.rows.length, 0, 'the admin\'s own role has no tasks planned');
+  // The tab is a grant like any other: a GMO without it is refused.
+  await assert.rejects(portalApi(db, GMO, 'checklist', {}, NOW), e => e.status === 403);
+});
+
+test('daily checklist: a photo is proof -- checked on arrival, never dragged with a list, opened by its owner or the GM', async () => {
+  const db = ckDb();
+  await portalApi(db, ADMIN, 'checklistPlanSave', CK_PLAN, NOW);
+  const d = await portalApi(db, CK_LEADER, 'checklist', {}, NOW);
+  const item = d.rows[1].id;
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPhoto', { item_id: item, photo: 'http://x/y.jpg' }, NOW), e => e.status === 400);
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPhoto', { item_id: item, photo: 'data:image/png;base64,AAAA' }, NOW), e => e.status === 400 && /ndogo|small/.test(e.message));
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPhoto', { item_id: item, photo: 'data:image/png;base64,' + Buffer.alloc(210 * 1024, 1).toString('base64') }, NOW),
+    e => e.status === 400 && /kubwa|large/.test(e.message));
+  // A photo may come before the tick: the row exists, unticked, with the photo stamped.
+  const p = await portalApi(db, CK_LEADER, 'checklistPhoto', { item_id: item, photo: CK_PNG }, NOW);
+  assert.equal(p.photo, true); assert.equal(p.ticked, false); assert.equal(p.photo_at, new Date(NOW).toISOString());
+  assert.equal(p.photo_bytes, 1500);
+  const d2 = await portalApi(db, CK_LEADER, 'checklist', {}, NOW);
+  assert.equal(d2.rows[1].photo, true); assert.equal(d2.photos, 1);
+  assert.equal(typeof d2.rows[1].photo, 'boolean', 'the list carries whether there is a photo, never the photo');
+  assert.ok(!JSON.stringify(d2).includes('base64'), 'no image data rides with the day');
+  // Then the tick; then an untick keeps the photo (the proof stays), only the claim goes.
+  await portalApi(db, CK_LEADER, 'checklistTick', { item_id: item, on: true }, NOW);
+  const u = await portalApi(db, CK_LEADER, 'checklistTick', { item_id: item, on: false }, NOW);
+  assert.equal(u.ticked, false); assert.equal(u.photo, true);
+  assert.equal(db._dump('checklist_entries').length, 1);
+  // Opened by its owner, and by the GM from the board; not by another leader.
+  const mine = await portalApi(db, CK_LEADER, 'checklistPhotoGet', { entry_id: p.entry_id }, NOW);
+  assert.equal(mine.photo, CK_PNG); assert.equal(mine.name, 'JUMA G'); assert.equal(mine.activity, 'Kukagua Nyumba');
+  const gm = await portalApi(db, ADMIN, 'checklistPhotoGet', { entry_id: p.entry_id }, NOW);
+  assert.equal(gm.photo, CK_PNG);
+  await assert.rejects(portalApi(db, CK_OTHER, 'checklistPhotoGet', { entry_id: p.entry_id }, NOW), e => e.status === 403);
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPhotoGet', {}, NOW), e => e.status === 400);
+  const g = await portalApi(db, ADMIN, 'checklist', {}, NOW);
+  assert.deepEqual(g.board.map(b => [b.done, b.photos]), [[0, 1]]);
+});
+
+test('daily checklist: before RUN-ME-048 the tab opens, says so, and refuses ticks naming the migration', async () => {
+  const db = ckDb({ missingTables: ['checklist_entries'] });
+  await portalApi(db, ADMIN, 'checklistPlanSave', CK_PLAN, NOW);
+  const d = await portalApi(db, CK_LEADER, 'checklist', {}, NOW);
+  assert.equal(d.notReady, true); assert.match(d.notReadyNote, /RUN-ME-048/);
+  assert.equal(d.rows.length, 3, 'the tasks still show');
+  const g = await portalApi(db, ADMIN, 'checklist', {}, NOW);
+  assert.equal(g.board, null);
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistTick', { item_id: d.rows[0].id }, NOW), e => e.status === 400 && /RUN-ME-048/.test(e.message));
+  await assert.rejects(portalApi(db, CK_LEADER, 'checklistPhoto', { item_id: d.rows[0].id, photo: CK_PNG }, NOW), e => e.status === 400 && /RUN-ME-048/.test(e.message));
+});
+
+test('daily checklist: a hand-typed DAILY_CHECKLIST setting cannot take the tab down', async () => {
+  const { normalisePlan, isLate } = await import('../api/_lib/checklist.js');
+  const t = tables();
+  t.settings.push({ key: 'DAILY_CHECKLIST', value: 'this is not json' });
+  const d = await portalApi(fakeDb(t), CK_LEADER, 'checklist', {}, NOW);
+  assert.equal(d.planned, false); assert.deepEqual(d.rows, []);
+  const n = normalisePlan({ roles: { ' gmo ': { FRI: [{ activity: ' a ', cutoff: '25:00' }, { activity: '' }, 'junk'], FUNDAY: [{ activity: 'x' }] }, '': { MON: [{ activity: 'x' }] } } });
+  assert.deepEqual(Object.keys(n.roles), ['GMO']);
+  assert.deepEqual(Object.keys(n.roles.GMO), ['FRI']);
+  assert.equal(n.roles.GMO.FRI.length, 1);
+  assert.equal(n.roles.GMO.FRI[0].activity, 'a'); assert.equal(n.roles.GMO.FRI[0].cutoff, '00:00', 'a bad cut-off becomes all day');
+  // Late is read on the EAT clock: NOW is 12:00 EAT.
+  assert.equal(isLate('11:59', NOW), true); assert.equal(isLate('12:00', NOW), false); assert.equal(isLate('00:00', NOW), false); assert.equal(isLate('', NOW), false);
+});

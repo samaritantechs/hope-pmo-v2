@@ -94,7 +94,12 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    advfinal is the finance manager's: the Finalize button on the report, and the whole book on it.
      "I decide what navs are to be accessed by team codes there" */
 export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud']);
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist']);
+/* `checklist` (the Daily Checklist -- a leader's own day: the tasks the GM set for their ROLE on
+   this weekday, each ticked against a cut-off and proved with a photo taken in the app) is
+   granted the same way: admins from the start, then whichever roles the GM ticks it for. The
+   tasks are managed per role on the Daily Bonus Plan tab (`bonusplan`), which is also what lets
+   somebody see everybody's day. */
 /* `fraud` (the Fraud Detector -- every approved loan's parties against every other's and the
    current defaults sheet, api/_lib/fraud.js) is granted the same way: admins from the start,
    a role when ticked. It reads the whole approved book, which is not a screen every code
@@ -108,7 +113,7 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set

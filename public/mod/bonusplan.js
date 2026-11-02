@@ -395,5 +395,14 @@ function bpWire_(){
 VIEWS.bonusplan = function(){
   HEAD = bpHtml_();
   S.rows = []; S.cols = []; ONROW = null;
-  return Promise.resolve();
+  /* THE DAILY CHECKLIST'S TASKS ARE MANAGED HERE -- "I should be able to manage tasks per role
+     at my bonasi tab". The editor is the checklist module's (mod/checklist.js, loaded on the
+     spot) and sits at the top of this tab; the preview below it still reads nothing. A tab
+     that cannot reach its editor still shows the preview and says why. */
+  return modLoad_('checklist').then(function(){ return ckPlanLoad_(); }).then(function(card){
+    HEAD = card + HEAD;
+  }, function(e){
+    HEAD = '<div class="note bad">Mipangilio ya Daily Checklist haikupakia: ' + esc(String(e && e.message || e))
+      + ' / The Daily Checklist settings did not load.</div>' + HEAD;
+  });
 };

@@ -3318,6 +3318,46 @@ per-analyst sales % (`credit`) already multiplied by the analyst's teams; it cou
 whose count 1–6 book the analyst carries, which is the same set whenever every held team has
 defaulters.
 
+## Part 27 — The Daily Checklist: a leader's day, task by task, stamped by the server
+
+> "MONDAY | ACTIVITY | CHECKBOX CutOff 00:00 HRS | CAMERA (icon) & View Button — Thats how
+> implementation of the window they work on should be for leaders at a tab 'Daily Checklist'
+> … I should be able to manage tasks per role at my bonasi tab"
+
+Two screens, one rule.
+
+**The window — `Daily Checklist / Orodha ya Kazi za Siku`** (HOPE Management, grantable like
+`audit`: admins hold it, a role gets it when ticked under Roles & access). The weekday is the
+heading. One row per task the GM set for the person's **role** on that weekday: the activity;
+a **checkbox** with its cut-off beside it (`CutOff 07:30 HRS`, or *all day* when the cut-off is
+00:00); a **camera** that opens the phone's camera inside the app, and a **» View** that opens
+the photo. The day's date box looks back: an earlier day is read, never worked. Four counters
+on top (tasks, ticked, late, photos). Somebody holding the Daily Bonus Plan tab (the GM) also
+sees **Everybody's day**: one line per person — ticked, not ticked, late, photos, last tick.
+
+**The editor** — at the top of `Bonasi ya Kila Siku / Daily Bonus Plan`. Pick a role (the roles
+the system knows), pick a weekday, list the activities with their cut-offs, *Save this role's
+week*. The whole week of that role is saved together. A task keeps its id when its wording is
+corrected, so ticks already made against it still point at it.
+
+**The stamps are the server's.** A tick is recorded with the server's clock on the EAT day; a
+tick after the cut-off is kept and marked **late**; a photo gets its own server stamp. The
+phone never writes a time of its own (a page test pins this). A photo is shrunk on the phone
+to the same 200KB ceiling as an imprest receipt, kept as the image itself, never carried with a
+list, and opened one at a time by its owner or by the GM. An untick removes the claim and keeps
+the photo. Nothing can be ticked for yesterday.
+
+| Where | What |
+|---|---|
+| `api/_lib/checklist.js` | `checklistPlan` / `checklistPlanSave` (the plan, permission `bonusplan`); `checklist` (the day, permission `checklist`; the board only for a `bonusplan` holder); `checklistTick`, `checklistPhoto` (today only, own row, server-stamped); `checklistPhotoGet` (own, or the GM's). The three writes are audited. |
+| setting `DAILY_CHECKLIST` | the plan: `{ roles: { GMO: { MON: [{ id, activity, cutoff }], … } } }`. A setting, so no migration; a hand-typed value that is not JSON leaves the tab working with no tasks. |
+| `db/RUN-ME-048-daily-checklist.sql` | `checklist_entries`: one row per person, day and task — `ticked_at`, `late`, `photo` (data URL), `photo_at`; unique on (code, day, item_id). **Until it is run** the tab opens, shows the tasks, says so, and refuses ticks and photos naming this file. |
+| `public/mod/checklist.js` | the window (`VIEWS.checklist`) and the editor card (`ckPlanLoad_`, drawn by `VIEWS.bonusplan`). `BUILD 2026-11-02-b`. |
+| `test/speed.test.mjs` | the day costs a leader 3 trips (the plan, their entries, and the teams-scope read); the GM one more for the board. |
+
+**What the GM does first:** run RUN-ME-048; on the Daily Bonus Plan tab set each role's week;
+on Roles & access tick *checklist* for the roles that work it (GMO, Manager, OPM …).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
