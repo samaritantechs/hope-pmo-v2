@@ -412,9 +412,10 @@ function presSlides(){
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest' ? 'good' : r.end==='Least active' ? 'bad' : ''; } },
         col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'), col('dials','Dials','num'),
         col('duration','Portfolio talk','dur'), col('portfolio','Portfolio','num'), col('connectPct','Reached %','pct')] });
-    slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week', rows:b.creditWeek.slice(0,12),
-      cols:[col('analyst','Analyst'), col('apps','Apps','num'), col('amount','Amount','money'),
-        col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
+    // Sales % is against the weekly target times the teams held: both are on the slide to show it.
+    slides.push({ id:'credit', kind:'table', title:'Credit analysts — this week · sales % ÷ (weekly target × teams held)', rows:b.creditWeek.slice(0,12),
+      cols:[col('analyst','Analyst'), col('teams','Teams','num'), col('apps','Apps','num'), col('amount','Amount','money'),
+        col('target','Target','money'), col('salesPct','Sales %','pct'), col('perf','Perf','pct')] });
     slides.push(coltrend);
     slides.push({ id:'fu', kind:'table', title:'Follow-up status — all defaulters', rows:b.fuStatus.slice(0,12),
       cols:[col('status','Status'), col('customers','Customers','num'), {key:'pct', label:'% of book', kind:'pct', lowGood:true},

@@ -1734,6 +1734,45 @@ test('the dashboard carries a legal recovery card on top and today/week boards b
   assert.ok(/b\.legalOn === false && b\.legalNote/.test(boards), 'and the missing ledger is said above them');
 });
 
+/* THE WEEK'S LEGAL REPORT -- "Add a button [Report] before the 3 Excel JPG CSV which exports the
+   whole week report with Legal, Team, Customer etc columns". The week board's own button, drawn
+   before the three, fetching the customer rows on the tap and writing them through the one
+   Excel writer every board uses. */
+test('the legal week board carries a Report button before Excel that exports the customer rows behind the sums', () => {
+  const app = appSrc();
+  const boards = app.slice(app.indexOf('DASH_LOAD_BOARDS_ = function'), app.indexOf('creditRecoveryBoard(creditRec'));
+  assert.ok(/board\('bLegalW','Legal recovery — this week'[\s\S]*?\{ buttons: '<button class="btn sm ghost" id="legalWeekReport"/.test(boards), 'the week board\'s own button');
+  assert.ok(!/board\('bLegalT'[\s\S]*?id="legalWeekReport"[\s\S]*?board\('bLegalW'/.test(boards), 'not on the today board');
+  const fn = app.slice(app.indexOf('function board(id, title, sub, rows, cols, totalRow, opts)'), app.indexOf('function boardPair('));
+  assert.ok(fn.indexOf("((opts && opts.buttons) || '')") > 0 && fn.indexOf("((opts && opts.buttons) || '')") < fn.indexOf('data-xls="\'+id+\'">Excel'), 'drawn before Excel / JPG / CSV');
+  const wire = app.slice(app.indexOf('DASH_LOAD_BOARDS_ = function'), app.indexOf('HEAD += \'<div id="boards">'));
+  assert.ok(/lwr\.onclick = function\(e\)\{ e\.stopPropagation\(\); legalWeekReport_\(lwr\); \}/.test(wire), 'wired when the boards land');
+  const cols = app.slice(app.indexOf('var LEGAL_REPORT_COLS'), app.indexOf('function legalWeekReport_('));
+  for (const k of ['officer', 'team', 'full_name', 'ref', 'contact', 'notice_id', 'notice_date', 'owed', 'paid_today', 'paid', 'payments', 'days']) {
+    assert.ok(new RegExp("col\\('" + k + "'").test(cols), k + ' is a column of the report');
+  }
+  assert.ok(/key:'pct', label:'Rec %', kind:'pct'/.test(cols));
+  const rep = app.slice(app.indexOf('function legalWeekReport_('), app.indexOf('function loading()'));
+  assert.ok(/srv\('legalWeekReport', \{ weekOf: S\.args\.weekOf \|\| '' \}\)/.test(rep), 'fetched on the tap, for the chosen week');
+  assert.ok(/exportBoard\(id, 'xls'\)/.test(rep), 'written by the board Excel writer');
+  assert.ok(/r\.on === false && r\.note/.test(rep), 'a database without the ledger is told on the screen');
+});
+
+/* THE CREDIT ANALYSTS' TARGET PER TEAM HELD -- "they are judged by no of teams they have so if
+   its 25,000,000 week target and has 5 teams then its 125m": the boards and the deck's slide
+   carry the teams and the target the sales % divides by. */
+test('the credit analysts boards and slide show the teams held and the target the sales % divides by', () => {
+  const app = appSrc();
+  const boards = app.slice(app.indexOf("boardPair('bCrdT'"), app.indexOf("board('bCS'"));
+  assert.ok(/col\('analyst','Analyst'\), col\('teams','Teams','num'\), col\('apps','Apps','num'\), col\('amount','Amt','money'\), col\('target','Target','money'\),/.test(boards), 'Teams and Target before the percentages');
+  assert.ok(/\['teams','apps','amount','target'\]\)/.test(boards), 'and both are totalled');
+  assert.ok(/target = weekly target × teams/.test(boards), 'the caption says what the percentage divides by');
+  const pres = page('present');
+  const at = pres.indexOf("slides.push({ id:'credit'");
+  const slide = pres.slice(at, pres.indexOf('slides.push(coltrend)', at));
+  assert.ok(/col\('teams','Teams','num'\)/.test(slide) && /col\('target','Target','money'\)/.test(slide), 'the deck\'s credit slide carries them too');
+});
+
 /* THE ORODHA'S RED NAMES FOLLOW THE MONTH -- "Orodha / List at dashboard conditional formatting
    red rows should be on the teams with less than monthly average - only. is it so?" It was
    not: the name rule took the first average column (T.Avg). The two name columns now name
