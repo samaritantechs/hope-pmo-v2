@@ -3390,6 +3390,58 @@ missing (recovery then reads 0). An "(unassigned)" row opens nothing.
 | `xdLeader_` (`public/app.html`) | the drawer; the leader column on the three boards is a `kind:'tap'` cell (a new cell kind in `cellHtml`: a name that opens a card, exports as text). Its values ride as `data-tap-<key>`, never bare `data-<key>`: `wireForms()` wires every `[data-role]` element to the role editor after each paint, and the first build's `data-role="MANAGER"` had its tap silently replaced — blue and dead. `BUILD 2026-11-02-d`. |
 | `test/speed.test.mjs` | the card's budget stated beside the report's. |
 
+## Part 29 — The tip and the toast close on a tap or a swipe
+
+> "System SW/EN popups can be swiped away please! because they hinder operation, one has to
+> wait until it disappears."
+
+The tip (Vidokezo / Tips, shown in the chosen language every few minutes and on the bulb
+button) sat over the bottom-right corner for its hold time (Settings → hints: `holdSec`) and
+ignored the pointer (`pointer-events:none`), so a leader working that corner waited it out.
+Now a shown tip takes the pointer: a tap closes it, and so does a swipe of 24px in any
+direction; `touch-action:none` on it keeps the flick from scrolling the page underneath. The
+toast (the three-second "saved" / error strip) closes the same way. Hidden, the tip still lets
+the pointer through. One wiring, `flickAway` beside the `#tipBtn` handler in `public/app.html`;
+the tip's own timer is cleared on a manual close so a stale timer cannot cut the next tip
+short. The call app has no tips; its toast is unchanged.
+
+## Part 30 — The Exp.Def Report: calls, talk and comments on every row, and a By OPM board
+
+> "At Exp.Def Report: Have sort headers of By OPM, Add columns of No of calls + duration
+> (calls among the assigned expected customer, guarantor & ana namba nyingine in them), and
+> no of comments : Between customers and initial columns"
+
+The report's boards now say what each leader **did** in the week beside what their book is
+worth: between *Customers* and *Initial* sit **Calls**, **Talk** and **Comments**, and a fourth
+board, **Kwa OPM / By OPM**, holds the whole assigned book of each OPM's teams (an OPM is
+assigned nothing by the rotation, but answers for every team under them). Every board is
+drawn by `board()`, so its headers sort; a tap on an OPM's name opens the same card as the
+other three.
+
+**One rule, in one place.** `weekWork` in `api/_lib/expdf.js` is the single definition of the
+week's work on a book, read by the report's columns and by the card behind a name, so the
+two can never disagree. A *call* is one number per day (the Calls report's rule), portfolio
+only, made from the HOPE Calls account(s) registered under the leader's name, to one of the
+book's customers: by the REF the sync stamped, or by the number dialled — the customer's, the
+guarantor's, or a replacement number recorded under ANA NAMBA NYINGINE
+(`followup_comments.new_number`). A *comment* is one written under the leader's name in the
+week on one of those customers. A call to somebody else's customer counts nowhere.
+
+**Four reads for the whole report, whatever its size:** the HOPE Calls roster (two columns —
+the teams table says `BOSS`, the roster `Boss`, and `.in()` is exact-case, so the match is
+made here), the leaders' portfolio calls of the week (`.in(user_id)` over the matched
+accounts), the replacement numbers (only when there are calls to match), and the leaders'
+comments of the week (`.or(created_by.ilike…)` over every spelling the teams table and the
+roster carry; a name that would break the or-grammar is matched exactly). Never one read per
+leader. A name not registered in HOPE Calls reads 0 in grey (`inCalls:false`). The weekly
+email is unchanged.
+
+| Where | What |
+|---|---|
+| `weekWork`, `REPORT_ROLES`, `expdfReport`, `expdfLeader` (`api/_lib/expdf.js`) | the rule, the four boards, the rows' `calls` / `dials` / `talk` / `comments` / `inCalls`, section totals; `expdfCore` rows carry `opm`. |
+| `VIEWS.expdfrep` (`public/app.html`) | the three columns with their headers' tooltips, the OPM board's subtitle, the note under the boards. |
+| `test/speed.test.mjs` | the report's ceiling raised to the four-read shape, with the reason. |
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

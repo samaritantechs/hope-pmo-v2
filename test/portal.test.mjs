@@ -4592,7 +4592,7 @@ test('expdf leaves out customers not due on the visit day, unless asked for all'
 test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', async () => {
   const db = fakeDb(expdfTables());
   const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
-  assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE']);
+  assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE', 'OPM']);
   const mgr = d.sections.find(s => s.role === 'MANAGER');
   assert.equal(mgr.rows[0].leader, 'BOSS');
   assert.equal(mgr.totals.recovered, 500);
@@ -12337,10 +12337,76 @@ test('expdf leader card: the leader\'s own calls and comments on their own custo
   const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.weekOf, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19'); assert.equal(past.pastWeek, true);
   assert.equal(past.rows.length, 0, 'no deck that week in this fixture');
-  // Refused in words: a role that is not one of the three, and the unassigned bucket.
-  await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'OPM', leader: 'BOSS' }, NOW), e => e.status === 400);
+  // Refused in words: a role that is not one of the four, and the unassigned bucket.
+  await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'CREDIT', leader: 'BOSS' }, NOW), e => e.status === 400);
   await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: '(unassigned)' }, NOW), e => e.status === 400);
   // The report's own tab gates it.
   const noTab = { code: 'N', name: 'NOBODY', role: 'OFFICER', teams: ['KONGOWE'], tabs: ['dashboard'] };
   await assert.rejects(portalApi(db, noTab, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW), e => e.status === 403);
+});
+
+/* =====================================================================================
+   THE WEEK'S WORK ON THE REPORT ITSELF, AND THE OPM BOARD.
+
+     "At Exp.Def Report: Have sort headers of By OPM, Add columns of No of calls + duration
+      (calls among the assigned expected customer, guarantor & ana namba nyingine in them),
+      and no of comments : Between customers and initial columns"
+
+   The same fixture as the card: BOSS (KONGOWE's manager, `Boss` in HOPE Calls) holds A2. A
+   replacement number recorded for A2 under ANA NAMBA NYINGINE is dialled with no REF stamped
+   and still counts. OPM O is the team's OPM: their board row holds the whole assigned book of
+   KONGOWE (A1, A2, A3) with THEIR OWN calls, which are none. One rule, in one place: the
+   report's cells and the card's totals are the same numbers.
+   ===================================================================================== */
+test('expdf report: calls, talk and comments per leader by the card\'s own rule, and a By OPM board', async () => {
+  const t = expdfTables();
+  t.teams[0] = { ...t.teams[0], opm: 'OPM O' };
+  for (const r of t.defaulter_snapshots) r.guarantor_contact = '07150000' + r.ref;
+  t.call_users.push({ user_id: 'UB', name: 'Boss', team: 'KONGOWE', role: 'MANAGER', is_leader: true });
+  t.call_logs.push(
+    { id: 'b1', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 120, portfolio: true, outcome: 'CONNECTED' },
+    { id: 'b2', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 30, portfolio: true, outcome: 'MISSED' },    // same number, same day: one call
+    { id: 'b3', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071500002', ref: null, call_date: YEST, duration: 60, portfolio: true, outcome: 'CONNECTED' },   // the guarantor's number
+    { id: 'b7', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '0788000002', ref: null, call_date: YEST, duration: 45, portfolio: true, outcome: 'CONNECTED' },  // the replacement number, no REF stamped
+    { id: 'b4', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: TODAY, duration: 90, portfolio: true, outcome: 'CONNECTED' },   // BIKE's customer: not BOSS's book
+    { id: 'b5', user_id: 'UB', officer: 'Boss', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: '2026-07-10', duration: 200, portfolio: true, outcome: 'CONNECTED' }, // last week
+    { id: 'j1', user_id: 'U1', officer: 'JUMA G', team: 'KONGOWE', phone: '071400002', ref: 'A2', call_date: TODAY, duration: 50, portfolio: true, outcome: 'CONNECTED' });  // somebody else
+  t.followup_comments.push(
+    { id: 'nn', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ana namba nyingine 0788000002', fu_status: 'ANA NAMBA NYINGINE', new_number: '0788000002', created_by: 'JUMA G', created_at: '2026-07-01T07:00:00Z' },
+    { id: 'cb1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ataleta Jumatatu', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: TODAY + 'T07:00:00Z' },
+    { id: 'cb2', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'hapatikani', fu_status: 'HANA USHIRIKIANO', created_by: 'Boss', created_at: YEST + 'T09:00:00Z' },   // the roster's spelling
+    { id: 'cb3', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'si wangu', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: TODAY + 'T07:00:00Z' },
+    { id: 'cj1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ya Juma', fu_status: 'AMETOA AHADI', created_by: 'JUMA G', created_at: TODAY + 'T08:00:00Z' });
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE', 'OPM'], 'the OPM board after the three roles');
+  const boss = d.sections.find(s => s.role === 'MANAGER').rows[0];
+  assert.equal(boss.leader, 'BOSS'); assert.equal(boss.inCalls, true);
+  // Three calls: today's two dials to A2 (one number, one day), the guarantor's number, and the
+  // replacement number -- matched by the number, with no REF on the call. Not: A1, last week, Juma's.
+  assert.equal(boss.calls, 3); assert.equal(boss.dials, 4); assert.equal(boss.talk, 255);
+  assert.equal(boss.comments, 2, 'BOSS and Boss are one person; Juma\'s and A1\'s comments are not hers');
+  const keys = Object.keys(boss);
+  assert.ok(keys.indexOf('customers') < keys.indexOf('calls') && keys.indexOf('comments') < keys.indexOf('initial'), 'between customers and initial');
+  const bike = d.sections.find(s => s.role === 'BIKE').rows[0];
+  assert.equal(bike.leader, 'BIKE BEE'); assert.equal(bike.inCalls, false); assert.equal(bike.calls, 0); assert.equal(bike.comments, 0);
+  const mgrT = d.sections.find(s => s.role === 'MANAGER').totals;
+  assert.equal(mgrT.calls, 3); assert.equal(mgrT.talk, 255); assert.equal(mgrT.comments, 2);
+  // The OPM board: the whole assigned book of their teams, with their own work (none registered).
+  const opm = d.sections.find(s => s.role === 'OPM');
+  assert.deepEqual(opm.rows.map(r => r.leader), ['OPM O']);
+  assert.equal(opm.rows[0].customers, 3); assert.equal(opm.rows[0].initial, 6000); assert.equal(opm.rows[0].recovered, 900);
+  assert.equal(opm.rows[0].calls, 0); assert.equal(opm.rows[0].inCalls, false);
+  assert.equal(opm.totals.customers, 3);
+  // The card says the same numbers as the row, by the one rule -- and opens for an OPM too.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
+  assert.equal(card.totals.calls, 3); assert.equal(card.totals.dials, 4); assert.equal(card.totals.talk, 255); assert.equal(card.totals.comments, 2);
+  assert.equal(card.rows[0].calls, 3);
+  const oc = await portalApi(db, ADMIN, 'expdfLeader', { role: 'OPM', leader: 'OPM O' }, NOW);
+  assert.deepEqual(oc.rows.map(r => r.ref).sort(), ['A1', 'A2', 'A3']); assert.equal(oc.inCalls, false); assert.equal(oc.totals.recovered, 900);
+  // A team with no OPM named lands in the unassigned bucket, which opens nothing.
+  for (const r of db._dump('teams')) if (r.team === 'KONGOWE') r.opm = null;
+  const d2 = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  assert.equal(d2.sections.find(s => s.role === 'OPM').rows[0].leader, '(unassigned)');
+  assert.equal(d2.sections.find(s => s.role === 'OPM').unassigned, 1);
 });

@@ -360,7 +360,7 @@
     border-left:3px solid var(--b500);border-radius:12px;padding:12px 14px;font-size:12.5px;color:var(--ink);
     box-shadow:0 14px 34px -18px rgba(8,28,74,.6);opacity:0;transform:translateY(12px);transition:all .3s ease;
     pointer-events:none;z-index:70}
-  #tip.show{opacity:1;transform:none}
+  #tip.show{opacity:1;transform:none;pointer-events:auto;cursor:pointer;touch-action:none}
   .msg{padding:34px 18px;text-align:center;color:var(--mut);font-size:13px}
   .msg.bad{color:var(--bad)}
   .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;background:var(--b50);color:var(--b600);border:1px solid var(--b100)}
@@ -759,7 +759,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-02-e';
+var BUILD = '2026-11-02-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1394,6 +1394,23 @@ function go(view, args){
 $('#langBtn').onclick = function(){ applyLang(S.lang === 'sw' ? 'en' : 'sw'); tipShow(); };
 $('#themeBtn').onclick = function(){ applyTheme(!document.body.classList.contains('dark')); };
 $('#tipBtn').onclick = function(){ tipShow(); };
+/* A POPUP YOU CAN FLICK AWAY. "System SW/EN popups can be swiped away please! because they
+   hinder operation, one has to wait until it disappears." The tip (Vidokezo, in the chosen
+   language) sat over the bottom corner for its hold time and ignored the pointer. Now a tap
+   closes it and so does a swipe in any direction -- a 24px flick -- and the toast closes the
+   same way. The flick never reaches the page under it (touch-action:none on the tip). */
+(function(){
+  function flickAway(el, onHide){
+    if (!el) return;
+    var sx = 0, sy = 0;
+    function hide(){ onHide(); }
+    el.addEventListener('click', hide);
+    el.addEventListener('touchstart', function(e){ var t = e.touches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+    el.addEventListener('touchmove', function(e){ var t = e.touches[0]; if (Math.abs(t.clientX - sx) > 24 || Math.abs(t.clientY - sy) > 24) hide(); }, { passive: true });
+  }
+  flickAway($('#tip'), function(){ $('#tip').classList.remove('show'); clearTimeout(S.tipHide); });
+  flickAway($('#toast'), function(){ $('#toast').style.display = 'none'; clearTimeout(toast._t); });
+})();
 $('#menuBtn').onclick = function(){ if (document.body.classList.contains('navopen')) navClose_(); else navOpen_(); };
 $('#scrim').onclick = function(){ navClose_(); };
 
@@ -4290,22 +4307,35 @@ VIEWS.expdfrep = function(){
       + '</div>'
       + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
           + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
+      /* FOUR BOARDS: the three recycling roles, then "Kwa OPM / By OPM" -- the whole assigned
+         book of each OPM's teams. Every board sorts on any header like the others. Between
+         Customers and Initial sit the week's work -- "No of calls + duration (calls among the
+         assigned expected customer, guarantor & ana namba nyingine in them), and no of
+         comments" -- counted by the same rule as the card behind the name. */
       + d.sections.map(function(sec){
+          var opm = sec.role === 'OPM';
           return board('xd_'+sec.role, 'Kwa ' + sec.role + ' / By ' + sec.role,
             money(sec.rows.length) + ' named · ' + money(sec.totals.customers) + ' customers'
+              + (opm ? ' · orodha yote ya timu zake / the whole assigned book of their teams' : '')
               + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : ''),
             sec.rows,
             [{key:'leader', label:sec.role, kind:'tap', tap:'xdLeader_',
               data:function(r){ return r.leader && r.leader!=='(unassigned)' ? { role: sec.role, leader: r.leader } : null; },
               cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }},
              col('teams','Teams','num'), col('customers','Customers','num'),
+             {key:'calls', label:'Calls', kind:'num', title:'Simu za portfolio wiki hii kwa wateja wa orodha yake, wadhamini wao na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE); namba moja kwa siku ni simu moja. / Portfolio calls this week to the customers on their list, their guarantors and the other numbers recorded under ANA NAMBA NYINGINE; one number per day is one call.',
+              cls:function(r){ return r.inCalls===false ? 'mut' : (r.calls>0 ? 'good' : ''); }},
+             {key:'talk', label:'Talk', kind:'dur', title:'Muda wa simu hizo / Talk time of those calls'},
+             {key:'comments', label:'Comments', kind:'num', title:'Maoni yaliyoandikwa kwa jina lake wiki hii kwa wateja hao / Follow-up comments written under this name this week on those customers',
+              cls:function(r){ return r.comments>0 ? 'good' : ''; }},
              col('initial','Initial','money'),
              {key:'arrears', label:'Arrears now', kind:'money', cls:function(){ return 'bad'; }},
              {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
              col('pct','Rec %','pct')],
-            {leader:'', teams:'', customers:sec.totals.customers, initial:sec.totals.initial,
-             arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct});
-        }).join('');
+            {leader:'', teams:'', customers:sec.totals.customers, calls:sec.totals.calls, talk:sec.totals.talk, comments:sec.totals.comments,
+             initial:sec.totals.initial, arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct});
+        }).join('')
+      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku, za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa za orodha yake; jina lisilosajiliwa HOPE Calls linasoma 0 (kijivu). Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day, portfolio only, to the customers, guarantors and recorded other numbers of their list; a name not registered in HOPE Calls reads 0 (grey). Comments are those written under this name this week on these customers.</div>';
     // The whole book behind the three boards, so a leader's row can be opened to the customer.
     S.rows = [];
     S.cols = [];
@@ -4333,7 +4363,7 @@ function xdLeader_(el){
       + '</div>'
       + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina <b>'+esc(d.leader)+'</b>, hivyo simu zinasoma 0. / Nobody is registered in HOPE Calls under this name, so calls read 0.</div>')
       + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya Jumatatu haipo — marejesho yanasoma 0. / No Monday initial deck, so recovery reads 0.</div>')
-      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja na wadhamini wa orodha yake. Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers and guarantors on this list. Comments are those written under this name this week on these customers.</div>'
+      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii. Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list. Comments are those written under this name this week on these customers.</div>'
       + tableSimple(d.rows || [], [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),
           col('calls','Calls','num'), col('dials','Dials','num'), col('lastCall','Last call','date'),
           col('comments','Comments','num'), col('lastStatus','Last status'), col('lastComment','Last comment'),
