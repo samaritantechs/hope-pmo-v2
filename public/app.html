@@ -757,7 +757,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-10-31-a';
+var BUILD = '2026-11-02-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4392,7 +4392,11 @@ VIEWS.defexp = function(){
               return '<option'+(S.filters.leader===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
         + '</div>';
     S.rows = onDay;
-    S.cols = [col('branch','Branch'), col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),
+    /* "Remove branch column, add recovered so after DS (initial arrears, current arrears,
+       recovered)". Branch is gone; after D.S come the arrears on today's initial deck, the
+       arrears now, and what came back between the two (the server's rule, shared with the
+       follow-up tab: zero where the customer is not on the initial deck). */
+    S.cols = [col('team','Team'), col('ref','REF#'), col('full_name','Fullname'),
       {key:'contact', label:'Contact#', kind:'tel'},
       {key:'slot', label:'Visit', kind:'chip', chip:function(r){ return !r.primary?'mut':(r.primary===day?'ok':'warn'); },
        get:function(r){ return !r.primary ? 'No date' : (r.primary===day ? 'Day 1' : 'Day 2'); }},
@@ -4403,10 +4407,13 @@ VIEWS.defexp = function(){
       {key:'role', label:'Owner role', kind:'chip', chip:function(){ return 'ok'; }},
       {key:'leader', label:'Recycling leader', cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }},
       col('cycle','Cycle'), col('ds','D.S'),
-      {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }}];
+      col('initial','Initial arrears','money'),
+      {key:'arrears', label:'Current arrears', kind:'money', cls:function(){ return 'bad'; }},
+      {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}];
     ONROW = openFollowup;
-    S.foot = names[day] + ': ' + money(onDay.length) + ' customers · Arrears: TZS '
-      + money(onDay.reduce(function(s,r){ return s + (Number(r.arrears)||0); }, 0));
+    var sumOn = function(k){ return onDay.reduce(function(s,r){ return s + (Number(r[k])||0); }, 0); };
+    S.foot = names[day] + ': ' + money(onDay.length) + ' customers · Initial: TZS ' + money(sumOn('initial'))
+      + ' · Arrears: TZS ' + money(sumOn('arrears')) + ' · Recovered: TZS ' + money(sumOn('recovered'));
   });
 };
 

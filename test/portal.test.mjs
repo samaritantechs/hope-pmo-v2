@@ -169,6 +169,33 @@ test('expected defaulters place every customer on two weekdays', async () => {
   assert.equal(d.unplaced, 0);
 });
 
+/* "Remove branch column, add recovered so after DS (initial arrears, current arrears, recovered)".
+   Each row of the Orodha / List carries the arrears on today's initial deck, the arrears now and
+   how far they came down -- the same figures, by the same rule, as the follow-up tab. */
+test('expected defaulters carry initial arrears and recovered, by the follow-up rule', async () => {
+  const d = await run('expectedDefaulters');
+  const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
+  // 111: initial 500, current 300 -> 200 back.  555: 700 -> 600 -> 100.  999: 900 -> 800 -> 100.
+  assert.equal(by['111'].initial, 500); assert.equal(by['111'].arrears, 300); assert.equal(by['111'].recovered, 200);
+  assert.equal(by['555'].initial, 700); assert.equal(by['555'].recovered, 100);
+  assert.equal(by['999'].initial, 900); assert.equal(by['999'].recovered, 100);
+  assert.equal(d.initial, 2100); assert.equal(d.recovered, 400); assert.equal(d.hasBaseline, true);
+  // The follow-up tab says the same about the same customer: one rule, two screens.
+  const f = await run('followup');
+  for (const r of f.rows.filter(x => by[x.ref])) {
+    assert.equal(r.initial, by[r.ref].initial, r.ref + ' initial agrees');
+    assert.equal(r.recovered, by[r.ref].recovered, r.ref + ' recovered agrees');
+  }
+});
+
+test('expected defaulters with no initial deck read recovered 0, never an invented figure', async () => {
+  const t = tables();
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.snapshot_type !== 'initial');
+  const d = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  assert.equal(d.hasBaseline, false);
+  for (const r of d.rows) { assert.equal(r.recovered, 0); assert.equal(r.initial, r.arrears); }
+});
+
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."
    The tab has to tell the screen WHO is looking and whether the rotation gives them a list of
    their own -- without that it can only ever show everybody's book. */

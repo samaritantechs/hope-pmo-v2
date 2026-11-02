@@ -622,6 +622,22 @@ async function defaulterBook(db, user, { type = 'current', notAfter, onDate, col
   return { ...snap, perTeam: false };
 }
 
+/* ONE RULE FOR A CUSTOMER'S "INITIAL" AND "RECOVERED", used by every list that carries both
+   (Defaulters Followup and the Exp.Def Orodha / List). Initial is the customer's arrears on
+   today's own INITIAL deck, matched by REF; recovered is how far they have come down since,
+   never below zero. A customer the initial deck does not hold has no baseline, so initial reads
+   as their arrears now and recovered as 0 -- a figure that is not known is never invented. */
+function baselineByRef(iniRows) {
+  const m = {};
+  for (const d of iniRows || []) m[String(d.ref == null ? '' : d.ref).trim().toUpperCase()] = num(d.arrears);
+  return m;
+}
+function recoveryOf(baseBy, ref, arrears) {
+  const key = String(ref == null ? '' : ref).trim().toUpperCase();
+  const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
+  return { initial, recovered: Math.max(0, initial - arrears) };
+}
+
 /* Purely informational, and unrelated to recovery_standing's own rule (which has no window at
    all any more, see RUN-ME-032 v8): Find customer still tells an admin when a customer's newest
    deck row of ANY type has gone stale -- six weeks with no fresh upload at all for them, on
@@ -956,11 +972,19 @@ async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) 
 const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 function rollSun(u) { return u === 7 ? 1 : u; }        // Sunday -> Monday
 async function expectedDefaulters(db, user, _args, nowMs) {
-  const [def, teamRows, strat] = await Promise.all([
+  const [def, teamRows, strat, iniSnap] = await Promise.all([
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs) }),
     readTeamsAll(db),
     assignStrategy(db),
+    /* THE INITIAL ARREARS BEHIND THE LIST'S "Initial arrears" AND "Recovered" COLUMNS -- "remove
+       branch column, add recovered so after DS (initial arrears, current arrears, recovered)".
+       Today's own initial deck, scoped at the database and only the three columns the match
+       needs (ref, team, arrears), the same read and the same rule Defaulters Followup uses. It
+       adds one deck read (the date, then its rows) to a screen that is not the upload or the
+       call app; the speed budget below says so. */
+    defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs), columns: 'ref, team, arrears' }),
   ]);
+  const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const rows = scoped(user, def.rows)
@@ -972,8 +996,9 @@ async function expectedDefaulters(db, user, _args, nowMs) {
       const a = assignFor(d, strat, nowMs);
       const s = K(d.status);
       const team = teamBy[K(d.team)] || {};
+      const { initial, recovered } = recoveryOf(baseBy, d.ref, num(d.arrears));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
-        arrears: num(d.arrears), balance: num(d.balance), ds: d.ds, dc: d.dc,
+        arrears: num(d.arrears), initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
         status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
         disb_date: d.disb_date,
         primary, secondary,
@@ -1021,7 +1046,10 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),
     chronic: rows.filter(r => r.status === 'CHRONIC').length,
     expired: rows.filter(r => r.status === 'EXPIRED').length,
-    arrears: rows.reduce((s, r) => s + r.arrears, 0) };
+    arrears: rows.reduce((s, r) => s + r.arrears, 0),
+    initial: rows.reduce((s, r) => s + r.initial, 0),
+    recovered: rows.reduce((s, r) => s + r.recovered, 0),
+    hasBaseline: iniSnap.rows.length > 0 };
 }
 
 /* ------------------------------------------------------------------ followup + comments */
@@ -1064,14 +1092,12 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
     const at = String(c.created_at || '');
     if (!newNo[k] || at > newNo[k].at) newNo[k] = { at, n };
   }
-  const baseBy = {};
-  for (const d of iniSnap.rows) baseBy[String(d.ref).trim().toUpperCase()] = num(d.arrears);
+  const baseBy = baselineByRef(iniSnap.rows);
 
   // Pure FK stubs (created so an Expected customer's comment can be stored) are not defaulters.
   const real = rows.filter(r => !(r.status == null && r.arrears == null)).map(r => {
     const arrears = num(r.arrears);
-    const key = String(r.ref == null ? '' : r.ref).trim().toUpperCase();
-    const initial = Object.prototype.hasOwnProperty.call(baseBy, key) ? baseBy[key] : arrears;
+    const { initial, recovered } = recoveryOf(baseBy, r.ref, arrears);
     return {
       ...r,
       branch: teamBranch.get(K(r.team)) || null,
@@ -1081,7 +1107,7 @@ async function followup(db, user, args = {}, nowMs = Date.now()) {
       status: (r.arrears != null && arrears <= 0) ? 'PAID' : r.status,
       new_no: (newNo[String(r.ref)] || {}).n || null,
       initial,
-      recovered: Math.max(0, initial - arrears),
+      recovered,
       // The month of the last transaction, so the screen can offer "any month" as a filter
       // without every browser having to work the same thing out from a date string.
       last_trans_month: String(r.last_trans || '').slice(0, 7) || null,

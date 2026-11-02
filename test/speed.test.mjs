@@ -327,7 +327,13 @@ const BUDGETS = [
   ['Leader reports',          'leaderReports',       {}, ADMIN, 24, 26000, 20, 4500],
   ['Month report',            'monthReport',         {}, ADMIN, 16,  5000, 22, 5500],
   ['Credit analysts',         'credit',              {}, ADMIN, 14,  4000, 12, 4200],
-  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  6,  1000,  6, 1000],
+  /* 6 -> 7 trips and 1,000 -> 1,100 rows (2026-11-02): the Orodha / List carries Initial arrears
+     and Recovered after D.S, which need today's initial deck -- one more deck read, and that deck
+     is as long as the current one (1,040 rows measured here against about 520 before). Only ref,
+     team and arrears are asked for, scoped at the database, by the same read and rule as
+     Defaulters Followup. The database cannot hand the pairing over without a function that has to
+     be pasted by hand, and this screen must work without one. */
+  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  7,  1100,  7, 1100],
   ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 10,  1500,  9, 1200],
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
   /* 5 -> 6 migrated, 5 -> 7 until then (2026-10-30): the all-time PAR's denominator -- every
