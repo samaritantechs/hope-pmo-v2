@@ -52,7 +52,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader } from './expdf.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -9863,7 +9863,7 @@ const FN = {
   adjustments, adjustmentRecord, adjustmentAmend, adjustmentDelete,
   auditLog, fuStatuses, fuStatusesSave, perfHistory, stampWeek, teamsExport, staffExport, smsExport, smsGaps, contactsExport,
   announceSave, notifications, notifSeen, customerSearch,
-  expdfMine, expdfReport: expdfReportWeek, emailWeeklyExpdf,
+  expdfMine, expdfReport: expdfReportWeek, expdfLeader: expdfLeaderWeek, emailWeeklyExpdf,
   officerAccounts, saveOfficerAccount, deleteOfficerAccount,
   callReport: (db, user, a, now) => reportCoreForPortal(db, user, a, now),
   callOfficers, recoveryByCredit,
@@ -10221,6 +10221,8 @@ const FN_TAB = {
   expected: ['expected'], expectedDay: ['expected'],
   expectedDefaulters: ['defexp'],
   expdfReport: ['expdfrep'], expdfMine: ['expdfrep'], emailWeeklyExpdf: ['expdfrep'],
+  // One leader's week behind their row on the report: calls, comments, recovery. The report's own tab.
+  expdfLeader: ['expdfrep'],
   assignments: ['assignments'],
   followup: ['followup'],
   promises: ['promises'],
@@ -10644,6 +10646,13 @@ async function expdfReportWeek(db, user, args, nowMs = Date.now()) {
   const d = await expdfReport(db, user, { ...(args || {}), weekly: true }, asOf.ms);
   return { ...d, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6), asOfDate: todayKey(asOf.ms),
     pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future };
+}
+
+/* The card behind a leader's name on the report: the same week, read the same way. */
+async function expdfLeaderWeek(db, user, args, nowMs = Date.now()) {
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const d = await expdfLeader(db, user, { ...(args || {}), weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6) }, asOf.ms);
+  return { ...d, asOfDate: todayKey(asOf.ms), pastWeek: asOf.past, weekFuture: asOf.future };
 }
 
 export function asOfWeek(nowMs, weekOf) {
