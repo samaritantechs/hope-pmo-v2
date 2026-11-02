@@ -211,6 +211,8 @@
   .teampick-act{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
   .tblfoot{padding:10px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--mut);background:var(--b50)}
   a.tel{color:var(--b600);text-decoration:none}
+  tr.taprow td{cursor:pointer}
+  tr.taprow:hover td{background:var(--b50)}
 
   /* dark mode -- one class on <body>, every colour comes from the variables above */
   body.dark{--zebra:#0F1828;--bg:#0B1120;--card:#131C2E;--line:#22304A;--ink:#E5EAF2;--mut:#8B9AB3;--soft:#64748B;
@@ -757,7 +759,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-02-d';
+var BUILD = '2026-11-02-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2005,7 +2007,7 @@ function cellHtml(r, c){
     var dt = txt && c.data ? c.data(r) : null;
     if (!dt) return esc(txt);
     var attrs = Object.keys(dt).map(function(k){ return ' data-tap-'+k+'="'+esc(dt[k])+'"'; }).join('');
-    return '<a class="tel" href="#"'+attrs+' onclick="event.preventDefault();event.stopPropagation();'+c.tap+'(this)">'+esc(txt)+'</a>';
+    return '<a class="tel" href="#" data-tap-fn="'+esc(c.tap)+'"'+attrs+' onclick="event.preventDefault();event.stopPropagation();'+c.tap+'(this)">'+esc(txt)+'</a>';
   }
   return esc(txt);
 }
@@ -4723,10 +4725,21 @@ function wireBoardSort(){
   });
 }
 
+/* A ROW THAT OPENS A CARD. On a board with a `tap` column the whole row is the target, not only
+   the name -- "rows ain't yet clickable": a thumb lands on the number beside the name as often
+   as on the name. One delegated handler; a tap on a link, button or box inside the row is its
+   own and is left alone. */
+document.addEventListener('click', function(e){
+  var tr = e.target && e.target.closest ? e.target.closest('tr.taprow') : null;
+  if (!tr || e.target.closest('a, button, input, select, label')) return;
+  var a = tr.querySelector('a[data-tap-fn]');
+  if (a && typeof window[a.getAttribute('data-tap-fn')] === 'function') window[a.getAttribute('data-tap-fn')](a);
+});
 function tableSimple(rows, cols, totalRow, boardId){
   if (!rows || !rows.length) return '<div class="msg">—</div>';
   var ctx = colourCtx_(cols, totalRow, rows);   // the same colour rule as the main list
-  var body = rows.map(function(r,i){ return '<tr><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
+  var tapRows = cols.some(function(c){ return c.kind==='tap'; });
+  var body = rows.map(function(r,i){ return '<tr'+(tapRows?' class="taprow"':'')+'><td class="sn">'+(i+1)+'</td>'+cols.map(function(c){
         var k = cellCls_(r, c, ctx);
         return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('');
   /* A TOTAL row is not decoration on these boards -- it is the number read out in the meeting.

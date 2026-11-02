@@ -1546,6 +1546,12 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   const wired = [...app.matchAll(/querySelectorAll\('\[(data-[a-z]+)\]'\)/g)].map(m => m[1]);
   assert.ok(wired.includes('data-role'), 'the role wiring this guards against is still there');
   assert.ok(!wired.some(a => a.startsWith('data-tap-')), 'nothing else wires data-tap-* elements');
+  // THE WHOLE ROW opens the card on a board with a tap column -- "rows ain't yet clickable".
+  const ts = app.slice(app.indexOf('function tableSimple('), app.indexOf('function sumRow('));
+  assert.ok(/tapRows\?' class="taprow"':''/.test(ts), 'rows of a board with a tap column are marked');
+  assert.ok(/closest\('tr\.taprow'\)/.test(app) && /a\[data-tap-fn\]/.test(app), 'one delegated row handler reaches the name\'s own function');
+  assert.ok(/data-tap-fn="'\+esc\(c\.tap\)\+'"/.test(cell), 'the anchor names its function for the row handler');
+  assert.ok(/tr\.taprow td\{cursor:pointer\}/.test(app), 'the row shows it can be tapped');
 });
 
 test('the daily bonus maths: a day is worth its gates, a perfect month is exactly the pot, and the rules hold', async () => {
