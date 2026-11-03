@@ -1533,7 +1533,7 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   assert.ok(/function xdLeader_\(el\)/.test(view), 'the card function sits with the report');
   assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'one read, the report\'s own period');
   for (const label of ['Portfolio calls', 'Comments', 'Recovered']) assert.ok(view.includes(label), 'the card shows ' + label);
-  assert.ok(/HOPE Calls under this name/.test(view), 'it says when the name is not registered in HOPE Calls');
+  assert.ok(/Nobody in HOPE Calls matches/.test(view) && /Put the leader’s number on Teams &amp; Staff/.test(view), 'it says when nobody in HOPE Calls matches, and what to do about it');
   // The tappable cell kind exports as text and never carries data for a null row.
   const cell = app.slice(app.indexOf('function cellHtml('), app.indexOf('function isNum('));
   assert.ok(/c\.kind==='tap'/.test(cell) && /if \(!dt\) return esc\(txt\);/.test(cell));

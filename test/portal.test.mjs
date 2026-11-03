@@ -18,6 +18,7 @@ const dbWithRpc = t => fakeDb(t || tables(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ..
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
+const { sameName } = await import('../api/_lib/expdf.js');
 // The announcement is READ without an access code -- it has to reach the sign-in screen -- so
 // it lives on the calls door beside the brand. Both sides are checked here, together, because
 // what one writes the other must be willing to show.
@@ -12442,4 +12443,42 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
   for (const r of db._dump('teams')) if (r.team === 'KONGOWE') r.opm = null;
   const d2 = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
   assert.equal(d2.sections.find(s => s.role === 'MANAGER').rows[0].opm, '(unassigned)');
+});
+
+/* WHO IS WHO -- "Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina SULEIMAN MPOKI MWASUNGA,
+   hivyo simu zinasoma 0": he WAS registered, under another spelling. Teams & Staff and the
+   roster are typed by different hands, so the match is by the role's number on Teams & Staff
+   first, then by the name's words (a shorter spelling whose words all appear in the longer, in
+   any order), never by a lone first name. */
+test('expdf report: a leader is matched to HOPE Calls by number, then by the words of the name', async () => {
+  const t = expdfTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'SULEIMAN MPOKI MWASUNGA', gmo_no: '0718000001', bike_no: '0717000009' };
+  t.call_users.push(
+    { user_id: 'US', name: 'Suleiman Mwasunga', phone: '0718999999', team: 'KONGOWE', role: 'GMO', is_leader: true },      // the middle name dropped, a different number
+    { user_id: 'UK', name: 'KAROLI K', phone: '0717000009', team: 'KONGOWE', role: 'BIKE', is_leader: true },             // BIKE BEE's number on Teams & Staff, a name nobody would match
+    { user_id: 'UJ', name: 'MWASUNGA', phone: '0719000000', team: 'KONGOWE', role: 'OFFICER', is_leader: false });        // one word: not enough to be anybody
+  t.call_logs.push(
+    { id: 's1', user_id: 'US', officer: 'Suleiman Mwasunga', team: 'KONGOWE', phone: '071400003', ref: 'A3', call_date: TODAY, duration: 100, portfolio: true, outcome: 'CONNECTED' },
+    { id: 'k1', user_id: 'UK', officer: 'KAROLI K', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: TODAY, duration: 80, portfolio: true, outcome: 'CONNECTED' },
+    { id: 'j1', user_id: 'UJ', officer: 'MWASUNGA', team: 'KONGOWE', phone: '071400003', ref: 'A3', call_date: TODAY, duration: 70, portfolio: true, outcome: 'CONNECTED' });
+  // His portal access code, under a third spelling; a comment written in the portal is signed with it.
+  t.access_codes.push({ code: 'SM', name: 'Mwasunga Suleiman', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  t.followup_comments.push(
+    { id: 'cs1', ref: 'A3', team: 'KONGOWE', full_name: 'CA3', comment: 'nitampigia tena', fu_status: 'HAPATIKANI', created_by: 'Suleiman Mwasunga', created_at: TODAY + 'T07:00:00Z' },
+    { id: 'cs2', ref: 'A3', team: 'KONGOWE', full_name: 'CA3', comment: 'kutoka portal', fu_status: 'AMETOA AHADI', created_by: 'Mwasunga Suleiman', created_at: TODAY + 'T08:00:00Z' });
+  const db = fakeDb(t);
+  const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  const gmo = d.sections.find(s => s.role === 'GMO').rows[0];
+  assert.equal(gmo.leader, 'SULEIMAN MPOKI MWASUNGA'); assert.equal(gmo.inCalls, true, 'matched by the words of the name');
+  assert.equal(gmo.calls, 1, 'his call counts; the lone-word MWASUNGA account is not him'); assert.equal(gmo.talk, 100);
+  assert.equal(gmo.comments, 2, 'his comments under the roster\'s spelling and under his access code\'s');
+  const bike = d.sections.find(s => s.role === 'BIKE').rows[0];
+  assert.equal(bike.leader, 'BIKE BEE'); assert.equal(bike.inCalls, true, 'matched by the number on Teams & Staff');
+  assert.equal(bike.calls, 1); assert.equal(bike.talk, 80);
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'GMO', leader: 'SULEIMAN MPOKI MWASUNGA' }, NOW);
+  assert.equal(card.inCalls, true); assert.equal(card.totals.calls, 1); assert.equal(card.totals.comments, 2);
+  assert.equal(sameName('SULEIMAN MWASUNGA', 'Suleiman Mpoki Mwasunga'), true);
+  assert.equal(sameName('MWASUNGA SULEIMAN', 'SULEIMAN MPOKI MWASUNGA'), true, 'in any order');
+  assert.equal(sameName('MWASUNGA', 'SULEIMAN MPOKI MWASUNGA'), false, 'one word is not a match');
+  assert.equal(sameName('SULEIMAN JUMA', 'SULEIMAN MPOKI MWASUNGA'), false, 'a different surname is somebody else');
 });
