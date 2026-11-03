@@ -771,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-03-b';
+var BUILD = '2026-11-03-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4290,29 +4290,62 @@ function chipFor(s){
    screen itself, and this report is what gets emailed. Monday's initial deck against the chosen
    week's latest current deck -- the server reads a past or upcoming week as it stood on its
    Friday (asOfWeek) -- so the week arrows move every card here, the three role cards included. */
+/* THE PERIOD BAR -- "Exp.Def Report should be daily . . put a weekly and monthly on buttons in
+   front of calendar date picker there". Three pills (Leo / Wiki / Mwezi) before the date, the
+   arrows step by a day, a week or a month, and the chip says which day, week or month is on
+   screen and whether it is past, current or upcoming. The server resolves the pick for the
+   period (a week to its Monday, a month to its first), so the input shows what is read. */
+var XD_WORDS = { day:   { pill: 'Leo / Daily',    cur: 'Leo / today',         of: 'siku ya / day',    base: 'orodha ya awali ya siku / the day’s initial deck',           rec: 'Marejesho ya leo / Daily recovered' },
+                 week:  { pill: 'Wiki / Weekly',  cur: 'Wiki hii / this week', of: 'wiki ya / week of', base: 'orodha ya Jumatatu / Monday’s deck',                        rec: 'Marejesho ya wiki / Weekly recovered' },
+                 month: { pill: 'Mwezi / Monthly', cur: 'Mwezi huu / this month', of: 'mwezi wa / month', base: 'orodha ya kwanza ya mwezi / the month’s first deck',      rec: 'Marejesho ya mwezi / Monthly recovered' } };
+function xdSpan_(d){ var p = XD_WORDS[d.period] || XD_WORDS.day; return p.of + ' ' + (d.period === 'month' ? String(d.from||'').slice(0,7) : (d.from||'')) + (d.period === 'day' ? '' : ' → ' + (d.to||'')); }
+function xdBar_(d, extra){
+  var period = d.period || 'day', w = XD_WORDS[period] || XD_WORDS.day;
+  var pills = ['day','week','month'].map(function(p){
+    return '<button class="pill'+(period===p?' on':'')+'" data-arg="period" data-val="'+p+'">'+XD_WORDS[p].pill+'</button>'; }).join('');
+  var chip = d.pastWeek
+      ? '<span class="chip warn" style="margin-left:8px">Kipindi kilichopita / past · ' + esc(xdSpan_(d)) + ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') + '</span>'
+      : (d.weekFuture
+          ? '<span class="chip ok" style="margin-left:8px">Kipindi kijacho / upcoming · ' + esc(xdSpan_(d)) + '</span>'
+          : '<span class="chip mut" style="margin-left:8px">' + w.cur + '</span>');
+  return bar('<span class="pills" style="display:inline-flex;gap:6px;margin-right:8px">' + pills + '</span>'
+    + '<button class="btn sm ghost" onclick="xdStep_(-1)" title="Nyuma / previous">◀</button>'
+    + '<input type="date" data-arg="weekOf" value="' + esc(d.from || '') + '">'
+    + '<button class="btn sm ghost" onclick="xdStep_(1)" title="Mbele / next">▶</button>'
+    + chip
+    + ((d.pastWeek || d.weekFuture) ? ' <button class="btn sm ghost" data-arg="weekOf" data-val="">Rudi leo / Back to today</button>' : '')
+    + (extra || ''));
+}
+function xdStep_(n){
+  var p = S.args.period || 'day';
+  var dt = new Date((S.args.weekOf || today()) + 'T09:00:00Z');
+  if (p === 'day') dt.setUTCDate(dt.getUTCDate() + n);
+  else if (p === 'week') dt.setUTCDate(dt.getUTCDate() + 7 * n);
+  else { dt.setUTCDate(1); dt.setUTCMonth(dt.getUTCMonth() + n); }
+  S.args.weekOf = dt.toISOString().slice(0, 10);
+  render();
+}
 VIEWS.expdfrep = function(){
-  /* THE WEEK ARROWS, "there too" -- "i need expected defaulters report to have the weekly
-     forward and backward buttons there too". The same weekBar the dashboard and the weekly
-     screens carry. */
-  return srv('expdfReport', { weekOf: S.args.weekOf || '' }).then(function(d){
-    var t = d.totals;
+  var period = S.args.period || 'day';
+  S.args.period = period;
+  return srv('expdfReport', { period: period, weekOf: S.args.weekOf || '' }).then(function(d){
+    var t = d.totals, w = XD_WORDS[d.period] || XD_WORDS.day;
     var byRole = {};
     (d.sections || []).forEach(function(sec){ byRole[sec.role] = sec.totals || {}; });
-    HEAD = weekBar(d, '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
+    HEAD = xdBar_(d, '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
       + '<div class="kpis">'
-      + kpi('Wateja / Customers', money(t.customers), 'wiki ya / week of '+d.weekOf+' → '+(d.weekEnd||''))
-      + kpi('Deni la awali / Initial', money(t.initial), 'orodha ya Jumatatu / Monday’s deck')
+      + kpi('Wateja / Customers', money(t.customers), xdSpan_(d))
+      + kpi('Deni la awali / Initial', money(t.initial), w.base + (d.baseDate ? ' · ' + d.baseDate : ''))
       + kpi('Deni sasa / Arrears now', money(t.arrears), null, 'bad')
-      + kpi('Marejesho ya wiki / Recovered this week', money(t.recovered), null, 'good')
+      + kpi('Marejesho / Recovered', money(t.recovered), xdSpan_(d), 'good')
       + kpi('Rec %', pct(t.pct), 'recovered ÷ initial')
       + '</div>'
-      /* THE THREE WEEKLY RECOVERED CARDS -- one per recycling category, the week's recovered
-         total over that category's leaders, with its Rec % and how many customers it holds.
-         A week back or forward reads straight off these three. */
+      /* THE THREE RECOVERED CARDS -- one per recycling category, the period's recovered total
+         over that category's leaders, with its Rec % and how many customers it holds. */
       + '<div class="kpis">'
       + ['GMO','MANAGER','BIKE'].map(function(role){
           var s = byRole[role] || {};
-          return kpi('Marejesho ya wiki / Weekly recovered · ' + role, money(s.recovered || 0),
+          return kpi(w.rec + ' · ' + role, money(s.recovered || 0),
             pct(s.pct) + ' · ' + money(s.customers || 0) + ' wateja / customers',
             (s.recovered || 0) > 0 ? 'good' : '', 'xdRec_' + role);
         }).join('')
@@ -4354,7 +4387,7 @@ VIEWS.expdfrep = function(){
             {opm:'', leader:'', teams:'', customers:sec.totals.customers, calls:sec.totals.calls, talk:sec.totals.talk, comments:sec.totals.comments,
              initial:sec.totals.initial, arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct});
         }).join('')
-      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku, za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa za orodha yake; jina lisilosajiliwa HOPE Calls linasoma 0 (kijivu). Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day, portfolio only, to the customers, guarantors and recorded other numbers of their list; a name not registered in HOPE Calls reads 0 (grey). Comments are those written under this name this week on these customers.</div>';
+      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku, za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa za orodha yake, katika kipindi hiki; jina lisilosajiliwa HOPE Calls linasoma 0 (kijivu). Maoni = yaliyoandikwa kwa jina lake katika kipindi hiki kwa wateja hao. / A call is one number per day, portfolio only, to the customers, guarantors and recorded other numbers of their list, in this period; a name not registered in HOPE Calls reads 0 (grey). Comments are those written under this name in this period on these customers.</div>';
     // The whole book behind the three boards, so a leader's row can be opened to the customer.
     S.rows = [];
     S.cols = [];
@@ -4368,28 +4401,29 @@ function xdLeader_(el){
   var role = el.getAttribute('data-tap-role'), leader = el.getAttribute('data-tap-leader');
   if (!leader) return;
   drawer('<h3>'+esc(leader)+' <span class="chip ok">'+esc(role)+'</span></h3><div class="sk"></div>', { wide: true });
-  srv('expdfLeader', { role: role, leader: leader, weekOf: S.args.weekOf || '' }).then(function(d){
+  // The same period as the report on screen, so the card says what the row says.
+  srv('expdfLeader', { role: role, leader: leader, period: S.args.period || 'day', weekOf: S.args.weekOf || '' }).then(function(d){
     var t = d.totals || {};
     var mins = function(sec){ sec = Number(sec)||0; return sec >= 3600 ? Math.floor(sec/3600)+'h '+Math.round((sec%3600)/60)+'m' : Math.round(sec/60)+'m'; };
     var html = '<h3>'+esc(d.leader)+' <span class="chip ok">'+esc(d.role)+'</span></h3>'
-      + '<div class="mut" style="font-size:12px;margin-bottom:8px">Wiki ya / week of '+esc(d.weekOf)+' → '+esc(d.weekEnd)
-      + (d.pastWeek ? ' · kama ilivyokuwa Ijumaa / as it stood on its Friday' : '') + '</div>'
+      + '<div class="mut" style="font-size:12px;margin-bottom:8px">'+esc(xdSpan_(d))
+      + (d.pastWeek ? ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') : '') + '</div>'
       + '<div class="kpis">'
-      + kpi('Wateja / Customers', money(t.customers), 'kwenye mzunguko wake wiki hii / in their rotation this week')
+      + kpi('Wateja / Customers', money(t.customers), 'kwenye mzunguko wake katika kipindi hiki / in their rotation this period')
       + kpi('Simu za portfolio / Portfolio calls', money(t.calls), money(t.dials)+' dials · '+money(t.reached)+' wateja / customers · '+mins(t.talk)+' talk', t.calls?'good':'bad')
       + kpi('Maoni / Comments', money(t.comments), money(t.commented)+' wateja / customers', t.comments?'good':'bad')
       + kpi('Marejesho / Recovered', money(t.recovered), (t.pct==null?'—':t.pct+'%')+' ya awali / of initial · '+money(t.recoveredCustomers)+' wateja / customers', t.recovered>0?'good':'')
       + '</div>'
       + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina <b>'+esc(d.leader)+'</b>, hivyo simu zinasoma 0. / Nobody is registered in HOPE Calls under this name, so calls read 0.</div>')
-      + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya Jumatatu haipo — marejesho yanasoma 0. / No Monday initial deck, so recovery reads 0.</div>')
-      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii. Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list. Comments are those written under this name this week on these customers.</div>';
+      + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya kipindi hiki haipo — marejesho yanasoma 0. / No initial deck for this period, so recovery reads 0.</div>')
+      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii, katika kipindi hiki. Maoni = yaliyoandikwa kwa jina lake katika kipindi hiki kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list, in this period. Comments are those written under this name in this period on these customers.</div>';
     var cols = [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),
           col('calls','Calls','num'), col('dials','Dials','num'), col('lastCall','Last call','date'),
           col('comments','Comments','num'), col('lastStatus','Last status'), col('lastComment','Last comment'),
           col('initial','Initial','money'), {key:'arrears', label:'Arrears now', kind:'money', cls:function(){ return 'bad'; }},
           {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}];
     // The card's customers, registered as a board so the Excel button beside the (x) can export them.
-    BOARDS.xd_leader = { title: d.leader + ' · ' + d.role + ' · wiki ya / week of ' + d.weekOf, rows: d.rows || [], cols: cols };
+    BOARDS.xd_leader = { title: d.leader + ' · ' + d.role + ' · ' + xdSpan_(d), rows: d.rows || [], cols: cols };
     html += tableSimple(d.rows || [], cols,
           {full_name:'', ref:'', team:'', cycle:'', calls:t.calls, dials:t.dials, lastCall:'', comments:t.comments, lastStatus:'', lastComment:'',
            initial:t.initial, arrears:t.arrears, recovered:t.recovered})

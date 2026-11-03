@@ -346,6 +346,10 @@ const BUDGETS = [
      fixture names no leader with a book, so none of the four is made here; the ceiling is the
      live shape. */
   ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 14,  2000,  13, 1700],
+  /* The same report for a week (Monday's deck is one more read) and for a month (the month's
+     first deck: one date query and one deck read more). The day, the default, reads neither. */
+  ['Rotation report (expdf, week)',  'expdfReport', { period: 'week' },  ADMIN, 15, 2000, 14, 1700],
+  ['Rotation report (expdf, month)', 'expdfReport', { period: 'month' }, ADMIN, 16, 2000, 15, 1700],
   /* The card behind a leader's name on that report: the same five deck reads, then the week's
      work by the same four reads as the report (the roster read by that one name). Measured with
      a leader nobody has registered (the calls and replacement-number reads are then not made)

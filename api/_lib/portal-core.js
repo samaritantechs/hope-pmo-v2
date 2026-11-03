@@ -52,7 +52,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport, expdfLeader } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -10641,18 +10641,23 @@ async function settingNum(db, key, dflt) {
    upcoming week is read as it stood on its Friday), and the report measures that week's Monday
    deck against its latest current deck, so the three role cards and the boards move with the
    arrows. The weekly email keeps calling expdfReport directly, on this week. */
+/* The report for a DAY (the default), a WEEK or a MONTH -- "Exp.Def Report should be daily . .
+   put a weekly and monthly on buttons in front of calendar date picker there". One resolver
+   (expdfPeriod) for the report and the card, so a row and its card never read different
+   periods. `weekOf` / `weekEnd` keep their names for the week bar's sake; `from` / `to` say the
+   same for any period. */
 async function expdfReportWeek(db, user, args, nowMs = Date.now()) {
-  const asOf = asOfWeek(nowMs, args && args.weekOf);
-  const d = await expdfReport(db, user, { ...(args || {}), weekly: true, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6) }, asOf.ms);
-  return { ...d, weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6), asOfDate: todayKey(asOf.ms),
-    pastWeek: asOf.past, weekRequested: asOf.requested, weekFuture: asOf.future };
+  const p = expdfPeriod(nowMs, args || {});
+  const d = await expdfReport(db, user, { ...(args || {}), weekly: p.period === 'week', monthly: p.period === 'month', weekOf: p.from, weekEnd: p.to }, p.ms);
+  return { ...d, period: p.period, from: p.from, to: p.to, weekOf: p.from, weekEnd: p.to, asOfDate: todayKey(p.ms),
+    pastWeek: p.past, weekRequested: p.requested, weekFuture: p.future };
 }
 
-/* The card behind a leader's name on the report: the same week, read the same way. */
+/* The card behind a leader's name on the report: the same period, read the same way. */
 async function expdfLeaderWeek(db, user, args, nowMs = Date.now()) {
-  const asOf = asOfWeek(nowMs, args && args.weekOf);
-  const d = await expdfLeader(db, user, { ...(args || {}), weekOf: asOf.weekOf, weekEnd: addDaysKey(asOf.weekOf, 6) }, asOf.ms);
-  return { ...d, asOfDate: todayKey(asOf.ms), pastWeek: asOf.past, weekFuture: asOf.future };
+  const p = expdfPeriod(nowMs, args || {});
+  const d = await expdfLeader(db, user, { ...(args || {}), period: p.period, weekOf: p.from, weekEnd: p.to }, p.ms);
+  return { ...d, period: p.period, from: p.from, to: p.to, asOfDate: todayKey(p.ms), pastWeek: p.past, weekFuture: p.future };
 }
 
 export function asOfWeek(nowMs, weekOf) {

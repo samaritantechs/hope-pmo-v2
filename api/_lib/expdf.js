@@ -39,21 +39,37 @@ export const RECYCLE_ROLES = ['GMO', 'MANAGER', 'BIKE'];
    book of each OPM's teams), was built and then dropped at the GM's word -- "Drop - Kwa OPM /
    By OPM"; the OPM instead stands as the first column of each role board. */
 
-export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
+/* The month's FIRST initial deck -- the baseline a monthly figure is measured from. One tiny
+   date query (ascending, one row), then that day's deck. Where the month has no deck yet the
+   caller falls back, never fails. */
+const NONE_ = { rows: [], date: null, batch: null };
+async function monthFirstInitial_(db, user, from, to) {
+  try {
+    const { data, error } = await db.from('defaulter_snapshots').select('snapshot_date').eq('snapshot_type', 'initial')
+      .gte('snapshot_date', from).lte('snapshot_date', to).order('snapshot_date', { ascending: true }).limit(1).maybeSingle();
+    if (error || !data || !data.snapshot_date) return NONE_;
+    return await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, { onDate: data.snapshot_date, teams: user.teams });
+  } catch (e) { return NONE_; }
+}
+
+export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false } = {}) {
   const today = todayKey(nowMs), wd = currentWeekday(nowMs), mon = weekMondayKey(nowMs);
-  const [curSnap, dayIni, monIni, teamRows, strat] = await Promise.all([
+  // Only the baseline the period needs is read: Monday's deck for a week, the month's first
+  // deck for a month, nothing extra for a day.
+  const [curSnap, dayIni, monIni, monthIni, teamRows, strat] = await Promise.all([
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: user.teams }),
     latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today, teams: user.teams }),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, teams: user.teams }),
+    weekly ? latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, teams: user.teams }) : Promise.resolve(NONE_),
+    monthly ? monthFirstInitial_(db, user, today.slice(0, 7) + '-01', today) : Promise.resolve(NONE_),
     fetchAll(() => db.from('teams').select('*')),
     assignStrategy(db),
   ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
-  // Weekly compares against Monday; daily against the same day's own initial. Where the
-  // chosen baseline is missing the customer just shows 0 recovered rather than a fabricated
-  // number computed off whatever deck happened to be lying around.
-  const base = weekly ? (monIni.rows.length ? monIni : dayIni) : dayIni;
+  // A month compares against its first deck, a week against Monday's, a day against the same
+  // day's own initial. Where the chosen baseline is missing the customer just shows 0 recovered
+  // rather than a fabricated number computed off whatever deck happened to be lying around.
+  const base = monthly ? (monthIni.rows.length ? monthIni : dayIni) : weekly ? (monIni.rows.length ? monIni : dayIni) : dayIni;
   const baseBy = {};
   for (const d of base.rows) baseBy[K(d.ref)] = num(d.arrears);
 
@@ -82,7 +98,50 @@ export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
         leader: (team[ROLE_COLS[a.role]] || '(unassigned)'),
         opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
     });
-  return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0 };
+  return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
+    baseline: monthly ? 'month' : (weekly ? 'week' : 'day') };
+}
+
+/* =======================================================================================
+   THE PERIOD A FIGURE IS READ FOR -- "Exp.Def Report should be daily . . put a weekly and
+   monthly on buttons in front of calendar date picker there".
+
+   One resolver for the report and the card behind a name, so the row and the card are always
+   the same period. `period` is day (the default), week or month; `date` (or the older
+   `weekOf`) is any day, and the period says what to make of it: the day itself, the Monday
+   week that holds it, the month that holds it. A past period is read as it stood at its close
+   (a past day on that day, a past week on its Friday, a past month on its last day); the
+   current one as of now; a future one at its close too, since a future deck is one somebody
+   has already uploaded in advance. `weekly: true` without a period means a week, for the
+   weekly e-mail and older callers. */
+export function expdfPeriod(nowMs, args = {}) {
+  const today = todayKey(nowMs);
+  let period = String(args.period || '').toLowerCase();
+  if (!['day', 'week', 'month'].includes(period)) period = args.weekly === true ? 'week' : 'day';
+  const pick = [args.date, args.weekOf].map(v => String(v == null ? '' : v)).find(v => /^\d{4}-\d{2}-\d{2}$/.test(v)) || today;
+  const at = k => Date.parse(k + 'T09:00:00Z');       // midday, so no timezone arithmetic rolls the date
+  if (period === 'day') {
+    return { period, from: pick, to: pick, ms: pick === today ? nowMs : at(pick), requested: pick, past: pick < today, future: pick > today };
+  }
+  if (period === 'week') {
+    const thisMon = weekMondayKey(nowMs), mon = weekMondayKey(at(pick));
+    return { period, from: mon, to: addDaysKey(mon, 6), ms: mon === thisMon ? nowMs : at(addDaysKey(mon, 4)),
+      requested: mon, past: mon < thisMon, future: mon > thisMon };
+  }
+  const ym = pick.slice(0, 7), thisYm = today.slice(0, 7);
+  const [y, m] = ym.split('-').map(Number);
+  const end = todayKey(Date.UTC(y, m, 0, 12));        // day 0 of the next month is this month's last day
+  return { period, from: ym + '-01', to: ym === thisYm ? today : end, ms: ym === thisYm ? nowMs : at(end),
+    requested: ym + '-01', past: ym < thisYm, future: ym > thisYm };
+}
+
+/* THE DAY'S LIST IS THE ROTATION'S OWN: on a daily reading, the customers whose cycle day it is
+   (as on the phone). Where the deck carries no disbursement dates every row's day is unknown and
+   the whole assigned book shows rather than nobody. A week or a month takes the whole book. */
+function periodRows_(core, { daily, day }) {
+  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
+  if (!daily || day === 'all' || !assigned.some(r => r.primary > 0)) return assigned;
+  return assigned.filter(r => r.onToday);
 }
 
 const sumExpdf = list => ({
@@ -286,10 +345,9 @@ const bookWeek_ = (nowMs, weekOf, weekEnd) => {
     daily or for the week -- each with the OPM of the teams they hold, and the week's calls,
     talk time and comments beside the customers they hold. This is what says which category,
     and which person, is actually working the rotation and which is not. */
-export async function expdfReport(db, user, { weekly = false, day = null, weekOf = null, weekEnd = null } = {}, nowMs) {
-  const core = await expdfCore(db, user, nowMs, { weekly });
-  const onScope = r => (weekly ? true : (day === 'all' ? true : r.onToday));
-  const all = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && onScope(r));
+export async function expdfReport(db, user, { weekly = false, monthly = false, day = null, weekOf = null, weekEnd = null } = {}, nowMs) {
+  const core = await expdfCore(db, user, nowMs, { weekly, monthly });
+  const all = periodRows_(core, { daily: !weekly && !monthly, day });
   const books = [];
   const built = RECYCLE_ROLES.map(role => {
     const mine = all.filter(r => r.role === role);
@@ -318,7 +376,7 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
     return { role, rows, totals: { ...sumExpdf(mine), calls: sum('calls'), dials: sum('dials'), talk: sum('talk'), comments: sum('comments') },
       unassigned: rows.filter(r => r.leader === '(unassigned)').length };
   });
-  return { weekly, weekday: core.weekday, date: core.date, weekOf: win.weekOf,
+  return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     sections, totals: sumExpdf(all) };
 }
@@ -334,14 +392,16 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
    The report says what each leader's book is worth and what came back. This says what they
    DID about it, customer by customer, so a leader with a good recovery and no calls, or many
    calls and no recovery, is visible as such. THE SAME BOOK AS THE ROW THEY TAPPED: the
-   rotation's rows for that role and that name, read as the report reads them, and the week's
-   work by the one definition above. Read on the tap only, never with the report. */
-export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd } = {}, nowMs) {
+   rotation's rows for that role and that name, read as the report reads them for the same
+   period (day, week or month), and the period's work by the one definition above. Read on
+   the tap only, never with the report. */
+export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, period = 'day', day = null } = {}, nowMs) {
   const R = K(role), L = String(leader == null ? '' : leader).trim();
   if (!RECYCLE_ROLES.includes(R)) bad_('Chagua GMO, MANAGER au BIKE. / Pick GMO, MANAGER or BIKE.');
   if (!L || L === '(unassigned)') bad_('Chagua kiongozi aliyetajwa. / Pick a named leader.');
-  const core = await expdfCore(db, user, nowMs, { weekly: true });
-  const rows = core.rows.filter(r => r.role === R && K(r.leader) === K(L));
+  const weekly = period === 'week', monthly = period === 'month';
+  const core = await expdfCore(db, user, nowMs, { weekly, monthly });
+  const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && K(r.leader) === K(L));
   const win = bookWeek_(nowMs, weekOf, weekEnd);
   const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd);
   const w = work.one;
@@ -352,7 +412,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd } = 
     comments: p.comments, lastComment: p.lastComment, lastStatus: p.lastStatus }; })
     .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
   const t = sumExpdf(rows);
-  return { role: R, leader: L, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
+  return { role: R, leader: L, period: core.baseline, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
     totals: { ...t, recoveredCustomers: rows.filter(r => r.recovered > 0).length,
       calls: w.calls, dials: w.dials, talk: w.talk, connected: w.connected,
       reached: w.reached, comments: w.comments, commented: w.commented },
