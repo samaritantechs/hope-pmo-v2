@@ -35,10 +35,9 @@ import { assignFor, assignStrategy, ROLE_COLS } from './assign.js';
    so a leader's number on this screen reconciles with the dashboard rather than being a
    second, differently-computed truth. */
 export const RECYCLE_ROLES = ['GMO', 'MANAGER', 'BIKE'];
-/* The report's boards: the three recycling roles, then the OPM -- who is assigned nothing by
-   the rotation but answers for every team under them, so their board is the whole assigned
-   book of their teams. "Have sort headers of By OPM". */
-export const REPORT_ROLES = ['GMO', 'MANAGER', 'BIKE', 'OPM'];
+/* The report's boards are the three recycling roles. A fourth, "By OPM" (the whole assigned
+   book of each OPM's teams), was built and then dropped at the GM's word -- "Drop - Kwa OPM /
+   By OPM"; the OPM instead stands as the first column of each role board. */
 
 export async function expdfCore(db, user, nowMs, { weekly = false } = {}) {
   const today = todayKey(nowMs), wd = currentWeekday(nowMs), mon = weekMondayKey(nowMs);
@@ -284,19 +283,19 @@ const bookWeek_ = (nowMs, weekOf, weekEnd) => {
 };
 
 /** The management view: every GMO / MANAGER / BIKE with their own book and their own recovery,
-    and every OPM with the whole assigned book of their teams, daily or for the week -- each
-    with the week's calls, talk time and comments beside the customers they hold. This is what
-    says which category, and which person, is actually working the rotation and which is not. */
+    daily or for the week -- each with the OPM of the teams they hold, and the week's calls,
+    talk time and comments beside the customers they hold. This is what says which category,
+    and which person, is actually working the rotation and which is not. */
 export async function expdfReport(db, user, { weekly = false, day = null, weekOf = null, weekEnd = null } = {}, nowMs) {
   const core = await expdfCore(db, user, nowMs, { weekly });
   const onScope = r => (weekly ? true : (day === 'all' ? true : r.onToday));
   const all = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && onScope(r));
   const books = [];
-  const built = REPORT_ROLES.map(role => {
-    const mine = role === 'OPM' ? all : all.filter(r => r.role === role);
+  const built = RECYCLE_ROLES.map(role => {
+    const mine = all.filter(r => r.role === role);
     const by = {};
     for (const r of mine) {
-      const b = bucket(by, role === 'OPM' ? r.opm : r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, opms: {}, rows: [] });
+      const b = bucket(by, r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, opms: {}, rows: [] });
       b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered; b.rows.push(r);
       if (r.team) b.teams[K(r.team)] = r.team;
       // "Add an OPM column on the three role boards too": the OPM(s) of the teams this leader holds.
@@ -309,7 +308,7 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
   const { work, inCalls } = await weekWork(db, books, win.weekOf, win.weekEnd);
   const sections = built.map(({ role, by, mine }) => {
     const rows = Object.values(by).map(b => { const w = work[role + '|' + K(b.key)] || {}; return { leader: b.key,
-      opm: role === 'OPM' ? undefined : (Object.values(b.opms).sort().join(', ') || '(unassigned)'),
+      opm: Object.values(b.opms).sort().join(', ') || '(unassigned)',
       teams: Object.keys(b.teams).length, customers: b.customers,
       calls: w.calls || 0, dials: w.dials || 0, talk: w.talk || 0, comments: w.comments || 0,
       inCalls: !!inCalls[K(b.key)],
@@ -335,15 +334,14 @@ export async function expdfReport(db, user, { weekly = false, day = null, weekOf
    The report says what each leader's book is worth and what came back. This says what they
    DID about it, customer by customer, so a leader with a good recovery and no calls, or many
    calls and no recovery, is visible as such. THE SAME BOOK AS THE ROW THEY TAPPED: the
-   rotation's rows for that role and that name -- for an OPM, every assigned row of their
-   teams -- read as the report reads them, and the week's work by the one definition above.
-   Read on the tap only, never with the report. */
+   rotation's rows for that role and that name, read as the report reads them, and the week's
+   work by the one definition above. Read on the tap only, never with the report. */
 export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd } = {}, nowMs) {
   const R = K(role), L = String(leader == null ? '' : leader).trim();
-  if (!REPORT_ROLES.includes(R)) bad_('Chagua GMO, MANAGER, BIKE au OPM. / Pick GMO, MANAGER, BIKE or OPM.');
+  if (!RECYCLE_ROLES.includes(R)) bad_('Chagua GMO, MANAGER au BIKE. / Pick GMO, MANAGER or BIKE.');
   if (!L || L === '(unassigned)') bad_('Chagua kiongozi aliyetajwa. / Pick a named leader.');
   const core = await expdfCore(db, user, nowMs, { weekly: true });
-  const rows = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && (R === 'OPM' ? K(r.opm) === K(L) : (r.role === R && K(r.leader) === K(L))));
+  const rows = core.rows.filter(r => r.role === R && K(r.leader) === K(L));
   const win = bookWeek_(nowMs, weekOf, weekEnd);
   const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd);
   const w = work.one;

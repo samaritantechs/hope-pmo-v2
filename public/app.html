@@ -452,8 +452,13 @@
   /* A drawer that holds a TABLE, not a form, takes the WHOLE screen of whatever device it is on: seven money columns in 560px is a strip somebody
      scrolls sideways through -- "widen the recovery card ... its so thick for the content". */
   .drawer.wide{max-width:100%;border-radius:0}
-  .drawer h3{margin:0 0 4px;font-size:16px}
+  .drawer h3{margin:0 0 4px;font-size:16px;padding-right:30px}
   .drawer .sub{color:var(--mut);font-size:12.5px;margin-bottom:12px}
+  /* the (x) at the top right of every drawer: a zero-height sticky bar, so it stays put while the card scrolls */
+  .drawer .dxbar{position:sticky;top:0;height:0;text-align:right;z-index:3}
+  .drawer .dx{width:30px;height:30px;margin:-8px -8px 0 0;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--mut);
+    font-size:20px;line-height:26px;cursor:pointer;padding:0}
+  .drawer .dx:hover{color:var(--ink)}
 
   /* THE ASSESSMENT DRAWER'S OWN HEADER + STAGE SWITCHER -- "sticky customer card header while
      scrolling" and "horizontal (not vertical) assessment stage switcher, business as 2nd
@@ -765,7 +770,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-02-i';
+var BUILD = '2026-11-03-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4313,28 +4318,27 @@ VIEWS.expdfrep = function(){
       + '</div>'
       + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
           + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
-      /* FOUR BOARDS: the three recycling roles, then "Kwa OPM / By OPM" -- the whole assigned
-         book of each OPM's teams. Every board sorts on any header like the others. Between
+      /* THREE BOARDS, one per recycling role (a fourth, "Kwa OPM / By OPM", was tried and dropped
+         at the GM's word). Every board sorts on any header like the others. The OPM of the
+         teams the leader holds comes FIRST -- "all the three tables should start with opm name
+         column before gmo/manager/bike" -- then the leader's name, which opens the card. Between
          Customers and Initial sit the week's work -- "No of calls + duration (calls among the
          assigned expected customer, guarantor & ana namba nyingine in them), and no of
          comments" -- counted by the same rule as the card behind the name. */
       + d.sections.map(function(sec){
-          var opm = sec.role === 'OPM';
           return board('xd_'+sec.role, 'Kwa ' + sec.role + ' / By ' + sec.role,
             money(sec.rows.length) + ' named · ' + money(sec.totals.customers) + ' customers'
-              + (opm ? ' · orodha yote ya timu zake / the whole assigned book of their teams' : '')
               + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : ''),
             sec.rows,
-            /* nameCol: the leader's name is judged by the colour rule like a team's or an OPM's
-               on every other board -- red below the board's Rec % line, green at target
-               ("underperforming rows should turn red"). The key is `leader`, which NAME_KEYS
-               does not list, so the column says so itself. */
-            [{key:'leader', label:sec.role, kind:'tap', tap:'xdLeader_', nameCol:true,
+            [{key:'opm', label:'OPM', kind:'text', title:'OPM wa timu anazoshikilia / The OPM of the teams this leader holds',
+              cls:function(r){ return r.opm==='(unassigned)'?'bad':''; }},
+             /* nameCol: the leader's name is judged by the colour rule like a team's or an OPM's
+                on every other board -- red below the board's Rec % line, green at target
+                ("underperforming rows should turn red"). The key is `leader`, which NAME_KEYS
+                does not list, so the column says so itself. */
+             {key:'leader', label:sec.role, kind:'tap', tap:'xdLeader_', nameCol:true,
               data:function(r){ return r.leader && r.leader!=='(unassigned)' ? { role: sec.role, leader: r.leader } : null; },
               cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }}]
-            // "Add an OPM column on the three role boards too": the OPM of the teams this leader holds.
-            .concat(opm ? [] : [{key:'opm', label:'OPM', kind:'text', title:'OPM wa timu anazoshikilia / The OPM of the teams this leader holds',
-              cls:function(r){ return r.opm==='(unassigned)'?'bad':''; }}])
             .concat([
              col('teams','Teams','num'), col('customers','Customers','num'),
              {key:'calls', label:'Calls', kind:'num', title:'Simu za portfolio wiki hii kwa wateja wa orodha yake, wadhamini wao na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE); namba moja kwa siku ni simu moja. / Portfolio calls this week to the customers on their list, their guarantors and the other numbers recorded under ANA NAMBA NYINGINE; one number per day is one call.',
@@ -4346,7 +4350,7 @@ VIEWS.expdfrep = function(){
              {key:'arrears', label:'Arrears now', kind:'money', cls:function(){ return 'bad'; }},
              {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }},
              col('pct','Rec %','pct')]),
-            {leader:'', opm:'', teams:'', customers:sec.totals.customers, calls:sec.totals.calls, talk:sec.totals.talk, comments:sec.totals.comments,
+            {opm:'', leader:'', teams:'', customers:sec.totals.customers, calls:sec.totals.calls, talk:sec.totals.talk, comments:sec.totals.comments,
              initial:sec.totals.initial, arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct});
         }).join('')
       + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku, za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa za orodha yake; jina lisilosajiliwa HOPE Calls linasoma 0 (kijivu). Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day, portfolio only, to the customers, guarantors and recorded other numbers of their list; a name not registered in HOPE Calls reads 0 (grey). Comments are those written under this name this week on these customers.</div>';
@@ -6100,7 +6104,11 @@ function navClose_(){ document.body.classList.remove('navopen'); backLayerClose_
     drawer keeps the form width, and the class is dropped the moment a normal one opens. */
 function drawer(html, opts){
   $('#drawer').classList.toggle('wide', !!(opts && opts.wide));
-  $('#drawer').innerHTML = html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
+  /* "The expdef user card has close down but should also have (x) on top right for close." A
+     zero-height sticky bar pins the × to the top-right corner however far the card is scrolled;
+     the Funga / Close at the bottom stays for the thumb. */
+  $('#drawer').innerHTML = '<div class="dxbar"><button class="dx" type="button" onclick="closeDrawer()" aria-label="Funga / Close" title="Funga / Close">&times;</button></div>'
+    + html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
   fitPanelToKeyboard_('drawerBg');
   backLayerOpen_('drawer');
