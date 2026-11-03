@@ -3412,11 +3412,10 @@ short. The call app has no tips; its toast is unchanged.
 > no of comments : Between customers and initial columns"
 
 The report's boards now say what each leader **did** in the week beside what their book is
-worth: between *Customers* and *Initial* sit **Calls**, **Talk** and **Comments**, and a fourth
-board, **Kwa OPM / By OPM**, holds the whole assigned book of each OPM's teams (an OPM is
-assigned nothing by the rotation, but answers for every team under them). Every board is
-drawn by `board()`, so its headers sort; a tap on an OPM's name opens the same card as the
-other three.
+worth: between *Customers* and *Initial* sit **Calls**, **Talk** and **Comments**. Every board
+is drawn by `board()`, so its headers sort. (A fourth board, *Kwa OPM / By OPM*, holding the
+whole assigned book of each OPM's teams, was built and then dropped at the GM's word — "Drop
+- Kwa OPM / By OPM"; the OPM stands as the first column of each role board instead.)
 
 **One rule, in one place.** `weekWork` in `api/_lib/expdf.js` is the single definition of the
 week's work on a book, read by the report's columns and by the card behind a name, so the
@@ -3437,9 +3436,16 @@ leader. A name not registered in HOPE Calls reads 0 in grey (`inCalls:false`). T
 email is unchanged.
 
 **And an OPM column on the three role boards** ("Add an OPM column on the three role boards
-too: all columns sortable as usual"): right after the leader's name, the OPM of the teams that
+too: all columns sortable as usual"; then "all the three tables should start with opm name
+column before gmo/manager/bike"): the FIRST column of each board, the OPM of the teams that
 leader holds — more than one, comma-separated; none, `(unassigned)` in red. Text, so it sorts
-like any header. Not on the By OPM board, where it would repeat the name.
+like any header. The leader's name, which opens the card, comes second.
+
+**The (x) on every drawer** ("The expdef user card has close down but should also have (x) on
+top right for close"): `drawer()` in `public/app.html` now opens with a zero-height sticky bar
+holding a round × that stays at the top-right however far the card is scrolled; the bottom
+*Funga / Close* stays for the thumb. Every drawer gets it, since all of them go through
+`drawer()`.
 
 **A tappable name keeps the row's colour** ("All the names became blue yet underperforming
 rows should turn red"): the leader column is a name column under the colour rule

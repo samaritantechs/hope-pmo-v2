@@ -1569,13 +1569,15 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(/calls:sec\.totals\.calls, talk:sec\.totals\.talk, comments:sec\.totals\.comments/.test(view), 'the total row carries the three');
   assert.ok(/r\.inCalls===false \? 'mut'/.test(view), 'a name not registered in HOPE Calls reads grey');
   assert.ok(/ANA NAMBA NYINGINE/.test(cols), 'the Calls header says what a call is, replacement numbers included');
-  // The OPM board is one of d.sections -- the server lists GMO, MANAGER, BIKE, OPM -- and every board is drawn by board(), so its headers sort.
-  assert.ok(/sec\.role === 'OPM'/.test(view) && /the whole assigned book of their teams/.test(view), 'the OPM board says what it holds');
+  // Three boards, drawn by board(), so their headers sort. The By OPM board was tried and dropped: "Drop - Kwa OPM / By OPM".
   assert.ok(/return board\('xd_'\+sec\.role/.test(view), 'drawn by board(), so the headers sort');
-  // "Add an OPM column on the three role boards too": after the name, text, sortable like any header; not on the OPM board itself.
-  assert.ok(/\.concat\(opm \? \[\] : \[\{key:'opm', label:'OPM', kind:'text'/.test(view), 'the OPM column on the three role boards only');
-  assert.ok(view.indexOf("key:'opm', label:'OPM'") < view.indexOf("col('teams','Teams','num')"), 'right after the leader\'s name');
-  assert.ok(/\{leader:'', opm:'', teams:''/.test(view), 'blank on the total row');
+  assert.ok(!/sec\.role === 'OPM'/.test(view) && !/the whole assigned book of their teams/.test(view), 'no By OPM board, no OPM-board subtitle');
+  const expdfSrc = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
+  assert.ok(!/REPORT_ROLES/.test(expdfSrc) && /const built = RECYCLE_ROLES\.map\(role =>/.test(expdfSrc), 'the server builds the three role boards and no OPM one');
+  // "all the three tables should start with opm name column before gmo/manager/bike": OPM first, then the name that opens the card.
+  assert.ok(/\[\{key:'opm', label:'OPM', kind:'text'/.test(view), 'the OPM column opens the column list');
+  assert.ok(view.indexOf("key:'opm', label:'OPM'") < view.indexOf("key:'leader', label:sec.role, kind:'tap'"), 'before the leader\'s name');
+  assert.ok(/\{opm:'', leader:'', teams:''/.test(view), 'blank on the total row');
   assert.ok(!/var BUILD = '2026-11-02-g'/.test(app), 'BUILD moved again');
   // "All the names became blue yet underperforming rows should turn red": the row's verdict beats the link's blue.
   assert.ok(/td\.bad a\.tel\{color:var\(--bad\)\}/.test(app) && /td\.good a\.tel\{color:var\(--ok\)\}/.test(app), 'a tappable name takes the cell\'s red or green');
@@ -1583,8 +1585,14 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(/key:'leader', label:sec\.role, kind:'tap', tap:'xdLeader_', nameCol:true/.test(view), 'the leader column is a name column under the colour rule (its key is not in NAME_KEYS)');
   assert.ok(/\(NAME_KEYS\[c\.key\] \|\| c\.nameCol\) && ctx\.avgCol/.test(app), 'which cellCls_ honours');
   assert.ok(!/var BUILD = '2026-11-02-h'/.test(app), 'BUILD moved once more');
+  // "The expdef user card has close down but should also have (x) on top right for close": every drawer, pinned while it scrolls.
+  const drawer = app.slice(app.indexOf('function drawer(html'), app.indexOf("$('#drawerBg').onclick"));
+  assert.ok(/<div class="dxbar"><button class="dx" type="button" onclick="closeDrawer\(\)"/.test(drawer), 'the (x) goes in first');
+  assert.ok(/Funga \/ Close<\/button>'/.test(drawer), 'the bottom Funga / Close stays');
+  assert.ok(/\.drawer \.dxbar\{position:sticky;top:0;height:0;text-align:right;z-index:3\}/.test(app), 'a zero-height sticky bar keeps it top-right as the card scrolls');
+  assert.ok(/\.drawer h3\{[^}]*padding-right:30px/.test(app), 'the title leaves it room');
+  assert.ok(!/var BUILD = '2026-11-02-i'/.test(app), 'BUILD moved yet again');
   const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
-  assert.ok(/export const REPORT_ROLES = \['GMO', 'MANAGER', 'BIKE', 'OPM'\]/.test(expdf));
   assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view), 'the three weekly recovered cards stay three: an OPM card would count the same customers twice');
   assert.ok(!/var BUILD = '2026-11-02-f'/.test(app), 'BUILD moved');
