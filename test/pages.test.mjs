@@ -1531,7 +1531,7 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   assert.ok(/key:'leader', label:sec\.role, kind:'tap', tap:'xdLeader_'/.test(view), 'the leader column is tappable on every role board');
   assert.ok(/r\.leader!=='\(unassigned\)' \? \{ role: sec\.role, leader: r\.leader \} : null/.test(view), 'an unassigned row opens nothing');
   assert.ok(/function xdLeader_\(el\)/.test(view), 'the card function sits with the report');
-  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'one read, the report\'s own week');
+  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'one read, the report\'s own period');
   for (const label of ['Portfolio calls', 'Comments', 'Recovered']) assert.ok(view.includes(label), 'the card shows ' + label);
   assert.ok(/HOPE Calls under this name/.test(view), 'it says when the name is not registered in HOPE Calls');
   // The tappable cell kind exports as text and never carries data for a null row.
@@ -1599,6 +1599,23 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(/BOARDS\.xd_leader = \{ title: d\.leader \+ ' · ' \+ d\.role/.test(leaderCard) && /rows: d\.rows \|\| \[\], cols: cols \}/.test(leaderCard), 'the leader card registers its customers as a board');
   assert.ok(/drawer\(html, \{ wide: true, xls: 'xd_leader' \}\)/.test(leaderCard), 'and asks for the Excel button');
   assert.ok(!/var BUILD = '2026-11-03-a'/.test(app), 'BUILD moved for the Excel button');
+  /* "Exp.Def Report should be daily . . put a weekly and monthly on buttons in front of calendar
+     date picker there": three pills before the date, day by default, the arrows step by the
+     period, and the card asks for the same period as the report. */
+  assert.ok(/var period = S\.args\.period \|\| 'day';/.test(view) && /srv\('expdfReport', \{ period: period, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'daily by default, the period sent with the pick');
+  const barFn = app.slice(app.indexOf('function xdBar_('), app.indexOf('VIEWS.expdfrep = function'));
+  assert.ok(/\['day','week','month'\]\.map\(function\(p\)/.test(barFn) && /data-arg="period" data-val="'\+p\+'"/.test(barFn), 'three period pills');
+  assert.ok(barFn.indexOf("data-arg=\"period\"") < barFn.indexOf('<input type="date" data-arg="weekOf"'), 'in front of the calendar date picker');
+  assert.ok(/onclick="xdStep_\(-1\)"/.test(barFn) && /onclick="xdStep_\(1\)"/.test(barFn), 'the arrows');
+  const step = app.slice(app.indexOf('function xdStep_('), app.indexOf('VIEWS.expdfrep = function'));
+  assert.ok(/if \(p === 'day'\) dt\.setUTCDate\(dt\.getUTCDate\(\) \+ n\);/.test(step) && /else if \(p === 'week'\) dt\.setUTCDate\(dt\.getUTCDate\(\) \+ 7 \* n\);/.test(step) && /dt\.setUTCMonth\(dt\.getUTCMonth\(\) \+ n\)/.test(step), 'stepping by a day, a week or a month');
+  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the card reads the same period');
+  assert.ok(!/weekBar\(d,/.test(view), 'the week-only bar is gone from this screen');
+  const expdfSrc2 = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
+  assert.equal(expdfSrc2.split('export function expdfPeriod(').length - 1, 1, 'one resolver of the period, for the report and the card');
+  const pc = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'portal-core.js'), 'utf-8');
+  assert.equal((pc.match(/expdfPeriod\(nowMs, args \|\| \{\}\)/g) || []).length, 2, 'the report and the card both resolve through it');
+  assert.ok(!/var BUILD = '2026-11-03-b'/.test(app), 'BUILD moved for the period bar');
   const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
   assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view), 'the three weekly recovered cards stay three: an OPM card would count the same customers twice');
@@ -1780,21 +1797,23 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
 });
 
 /* "i need expected defaulters report to have the weekly forward and backward buttons there
-   too" / "expected def - remove Leo / Daily and Wiki / Weekly; add weekly recovered 3 cards
-   (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the cards": the
-   Exp.Def Report carries the same weekBar as the dashboard, asks the server for the chosen week
-   only (no daily/weekly pills), keeps the email button on the bar, and shows the week's
+   too" / "add weekly recovered 3 cards (GMO, Manager, Bike) so that weeks shift shows weekly
+   recovery total on the cards" -- and since then "Exp.Def Report should be daily . . put a
+   weekly and monthly on buttons in front of calendar date picker there": the Exp.Def Report
+   carries its own period bar (three pills, the date, the arrows), asks the server for the
+   chosen period and pick only, keeps the email button on the bar, and shows the period's
    recovered total per recycling category. */
-test('the Exp.Def Report carries the week arrows, no day/week pills, and the three weekly recovered cards', () => {
+test('the Exp.Def Report carries the period bar with its arrows, the email button, and the three recovered cards', () => {
   const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
-  assert.ok(/srv\('expdfReport', \{ weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen week goes to the server, nothing else');
-  assert.ok(/HEAD = weekBar\(d, /.test(view), 'the same week bar as the dashboard');
-  assert.ok(!/data-arg="scope"/.test(view) && !/Leo \/ Daily|Wiki \/ Weekly/.test(view), 'the daily/weekly pills are gone');
+  assert.ok(/srv\('expdfReport', \{ period: period, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen period and pick go to the server, nothing else');
+  assert.ok(/HEAD = xdBar_\(d, /.test(view), 'the report\'s own period bar');
+  const words = app.slice(app.indexOf('var XD_WORDS = '), app.indexOf('function xdSpan_('));
+  assert.ok(/pill: 'Leo \/ Daily'/.test(words) && /pill: 'Wiki \/ Weekly'/.test(words) && /pill: 'Mwezi \/ Monthly'/.test(words), 'the three pills');
   assert.ok(/id="mailWeekly"/.test(view), 'the email button stays on the bar');
-  assert.ok(/wiki ya \/ week of '\+d\.weekOf\+' → '\+\(d\.weekEnd\|\|''\)/.test(view), 'the customers card names the week');
-  assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /Weekly recovered · ' \+ role/.test(view)
-    && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one weekly recovered card per recycling category, the week\'s total');
+  assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
+  assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)
+    && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one recovered card per recycling category, the period\'s total');
 });
 
 /* PMO DEDUCTION -- "i also want to build the pmo deduction pannel shift from google sheets into

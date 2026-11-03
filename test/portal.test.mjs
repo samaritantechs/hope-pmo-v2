@@ -4601,29 +4601,49 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   assert.equal(d.totals.initial, 6000);
   assert.equal(d.totals.recovered, 900);
   assert.equal(d.totals.pct, 15);
-  // THE WEEK'S REPORT, ALWAYS -- "expected def - remove Leo / Daily and Wiki / Weekly": the
-  // portal's call is weekly whatever it asks; the three role cards read sections[].totals.
-  assert.equal(d.weekly, true);
+  /* THE DAY'S REPORT BY DEFAULT -- "Exp.Def Report should be daily . . put a weekly and monthly
+     on buttons in front of calendar date picker there". The day is the rotation's own list (the
+     customers whose cycle day it is -- all three here, disbursed on a Tuesday and read on a
+     Friday), measured against the day's own initial deck; the three role cards read
+     sections[].totals. */
+  assert.equal(d.period, 'day'); assert.equal(d.weekly, false); assert.equal(d.from, TODAY); assert.equal(d.to, TODAY);
   assert.equal(d.sections.find(s => s.role === 'BIKE').totals.recovered, 400);
   assert.equal(d.sections.find(s => s.role === 'GMO').totals.recovered, 0);
-  // Weekly measures against MONDAY's deck; there is none here, so it falls back to the day's
-  // own initial rather than inventing a baseline.
+  // A WEEK measures against MONDAY's deck; there is none here, so it falls back to the day's
+  // own initial rather than inventing a baseline. `weekly: true` without a period still means a week.
   const w = await portalApi(db, ADMIN, 'expdfReport', { weekly: true }, NOW);
-  assert.equal(w.weekly, true);
+  assert.equal(w.weekly, true); assert.equal(w.period, 'week');
   assert.equal(w.totals.recovered, 900);
+  assert.deepEqual(await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW).then(x => [x.period, x.from, x.to]), ['week', MON, '2026-07-26']);
   /* THE WEEK ARROWS -- "i need expected defaulters report to have the weekly forward and
      backward buttons there too". This week carries the week bar's fields; a past week is read
      as it stood on its Friday, like the dashboard; a stray date snaps to its Monday. */
   assert.equal(w.weekOf, MON); assert.equal(w.weekEnd, '2026-07-26');
   assert.equal(w.pastWeek, false); assert.equal(w.weekFuture, false); assert.equal(w.asOfDate, TODAY);
-  const past = await portalApi(db, ADMIN, 'expdfReport', { weekly: true, weekOf: '2026-07-15' }, NOW);
+  const past = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.weekOf, '2026-07-13', 'the Wednesday asked for resolves to its Monday');
   assert.equal(past.weekRequested, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19');
   assert.equal(past.pastWeek, true); assert.equal(past.asOfDate, '2026-07-17', 'read as it stood on that Friday');
   assert.equal(past.date, null, 'date is the deck\'s own date, and no deck was uploaded that week'); assert.equal(past.weekday, 'FRI');
   assert.equal(past.totals.customers, 0, 'no deck that week in this fixture: nothing invented');
-  const next = await portalApi(db, ADMIN, 'expdfReport', { weekOf: '2026-07-27' }, NOW);
+  const next = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-27' }, NOW);
   assert.equal(next.weekFuture, true); assert.equal(next.pastWeek, false); assert.equal(next.weekOf, '2026-07-27');
+  // A past DAY is read as it stood on that day; a future day at its close; a month to its last day.
+  const pday = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: '2026-07-15' }, NOW);
+  assert.equal(pday.period, 'day'); assert.equal(pday.from, '2026-07-15'); assert.equal(pday.to, '2026-07-15');
+  assert.equal(pday.pastWeek, true); assert.equal(pday.asOfDate, '2026-07-15'); assert.equal(pday.totals.customers, 0, 'no deck on or before that day');
+  // A deck belongs to its weekday: tomorrow (a Saturday) has no Saturday deck here and shows nobody; next Friday reads today's Friday deck.
+  const sat = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: '2026-07-25' }, NOW);
+  assert.equal(sat.weekFuture, true); assert.equal(sat.totals.customers, 0, 'no Saturday deck in this fixture');
+  const nday = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: '2026-07-31' }, NOW);
+  assert.equal(nday.weekFuture, true); assert.equal(nday.totals.customers, 3, 'reads the latest Friday decks as of that day -- today\'s');
+  const mon = await portalApi(db, ADMIN, 'expdfReport', { period: 'month' }, NOW);
+  assert.equal(mon.period, 'month'); assert.equal(mon.monthly, true); assert.equal(mon.from, MONTH1); assert.equal(mon.to, TODAY, 'the live month runs to today');
+  assert.equal(mon.baseDate, TODAY, 'the month\'s first initial deck is the only one in this fixture');
+  assert.equal(mon.totals.customers, 3); assert.equal(mon.totals.recovered, 900);
+  const pmon = await portalApi(db, ADMIN, 'expdfReport', { period: 'month', weekOf: '2026-06-10' }, NOW);
+  assert.equal(pmon.from, '2026-06-01'); assert.equal(pmon.to, '2026-06-30'); assert.equal(pmon.pastWeek, true); assert.equal(pmon.asOfDate, '2026-06-30');
+  assert.equal(pmon.totals.customers, 0, 'June has no decks in this fixture');
 });
 
 test('the weekly email refuses clearly when it is not configured, and never sends daily', async () => {
@@ -12312,8 +12332,8 @@ test('expdf leader card: the leader\'s own calls and comments on their own custo
     { id: 'cb4', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'wiki iliyopita', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: '2026-07-10T07:00:00Z' }, // last week
     { id: 'cj1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ya Juma', fu_status: 'AMETOA AHADI', created_by: 'JUMA G', created_at: TODAY + 'T08:00:00Z' });    // somebody else's
   const db = fakeDb(t);
-  const d = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
-  assert.equal(d.leader, 'BOSS'); assert.equal(d.role, 'MANAGER');
+  const d = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  assert.equal(d.leader, 'BOSS'); assert.equal(d.role, 'MANAGER'); assert.equal(d.period, 'week');
   assert.equal(d.weekOf, MON); assert.equal(d.weekEnd, '2026-07-26'); assert.equal(d.inCalls, true);
   assert.deepEqual(d.rows.map(r => r.ref), ['A2'], 'the manager\'s own book, nobody else\'s');
   const t2 = d.totals;
@@ -12329,14 +12349,20 @@ test('expdf leader card: the leader\'s own calls and comments on their own custo
   assert.equal(d.rows[0].comments, 2); assert.equal(d.rows[0].lastComment, 'ataleta Jumatatu'); assert.equal(d.rows[0].lastStatus, 'AMETOA AHADI');
   assert.deepEqual(d.recent.map(c => c.comment), ['ataleta Jumatatu', 'hapatikani']);
   // The same name, a different role: BIKE BEE's card holds A1 and none of BOSS's work.
-  const bike = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW);
+  const bike = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
   assert.deepEqual(bike.rows.map(r => r.ref), ['A1']);
   assert.equal(bike.inCalls, false, 'not registered in HOPE Calls under that name');
   assert.equal(bike.totals.calls, 0); assert.equal(bike.totals.comments, 0); assert.equal(bike.totals.recovered, 400);
   // A past week is read as it stood on its Friday, like the report; the windows move with it.
-  const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', weekOf: '2026-07-15' }, NOW);
+  const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.weekOf, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19'); assert.equal(past.pastWeek, true);
   assert.equal(past.rows.length, 0, 'no deck that week in this fixture');
+  // The DAY (the default) is the day's window only: today's two dials are one call; yesterday's
+  // guarantor call and comment are not today's.
+  const day = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
+  assert.equal(day.period, 'day'); assert.equal(day.from, TODAY); assert.equal(day.to, TODAY);
+  assert.equal(day.totals.calls, 1); assert.equal(day.totals.dials, 2); assert.equal(day.totals.talk, 150); assert.equal(day.totals.comments, 1);
+  assert.equal(day.totals.recovered, 500, 'against the day\'s own initial deck');
   // Refused in words: a role that is not one of the three (the By OPM board was dropped), and the unassigned bucket.
   await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'OPM', leader: 'BOSS' }, NOW), e => e.status === 400);
   await assert.rejects(portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: '(unassigned)' }, NOW), e => e.status === 400);
@@ -12379,7 +12405,7 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
     { id: 'cb3', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'si wangu', fu_status: 'AMETOA AHADI', created_by: 'BOSS', created_at: TODAY + 'T07:00:00Z' },
     { id: 'cj1', ref: 'A2', team: 'KONGOWE', full_name: 'CA2', comment: 'ya Juma', fu_status: 'AMETOA AHADI', created_by: 'JUMA G', created_at: TODAY + 'T08:00:00Z' });
   const db = fakeDb(t);
-  const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  const d = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
   assert.deepEqual(d.sections.map(s => s.role), ['GMO', 'MANAGER', 'BIKE'], 'three boards; no By OPM board');
   const boss = d.sections.find(s => s.role === 'MANAGER').rows[0];
   assert.equal(boss.leader, 'BOSS'); assert.equal(boss.inCalls, true);
@@ -12397,9 +12423,21 @@ test('expdf report: calls, talk and comments per leader by the card\'s own rule,
   assert.equal(mgrT.calls, 3); assert.equal(mgrT.talk, 255); assert.equal(mgrT.comments, 2);
   assert.equal(bike.opm, 'OPM O', 'the same OPM on the BIKE row');
   // The card says the same numbers as the row, by the one rule.
-  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS' }, NOW);
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
   assert.equal(card.totals.calls, 3); assert.equal(card.totals.dials, 4); assert.equal(card.totals.talk, 255); assert.equal(card.totals.comments, 2);
   assert.equal(card.rows[0].calls, 3);
+  /* THE SAME ROW BY THE DAY AND BY THE MONTH. The day holds only today's window: one call (two
+     dials), one comment. The month runs from the 1st to today: last week's call (b5) joins the
+     week's -- four calls, five dials -- and the two comments stay two (none older this month);
+     measured against the month's first initial deck, which here is today's. */
+  const dayRow = (await portalApi(db, ADMIN, 'expdfReport', { period: 'day' }, NOW)).sections.find(s => s.role === 'MANAGER').rows[0];
+  assert.equal(dayRow.calls, 1); assert.equal(dayRow.dials, 2); assert.equal(dayRow.talk, 150); assert.equal(dayRow.comments, 1);
+  const monRow = (await portalApi(db, ADMIN, 'expdfReport', { period: 'month' }, NOW)).sections.find(s => s.role === 'MANAGER').rows[0];
+  assert.equal(monRow.calls, 4); assert.equal(monRow.dials, 5); assert.equal(monRow.talk, 455); assert.equal(monRow.comments, 2);
+  assert.equal(monRow.initial, 2000); assert.equal(monRow.recovered, 500);
+  const monCard = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'month' }, NOW);
+  assert.equal(monCard.period, 'month'); assert.equal(monCard.from, MONTH1); assert.equal(monCard.to, TODAY);
+  assert.equal(monCard.totals.calls, 4); assert.equal(monCard.totals.comments, 2); assert.equal(monCard.totals.recovered, 500);
   // A team with no OPM named says so in the OPM column.
   for (const r of db._dump('teams')) if (r.team === 'KONGOWE') r.opm = null;
   const d2 = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);

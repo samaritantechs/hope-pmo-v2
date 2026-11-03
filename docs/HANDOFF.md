@@ -3457,9 +3457,38 @@ the name inside is an `a.tel` link, whose blue beat the cell's red. `td.bad a.te
 
 | Where | What |
 |---|---|
-| `weekWork`, `REPORT_ROLES`, `expdfReport`, `expdfLeader` (`api/_lib/expdf.js`) | the rule, the four boards, the rows' `calls` / `dials` / `talk` / `comments` / `inCalls`, section totals; `expdfCore` rows carry `opm`. |
-| `VIEWS.expdfrep` (`public/app.html`) | the three columns with their headers' tooltips, the OPM board's subtitle, the note under the boards. |
+| `weekWork`, `expdfReport`, `expdfLeader` (`api/_lib/expdf.js`) | the rule, the three boards, the rows' `opm` / `calls` / `dials` / `talk` / `comments` / `inCalls`, section totals; `expdfCore` rows carry `opm`. |
+| `VIEWS.expdfrep` (`public/app.html`) | the OPM column, the three work columns with their headers' tooltips, the note under the boards. |
 | `test/speed.test.mjs` | the report's ceiling raised to the four-read shape, with the reason. |
+
+## Part 31 — The Exp.Def Report by the day, the week or the month
+
+> "Exp.Def Report should be daily . . put a weekly and monly on buttons infront of callender
+> date picker there"
+
+The report opens on **today**. Three pills in front of the date picker — *Leo / Daily*,
+*Wiki / Weekly*, *Mwezi / Monthly* — choose the period; the arrows step by a day, a week or a
+month; the chip says which day, week or month is on screen and whether it is past, current or
+upcoming; *Rudi leo / Back to today* returns. The date picker shows what is read (a week's
+Monday, a month's first).
+
+**One resolver, `expdfPeriod` in `api/_lib/expdf.js`**, for the report and the card behind a
+name, so a row and its card never read different periods. A past period is read as it stood
+at its close (a past day on that day, a past week on its Friday, a past month on its last
+day); the current one as of now; a future one at its close too. `weekly: true` without a
+period still means a week, for the weekly e-mail and older callers.
+
+| Period | The book | The baseline recovery is measured from | Calls and comments |
+|---|---|---|---|
+| day | the rotation's own list for that day (the customers whose cycle day it is; the whole assigned book where the deck carries no disbursement dates, as on the phone) | the day's own initial deck | that day |
+| week | the whole assigned book | Monday's initial deck (the day's where Monday's is missing) | Monday to Sunday |
+| month | the whole assigned book | the month's **first** initial deck (`monthFirstInitial_`: one ascending date query, then that deck; the day's where the month has none) | the 1st to the last day, or to today in the live month |
+
+`expdfCore` reads only the baseline its period needs — Monday's deck for a week, the first
+deck for a month, nothing extra for a day — so the day costs one read less than the old
+weekly screen; the speed table carries a row for each period. The three recovered cards and
+the KPI subtitles name the period; the leader card asks for the same `period` and `weekOf`
+as the report on screen.
 
 ---
 
