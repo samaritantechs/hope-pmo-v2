@@ -96,6 +96,9 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
         primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
         onToday: primary === dayIdx || secondary === dayIdx,
         leader: (team[ROLE_COLS[a.role]] || '(unassigned)'),
+        // The leader's number as Teams & Staff carries it (gmo_no / manager_no / bike_no), the
+        // surest link to their HOPE Calls account when the two spell the name differently.
+        leaderPhone: team[ROLE_COLS[a.role] + '_no'] || null,
         opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
     });
   return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
@@ -220,15 +223,30 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
    NYINGINE (followup_comments.new_number). A COMMENT is one written under the leader's name
    in the week on one of those customers. A call to somebody else's customer counts nowhere.
 
-   Four reads for the whole report, whatever its size: the HOPE Calls roster (two columns; a
-   name is matched without regard to case, which .in() cannot do -- `Boss` and `BOSS` are one
-   person), the leaders' portfolio calls of the week, the replacement numbers (only when there
-   are calls to match), and the leaders' comments of the week. A single book -- the card --
-   reads the roster by that one name. */
+   Four reads for the whole report, whatever its size: the HOPE Calls roster (three columns),
+   the leaders' portfolio calls of the week, the replacement numbers (only when there are
+   calls to match), and the leaders' comments of the week.
+
+   WHO IS WHO. "Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina SULEIMAN MPOKI MWASUNGA" --
+   he was registered, under another spelling of the same name. Teams & Staff and the HOPE
+   Calls roster are typed by different hands, so a leader is matched to their account first
+   by the NUMBER Teams & Staff carries for the role (gmo_no / manager_no / bike_no), then by
+   the name regardless of case (`Boss` and `BOSS` are one person), then by the name's words:
+   a shorter spelling whose words all appear in the longer one (SULEIMAN MWASUNGA in SULEIMAN
+   MPOKI MWASUNGA, in any order) is the same person, provided it has at least two words -- a
+   lone JUMA matches nobody. The comments are then read under every spelling found. */
 const nine_ = v => { const s = String(v == null ? '' : v).replace(/\D/g, ''); return s.length >= 9 ? s.slice(-9) : (s || null); };
 const likeSafe_ = s => String(s).replace(/[%_\\]/g, m => '\\' + m);
 // A name that would break PostgREST's or=(...) grammar is matched exactly instead.
 const orSafe_ = s => !/[,()"\\]/.test(String(s));
+const words_ = s => K(s).replace(/[^A-Z0-9 ]+/g, ' ').split(/\s+/).filter(Boolean);
+export function sameName(a, b) {
+  const x = words_(a), y = words_(b);
+  if (!x.length || !y.length) return false;
+  if (x.join(' ') === y.join(' ')) return true;
+  const [s, l] = x.length <= y.length ? [x, y] : [y, x];
+  return s.length >= 2 && s.every(w => l.includes(w));
+}
 function bad_(msg) { const e = new Error(msg); e.status = 400; throw e; }
 const per_ = () => ({ calls: new Set(), dials: 0, talk: 0, lastCall: null, comments: 0, lastComment: null, lastStatus: null, lastAt: null });
 
@@ -237,26 +255,34 @@ export async function weekWork(db, books, weekOf, weekEnd) {
   for (const b of books) work[b.key] = { dayNums: new Set(), dials: 0, talk: 0, connected: new Set(), called: new Set(),
     comments: 0, commented: new Set(), per: {}, recent: [] };
   const named = books.filter(b => b.leader && b.leader !== '(unassigned)' && b.rows.length);
-  const byName = {};
-  for (const b of named) (byName[K(b.leader)] = byName[K(b.leader)] || []).push(b);
-  const names = Object.keys(byName);
+  for (const b of named) b.phones = new Set((b.phones ? [...b.phones] : []).concat(b.rows.map(r => nine_(r.leaderPhone))).filter(Boolean));
   const inCalls = {};
-  if (!names.length) return { work: finish_(work), inCalls };
+  if (!named.length) return { work: finish_(work), inCalls };
 
-  // 1. Whose calls: the HOPE Calls accounts under those names.
-  let users = [];
-  try {
-    users = names.length === 1
-      ? await fetchAll(() => db.from('call_users').select('user_id, name').ilike('name', likeSafe_(named[0].leader)))
-      : await fetchAll(() => db.from('call_users').select('user_id, name'));
-  } catch (e) { users = []; }
-  const idBooks = {}, spellings = {};
+  /* 1. Whose calls. "Always match anyone who signed in with that code": a leader registers in
+     HOPE Calls with their portal access code, and the account takes the CODE's name -- so the
+     leader's codes are found first (by name, by the name's words), and every account carrying a
+     code's name, the leader's number from Teams & Staff, or a spelling of the leader's name is
+     theirs. A comment is then read under every one of those spellings, the code's included. */
+  let users = [], codes = [];
+  [users, codes] = await Promise.all([
+    fetchAll(() => db.from('call_users').select('user_id, name, phone')).catch(() => []),
+    fetchAll(() => db.from('access_codes').select('name')).catch(() => []),
+  ]);
+  const idBooks = {}, spellings = {}, nameBooks = {};
+  const own = (b, s) => { const k = K(s); if (!k) return; b.names.add(k); (spellings[K(b.leader)] = spellings[K(b.leader)] || new Set()).add(String(s));
+    if (!(nameBooks[k] || []).includes(b)) (nameBooks[k] = nameBooks[k] || []).push(b); };
+  for (const b of named) { b.names = new Set(); own(b, b.leader); }
+  for (const c of codes) for (const b of named) { if (K(c.name) === K(b.leader) || sameName(c.name, b.leader)) own(b, c.name); }
   for (const u of users) {
-    const k = K(u.name);
-    if (!byName[k] || !u.user_id) continue;
-    inCalls[k] = true;
-    (idBooks[u.user_id] = idBooks[u.user_id] || []).push(...byName[k]);
-    (spellings[k] = spellings[k] || new Set()).add(String(u.name));
+    if (!u.user_id) continue;
+    const ph = nine_(u.phone), nk = K(u.name);
+    for (const b of named) {
+      if (!((ph && b.phones.has(ph)) || b.names.has(nk) || sameName(u.name, b.leader))) continue;
+      inCalls[K(b.leader)] = true;
+      (idBooks[u.user_id] = idBooks[u.user_id] || []).push(b);
+      own(b, u.name);
+    }
   }
   const ids = Object.keys(idBooks);
 
@@ -299,7 +325,7 @@ export async function weekWork(db, books, weekOf, weekEnd) {
     }
   }
 
-  // 4. Their comments of the week, under any spelling of the name the roster or the teams table carries.
+  // 4. Their comments of the week, under any spelling the teams table, their access codes or the roster carry.
   const clauses = [], exact = new Set();
   for (const b of named) {
     const all = new Set([String(b.leader), K(b.leader)].concat([...(spellings[K(b.leader)] || [])]));
@@ -313,7 +339,7 @@ export async function weekWork(db, books, weekOf, weekEnd) {
     comments = await fetchAll(() => q);
   } catch (e) { comments = []; }
   for (const c of comments) {
-    for (const b of (byName[K(c.created_by)] || [])) {
+    for (const b of (nameBooks[K(c.created_by)] || [])) {
       const { refSet } = index(b); const ref = K(c.ref);
       if (!refSet.has(ref)) continue;
       const w = work[b.key], p = w.per[ref] || (w.per[ref] = per_());

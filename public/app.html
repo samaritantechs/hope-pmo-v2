@@ -771,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-03-c';
+var BUILD = '2026-11-03-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4414,7 +4414,7 @@ function xdLeader_(el){
       + kpi('Maoni / Comments', money(t.comments), money(t.commented)+' wateja / customers', t.comments?'good':'bad')
       + kpi('Marejesho / Recovered', money(t.recovered), (t.pct==null?'—':t.pct+'%')+' ya awali / of initial · '+money(t.recoveredCustomers)+' wateja / customers', t.recovered>0?'good':'')
       + '</div>'
-      + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina <b>'+esc(d.leader)+'</b>, hivyo simu zinasoma 0. / Nobody is registered in HOPE Calls under this name, so calls read 0.</div>')
+      + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyelinganishwa na <b>'+esc(d.leader)+'</b> — kwa namba yake ya Teams &amp; Staff ('+esc(d.role)+' NO), wala kwa jina — hivyo simu zinasoma 0. Weka namba yake kwenye Teams &amp; Staff ili alinganishwe kwa namba. / Nobody in HOPE Calls matches <b>'+esc(d.leader)+'</b> — by the number on Teams &amp; Staff ('+esc(d.role)+' NO) or by name — so calls read 0. Put the leader’s number on Teams &amp; Staff and the match is by number.</div>')
       + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya kipindi hiki haipo — marejesho yanasoma 0. / No initial deck for this period, so recovery reads 0.</div>')
       + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii, katika kipindi hiki. Maoni = yaliyoandikwa kwa jina lake katika kipindi hiki kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list, in this period. Comments are those written under this name in this period on these customers.</div>';
     var cols = [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),

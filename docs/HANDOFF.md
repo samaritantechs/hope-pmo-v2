@@ -3490,6 +3490,18 @@ weekly screen; the speed table carries a row for each period. The three recovere
 the KPI subtitles name the period; the leader card asks for the same `period` and `weekOf`
 as the report on screen.
 
+**Who is who** ("Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina SULEIMAN MPOKI MWASUNGA"
+— he was, under another spelling; "Always match anyone who signed in with that code"). A
+leader registers in HOPE Calls with their portal access code and the account takes the
+code's name, so `weekWork` reads the access codes (names) beside the roster (`user_id, name,
+phone`) and owns an account when it carries the leader's number from Teams & Staff
+(`gmo_no` / `manager_no` / `bike_no`, now on every `expdfCore` row as `leaderPhone`), the
+name of one of the leader's codes, or a spelling of the leader's name — `sameName`: a shorter
+spelling whose words all appear in the longer one, in any order, two words at least; a lone
+first name matches nobody. Comments are read under every spelling found (the code's
+included, which is how portal comments are signed). The card's note now says the match is
+by the role's number on Teams & Staff or by name, and what to do.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
