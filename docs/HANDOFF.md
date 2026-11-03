@@ -3445,7 +3445,9 @@ like any header. The leader's name, which opens the card, comes second.
 top right for close"): `drawer()` in `public/app.html` now opens with a zero-height sticky bar
 holding a round × that stays at the top-right however far the card is scrolled; the bottom
 *Funga / Close* stays for the thumb. Every drawer gets it, since all of them go through
-`drawer()`.
+`drawer()`. A card whose table is registered in `BOARDS` passes `xls: '<id>'` and gets an
+**Excel** button before the × ("add excel button before it"), exporting through `exportBoard`
+like any board; the leader card registers its customers as `BOARDS.xd_leader`.
 
 **A tappable name keeps the row's colour** ("All the names became blue yet underperforming
 rows should turn red"): the leader column is a name column under the colour rule
