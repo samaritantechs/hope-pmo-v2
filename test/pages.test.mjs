@@ -1587,11 +1587,18 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(!/var BUILD = '2026-11-02-h'/.test(app), 'BUILD moved once more');
   // "The expdef user card has close down but should also have (x) on top right for close": every drawer, pinned while it scrolls.
   const drawer = app.slice(app.indexOf('function drawer(html'), app.indexOf("$('#drawerBg').onclick"));
-  assert.ok(/<div class="dxbar"><button class="dx" type="button" onclick="closeDrawer\(\)"/.test(drawer), 'the (x) goes in first');
+  assert.ok(/'<div class="dxbar">' \+ xls \+ '<button class="dx" type="button" onclick="closeDrawer\(\)"/.test(drawer), 'the (x) goes in first, after the optional Excel button');
   assert.ok(/Funga \/ Close<\/button>'/.test(drawer), 'the bottom Funga / Close stays');
   assert.ok(/\.drawer \.dxbar\{position:sticky;top:0;height:0;text-align:right;z-index:3\}/.test(app), 'a zero-height sticky bar keeps it top-right as the card scrolls');
   assert.ok(/\.drawer h3\{[^}]*padding-right:30px/.test(app), 'the title leaves it room');
   assert.ok(!/var BUILD = '2026-11-02-i'/.test(app), 'BUILD moved yet again');
+  // "add excel button before it": a card whose table is a registered board gets Excel beside the (x), through the one exporter.
+  assert.ok(/var xls = opts && opts\.xls && BOARDS\[opts\.xls\]/.test(drawer) && /onclick="exportBoard\(\\'' \+ esc\(opts\.xls\) \+ '\\',\\'xls\\'\)">Excel<\/button>'/.test(drawer), 'the drawer takes xls: the board to export');
+  assert.ok(/'<div class="dxbar">' \+ xls \+ '<button class="dx"/.test(drawer), 'Excel comes before the (x)');
+  const leaderCard = app.slice(app.indexOf('function xdLeader_(el)'), app.indexOf('VIEWS.defexp = function'));
+  assert.ok(/BOARDS\.xd_leader = \{ title: d\.leader \+ ' · ' \+ d\.role/.test(leaderCard) && /rows: d\.rows \|\| \[\], cols: cols \}/.test(leaderCard), 'the leader card registers its customers as a board');
+  assert.ok(/drawer\(html, \{ wide: true, xls: 'xd_leader' \}\)/.test(leaderCard), 'and asks for the Excel button');
+  assert.ok(!/var BUILD = '2026-11-03-a'/.test(app), 'BUILD moved for the Excel button');
   const expdf = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
   assert.equal(expdf.split('export async function weekWork(').length - 1, 1, 'one definition of the week\'s work, read by the report and the card');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view), 'the three weekly recovered cards stay three: an OPM card would count the same customers twice');

@@ -459,6 +459,7 @@
   .drawer .dx{width:30px;height:30px;margin:-8px -8px 0 0;border:1px solid var(--line);border-radius:50%;background:var(--card);color:var(--mut);
     font-size:20px;line-height:26px;cursor:pointer;padding:0}
   .drawer .dx:hover{color:var(--ink)}
+  .drawer .dxl{vertical-align:top;margin:-6px 6px 0 0}   /* the Excel button, before the (x) */
 
   /* THE ASSESSMENT DRAWER'S OWN HEADER + STAGE SWITCHER -- "sticky customer card header while
      scrolling" and "horizontal (not vertical) assessment stage switcher, business as 2nd
@@ -770,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-03-a';
+var BUILD = '2026-11-03-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4381,12 +4382,15 @@ function xdLeader_(el){
       + '</div>'
       + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyesajiliwa kwa jina <b>'+esc(d.leader)+'</b>, hivyo simu zinasoma 0. / Nobody is registered in HOPE Calls under this name, so calls read 0.</div>')
       + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya Jumatatu haipo — marejesho yanasoma 0. / No Monday initial deck, so recovery reads 0.</div>')
-      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii. Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list. Comments are those written under this name this week on these customers.</div>'
-      + tableSimple(d.rows || [], [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),
+      + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii. Maoni = yaliyoandikwa kwa jina lake wiki hii kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list. Comments are those written under this name this week on these customers.</div>';
+    var cols = [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),
           col('calls','Calls','num'), col('dials','Dials','num'), col('lastCall','Last call','date'),
           col('comments','Comments','num'), col('lastStatus','Last status'), col('lastComment','Last comment'),
           col('initial','Initial','money'), {key:'arrears', label:'Arrears now', kind:'money', cls:function(){ return 'bad'; }},
-          {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}],
+          {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}];
+    // The card's customers, registered as a board so the Excel button beside the (x) can export them.
+    BOARDS.xd_leader = { title: d.leader + ' · ' + d.role + ' · wiki ya / week of ' + d.weekOf, rows: d.rows || [], cols: cols };
+    html += tableSimple(d.rows || [], cols,
           {full_name:'', ref:'', team:'', cycle:'', calls:t.calls, dials:t.dials, lastCall:'', comments:t.comments, lastStatus:'', lastComment:'',
            initial:t.initial, arrears:t.arrears, recovered:t.recovered})
       + ((d.recent||[]).length ? '<h4 style="margin:12px 0 6px">Maoni ya karibuni / Latest comments</h4>'
@@ -4394,7 +4398,7 @@ function xdLeader_(el){
               + (c.fu_status ? ' <span class="chip '+chipFor(c.fu_status)+'">'+esc(c.fu_status)+'</span>' : '')
               + ' <span class="mut">'+esc(String(c.created_at||'').slice(0,10))+'</span><br>'+esc(c.comment||'')+'</div>'; }).join('')
           : '');
-    drawer(html, { wide: true });
+    drawer(html, { wide: true, xls: 'xd_leader' });
   }).catch(function(e){ drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
 }
 VIEWS.defexp = function(){
@@ -6107,7 +6111,11 @@ function drawer(html, opts){
   /* "The expdef user card has close down but should also have (x) on top right for close." A
      zero-height sticky bar pins the × to the top-right corner however far the card is scrolled;
      the Funga / Close at the bottom stays for the thumb. */
-  $('#drawer').innerHTML = '<div class="dxbar"><button class="dx" type="button" onclick="closeDrawer()" aria-label="Funga / Close" title="Funga / Close">&times;</button></div>'
+  /* "add excel button before it": a card whose table is registered in BOARDS (opts.xls names
+     the entry) gets an Excel button beside the ×, exporting through the one board exporter. */
+  var xls = opts && opts.xls && BOARDS[opts.xls]
+    ? '<button class="btn sm ghost dxl" type="button" onclick="exportBoard(\'' + esc(opts.xls) + '\',\'xls\')">Excel</button>' : '';
+  $('#drawer').innerHTML = '<div class="dxbar">' + xls + '<button class="dx" type="button" onclick="closeDrawer()" aria-label="Funga / Close" title="Funga / Close">&times;</button></div>'
     + html + '<button class="btn ghost w" style="margin-top:6px" onclick="closeDrawer()">Funga / Close</button>';
   $('#drawerBg').style.display = 'flex';
   fitPanelToKeyboard_('drawerBg');
