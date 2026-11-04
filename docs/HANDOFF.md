@@ -3530,7 +3530,7 @@ read off the system, for any year, as it stands today.
 |---|---|---|
 | Sales, count, TRK1 (first-time), retained, total loan (P+I) | the loans table, `SALES_STAGES` by `approved_date` — the one rule every sales figure uses. Summed by the database (`loan_month_totals_by_team`, RUN-ME-049) or, until that is pasted, from the rows on the server (and the screen says so) | 2024 onward |
 | Collection, early collection, recovery | the **month ledger** the month report fills (`monthLedgerDays_` → `ledgerByTeam_`, the same cells, with Iliyonasia laid over) | the months the app has run (August 2026 →) |
-| Collection, early collection, recovery before the app | `team_months`, stamped from the workbooks by **`db/RUN-ME-049-annual-team-months.sql`** | January–July 2026 per team per month; 2025 as one **year row** per team (the 2025 workbook kept no monthly collection or recovery — only the year's collection %, PAR and total def, and the year's leaders) |
+| Collection, early collection, recovery before the app | `team_months`, stamped from the workbooks by **`db/RUN-ME-049a` to `049d`** (five short scripts, run in order: a the table and the sales function, b 2025, c January–March 2026, d April–July 2026, e the loans index, slow and on its own; each safe to re-run) | January–July 2026 per team per month; 2025 as one **year row** per team (the 2025 workbook kept no monthly collection or recovery — only the year's collection %, PAR and total def, and the year's leaders) |
 
 A month that has stamped rows is read from them and nowhere else; a month without is the
 ledger's. Sales are never stamped and never frozen, which is why "customer retention comes
