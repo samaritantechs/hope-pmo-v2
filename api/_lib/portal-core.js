@@ -53,6 +53,7 @@ import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFu
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
+import { annualReport } from './annual.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -9843,8 +9844,14 @@ async function officerLocationsList(db, user, _args, nowMs = Date.now()) {
   return { rows: all, callsReady, callUsers7d };
 }
 
+/* THE ANNUAL REPORT'S WAY INTO THE LEDGER. api/_lib/annual.js reads the same month cells the
+   month report reads (monthLedgerDays_, ledgerByTeam_), the same registry (readTeamsAll) and
+   the same sales target (settingNum); they are this file's, handed over rather than exported,
+   so the two modules do not import each other. */
+const ANNUAL_DEPS = { monthLedgerDays_, ledgerByTeam_, readTeamsAll, settingNum };
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
+  annual: (db, user, a, now) => annualReport(db, user, a, now, ANNUAL_DEPS),
   loans, loanPipeline, appsWeekly, appsTab, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
@@ -10232,6 +10239,8 @@ const FN_TAB = {
   followupReport: ['fureport'],
   par: ['par'],
   auditReport: ['auditrep'],
+  // The annual report: granted like the audit report -- admins from the start, a role when ticked.
+  annual: ['annual'],
   weekly: ['weekly'], teamProgress: ['weekly'], stampWeek: ['weekly'],
   leaderReports: ['reports'],
   commission: ['commission'], commissionSave: ['commission'],
@@ -10727,7 +10736,7 @@ function monthDayCell_(d, expRows, defRows, iniRows) {
    null while the store is still filling. Two readers: the month report (ledgerSum_, per
    viewer) and the dashboard's Orodha (ledgerByTeam_, per team, percentages only). One
    shared unscoped ledger either way, so whichever screen fills it first pays for both. */
-async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs, maxJobs = Infinity }) {
+async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs, maxJobs = Infinity, summaries = null }) {
   const deadline = Date.now() + budgetMs;
   const key = MONTH_LEDGER_PREFIX + monthStart.slice(0, 7);
   let ledger = null;
@@ -10736,15 +10745,25 @@ async function monthLedgerDays_(db, { monthStart, today, mon, budgetMs, maxJobs 
     ledger = { v: MONTH_LEDGER_V, days: {} };
   }
 
-  const [sumE, sumF] = await Promise.all([
-    monthSummaryRows(db, 'expected', { from: monthStart, to: today }),
-    monthSummaryRows(db, 'defaulter', { from: monthStart, to: today }),
-  ]);
+  /* The two summary reads -- unless the caller already made them for a longer stretch and
+     hands them in (the Annual tab reads a year's summaries once for every month it fills; a
+     superset is fine, monthDayCell_ picks each day's own rows). */
+  const [sumE, sumF] = summaries
+    ? [summaries.exp || [], summaries.def || []]
+    : await Promise.all([
+      monthSummaryRows(db, 'expected', { from: monthStart, to: today }),
+      monthSummaryRows(db, 'defaulter', { from: monthStart, to: today }),
+    ]);
 
   /* The live week first -- its days keep changing under uploads -- then only the frozen
      slices still missing. One slice is the call size this database answers; the deadline
-     decides how many fit today, and the store carries the rest to the next load. */
-  const weekFloor = mon > monthStart ? mon : monthStart;
+     decides how many fit today, and the store carries the rest to the next load.
+     A FINISHED MONTH HAS NO LIVE WEEK: when the real week's Monday is past `today` (a past
+     month, read to its last day), the floor is the day after `today`, so the frozen slices
+     stop at the month's end instead of walking on to this week -- a January read in November
+     was asking for forty slices, thirty-eight of them outside January. */
+  const liveFloor = mon > monthStart ? mon : monthStart;
+  const weekFloor = liveFloor <= today ? liveFloor : addDaysKey(today, 1);
   const jobs = [];
   if (weekFloor <= today) jobs.push([weekFloor, today]);
   for (let d = monthStart; d < weekFloor; d = addDaysKey(d, 7)) {

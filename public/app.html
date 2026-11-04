@@ -771,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-04-a';
+var BUILD = '2026-11-04-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1036,6 +1036,9 @@ var NAV = [
   /* THE AUDIT REPORT PANEL -- the internal audit questionnaire answered for a chosen month,
      directly under the PAR it extends. Granted like `audit`: admins, then PMO Data when ticked. */
   { id:'auditrep',    label:'Audit report', ic:'<path d="M9 2h6a2 2 0 0 1 2 2v1h2a1 1 0 0 1 1 1v15a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h2V4a2 2 0 0 1 2-2z"/><path d="M9 12l2 2 4-4"/>' },
+  /* THE ANNUAL REPORT -- the GM's annual workbook read off the system: every team's year, month
+     by month, with the leaders by role. Under the audit report it extends; granted like it. */
+  { id:'annual',      label:'Ripoti ya Mwaka / Annual Report', ic:'<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/><path d="M7 17l3-3 2 2 5-5"/>' },
   { id:'present',     label:'Presentation', ic:'<rect x="2" y="3" width="20" height="13" rx="2"/><path d="M8 21h8M12 16v5"/>' },
   /* IMPREST -- three panes, three authorities, granted like every tab in this list is now:
        "implement request, approval and report and i'll grant the navs to those responsible"
@@ -1303,7 +1306,10 @@ var MOD_OF = { deduct:'deduct', advreq:'advance', advappr:'advance', advrep:'adv
      promises, the weekly book, complaints, restructuring -- stay in the page. */
   teamtrend:'reports', monthreport:'reports', par:'reports', auditrep:'reports', reports:'reports',
   commission:'reports', cmmonth:'reports', calls:'reports', credit:'reports', creditinfo:'reports',
-  perf:'reports', audit:'reports', officerloc:'reports' };
+  perf:'reports', audit:'reports', officerloc:'reports',
+  /* THE ANNUAL REPORT -- a year per team per month, three report types and a leader card; a
+     module of its own, since it carries a year of every team and is read, never worked. */
+  annual:'annual' };
 var MOD_READY_ = {}, MOD_LOADING_ = {};
 function modOf_(view){ return MOD_OF[view] || (isLoanId_(view) ? 'loan' : null); }
 function modLoad_(name){

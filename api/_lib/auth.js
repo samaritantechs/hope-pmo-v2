@@ -94,7 +94,10 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    advfinal is the finance manager's: the Finalize button on the report, and the whole book on it.
      "I decide what navs are to be accessed by team codes there" */
 export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist']);
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist', 'annual']);
+/* `annual` (the Annual Report -- the GM's annual workbook read off the system, every team's year
+   month by month) is granted the same way `auditrep` is: admins from the start, a role when the
+   tab is ticked. It reads the whole year's sales and collection for every team in scope. */
 /* `checklist` (the Daily Checklist -- a leader's own day: the tasks the GM set for their ROLE on
    this weekday, each ticked against a cut-off and proved with a photo taken in the app) is
    granted the same way: admins from the start, then whichever roles the GM ticks it for. The
@@ -113,7 +116,7 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist', 'annual'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set
