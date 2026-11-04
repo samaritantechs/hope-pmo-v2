@@ -378,7 +378,8 @@ VIEWS.par = function(){
           [col('status','Status'), col('customers','Customers','num'), col('arrears','Arrears','money')],
           sumRow(d.byStatus, ['customers','arrears']));
     S.rows = d.byTeam;
-    S.cols = [col('branch','Branch'), col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
+    // "In orodha/list at par, drop branch column replace with opm name": the team's OPM, from Teams & Staff.
+    S.cols = [col('opm','OPM'), col('team','Team'), col('customers','Defaulters','num'), col('avgLoan','Avg principal','money'),
       {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
       col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true},
       col('loans','Loans all-time','num'), col('totalLoan','Total loan all-time (P+I)','money'),

@@ -1622,6 +1622,17 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(!/var BUILD = '2026-11-02-f'/.test(app), 'BUILD moved');
 });
 
+/* "In orodha/list at par, drop branch column replace with opm name". */
+test('the PAR Orodha / List opens with the OPM where the Branch column was', () => {
+  const rep = page('reports');
+  const par = rep.slice(rep.indexOf('VIEWS.par = function'), rep.indexOf('VIEWS.auditrep = function'));
+  assert.ok(/S\.cols = \[col\('opm','OPM'\), col\('team','Team'\), col\('customers','Defaulters','num'\)/.test(par), 'OPM first, then the team');
+  assert.ok(!/col\('branch','Branch'\)/.test(par), 'no Branch column on this screen');
+  const core = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'portal-core.js'), 'utf-8');
+  assert.ok(/opm: tr\.opm \|\| '\(unassigned\)'/.test(core), 'the row carries the team\'s OPM, (unassigned) where none is named');
+  assert.ok(!/var BUILD = '2026-11-03-d'/.test(appSrc()), 'BUILD moved (a module changed)');
+});
+
 /* "System SW/EN popups can be swiped away please! because they hinder operation, one has to wait
    until it disappears." The tip (Vidokezo, in the chosen language) ignored the pointer. */
 test('the tip and the toast close on a tap or a swipe, not only on their own clock', () => {

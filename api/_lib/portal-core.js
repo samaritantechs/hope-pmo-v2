@@ -3900,7 +3900,9 @@ async function par(db, user, _args, nowMs) {
   const rows = scoped(user, snap.rows);
   const bands = PAR_BANDS.map(b => ({ band: b.key, customers: 0, arrears: 0 }));
   const pbands = PRINCIPAL_BANDS.map(b => ({ band: b.label, customers: 0, arrears: 0, balance: 0, loanSum: 0 }));
-  const teamBranch = await branchByTeam(db);
+  // One read of the teams table for both: the branch (still on the row for the export) and the
+  // OPM, which the Orodha shows in the branch's place -- "drop branch column replace with opm name".
+  const teamRow = new Map((await readTeamsAll(db, nowMs) || []).map(t => [K(t.team), t]));
   const lent = await loanTotalsByTeam(db, user, nowMs);
   const byStatus = {}, byTeam = {};
   let totArrears = 0, totBalance = 0, totLoan = 0;
@@ -3935,7 +3937,8 @@ async function par(db, user, _args, nowMs) {
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
     byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
-    byTeam: Object.values(byTeam).map(({ key, ...t }) => ({ team: t.team, branch: teamBranch.get(K(t.team)) || null, ...finish(t), ...allTime(t) }))
+    byTeam: Object.values(byTeam).map(({ key, ...t }) => { const tr = teamRow.get(K(t.team)) || {}; return { team: t.team,
+      branch: tr.branch || null, opm: tr.opm || '(unassigned)', ...finish(t), ...allTime(t) }; })
       .sort((a, b) => b.arrears - a.arrears || b.totalLoan - a.totalLoan),
     totals: { customers: rows.length, arrears: totArrears, balance: totBalance,
       avgLoan: rows.length ? Math.round(totLoan / rows.length) : 0, par: pctOf(totArrears, totBalance),
