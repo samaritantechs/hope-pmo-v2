@@ -3643,5 +3643,56 @@ at a handful of chunked writes. `team_months` and `team_holders` are named in `P
 
 ---
 
+## Part 35 — Export deck (PPT): the annual report as the GM's deck, from the year on screen
+
+> "Having the ppt design in place -- I wish to have an export annual ppt button that will always
+> ppt export with updated data of selected year"
+> "PAR data, Active portfolio, and legal performance must be presented in the ppt with no excuse"
+> "Where giving zones in ppt there should be (key) listing teams in the zone or ... name the GMO"
+
+**The button** sits on the Annual Rep bar (`Export deck (PPT)`). Pressing it makes a .pptx for the
+selected year, in the browser, named `HOPE_Annual_Report_<year>.pptx` (`_to_date` while the year runs).
+Nothing is fetched at page load: the tab (`public/mod/annual.js`, `anPptExport_`) asks for
+`/deck/annual-ppt.js?v=BUILD` on the first press, and that file fetches the PowerPoint library and the
+two images. Files, all in `public/deck/`: `annual-ppt.js` (the model and the slides), `pptxgen.bundle.js`
+(PptxGenJS 3.12.0, MIT, vendored so the export needs no third-party host; its source-map comment is
+removed), `hope-title.jpg` (21 KB), `hope-logo.png`. Colours are hex (a browser-made deck has no theme
+step); fonts Calibri; charts are native, so the GM can edit them in PowerPoint.
+
+**What it asks the server, on the press only:** `annual` for the year before (only if that year exists;
+the one-minute cache usually has it), and `annualBook` (below). The year itself is `S.anData`, already on
+screen. The arithmetic is the server's; `annual-ppt.js` only chooses, sorts and words. Two additions to
+the annual answer so the deck needs no rule of its own: `regions` (each region month by month and for the
+year, built by `monthRow_`, the same helper that builds the company's months) and a leader's `retained` /
+`retentionPct`.
+
+**`annualBook(year)`** (`api/_lib/annual.js`, FN_TAB `annual`) is the three books the system holds, each
+read by its own tab's reader with the caller's own scope and grouped by region: `par` (the PAR tab's
+`par()`: days-overdue bands, status, per team with all-time PAR, and by region), `portfolio` (the latest
+Expected deck: customers, outstanding balance, how many are behind, due and collected that day, by status,
+team and region) and `legal` (the demand notices dated in the year, by month, state and team; the tiles
+come from `noticeTiles_` in portal-core, extracted so the register and the deck share one definition).
+Each section is `{ ok, ... }`; one the code may not open (it needs the PAR, Expected or Legal tab) or that
+fails returns `{ ok: false, reason }` and the deck draws a slide that says why. PAR and the portfolio are
+the book as at the latest deck (the date is on the slides and in the notes), not rebuilt for a past
+year-end; a closed year with a stamped PAR also gets "PAR by team, as the year's report closed it".
+
+**What the deck holds** (a slide is left out when its data is not there, and the contents slide lists only
+what is in): at a glance, teams and regions, sales by month / against last year / top ten / against
+target, first-time and returning, retention by team, region and credit analyst, collection and recovery
+by month and team, regions (sales, GMO, general) **and a key of every region with its GMO and its teams**,
+credit analysts, general by team and leader, a month-by-month table, **portfolio at risk (overview, region,
+team, status), the active portfolio (overview, region, team), legal (overview, month and state, team)**,
+observations, what to focus on, what is not here, notes. Not in it, said on its own slide: staff
+headcount, loan-application pipeline (the portal keeps no history of stages), court cases and lawyer cost
+(the portal holds notices), fleet.
+
+**Cost.** `annualBook` is the PAR tab, the register and the Expected tab added together (the defaulter deck
+is read twice, as when both tabs are open); the speed table carries it (18 / 5,300 un-migrated, 16 / 3,300
+migrated) with the reason. Never on `/api/upload` or `/api/call`. `test/annualppt.test.mjs` runs the real
+server, the real deck code and the real vendored library in a VM and reads the slides back out of the file.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

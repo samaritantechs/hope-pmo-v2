@@ -177,6 +177,54 @@ const sumMeasured = (cells, f) => { const m = cells.filter(c => c[f] != null); r
 const byGeneral = (a, b) => (b.general == null ? -1 : b.general) - (a.general == null ? -1 : a.general)
   || (num(b.sales) - num(a.sales)) || String(a.team || a.name || '').localeCompare(String(b.team || b.name || ''));
 
+/** A group of teams' month, by the one rule: the sum of what they sold, the sum collected over the sum
+    expected, the sum recovered over the sum left uncollected (on the teams that measured it), General
+    the average of the measured three. The company's month and a region's month are both this. */
+function monthRow_(cells, monthTarget) {
+  const expected = sumMeasured(cells, 'expected'), collected = sumMeasured(cells, 'collected');
+  const recCells = cells.filter(c => c.recovered != null && c.uncollected != null);
+  const recU = recCells.length ? sumOf(recCells, 'uncollected') : null;
+  const recovered = recCells.length ? sumOf(recCells, 'recovered') : null;
+  const row = { teams: cells.length,
+    sales: sumOf(cells, 'sales'), loans: sumOf(cells, 'loans'), trk1: sumOf(cells, 'trk1'), retained: sumOf(cells, 'retained'), totalLoan: sumOf(cells, 'totalLoan'),
+    expected, collected, uncollected: sumMeasured(cells, 'uncollected'), recovered,
+    salesPct: cells.length ? pct(sumOf(cells, 'sales'), monthTarget * cells.length) : null,
+    colPct: expected != null ? pct(collected, expected) : null,
+    recPct: recU != null && recU > 0 ? pct(recovered, recU) : null,
+    ecolPct: mean(cells.map(c => c.ecolPct)) };
+  row.retentionPct = pct(row.retained, row.loans);
+  row.general = mean([row.salesPct, row.colPct, row.recPct]);
+  return row;
+}
+/** Every region (the Teams & Staff column, or the year row's) month by month and for the year: a
+    month by monthRow_, the year the average of its measured months, as the company's is. Feeds the
+    annual deck's regional slides, so the rule lives here and not in the browser. */
+function regionBoards_(teamRows, yms, monthTarget) {
+  const groups = new Map();
+  for (const t of teamRows) {
+    const name = cleanName(t.region);
+    if (!name || nobody(name)) continue;
+    const k = K(name);
+    if (!groups.has(k)) groups.set(k, { name, teams: [] });
+    groups.get(k).teams.push(t);
+  }
+  return [...groups.values()].map(g => {
+    const m = {}, held = [];
+    for (const ym of yms) {
+      const cells = g.teams.map(t => t.m[ym]).filter(Boolean);
+      if (!cells.length) continue;
+      m[ym] = monthRow_(cells, monthTarget); held.push(ym);
+    }
+    const rows = held.map(ym => m[ym]);
+    const row = { region: g.name, teams: rows.length ? rows[rows.length - 1].teams : 0, teamsEver: g.teams.length, months: held.length,
+      sales: sumOf(rows, 'sales'), loans: sumOf(rows, 'loans'), trk1: sumOf(rows, 'trk1'), retained: sumOf(rows, 'retained'),
+      salesPct: mean(rows.map(r => r.salesPct)), colPct: mean(rows.map(r => r.colPct)), recPct: mean(rows.map(r => r.recPct)), ecolPct: mean(rows.map(r => r.ecolPct)), m };
+    row.retentionPct = pct(row.retained, row.loans);
+    row.general = mean([row.salesPct, row.colPct, row.recPct]);
+    return row;
+  }).sort(byGeneral);
+}
+
 /* ---------------------------------------------------------------------------- the leaders */
 /** WHO HELD THE ROLE THAT MONTH. The month being lived belongs to whoever holds the team now; a
     finished month to whoever the holder history says held it on its last day; and where the
@@ -200,7 +248,8 @@ function leaderFromMonths_(name, byMonth, yms) {
   let sales = 0, loans = 0;
   for (const ym of held) {
     const ents = [...byMonth.get(ym).values()], cs = ents.map(e => e.cell);
-    const mm = { teams: ents.length, sales: sumOf(cs, 'sales'), salesPct: mean(cs.map(c => c.salesPct)), ecolPct: mean(cs.map(c => c.ecolPct)),
+    const mm = { teams: ents.length, sales: sumOf(cs, 'sales'), loans: sumOf(cs, 'loans'), retained: sumOf(cs, 'retained'),
+      salesPct: mean(cs.map(c => c.salesPct)), ecolPct: mean(cs.map(c => c.ecolPct)),
       colPct: mean(cs.map(c => c.colPct)), recPct: mean(cs.map(c => c.recPct)) };
     mm.general = mean([mm.salesPct, mm.colPct, mm.recPct]);
     m[ym] = mm; sales += mm.sales; loans += sumOf(cs, 'loans');
@@ -210,7 +259,8 @@ function leaderFromMonths_(name, byMonth, yms) {
     }
   }
   const stints = [...seen.values()];
-  const row = { name, teams: stints.length, teamList: stints.map(x => x.team).join(', '), months: held.length, sales, loans,
+  const retained = held.reduce((s, ym) => s + m[ym].retained, 0);
+  const row = { name, teams: stints.length, teamList: stints.map(x => x.team).join(', '), months: held.length, sales, loans, retained, retentionPct: pct(retained, loans),
     salesPct: mean(held.map(ym => m[ym].salesPct)), ecolPct: mean(held.map(ym => m[ym].ecolPct)),
     colPct: mean(held.map(ym => m[ym].colPct)), recPct: mean(held.map(ym => m[ym].recPct)), m, stints };
   row.general = mean([row.salesPct, row.colPct, row.recPct]);
@@ -431,20 +481,7 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   const months = yms.map((ym, i) => {
     const state = ym > thisYm ? 'future' : sheetYms.has(ym) ? 'sheet' : (live[ym] ? 'live' : 'pending');
     const cells = teamRows.map(t => t.m[ym]).filter(Boolean);
-    const expected = sumMeasured(cells, 'expected'), collected = sumMeasured(cells, 'collected');
-    const recCells = cells.filter(c => c.recovered != null && c.uncollected != null);
-    const recU = recCells.length ? sumOf(recCells, 'uncollected') : null;
-    const recovered = recCells.length ? sumOf(recCells, 'recovered') : null;
-    const row = { ym, name: MONTH_NAMES[i], state, teams: cells.length,
-      sales: sumOf(cells, 'sales'), loans: sumOf(cells, 'loans'), trk1: sumOf(cells, 'trk1'), retained: sumOf(cells, 'retained'), totalLoan: sumOf(cells, 'totalLoan'),
-      expected, collected, uncollected: sumMeasured(cells, 'uncollected'), recovered,
-      salesPct: cells.length ? pct(sumOf(cells, 'sales'), monthTarget * cells.length) : null,
-      colPct: expected != null ? pct(collected, expected) : null,
-      recPct: recU != null && recU > 0 ? pct(recovered, recU) : null,
-      ecolPct: mean(cells.map(c => c.ecolPct)) };
-    row.retentionPct = pct(row.retained, row.loans);
-    row.general = mean([row.salesPct, row.colPct, row.recPct]);
-    return row;
+    return { ym, name: MONTH_NAMES[i], state, ...monthRow_(cells, monthTarget) };
   });
   const had = months.filter(m => m.state !== 'future' && m.teams > 0);
   const totals = { teams: teamRows.length, months: had.length,
@@ -463,6 +500,7 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   totals.general = mean([totals.salesPct, totals.colPct, totals.recPct]);
 
   const leaders = leaderBoards_(teamRows, yms, makeRoleAt_(hist, today, thisYm));
+  const regions = regionBoards_(teamRows, yms, monthTarget);
 
   /* ---- WHAT WAS NOT DONE, said on the screen. */
   const notes = [];
@@ -486,8 +524,131 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   const years = [];
   for (let y = Math.min(FIRST_YEAR, year); y <= thisYear; y++) years.push(y);
   return { year, years, today, thisYm, target: monthTarget, weeklyTarget, stamped: stamps.ok, light: sales.light,
-    months, teams: teamRows, totals, leaders, notes,
+    months, teams: teamRows, totals, leaders, regions, notes,
     holders: { ok: holders.ok, stretches: holders.rows.length, loaded: loadedHolders },
     rule: 'Mwezi: mauzo ÷ lengo (wiki × 4), collected ÷ expected, recovered ÷ uncollected. Mwaka: wastani wa asilimia za miezi iliyopimwa. General: wastani wa sales %, collection % na recovery % zilizopimwa. Kiongozi: wastani wa timu zake. '
       + '/ A month: sales ÷ target (weekly × 4), collected ÷ expected, recovered ÷ uncollected. A year: the average of the measured months\' percentages. General: the average of the measured sales %, collection % and recovery %. A leader: the average of their teams.' };
+}
+
+/* =====================================================================================
+   THE BOOKS BESIDE THE YEAR -- what the annual deck lays next to the months.
+
+     "PAR data, Active portfolio, and legal performance must be presented in the ppt with no
+      excuse brother"
+
+   The Annual Rep answer is the year's own: sales, collection, recovery, leaders. Three more
+   things belong in the GM's deck and are not the year's months but the BOOKS the system holds,
+   read the way their own tabs read them:
+
+     par         the Portfolio at Risk tab's answer (par(): the latest defaulter deck, bucketed by
+                 days overdue and by status, per team, with the all-time PAR over everything ever
+                 lent), and the same laid by region;
+     portfolio   the active portfolio: every customer on the latest Expected deck with their
+                 outstanding balance, how many are behind, what was due and collected that day;
+     legal       the demand notice register for THE YEAR (notices dated in it), by month and by
+                 team, with the recovery the register itself reports (noticeTiles_, the one
+                 definition) as at the latest deck.
+
+   NOTHING IS WORKED OUT A SECOND WAY. Each section calls the function its tab calls, with the
+   caller's own scope, and only groups what comes back (by region, by month). A section the code
+   may not open, or that cannot be read, comes back `{ ok: false, reason }` and the deck says so on
+   its own slide; one section failing never takes the others down. PAR and the portfolio are the
+   book AS AT the latest deck (the date is on the answer) -- they are not rebuilt for a past
+   year-end, and the deck says that too. Read on the press of the deck's button only; cached for
+   the usual minute; never on the upload or call paths.
+   ===================================================================================== */
+const sumBy_ = (rows, f) => rows.reduce((s, r) => s + num(r[f]), 0);
+
+export async function annualBook(db, user, args, nowMs, deps) {
+  const today = todayKey(nowMs);
+  const year = annualYear(args && args.year, today);
+  return cachedAnswer(db, 'annualBook|' + year, user, nowMs, () => bookCompute_(db, user, year, today, nowMs, deps));
+}
+
+async function bookCompute_(db, user, year, today, nowMs, deps) {
+  const tabs = user.tabs || [];
+  const may = tab => tabs.includes('settings') || tabs.includes(tab);
+  const regionBy = new Map();
+  for (const t of (await deps.readTeamsAll(db, nowMs).catch(() => [])) || []) {
+    const r = t && t.team ? cleanName(t.region) : '';
+    if (r && !nobody(r)) regionBy.set(K2(t.team), r);
+  }
+  const regionOf = team => regionBy.get(K2(team)) || null;
+  const attempt = async (tab, label, fn) => {
+    if (!may(tab)) return { ok: false, reason: 'needs the ' + label + ' tab on this code' };
+    try { return { ok: true, ...(await fn()) }; } catch (e) { return { ok: false, reason: 'could not be read: ' + String((e && e.message) || e).slice(0, 160) }; }
+  };
+  /** Teams grouped by region: each group's sums, with whatever ratio the caller derives from them. */
+  const byRegion = (rows, teamOf, fields) => {
+    const g = new Map();
+    for (const r of rows) {
+      const name = regionOf(teamOf(r));
+      if (!name) continue;
+      if (!g.has(name)) g.set(name, { region: name, teams: new Set() });
+      const x = g.get(name); x.teams.add(K2(teamOf(r)));
+      for (const f of fields) x[f] = (x[f] || 0) + num(r[f]);
+    }
+    return [...g.values()].map(x => ({ ...x, teams: x.teams.size }));
+  };
+
+  const [par, portfolio, legal] = await Promise.all([
+    attempt('par', 'Portfolio at Risk', async () => {
+      const p = await deps.par(db, user, {}, nowMs);
+      const byTeam = (p.byTeam || []).map(t => ({ team: t.team, region: regionOf(t.team), customers: t.customers, arrears: t.arrears, balance: t.balance,
+        par: t.par, loans: t.loans, totalLoan: t.totalLoan, parAll: t.parAll }));
+      const regions = byRegion(byTeam, t => t.team, ['customers', 'arrears', 'balance', 'totalLoan']).map(x => ({ ...x,
+        par: pct(x.arrears, x.balance), parAll: x.totalLoan > 0 ? pct(x.arrears, x.totalLoan) : null }))
+        .sort((a, b) => b.arrears - a.arrears);
+      return { date: p.date || null, empty: !p.date, totals: p.totals, bands: p.bands || [], byBand: p.byBand || [], byStatus: (p.byStatus || []).slice(0, 8),
+        byTeam, byRegion: regions, allTime: p.allTime ? { since: p.allTime.since, loans: p.allTime.loans, totalLoan: p.allTime.totalLoan } : null };
+    }),
+    attempt('expected', 'Expected', async () => {
+      const e = await deps.expected(db, user, { type: 'today' }, nowMs);
+      const rows = e.rows || [];
+      const behind = rows.filter(r => num(r.arrears) > 0);
+      const status = new Map();
+      for (const r of rows) {
+        const k = String(r.todays_status || '').trim().toUpperCase() || '(BLANK)';
+        const s = status.get(k) || { status: k, customers: 0, balance: 0 };
+        s.customers++; s.balance += num(r.balance); status.set(k, s);
+      }
+      const team = new Map();
+      for (const r of rows) {
+        const t = String(r.team || '(no team)').trim();
+        const x = team.get(K2(t)) || { team: t, customers: 0, balance: 0, arrears: 0, behind: 0 };
+        x.customers++; x.balance += num(r.balance); x.arrears += num(r.arrears); if (num(r.arrears) > 0) x.behind++; team.set(K2(t), x);
+      }
+      const byTeam = [...team.values()].map(x => ({ ...x, region: regionOf(x.team), arrearsPct: pct(x.arrears, x.balance) })).sort((a, b) => b.balance - a.balance);
+      const regions = byRegion(byTeam, t => t.team, ['customers', 'balance', 'arrears', 'behind']).map(x => ({ ...x, arrearsPct: pct(x.arrears, x.balance) }))
+        .sort((a, b) => b.balance - a.balance);
+      const t = e.totals || {};
+      return { date: e.date || null, empty: !e.date || !rows.length, customers: rows.length, balance: sumBy_(rows, 'balance'),
+        expected: num(t.expected), collected: num(t.collected), collectedPct: t.pct == null ? null : t.pct,
+        behind: { customers: behind.length, arrears: sumBy_(behind, 'arrears'), balance: sumBy_(behind, 'balance') },
+        byStatus: [...status.values()].sort((a, b) => b.customers - a.customers), byTeam, byRegion: regions };
+    }),
+    attempt('legal', 'Legal', async () => {
+      const dn = await deps.demandNotices(db, user, {}, nowMs);
+      const rows = (dn.rows || []).filter(r => String(r.notice_date || '').slice(0, 4) === String(year));
+      const tiles = deps.noticeTiles_(rows);
+      const byMonth = [];
+      for (let m = 1; m <= 12; m++) {
+        const ym = year + '-' + String(m).padStart(2, '0');
+        const mr = rows.filter(r => String(r.notice_date || '').slice(0, 7) === ym);
+        byMonth.push({ ym, notices: mr.length, demanded: sumBy_(mr, 'total_demand'), fines: sumBy_(mr, 'fine'), paidSince: deps.noticeTiles_(mr).paidSince });
+      }
+      const team = new Map();
+      for (const r of rows) { const k = K2(r.team); if (!team.has(k)) team.set(k, { team: String(r.team || '(no team)').trim(), rows: [] }); team.get(k).rows.push(r); }
+      const byTeam = [...team.values()].map(x => { const tl = deps.noticeTiles_(x.rows); return { team: x.team, region: regionOf(x.team), notices: x.rows.length, customers: tl.customers,
+        demanded: sumBy_(x.rows, 'total_demand'), fines: sumBy_(x.rows, 'fine'), paidSince: tl.paidSince, recovery: tl.recovery, recoveryPct: tl.recoveryPct, cleared: tl.cleared }; })
+        .sort((a, b) => b.demanded - a.demanded);
+      const state = new Map();
+      for (const r of rows) { const k = String(r.notice_state || '').trim(); state.set(k, (state.get(k) || 0) + 1); }
+      return { empty: !rows.length, asOf: dn.asOf || null, paymentsOn: !!dn.paymentsOn, notices: rows.length, customers: tiles.customers, cleared: tiles.cleared,
+        demanded: sumBy_(rows, 'total_demand'), fines: sumBy_(rows, 'fine'), atNotice: sumBy_(rows, 'arrears_at_notice'),
+        recovery: tiles.recovery, owed: tiles.owed, recoveryPct: tiles.recoveryPct, paidSince: tiles.paidSince,
+        byMonth, byTeam, byState: [...state.entries()].map(([s, n]) => ({ state: s, notices: n })).sort((a, b) => b.notices - a.notices) };
+    }),
+  ]);
+  return { year, asAt: today, par, portfolio, legal };
 }

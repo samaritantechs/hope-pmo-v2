@@ -53,7 +53,7 @@ import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFu
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
-import { annualReport } from './annual.js';
+import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
@@ -3433,6 +3433,30 @@ async function noticePayments_(db, notices) {
   return { by, kept: rows.length ? rows.every(p => p.n_phone !== undefined) : null };
 }
 
+/** THE NOTICE TILES, ONE DEFINITION: each customer is added up once, at the reading of their earliest
+    notice (the largest, since it looks back furthest). The register's cards and the annual deck's legal
+    slides both come from this, so a year's figure and the tab's cannot differ. `rows` are notice rows
+    carrying arrears_at_notice, arrears_down, paid_since and notice_state. */
+function noticeTiles_(rows) {
+  const perCustomer = new Map();
+  for (const x of rows) {
+    const c = perCustomer.get(K(x.ref)) || { paid: 0, down: 0, owed: null, cleared: false };
+    c.paid = Math.max(c.paid, num(x.paid_since));
+    /* OWED goes with the reading: the arrears at the notice whose drop the customer is
+       counted at (the earliest letter looks back furthest), so Rec % divides like for like.
+       A second letter to the same person does not add their arrears up twice. */
+    if (c.owed == null || num(x.arrears_down) > c.down) c.owed = num(x.arrears_at_notice);
+    c.down = Math.max(c.down, num(x.arrears_down));
+    c.cleared = c.cleared || x.notice_state.indexOf('Cleared') >= 0;
+    perCustomer.set(K(x.ref), c);
+  }
+  const customers = [...perCustomer.values()];
+  const recovery = customers.reduce((s, c) => s + c.down, 0);
+  const owed = customers.reduce((s, c) => s + num(c.owed), 0);
+  return { recovery, owed, recoveryPct: pctOf(recovery, owed), paidSince: customers.reduce((s, c) => s + c.paid, 0),
+    cleared: customers.filter(c => c.cleared).length, customers: customers.length };
+}
+
 async function demandNotices(db, user, args, nowMs = Date.now()) {
   const [r, cur, teamBranch, brand, mine] = await Promise.all([
     listTable(db, user, 'demand_notices'),
@@ -3504,21 +3528,8 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
      twice and call one person two clearances. Each customer counts at their earliest notice's
      reading -- the largest, since it looks back furthest. The rows themselves stay per notice:
      that is what the register is. */
-  const perCustomer = new Map();
-  for (const x of rows) {
-    const c = perCustomer.get(K(x.ref)) || { paid: 0, down: 0, owed: null, cleared: false };
-    c.paid = Math.max(c.paid, num(x.paid_since));
-    /* OWED goes with the reading: the arrears at the notice whose drop the customer is
-       counted at (the earliest letter looks back furthest), so Rec % divides like for like.
-       A second letter to the same person does not add their arrears up twice. */
-    if (c.owed == null || num(x.arrears_down) > c.down) c.owed = num(x.arrears_at_notice);
-    c.down = Math.max(c.down, num(x.arrears_down));
-    c.cleared = c.cleared || x.notice_state.indexOf('Cleared') >= 0;
-    perCustomer.set(K(x.ref), c);
-  }
-  const customers = [...perCustomer.values()];
-  const recovery = customers.reduce((s, c) => s + c.down, 0);
-  const owed = customers.reduce((s, c) => s + num(c.owed), 0);
+  const tiles = noticeTiles_(rows);
+  const { recovery, owed } = tiles;
   /* RECOVERED LEO AND THIS WEEK, ON THE TAB -- "add recovered leo and recovered weekly cards at
      demand notice pannel". The dashboard card's own reading (legalTotals_: the week's ledger
      rows, a payment once per customer, only under a notice this register holds), so the two
@@ -3535,11 +3546,11 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
     /* RECOVERY, WITH ITS REC % IN FRONT -- "add % figure infront of amount in the same card":
        the arrears drop over what the letters chased (each customer's arrears at the notice
        they are read at, once per person); null with nothing owed. */
-    recovery, owed, recoveryPct: pctOf(recovery, owed),
+    recovery, owed, recoveryPct: tiles.recoveryPct,
     // RECOVERED SINCE NOTICE: what was paid after the letters, once per customer.
-    paidSince: customers.reduce((s, c) => s + c.paid, 0),
-    cleared: customers.filter(c => c.cleared).length,
-    customers: customers.length,
+    paidSince: tiles.paidSince,
+    cleared: tiles.cleared,
+    customers: tiles.customers,
     asOf: cur.date || null,
     paymentsOn: !!paidBy,
     /* true: the ledger answered (RUN-ME-041, kept for good, matched by phone too). false:
@@ -9849,10 +9860,13 @@ async function officerLocationsList(db, user, _args, nowMs = Date.now()) {
    month report reads (monthLedgerDays_, ledgerByTeam_), the same registry (readTeamsAll) and
    the same sales target (settingNum); they are this file's, handed over rather than exported,
    so the two modules do not import each other. */
-const ANNUAL_DEPS = { monthLedgerDays_, ledgerByTeam_, readTeamsAll, settingNum, settingGet, noteSettingsWritten };
+const ANNUAL_DEPS = { monthLedgerDays_, ledgerByTeam_, readTeamsAll, settingNum, settingGet, noteSettingsWritten,
+  // The books the annual deck lays beside the year: the PAR tab, the latest expected deck, the legal register.
+  par, expected, demandNotices, noticeTiles_ };
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   annual: (db, user, a, now) => annualReport(db, user, a, now, ANNUAL_DEPS),
+  annualBook: (db, user, a, now) => annualBook(db, user, a, now, ANNUAL_DEPS),
   loans, loanPipeline, appsWeekly, appsTab, expected, defaulters, expectedDefaulters,
   followup, comments, addComment, promises, followupReport,
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
@@ -10241,7 +10255,7 @@ const FN_TAB = {
   par: ['par'],
   auditReport: ['auditrep'],
   // The annual report: granted like the audit report -- admins from the start, a role when ticked.
-  annual: ['annual'],
+  annual: ['annual'], annualBook: ['annual'],
   weekly: ['weekly'], teamProgress: ['weekly'], stampWeek: ['weekly'],
   leaderReports: ['reports'],
   commission: ['commission'], commissionSave: ['commission'],
