@@ -402,8 +402,8 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
 
   /* ---- WHAT WAS NOT DONE, said on the screen. */
   const notes = [];
-  if (!stamps.ok) notes.push('Jedwali la team_months halipo — endesha db/RUN-ME-049a, 049b, 049c na 049d (kwa mpangilio huo) ili miezi ya kabla ya app (2025 na Januari–Julai 2026) ipate collection na recovery. '
-    + '/ The team_months table is not there — run db/RUN-ME-049a, 049b, 049c and 049d, in that order, so the months before the app (2025 and January–July 2026) get their collection and recovery.');
+  if (!stamps.ok) notes.push('Jedwali la team_months halipo — endesha db/RUN-ME-049a hadi 049e (kwa mpangilio huo) ili miezi ya kabla ya app (2025 na Januari–Julai 2026) ipate collection na recovery. '
+    + '/ The team_months table is not there — run db/RUN-ME-049a to 049e, in that order, so the months before the app (2025 and January–July 2026) get their collection and recovery.');
   if (!sales.light) notes.push('Mauzo ya mwaka yamejumlishwa hapa seva kutoka kwenye safu zote — endesha db/RUN-ME-049a-annual-table-and-sales-function.sql ili database ijumlishe. '
     + '/ The year\'s sales were summed on this server from every sale row — run db/RUN-ME-049a-annual-table-and-sales-function.sql to have the database sum them.');
   if (notReached.length) notes.push('Leja ya ' + notReached.map(ym => MONTH_NAMES[Number(ym.slice(5, 7)) - 1]).join(', ')
