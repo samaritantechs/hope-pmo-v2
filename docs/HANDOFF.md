@@ -3580,5 +3580,68 @@ report, and a deck can be cut from them when the year closes.
 
 ---
 
+## Part 34 — Who held each team, when: the leader history
+
+> "backfill the leaders, then from the current ones whenever I change a name of code holder,
+> trigger to save the previous one only if the new saved name is different. Because I might go
+> there to edit something else from names."
+
+Teams & Staff says who is responsible **now**; every move overwrites it, so the past was
+rewritten each time and the Annual Rep tab could not say whose year a team's year was. The
+other half is `team_holders` (`db/RUN-ME-050-team-holders.sql`, small, nothing to paste but the
+table): one row per team, per role (the Teams & Staff column: gmo, manager, opm, collection =
+the PMO, credit, expected = early collection, recovery, bike, legal), per stretch of days one
+person held it. `name = ''` means nobody held it. A running stretch ends on `9999-12-31`, so a
+read is one range query. The table is **optional**: without it the tab judges every month on
+whoever holds the team today, as before, and a note says to run RUN-ME-050.
+
+**The backfill is not pasted.** The workbooks' leaders live in `api/_lib/annual-holders-data.js`
+(generated from the 2025 FINAL sheet and the ten 2026 monthly sheets; 2025 is the FINAL
+sheet's holder for the whole year, 2026 is each month's own names; a sheet's "NO-PMO / NO GMO /
+NO-BIKE ..." is a stretch of nobody, a blank cell is unknown and writes nothing; an unknown
+month is bridged only between two months naming the same person). The first admin to open
+Annual Rep after the table exists loads it (`loadWorkbookHolders`: chunks of 500,
+`ignoreDuplicates`, so a correction made by hand is never overwritten) and the setting
+`ANNUAL_HOLDERS_LOADED` stops it ever running again. Readers, read-only users and team-scoped
+users never trigger it. Every workbook stretch is closed at a month's end, so the app's own
+rows (which open on the day they are recorded) never overlap one.
+
+**The trigger lives at the one door.** `portalApi` wraps `HOLDER_FNS` (saveTeam, deleteTeam,
+saveStaffTeams, saveAccessCode, deleteAccessCode) with `syncHolders` before and after, for an
+admin only, swallowing every failure (including the table not existing) so it can never break a
+save. `syncHolders` compares who holds each role NOW (`readTeamsAll`: the sheet with the access
+codes laid over it, exactly what every board reads) with the open stretches and writes **only
+what differs**: the open stretch closes the day before and a new one opens today; an emptied
+role closes and opens an empty one; a role seen for the first time opens from today. Editing a
+phone number or anything else writes nothing; retyping the same name writes nothing. A stretch
+that began today and is already over has no days in it and is dropped, not kept.
+
+**The same person under two spellings is not a change.** The sheets say "SULEIMAN"; Teams &
+Staff may say "SULEIMAN MPOKI MWASUNGA". `looseSame` (every word of the shorter name is in the
+longer) means spelling a name out in full never records a transfer, and `canonNames` folds the
+two into one leader on the boards, only when the longer name is the ONLY one it could be.
+
+**What Annual Rep does with it.** A month belongs to whoever held the role then: the month
+being lived to whoever holds it now, a finished month to whoever the history says held it on
+its last day, and where the history is silent to whoever holds it now (what every month was
+judged on before). A leader's month is the average of the teams they held THAT month; the year
+is the average of those months; "Everyone, any role" counts a team once a month however many
+roles the person held it under and shows their General % in each role beside the overall one.
+The card behind a name lists each team with the months it was held (JAN–MAR, JUN) and a
+General %-by-month table that is blank, not zero, for months they did not hold it. The
+response carries `holders: { ok, stretches, loaded }` and notes for a missing table, the count
+loaded, or a failed load.
+
+**What to know.** The March 2026 sheet shows one-month holder blips (28 in the GMO column); the
+backfill stores what the sheet states and they can be corrected in the table (the load never
+overwrites). Recovery officers have no workbook history, so their history starts the day the
+trigger first sees them. Cost: ~1,840 stretches for 2026, two pages, once per cold open of the
+tab (never upload or call); the speed table says why, and a separate test pins the one-time load
+at a handful of chunked writes. `team_months` and `team_holders` are named in `PAGE_KEY`
+(api/_lib/supabase.js) so their reads page on the real primary key instead of sending the
+`order=id` Postgres can only reject.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

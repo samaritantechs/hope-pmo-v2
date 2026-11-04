@@ -269,6 +269,12 @@ export const PAGE_KEY = {
   notice_payment_ledger: ['ref', 'since', 'payment_id'],
   // Where each customer and guarantor is (RUN-ME-2026-10-19): one row per customer (docket key) and party.
   customer_locations: ['docket_key', 'party'],
+  // The Annual Rep tab's two tables (RUN-ME-049a, RUN-ME-050). Neither has an `id`; each is unique
+  // on its declared primary key, so each read pages on that and never sends the order=id Postgres
+  // can only reject. team_months: one row per team and month. team_holders: one row per team, role
+  // and start day.
+  team_months: ['team', 'ym'],
+  team_holders: ['team', 'role', 'from_date'],
   // hints is NOT here on purpose. Its table once read `tab text primary key` (still schema.sql's
   // own text, which is stale for this one) -- but db/migrations/2026-07-27-hints-many-per-tab.sql
   // dropped that and gave it `id` instead, because tab was never really unique: many tips
