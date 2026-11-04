@@ -3520,7 +3520,7 @@ on the row (and so in the Excel/CSV export) but is no longer a column on the scr
 
 The annual report used to be a workbook kept by hand: a sheet per month, a sheet per summary
 (ANNUAL, SALES, COLN, REC, COUNT, one per GMO), and a deck built from it in January. The
-**Ripoti ya Mwaka / Annual Report** tab (`public/mod/annual.js`, `api/_lib/annual.js`,
+**Annual Rep** tab (`public/mod/annual.js`, `api/_lib/annual.js`,
 granted like the audit report: admins from the start, a role when ticked) is that workbook
 read off the system, for any year, as it stands today.
 
