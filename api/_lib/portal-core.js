@@ -54,6 +54,7 @@ import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFu
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
 import { annualReport } from './annual.js';
+import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -9848,7 +9849,7 @@ async function officerLocationsList(db, user, _args, nowMs = Date.now()) {
    month report reads (monthLedgerDays_, ledgerByTeam_), the same registry (readTeamsAll) and
    the same sales target (settingNum); they are this file's, handed over rather than exported,
    so the two modules do not import each other. */
-const ANNUAL_DEPS = { monthLedgerDays_, ledgerByTeam_, readTeamsAll, settingNum };
+const ANNUAL_DEPS = { monthLedgerDays_, ledgerByTeam_, readTeamsAll, settingNum, settingGet, noteSettingsWritten };
 const FN = {
   dashboard: (db, user, a, now) => buildDashboard(db, user, now),
   annual: (db, user, a, now) => annualReport(db, user, a, now, ANNUAL_DEPS),
@@ -10346,7 +10347,25 @@ export async function portalApi(db, user, fn, args, nowMs = Date.now()) {
      invites the conclusion that what is missing did not happen. Reads pass straight through --
      see api/_lib/audit.js for why only the writes are recorded, and why the arguments are
      reduced to a few identifying fields rather than stored whole. */
-  return audited(db, u, fn, args || {}, () => h(db, u, args || {}, nowMs));
+  const run = () => audited(db, u, fn, args || {}, () => h(db, u, args || {}, nowMs));
+  if (!HOLDER_FNS.has(fn) || !(u && (u.tabs || []).includes('settings'))) return run();
+  /* WHO HOLDS WHAT IS RECORDED AROUND EVERY SAVE THAT CAN CHANGE IT -- and only changes are
+     written (see holders.js). Before: so the holder this save is about to replace is on the record,
+     whatever way they were put there. After: so the new one is. A save that touches a phone number
+     or any other field leaves every role as it was and writes nothing. */
+  await noteHolders_(db, nowMs);
+  const out = await run();
+  await noteHolders_(db, nowMs);
+  return out;
+}
+/* The history is never allowed to break a save: any failure is swallowed, and a database that has
+   not got the table yet is not asked again for a minute. */
+const holdersMissingUntil = new WeakMap();
+async function noteHolders_(db, nowMs) {
+  const until = holdersMissingUntil.get(db);
+  if (until && Date.now() < until) return;
+  try { await syncHolders(db, nowMs, readTeamsAll); }
+  catch (e) { if (holdersTableMissing(e)) holdersMissingUntil.set(db, Date.now() + 60000); }
 }
 async function scopedUser_(db, user, nowMs) {
   if (!user || !user.teams || !user.teams.length) return user;       // ALL teams: nothing to resolve

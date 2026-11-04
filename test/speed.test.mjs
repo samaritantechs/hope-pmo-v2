@@ -26,6 +26,8 @@ import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_R
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi } = await import('../api/_lib/portal-core.js');
+const { expandHolderData } = await import('../api/_lib/holders.js');
+const { HOLDER_DATA } = await import('../api/_lib/annual-holders-data.js');
 const { callApi, _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
 const { loanApi } = await import('../api/_lib/loan-core.js');
 const { deviceApi } = await import('../api/_lib/device-core.js');
@@ -178,6 +180,17 @@ function counting(tables, opts) {
                  rpc: (n, a) => wrap(db0.rpc(n, a)),
                  _dump: n => db0._dump(n) },
            stat: () => ({ trips, rows }) };
+}
+
+/** THE ANNUAL REPORT'S BOOK: the ordinary book plus the leader history as it stands once the
+    workbooks' leaders have been loaded -- the real ~2,000 stretches, with the flag the first admin's
+    open sets. That is what EVERY open after the first reads; the one-time load is measured on its
+    own, further down. */
+function annualBook() {
+  const t = bigBook();
+  t.settings.push({ key: 'ANNUAL_HOLDERS_LOADED', value: 'done' });
+  t.team_holders = expandHolderData(HOLDER_DATA);
+  return t;
 }
 
 const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'upload'] };
@@ -372,7 +385,15 @@ const BUDGETS = [
      months here, each its week-sized slices plus the one write that stores them. That store is
      the point: a finished month's ledger is kept, so the second open of a year pays the stamps,
      the sales and the live week only -- the warm test under this table measures that. */
-  ['Annual report (cold year)', 'annual', { year: 2026 }, ADMIN, 12, 2100, 81, 950],
+  /* 12 -> 14 trips and 2,100 -> 4,000 rows (83 trips and 2,800 rows migrated, from 81 and 950) for
+     THE LEADER HISTORY (RUN-ME-050). Who held each team, month by month, is the one thing the
+     Annual Rep tab cannot ask the database to add up: it is read as stretches, ~1,840 of them for
+     2026 on the real workbooks (every team, every role, a stretch per change of holder), which is
+     two pages of the 1,000-row ceiling. It is read once per cold open -- the answer is kept a
+     minute -- and never on /api/upload or /api/call. Narrower than "everything": only the
+     stretches that touch the year, scoped to the user's teams at the database. If this grows
+     again the question is whether finished months' holders should be frozen into the ledger. */
+  ['Annual report (cold year)', 'annual', { year: 2026 }, ADMIN, 14, 4000, 83, 2800],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
   /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
      the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
@@ -518,7 +539,7 @@ for (const B of BUDGETS) {
   const [label, fn, args, user] = B;
   const tripBudget = B[tripIdx], rowBudget = B[rowIdx];
   test(`speed [${world}]: ${label} stays within ${tripBudget} trips and ${rowBudget.toLocaleString()} rows`, async () => {
-    const c = counting(bigBook(), opts);
+    const c = counting(fn === 'annual' ? annualBook() : bigBook(), opts);
     await portalApi(c.db, user, fn, args, NOW);
     const { trips, rows } = c.stat();
     const advice = `\n  Before raising these numbers: can the database do the work instead?\n` +
@@ -540,14 +561,35 @@ for (const B of BUDGETS) {
    a year costs on every open after the first, and it must stay flat however many months the
    year has gathered: a month that is finished never costs a slice again. */
 test('speed: the annual report, warm -- a year whose ledgers are stored costs the stamps, the sales and the live week', async () => {
-  const c = counting(bigBook(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC } });
+  const c = counting(annualBook(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC } });
   await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW);
   const cold = c.stat();
   await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW + 61000);
   const trips = c.stat().trips - cold.trips, rows = c.stat().rows - cold.rows;
   assert.ok(trips <= 9, `the warm annual report took ${trips} round trips (budget 9) -- a finished month must never cost a slice again.`);
-  // The live week's team-day totals and the year's team-months of sales: never a customer row.
-  assert.ok(rows <= 700, `the warm annual report read ${rows} rows (budget 700).`);
+  /* The live week's team-day totals, the year's team-months of sales, and the leader history's ~1,840
+     stretches (trips stay at 9; rows 700 -> 2,600 for RUN-ME-050): never a customer row. */
+  assert.ok(rows <= 2600, `the warm annual report read ${rows} rows (budget 2,600).`);
+});
+
+/* THE ONE-TIME LOAD of the workbooks' leaders (the first admin to open the tab, once, ever): the
+   stretches go up in chunks of 500 with ignoreDuplicates, plus the flag, and nothing else. It must
+   stay a handful of writes -- never a write per stretch -- and a second open must not repeat it. */
+test('speed: loading the workbooks\' leaders is a few chunked writes, once', async () => {
+  // The same first open twice, on a book that has the history and on one that has not: the
+  // difference is the load, and nothing else may be in it.
+  const have = counting(annualBook());
+  await portalApi(have.db, ADMIN, 'annual', { year: 2026 }, NOW);
+  const t = bigBook();
+  const c = counting(t);
+  await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW);
+  const rowsLoaded = c.db._dump('team_holders').length;
+  assert.ok(rowsLoaded > 1500, 'the workbooks\' leaders were loaded');
+  const extra = c.stat().trips - have.stat().trips;
+  // 4 chunked writes of 500, the flag read and write, and the one extra read of the loaded history.
+  assert.ok(extra <= 9, `loading took ${extra} extra round trips (budget 9): ${Math.ceil(rowsLoaded / 500)} chunked writes and the flag, never a write per stretch.`);
+  await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW + 61000);
+  assert.equal(c.db._dump('team_holders').length, rowsLoaded, 'the second open loads nothing');
 });
 
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one

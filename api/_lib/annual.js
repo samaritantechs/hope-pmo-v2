@@ -57,6 +57,7 @@ import { SALES_STAGES } from './dashboard-core.js';
 import { adjReceived_ } from './adjustments.js';
 import { cachedAnswer } from './answer-cache.js';
 import { monthSummaryRows } from './snapshot-totals.js';
+import { readHolders, holderIndex, canonNames, cleanName, loadWorkbookHolders } from './holders.js';
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 /* THE JOIN KEY ACROSS SPELLINGS. The workbook writes "TENGERU- USARIVER " and "Tunduru"; the
@@ -96,6 +97,7 @@ const nobody = s => !s || NOBODY.test(String(s).trim());
    seconds; a year's worth of cold months would not fit any budget, so the months are filled
    oldest first until this runs out, and the rest say "pending" and come on the next open. */
 const ANNUAL_LEDGER_BUDGET_MS = 20000;
+const HOLDERS_LOADED_KEY = 'ANNUAL_HOLDERS_LOADED';
 const FIRST_YEAR = 2025;
 
 function tableMissing(err) {
@@ -175,49 +177,95 @@ const sumMeasured = (cells, f) => { const m = cells.filter(c => c[f] != null); r
 const byGeneral = (a, b) => (b.general == null ? -1 : b.general) - (a.general == null ? -1 : a.general)
   || (num(b.sales) - num(a.sales)) || String(a.team || a.name || '').localeCompare(String(b.team || b.name || ''));
 
-/** A leader's row: the average of their teams' figures, for the year and for each month. */
-function leaderRow_(name, teams, yms) {
-  const row = { name, teams: teams.length, teamList: teams.map(t => t.team).join(', '), teamKeys: teams.map(t => t.key),
-    months: yms.filter(ym => teams.some(t => t.m[ym])).length,
-    sales: teams.reduce((s, t) => s + num(t.sales), 0), loans: teams.reduce((s, t) => s + num(t.loans), 0),
-    salesPct: mean(teams.map(t => t.salesPct)), ecolPct: mean(teams.map(t => t.ecolPct)),
-    colPct: mean(teams.map(t => t.colPct)), recPct: mean(teams.map(t => t.recPct)), m: {} };
-  row.general = mean([row.salesPct, row.colPct, row.recPct]);
-  for (const ym of yms) {
-    const cs = teams.map(t => t.m[ym]).filter(Boolean);
-    if (!cs.length) continue;
-    const mm = { teams: cs.length, sales: sumOf(cs, 'sales'), salesPct: mean(cs.map(c => c.salesPct)), ecolPct: mean(cs.map(c => c.ecolPct)),
+/* ---------------------------------------------------------------------------- the leaders */
+/** WHO HELD THE ROLE THAT MONTH. The month being lived belongs to whoever holds the team now; a
+    finished month to whoever the holder history says held it on its last day; and where the
+    history is silent -- nothing recorded, or the table not there yet -- to whoever holds it now
+    (or the year row's name), which is exactly what every month was judged on before the history
+    existed. A recorded "nobody" stays nobody. */
+function makeRoleAt_(hist, today, thisYm) {
+  return (t, role, ym) => {
+    if (ym >= thisYm) return t[role.key];
+    const end = monthEndOf(ym), asOf = end < today ? end : today;
+    const h = hist.holderAt(t.key, role.col, asOf);
+    return h === undefined ? t[role.key] : (h || null);
+  };
+}
+/** One leader from the months they held: byMonth is ym -> teamKey -> { team, key, cell }. A month
+    is the average of the teams they held that month; the year is the average of those months.
+    `stints` says which team, in which months, so the card behind a name can show exactly that. */
+function leaderFromMonths_(name, byMonth, yms) {
+  const held = yms.filter(ym => byMonth.has(ym));
+  const m = {}, seen = new Map();
+  let sales = 0, loans = 0;
+  for (const ym of held) {
+    const ents = [...byMonth.get(ym).values()], cs = ents.map(e => e.cell);
+    const mm = { teams: ents.length, sales: sumOf(cs, 'sales'), salesPct: mean(cs.map(c => c.salesPct)), ecolPct: mean(cs.map(c => c.ecolPct)),
       colPct: mean(cs.map(c => c.colPct)), recPct: mean(cs.map(c => c.recPct)) };
     mm.general = mean([mm.salesPct, mm.colPct, mm.recPct]);
-    row.m[ym] = mm;
+    m[ym] = mm; sales += mm.sales; loans += sumOf(cs, 'loans');
+    for (const e of ents) {
+      if (!seen.has(e.key)) seen.set(e.key, { team: e.team, key: e.key, months: [] });
+      seen.get(e.key).months.push(ym);
+    }
   }
+  const stints = [...seen.values()];
+  const row = { name, teams: stints.length, teamList: stints.map(x => x.team).join(', '), months: held.length, sales, loans,
+    salesPct: mean(held.map(ym => m[ym].salesPct)), ecolPct: mean(held.map(ym => m[ym].ecolPct)),
+    colPct: mean(held.map(ym => m[ym].colPct)), recPct: mean(held.map(ym => m[ym].recPct)), m, stints };
+  row.general = mean([row.salesPct, row.colPct, row.recPct]);
   return row;
 }
-function leaderBoards_(teamRows, yms) {
-  const roles = ANNUAL_ROLES.map(role => {
-    const by = new Map();
-    for (const t of teamRows) {
-      const nm = t[role.key];
-      if (nobody(nm)) continue;
-      const k = K(nm);
-      if (!by.has(k)) by.set(k, { name: String(nm).trim(), teams: [] });
-      by.get(k).teams.push(t);
-    }
-    return { role: role.key, label: role.label, rows: [...by.values()].map(h => leaderRow_(h.name, h.teams, yms)).sort(byGeneral) };
-  });
-  // Everyone, in any role: one person, the union of every team they hold under any heading.
-  const all = new Map();
-  for (const r of roles) for (const t of teamRows) {
-    const nm = t[ANNUAL_ROLES.find(x => x.key === r.role).key];
-    if (nobody(nm)) continue;
-    const k = K(nm);
-    if (!all.has(k)) all.set(k, { name: String(nm).trim(), roles: [], teams: new Map() });
-    const a = all.get(k);
-    if (!a.roles.includes(r.label)) a.roles.push(r.label);
-    a.teams.set(t.key, t);
+/** Every leader, by role and in any role, from who held which team in which month. A person
+    named two ways ("SULEIMAN", "SULEIMAN MPOKI MWASUNGA") is one person where the longer name is
+    the only one the shorter could be. Everyone-in-any-role counts a team once a month however many
+    roles the person held it under, and keeps their average in each role beside the overall one. */
+function leaderBoards_(teamRows, yms, roleAt) {
+  const holds = [];
+  for (const role of ANNUAL_ROLES) for (const t of teamRows) for (const ym of yms) {
+    if (!t.m[ym]) continue;
+    const nm = cleanName(roleAt(t, role, ym));
+    if (!nm || nobody(nm)) continue;
+    holds.push({ role, ym, t, nm });
   }
-  const everyone = [...all.values()].map(a => ({ roles: a.roles.join(', '), ...leaderRow_(a.name, [...a.teams.values()], yms) })).sort(byGeneral);
-  return { roles, all: everyone };
+  const canonRole = new Map(ANNUAL_ROLES.map(r => [r.key, canonNames(holds.filter(h => h.role.key === r.key).map(h => h.nm))]));
+  const canonAll = canonNames(holds.map(h => h.nm));
+  const fold = (map, nm) => map.get(K(nm)) || nm;
+  const monthsOf = items => {
+    const by = new Map();
+    for (const it of items) {
+      if (!by.has(it.ym)) by.set(it.ym, new Map());
+      by.get(it.ym).set(it.t.key, { team: it.t.team, key: it.t.key, cell: it.t.m[it.ym] });
+    }
+    return by;
+  };
+  const roles = ANNUAL_ROLES.map(role => {
+    const g = new Map();
+    for (const h of holds) if (h.role.key === role.key) {
+      const nm = fold(canonRole.get(role.key), h.nm), k = K(nm);
+      if (!g.has(k)) g.set(k, { name: nm, items: [] });
+      g.get(k).items.push(h);
+    }
+    return { role: role.key, label: role.label,
+      rows: [...g.values()].map(x => ({ id: role.key + '|' + K(x.name), ...leaderFromMonths_(x.name, monthsOf(x.items), yms) })).sort(byGeneral) };
+  });
+  const people = new Map();
+  for (const h of holds) {
+    const nm = fold(canonAll, h.nm), k = K(nm);
+    if (!people.has(k)) people.set(k, { name: nm, items: [], roles: new Map() });
+    const p = people.get(k);
+    p.items.push(h);
+    if (!p.roles.has(h.role.key)) p.roles.set(h.role.key, []);
+    p.roles.get(h.role.key).push(h);
+  }
+  const all = [...people.values()].map(p => {
+    const byRole = [...p.roles.entries()].map(([rk, items]) => {
+      const r = leaderFromMonths_(p.name, monthsOf(items), yms);
+      return { role: ANNUAL_ROLES.find(x => x.key === rk).label, general: r.general, months: r.months, teams: r.teams };
+    });
+    return { id: 'all|' + K(p.name), roles: byRole.map(b => b.role).join(', '), byRole, ...leaderFromMonths_(p.name, monthsOf(p.items), yms) };
+  }).sort(byGeneral);
+  return { roles, all };
 }
 
 /* ---------------------------------------------------------------------------- the answer */
@@ -238,12 +286,28 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   const weeklyTarget = await deps.settingNum(db, 'SALES_TARGET_WEEKLY', await deps.settingNum(db, 'SALES_TARGET', 100000000));
   const monthTarget = weeklyTarget * 4;
 
-  const [stamps, registry, sales, adj] = await Promise.all([
+  const [stamps, registry, sales, adj, holders0] = await Promise.all([
     readStamps_(db, user, year),
     deps.readTeamsAll(db, nowMs).catch(() => []),
     salesByMonth_(db, user, yearStart, to),
     adjReceived_(db, user, { from: yearStart, to }).catch(() => null),
+    readHolders(db, yearStart, yearEnd, user.teams, teamMatchList),
   ]);
+  /* THE WORKBOOKS' LEADERS, LOADED ONCE. The first time an admin who may write opens this tab on a
+     database that has the table, the leaders of 2025 and of each month of 2026 are written in
+     (rows already there are left as they are) and a setting remembers it was done, so nobody
+     pastes anything and nothing is loaded twice. Anyone else, and a view-only code, only reads. */
+  let holders = holders0, loadedHolders = null, holdersError = null;
+  const mayLoad = holders.ok && (user.tabs || []).includes('settings') && !user.readOnly && !(user.teams && user.teams.length);
+  if (mayLoad && !(await deps.settingGet(db, HOLDERS_LOADED_KEY))) {
+    try {
+      loadedHolders = await loadWorkbookHolders(db);
+      await db.from('settings').upsert({ key: HOLDERS_LOADED_KEY, value: new Date(nowMs).toISOString() }, { onConflict: 'key' });
+      deps.noteSettingsWritten(db);
+      holders = await readHolders(db, yearStart, yearEnd, user.teams, teamMatchList);
+    } catch (e) { holdersError = String((e && e.message) || e); }
+  }
+  const hist = holderIndex(holders.rows);
 
   /* WHICH MONTHS THE LEDGER ANSWERS: every month that has happened and has no stamped rows.
      The two summary reads the ledger makes per month are made ONCE for the whole stretch --
@@ -398,12 +462,17 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   totals.unrecovered = (totals.uncollected != null && totals.recovered != null) ? totals.uncollected - totals.recovered : null;
   totals.general = mean([totals.salesPct, totals.colPct, totals.recPct]);
 
-  const leaders = leaderBoards_(teamRows, yms);
+  const leaders = leaderBoards_(teamRows, yms, makeRoleAt_(hist, today, thisYm));
 
   /* ---- WHAT WAS NOT DONE, said on the screen. */
   const notes = [];
   if (!stamps.ok) notes.push('Jedwali la team_months halipo — endesha db/RUN-ME-049a hadi 049e (kwa mpangilio huo) ili miezi ya kabla ya app (2025 na Januari–Julai 2026) ipate collection na recovery. '
     + '/ The team_months table is not there — run db/RUN-ME-049a to 049e, in that order, so the months before the app (2025 and January–July 2026) get their collection and recovery.');
+  if (!holders.ok) notes.push('Jedwali la team_holders halipo — endesha db/RUN-ME-050-team-holders.sql ili kila mwezi ahukumiwe kwa aliyeshika timu wakati wake; kwa sasa ni anayeshika timu leo. '
+    + '/ The team_holders table is not there — run db/RUN-ME-050-team-holders.sql so each month is judged on who held the team that month; until then it is whoever holds the team today.');
+  if (loadedHolders) notes.push('Viongozi wa 2025 na wa kila mwezi wa 2026 wamepakiwa kutoka kwenye faili za mwaka (' + loadedHolders + ' vipindi). Kuanzia sasa kila ukibadilisha mwenye nafasi kwenye Teams & Staff, aliyetangulia anahifadhiwa. '
+    + '/ The leaders of 2025 and of each month of 2026 were loaded from the annual workbooks (' + loadedHolders + ' stretches). From now on, when you change who holds a role on Teams & Staff, the previous holder is saved.');
+  if (holdersError) notes.push('Viongozi wa kutoka kwenye faili hawakupakiwa: ' + holdersError + ' / The workbooks\' leaders could not be loaded: ' + holdersError + ' — open this tab again to retry.');
   if (!sales.light) notes.push('Mauzo ya mwaka yamejumlishwa hapa seva kutoka kwenye safu zote — endesha db/RUN-ME-049a-annual-table-and-sales-function.sql ili database ijumlishe. '
     + '/ The year\'s sales were summed on this server from every sale row — run db/RUN-ME-049a-annual-table-and-sales-function.sql to have the database sum them.');
   if (notReached.length) notes.push('Leja ya ' + notReached.map(ym => MONTH_NAMES[Number(ym.slice(5, 7)) - 1]).join(', ')
@@ -418,6 +487,7 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   for (let y = Math.min(FIRST_YEAR, year); y <= thisYear; y++) years.push(y);
   return { year, years, today, thisYm, target: monthTarget, weeklyTarget, stamped: stamps.ok, light: sales.light,
     months, teams: teamRows, totals, leaders, notes,
+    holders: { ok: holders.ok, stretches: holders.rows.length, loaded: loadedHolders },
     rule: 'Mwezi: mauzo ÷ lengo (wiki × 4), collected ÷ expected, recovered ÷ uncollected. Mwaka: wastani wa asilimia za miezi iliyopimwa. General: wastani wa sales %, collection % na recovery % zilizopimwa. Kiongozi: wastani wa timu zake. '
       + '/ A month: sales ÷ target (weekly × 4), collected ÷ expected, recovered ÷ uncollected. A year: the average of the measured months\' percentages. General: the average of the measured sales %, collection % and recovery %. A leader: the average of their teams.' };
 }

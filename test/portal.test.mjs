@@ -12509,6 +12509,8 @@ test('expdf report: a leader is matched to HOPE Calls by number, then by the wor
 function annualTables() {
   const t = tables();
   t.settings.push({ key: 'SALES_TARGET_WEEKLY', value: '250000' });   // 1,000,000 a month per team
+  // These tests are about the stamps and the ledger; the leader history is exercised by its own tests below.
+  t.settings.push({ key: 'ANNUAL_HOLDERS_LOADED', value: 'test' });
   t.loans = [
     // January: KONGOWE sold 600,000 on two loans, one of them a first-time customer; MBAGALA 200,000.
     { id: 'a1', team: 'KONGOWE', stage: 'disbursed', principal_amt: 400000, loan_amt: 544000, approved_date: '2026-01-10', track_no: '1' },
@@ -12587,7 +12589,7 @@ test('the annual report: a stamped month, the live month and the loans table, on
   const mgr = d.leaders.roles.find(r => r.role === 'manager');
   assert.equal(mgr.label, 'Manager');
   const boss = mgr.rows.find(r => r.name === 'BOSS');
-  assert.equal(boss.teams, 1); assert.equal(boss.teamList, 'KONGOWE'); assert.deepEqual(boss.teamKeys, ['KONGOWE']);
+  assert.equal(boss.teams, 1); assert.equal(boss.teamList, 'KONGOWE'); assert.deepEqual(boss.stints.map(x => [x.key, x.months]), [['KONGOWE', ['2026-01', '2026-07']]]);
   assert.equal(boss.salesPct, 50); assert.equal(boss.colPct, 53.2); assert.equal(boss.general, 46.3); assert.equal(boss.months, 2);
   assert.equal(boss.m['2026-01'].general, 63.3, 'and month by month');
   assert.ok(!d.leaders.roles.find(r => r.role === 'gmo').rows.length, 'nobody is a GMO on this registry');
@@ -12650,4 +12652,179 @@ test('the annual report is team-scoped at the database and gated on its own tab'
   assert.equal(K2('TENGERU- USARIVER '), K2('tengeru-usariver'), 'the sheet\'s spelling and the registry\'s meet');
   assert.equal(mean([60, null, 80]), 70, 'a missing month leaves the divisor');
   assert.equal(mean([]), null);
+});
+
+/* ===================================================================================
+   THE LEADER HISTORY -- who held each team, when.
+     "backfill the leaders, then from the current ones whenever I change a name of code holder,
+      trigger to save the previous one only if the new saved name is different. Because I might
+      go there to edit something else from names"
+   team_holders: one row per team, role and stretch of days. The workbooks' leaders are loaded once
+   by the first admin who opens the Annual Rep tab; after that a row is written only when a
+   Teams & Staff save changes who holds a role. See api/_lib/holders.js.
+   =================================================================================== */
+const DAY = 86400000;
+const holderRows = (db, team, role) => db._dump('team_holders').filter(r => r.team === team && r.role === role)
+  .map(r => ({ name: r.name, from: String(r.from_date).slice(0, 10), to: String(r.to_date).slice(0, 10), source: r.source }))
+  .sort((a, b) => a.from.localeCompare(b.from));
+const OPEN_ = '9999-12-31';
+
+test('holders: one person under two spellings, and the workbook data expands into closed month-end stretches', async () => {
+  const { looseSame, canonNames, expandHolderData, holderIndex } = await import('../api/_lib/holders.js');
+  assert.equal(looseSame('SULEIMAN', 'Suleiman Mpoki Mwasunga'), true, 'spelled out in full is the same person');
+  assert.equal(looseSame('MWASUNGA SULEIMAN', 'SULEIMAN MPOKI MWASUNGA'), true, 'in any order');
+  assert.equal(looseSame('SULEIMAN JUMA', 'SULEIMAN MPOKI MWASUNGA'), false, 'a different surname is somebody else');
+  assert.equal(looseSame('', ''), true, 'nobody and nobody is no change');
+  assert.equal(looseSame('ADAM', ''), false, 'a name and nobody are not the same');
+  const c = canonNames(['SULEIMAN', 'SULEIMAN MPOKI MWASUNGA', 'JANETH', 'JANETH ABDALLAH', 'ADAM', 'ADAM SAID', 'ADAM JUMA']);
+  assert.equal(c.get('SULEIMAN'), 'SULEIMAN MPOKI MWASUNGA'); assert.equal(c.get('JANETH'), 'JANETH ABDALLAH');
+  assert.equal(c.get('ADAM'), 'ADAM', 'two longer names it could be: it stays as it is');
+  const rows = expandHolderData('KABWE|gmo|MOZEE:13-18,~:19,BARAKA:20-22\nBABATI|opm|PATRICK:1-13');
+  assert.deepEqual(rows.map(r => [r.team, r.role, r.name, r.from_date, r.to_date, r.source]), [
+    ['KABWE', 'gmo', 'MOZEE', '2026-01-01', '2026-06-30', 'workbook'],
+    ['KABWE', 'gmo', '', '2026-07-01', '2026-07-31', 'workbook'],
+    ['KABWE', 'gmo', 'BARAKA', '2026-08-01', '2026-10-31', 'workbook'],
+    ['BABATI', 'opm', 'PATRICK', '2025-01-01', '2026-01-31', 'workbook']]);
+  const ix = holderIndex(rows);
+  assert.equal(ix.holderAt('Kabwe ', 'gmo', '2026-02-10'), 'MOZEE'); assert.equal(ix.holderAt('KABWE', 'gmo', '2026-07-15'), '', 'nobody');
+  assert.equal(ix.holderAt('KABWE', 'gmo', '2026-11-15'), undefined, 'the history is silent'); assert.equal(ix.holderAt('KABWE', 'manager', '2026-02-10'), undefined);
+  const { HOLDER_DATA } = await import('../api/_lib/annual-holders-data.js');
+  const all = expandHolderData(HOLDER_DATA);
+  assert.ok(all.length > 1500 && all.every(r => r.to_date < '2026-11-01' && r.from_date <= r.to_date), 'every stretch is closed at a month end, before November');
+});
+
+test('leader history: a save that changes nobody writes nothing; a changed holder is closed the day before and the new one opens', async () => {
+  const t = annualTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'GMO ONE' };
+  const db = fakeDb(t);
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', teamCode: 'ABCDEFG' }, NOW);
+  // The first look opens every holder from today: GMO, manager, recovery, credit and early collection; nobody is OPM or bike.
+  const seeded = db._dump('team_holders').filter(r => r.team === 'KONGOWE').map(r => r.role + '=' + r.name + '@' + String(r.from_date).slice(0, 10) + '>' + String(r.to_date).slice(0, 10)).sort();
+  assert.deepEqual(seeded, ['credit=ANALYST A@2026-07-24>9999-12-31', 'expected=EARLY E@2026-07-24>9999-12-31', 'gmo=GMO ONE@2026-07-24>9999-12-31',
+    'manager=BOSS@2026-07-24>9999-12-31', 'recovery=JUMA G@2026-07-24>9999-12-31']);
+  const before = JSON.stringify(db._dump('team_holders'));
+  // A day later the admin goes to the team to change something else, and nobody's name changes: nothing is written.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', teamCode: 'ABCDEFH' }, NOW + DAY);
+  assert.equal(JSON.stringify(db._dump('team_holders')), before, 'editing another field writes nothing');
+  // The same save with the name written the same way in other capitals is not a change either.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo: 'gmo one ' }, NOW + DAY);
+  assert.equal(JSON.stringify(db._dump('team_holders')), before, 'the same name, differently typed, writes nothing');
+  // A different name: the previous holder is closed on the day before, the new one opens today.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo: 'GMO TWO' }, NOW + DAY);
+  assert.deepEqual(holderRows(db, 'KONGOWE', 'gmo'), [
+    { name: 'GMO ONE', from: '2026-07-24', to: '2026-07-24', source: 'app' }, { name: 'GMO TWO', from: '2026-07-25', to: OPEN_, source: 'app' }]);
+  assert.equal(holderRows(db, 'KONGOWE', 'manager').length, 1, 'the manager, untouched, is still one open stretch');
+  // Emptying a role is on the record as nobody, not as a gap.
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', manager: '' }, NOW + 2 * DAY);
+  assert.deepEqual(holderRows(db, 'KONGOWE', 'manager'), [
+    { name: 'BOSS', from: '2026-07-24', to: '2026-07-25', source: 'app' }, { name: '', from: '2026-07-26', to: OPEN_, source: 'app' }]);
+});
+
+test('leader history: spelling a name out in full is not a transfer, and a change on the day a stretch began leaves no empty stretch', async () => {
+  const t = annualTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'SULEIMAN' };
+  const db = fakeDb(t);
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', teamCode: 'ABCDEFG' }, NOW);
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo: 'SULEIMAN MPOKI MWASUNGA' }, NOW + DAY);
+  assert.deepEqual(holderRows(db, 'KONGOWE', 'gmo'), [{ name: 'SULEIMAN', from: '2026-07-24', to: OPEN_, source: 'app' }], 'the same person, written out: nothing recorded');
+  // Changed again the very day it was first seen: the seeded stretch had no days in it, so it is dropped, not kept inverted.
+  const t2 = annualTables(); t2.teams[0] = { ...t2.teams[0], gmo: 'GMO ONE' };
+  const d2 = fakeDb(t2);
+  await portalApi(d2, ADMIN, 'saveTeam', { team: 'KONGOWE', teamCode: 'ABCDEFG' }, NOW);
+  await portalApi(d2, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo: 'GMO TWO' }, NOW);
+  assert.deepEqual(holderRows(d2, 'KONGOWE', 'gmo'), [{ name: 'GMO TWO', from: '2026-07-24', to: OPEN_, source: 'app' }]);
+  assert.ok(d2._dump('team_holders').every(r => String(r.from_date) <= String(r.to_date)), 'no stretch ends before it begins');
+});
+
+test('leader history: an officer\'s access code lays over the sheet, so renaming the code is a change of holder too', async () => {
+  const t = annualTables();
+  t.access_codes.push({ code: 'R1', name: 'RECO ONE', role: 'RECOVERY', teams: ['KONGOWE'], tabs: [] });
+  const db = fakeDb(t);
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', teamCode: 'ABCDEFG' }, NOW);
+  assert.deepEqual(holderRows(db, 'KONGOWE', 'recovery'), [{ name: 'RECO ONE', from: '2026-07-24', to: OPEN_, source: 'app' }], 'the code, not the sheet\'s JUMA G');
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'R1', name: 'RECO TWO', role: 'RECOVERY', teams: 'KONGOWE' }, NOW + DAY);
+  assert.deepEqual(holderRows(db, 'KONGOWE', 'recovery'), [
+    { name: 'RECO ONE', from: '2026-07-24', to: '2026-07-24', source: 'app' }, { name: 'RECO TWO', from: '2026-07-25', to: OPEN_, source: 'app' }]);
+});
+
+test('leader history: a database without the table still saves, and a non-admin save records nothing', async () => {
+  const t = annualTables();
+  const db = fakeDb(t, { missingTables: ['team_holders'] });
+  const r = await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo: 'NEW GMO' }, NOW);
+  assert.equal(r.team, 'KONGOWE'); assert.equal(db._dump('teams').find(x => x.team === 'KONGOWE').gmo, 'NEW GMO', 'the save itself went through');
+  const t2 = annualTables(); const d2 = fakeDb(t2);
+  await assert.rejects(() => portalApi(d2, { ...GMO, tabs: ['teams'] }, 'saveTeam', { team: 'KONGOWE', gmo: 'X' }, NOW), e => e.status === 403);
+  assert.equal(d2._dump('team_holders').length, 0, 'a refused save leaves no history behind');
+});
+
+test('the annual leaders are judged on the months they held: a transfer, a vacancy, one person under two spellings', async () => {
+  const t = annualTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'GMO B' };
+  t.teams[1] = { ...t.teams[1], gmo: 'GMO A' };
+  t.team_holders = [
+    { team: 'KONGOWE', role: 'gmo', name: 'GMO A', from_date: '2026-01-01', to_date: '2026-03-31', source: 'app' },   // moved on in April
+    { team: 'MBAGALA', role: 'gmo', name: 'GMO A', from_date: '2026-01-01', to_date: OPEN_, source: 'app' },
+    { team: 'KONGOWE', role: 'manager', name: '', from_date: '2026-01-01', to_date: '2026-03-31', source: 'app' },       // nobody was manager in January
+  ];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'annual', { year: 2026 }, NOW);
+  assert.equal(d.holders.ok, true); assert.equal(d.holders.stretches, 3);
+  const gmo = d.leaders.roles.find(r => r.role === 'gmo').rows;
+  const a = gmo.find(r => r.name === 'GMO A'), b = gmo.find(r => r.name === 'GMO B');
+  // January: GMO A held both teams (60% and 60 general on KONGOWE, MBAGALA 20/100/not measured). July is the live month: whoever holds it now.
+  assert.equal(a.months, 2); assert.deepEqual(a.stints.map(x => [x.key, x.months]).sort(), [['KONGOWE', ['2026-01']], ['MBAGALA', ['2026-01', '2026-07']]]);
+  assert.equal(a.m['2026-01'].teams, 2); assert.equal(a.m['2026-01'].salesPct, 40); assert.equal(a.m['2026-01'].colPct, 90); assert.equal(a.m['2026-01'].recPct, 50); assert.equal(a.m['2026-01'].general, 60);
+  assert.equal(a.m['2026-07'].teams, 1, 'in July GMO A holds MBAGALA only');
+  assert.equal(a.salesPct, 20, 'the year is the average of the months held'); assert.equal(a.colPct, 45); assert.equal(a.recPct, 31.3); assert.equal(a.general, 32.1);
+  assert.equal(b.months, 1); assert.equal(b.teamList, 'KONGOWE'); assert.equal(b.general, 29.2, 'GMO B is judged on July alone, not on the team\'s January');
+  const mgr = d.leaders.roles.find(r => r.role === 'manager').rows;
+  assert.equal(mgr.find(r => r.name === 'BOSS').months, 1, 'nobody held the manager role in January, so BOSS has July only');
+  const me = d.leaders.all.find(r => r.name === 'GMO A');
+  assert.equal(me.roles, 'GMO'); assert.deepEqual(me.byRole.map(x => [x.role, x.general]), [['GMO', 32.1]]);
+  // One person under two spellings is one leader, under the fuller one.
+  const t2 = annualTables();
+  t2.teams[0] = { ...t2.teams[0], gmo: 'SULEIMAN MPOKI MWASUNGA' };
+  t2.team_holders = [{ team: 'KONGOWE', role: 'gmo', name: 'SULEIMAN', from_date: '2026-01-01', to_date: '2026-03-31', source: 'workbook' }];
+  const d2 = await portalApi(dbWithRpc(t2), ADMIN, 'annual', { year: 2026 }, NOW);
+  const s = d2.leaders.roles.find(r => r.role === 'gmo').rows;
+  assert.deepEqual(s.map(r => [r.name, r.months]), [['SULEIMAN MPOKI MWASUNGA', 2]], 'January\'s SULEIMAN and July\'s full name are one person');
+});
+
+test('the annual leaders count a team once a month however many roles the person held it under, and keep each role\'s own average', async () => {
+  const t = annualTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'ADAM', manager: 'ADAM' };
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'annual', { year: 2026 }, NOW);
+  const me = d.leaders.all.find(r => r.name === 'ADAM');
+  assert.equal(me.teams, 1); assert.equal(me.months, 2); assert.equal(me.roles, 'GMO, Manager');
+  assert.deepEqual(me.byRole.map(x => [x.role, x.months]), [['GMO', 2], ['Manager', 2]]);
+  assert.equal(me.general, 46.3, 'KONGOWE counted once, so the overall is the team\'s own');
+});
+
+test('the workbooks\' leaders are loaded once, by the first admin who opens the Annual Rep tab', async () => {
+  const { expandHolderData } = await import('../api/_lib/holders.js');
+  const { HOLDER_DATA } = await import('../api/_lib/annual-holders-data.js');
+  const want = expandHolderData(HOLDER_DATA).length;
+  const t = annualTables();
+  t.settings = t.settings.filter(x => x.key !== 'ANNUAL_HOLDERS_LOADED');
+  const db = dbWithRpc(t);
+  // Somebody who may only read does not load anything.
+  await portalApi(db, { ...GMO, tabs: ['annual'], teams: null }, 'annual', { year: 2026 }, NOW);
+  assert.equal(db._dump('team_holders').length, 0, 'a reader never writes');
+  const ro = await portalApi(dbWithRpc(annualTables()), { ...ADMIN, readOnly: true }, 'annual', { year: 2026 }, NOW);
+  assert.equal(ro.holders.loaded, null);
+  // The first admin does, and the screen says so.
+  const first = await portalApi(db, ADMIN, 'annual', { year: 2026 }, NOW + 61000);
+  assert.equal(first.holders.loaded, want); assert.equal(db._dump('team_holders').length, want);
+  assert.ok(first.notes.some(n => /workbooks/.test(n) && n.includes(String(want))));
+  assert.ok(db._dump('settings').some(r => r.key === 'ANNUAL_HOLDERS_LOADED'), 'and remembers it');
+  assert.ok(db._dump('team_holders').every(r => r.source === 'workbook'));
+  // KONGOWE's January 2026 GMO, as the January sheet named him, is credited with January.
+  const gmo = first.leaders.roles.find(r => r.role === 'gmo').rows;
+  assert.ok(gmo.find(r => r.name === 'SULEIMAN' && r.stints.some(x => x.key === 'KONGOWE' && x.months.includes('2026-01'))));
+  assert.ok(gmo.find(r => r.name === 'SADICK' && r.stints.some(x => x.key === 'MBAGALA' && x.months.includes('2026-01'))));
+  // The second time asks for nothing and writes nothing.
+  const second = await portalApi(db, ADMIN, 'annual', { year: 2026 }, NOW + 2 * 61000);
+  assert.equal(second.holders.loaded, null); assert.equal(db._dump('team_holders').length, want);
+  // Without the table the tab says what to run.
+  const miss = await portalApi(fakeDb(annualTables(), { missingTables: ['team_holders'], rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } }), ADMIN, 'annual', { year: 2026 }, NOW);
+  assert.equal(miss.holders.ok, false); assert.ok(miss.notes.some(n => /RUN-ME-050/.test(n)));
 });
