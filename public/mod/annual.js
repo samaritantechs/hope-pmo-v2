@@ -1,0 +1,255 @@
+/* annual -- a screen of HOPE PMO's portal, split out of public/app.html and fetched the first
+   time its tab opens (see modLoad_ in app.html). Plain script, no build step: every function
+   here is a global exactly as it would be inside app.html, and it may use any helper the core
+   page defines. Bump `var BUILD` in app.html whenever this file changes -- the loader fetches it
+   as /mod/annual.js?v=BUILD. */
+
+/* =====================================================================================
+   THE ANNUAL REPORT -- the GM's annual workbook, read off the system and always current.
+
+     "we also build a new tab 'Annual' - this will always update the annual statics, GM wants
+      to always have the report autoupdating ... in the tab i could go months, years, report
+      types, export excels, jpgs etc of what you see best"
+
+   One call per year (srv('annual', { year })) brings every team's twelve months; everything on
+   this screen -- the whole year, one month's own sheet, the company month by month, a metric
+   across the months, the leaders by role and in any role -- is cut from that one answer, so
+   changing the month or the report type costs nothing. Every table is a board with its own
+   Excel / JPG / CSV, and the list behind the chip is the same table with the search box.
+
+   The arithmetic is the server's (api/_lib/annual.js) and is printed under the bar: a month's
+   three percentages are the month report's own; a year's are the average of its measured
+   months; GENERAL is the average of the measured three; a leader is the average of their
+   teams. Sales, count and retention come from the loans table for every month; collection and
+   recovery come from the stamped workbook months (2025, January–July 2026) or the month ledger.
+   ===================================================================================== */
+var AN_MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+var AN_MON_SW = ['Januari', 'Februari', 'Machi', 'Aprili', 'Mei', 'Juni', 'Julai', 'Agosti', 'Septemba', 'Oktoba', 'Novemba', 'Desemba'];
+var AN_STATE = { sheet: ['kutoka ripoti', 'from the sheet', 'ok'], live: ['mfumo', 'the system', 'ok'],
+  pending: ['leja inajengwa', 'ledger pending', 'warn'], future: ['bado', 'not yet', 'mut'] };
+var AN_LEADER_COLS = [['opm', 'OPM'], ['pmo', 'PMO'], ['credit', 'Credit'], ['manager', 'Manager'], ['gmo', 'GMO'],
+  ['legal', 'Legal'], ['region', 'Region'], ['bike', 'Bike'], ['earlyCol', 'Early col']];
+var AN_METRICS = [['salesPct', 'Sales %', 'pct'], ['sales', 'Mauzo / Sales', 'money'], ['ecolPct', 'Early col %', 'pct'],
+  ['colPct', 'Collection %', 'pct'], ['recPct', 'Recovery %', 'pct'], ['general', 'General %', 'pct'],
+  ['loans', 'Count', 'num'], ['retentionPct', 'Retention %', 'pct']];
+
+function anYmLabel_(ym){ var i = Number(String(ym).slice(5, 7)) - 1; return (AN_MON[i] || ym) + ' ' + String(ym).slice(0, 4); }
+function anYmLong_(ym){ var i = Number(String(ym).slice(5, 7)) - 1; return (AN_MON_SW[i] || '') + ' / ' + (['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'][i] || ym) + ' ' + String(ym).slice(0, 4); }
+function anStateWords_(st){ var w = AN_STATE[st] || [st, st, 'mut']; return w[0] + ' / ' + w[1]; }
+function anStateCls_(st){ return (AN_STATE[st] || [0, 0, 'mut'])[2]; }
+/* A percentage's colour on the cards: at or over its target green, otherwise plain -- the same
+   targets the tables use (targetOf_). The tables themselves paint by the one colour rule. */
+function anCls_(key, v){ if (v == null) return ''; var t = targetOf_({ key: key }); return (t != null && Number(v) >= t) ? 'good' : ''; }
+function anPc_(v){ return v == null ? '—' : pct(v); }
+
+/* The bar: the three report types, then the year and the month. A month narrows the Teams and
+   Leaders reports to that month's own sheet; "By month" always shows the whole year. */
+function anBar_(d, rep, month){
+  var yrs = d.years || [d.year];
+  var i = yrs.indexOf(Number(d.year));
+  var prev = i > 0 ? yrs[i - 1] : null, next = (i >= 0 && i < yrs.length - 1) ? yrs[i + 1] : null;
+  var pills = [['teams', 'Timu / Teams'], ['months', 'Kwa mwezi / By month'], ['leaders', 'Viongozi / Leaders']].map(function(p){
+    return '<button class="pill' + (rep === p[0] ? ' on' : '') + '" data-arg="rep" data-val="' + p[0] + '">' + p[1] + '</button>'; }).join('');
+  var sel = '<select data-arg="month"><option value="">Mwaka mzima / Whole year ' + esc(d.year) + '</option>'
+    + (d.months || []).filter(function(m){ return m.state !== 'future'; }).map(function(m){
+        return '<option value="' + m.ym + '"' + (month === m.ym ? ' selected' : '') + '>' + anYmLabel_(m.ym) + ' · ' + (AN_STATE[m.state] || [m.state, m.state])[1] + '</option>'; }).join('')
+    + '</select>';
+  return bar(pills
+    + '<span class="mut" style="margin-left:auto;font-size:12px">Mwaka / Year</span>'
+    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(prev || d.year) + '"' + (prev ? '' : ' disabled') + ' title="Mwaka uliopita / previous year">&#9664;</button>'
+    + '<b style="padding:0 4px">' + esc(d.year) + '</b>'
+    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(next || d.year) + '"' + (next ? '' : ' disabled') + ' title="Mwaka unaofuata / next year">&#9654;</button>'
+    + sel);
+}
+/* Where each month came from, in one line under the bar -- the sheet, the system, or not yet. */
+function anSources_(d){
+  var had = (d.months || []).filter(function(m){ return m.state !== 'future'; });
+  var by = {};
+  had.forEach(function(m){ (by[m.state] = by[m.state] || []).push(AN_MON[Number(m.ym.slice(5, 7)) - 1]); });
+  return '<div class="mut" style="font-size:12px;margin:2px 0 8px">'
+    + Object.keys(by).map(function(st){ return '<span class="chip ' + anStateCls_(st) + '">' + esc(anStateWords_(st)) + '</span> ' + esc(by[st].join(', ')); }).join(' &nbsp; ')
+    + ' &nbsp; <span class="mut">Lengo la mwezi / month target: TZS ' + money(d.target) + ' kwa timu / per team</span></div>';
+}
+function anKpis_(t, when){
+  return '<div class="kpis">'
+    + kpi('Mauzo / Sales', money(t.sales), money(t.loans) + ' loans · ' + money(t.trk1) + ' TRK1 · ' + money(t.retained) + ' retained (' + anPc_(t.retentionPct) + ') · ' + when)
+    + kpi('Sales %', anPc_(t.salesPct), 'dhidi ya lengo / against target', anCls_('salesPct', t.salesPct))
+    + kpi('Early col %', anPc_(t.ecolPct), 'orodha ya awali / initial sheet', anCls_('ecolPct', t.ecolPct))
+    + kpi('Collection %', anPc_(t.colPct), t.expected != null ? 'TZS ' + money(t.collected) + ' / ' + money(t.expected) : '', anCls_('colPct', t.colPct))
+    + kpi('Recovery %', anPc_(t.recPct), t.recovered != null ? 'TZS ' + money(t.recovered) + ' / ' + money(t.uncollected) : '', anCls_('recPct', t.recPct))
+    + kpi('General %', anPc_(t.general), 'wastani wa sales, collection, recovery / the average of the three', t.general == null ? '' : (t.general >= 70 ? 'good' : (t.general < 50 ? 'bad' : '')))
+    + '</div>';
+}
+function anTeamCols_(yearMode){
+  var c = AN_LEADER_COLS.map(function(p){ return { key: p[0], label: p[1], nameCol: p[0] !== 'region' }; });
+  c.push({ key: 'team', label: 'Timu / Team', nameCol: true },
+    col('sales', 'Mauzo / Sales', 'money'), col('totalLoan', 'Total loan (P+I)', 'money'), col('salesPct', 'Sales %', 'pct'),
+    col('loans', 'Count', 'num'), col('trk1', 'TRK1', 'num'), col('retained', 'Retained', 'num'), col('retentionPct', 'Retention %', 'pct'),
+    col('expected', 'Expected', 'money'), col('collected', 'Collected', 'money'), col('uncollected', 'Uncollected', 'money'),
+    col('ecolPct', 'Early col %', 'pct'), col('colPct', 'Collection %', 'pct'),
+    col('recovered', 'Recovered', 'money'), col('recPct', 'Recovery %', 'pct'), col('unrecovered', 'Unrecovered', 'money'),
+    { key: 'general', label: 'General %', kind: 'pct', avgKey: 'general' });
+  if (yearMode) c.push(col('totalDef', 'Total def', 'money'), { key: 'par', label: 'PAR %', kind: 'pct', lowGood: true }, col('months', 'Miezi / Months', 'num'));
+  return c;
+}
+/* The total row of a board, from the server's own figures -- the engine fills only what is left
+   blank, so a percentage here is the company's, never an average of the rows above it. */
+function anTotals_(t, cols){
+  var o = {};
+  cols.forEach(function(c){ if (t[c.key] != null) o[c.key] = t[c.key]; });
+  o[cols[0].key] = '';
+  return o;
+}
+/* One month's sheet: every team that had the month, its leaders beside the month's figures. */
+function anMonthRows_(d, ym){
+  return (d.teams || []).filter(function(t){ return t.m && t.m[ym]; }).map(function(t){
+    var c = t.m[ym], o = { team: t.team, key: t.key };
+    AN_LEADER_COLS.forEach(function(p){ o[p[0]] = t[p[0]]; });
+    Object.keys(c).forEach(function(k){ o[k] = c[k]; });
+    o.unrecovered = (c.uncollected != null && c.recovered != null) ? c.uncollected - c.recovered : null;
+    return o;
+  }).sort(function(a, b){ return (b.general == null ? -1 : b.general) - (a.general == null ? -1 : a.general) || (b.sales - a.sales); });
+}
+function anMonthOf_(d, ym){ return (d.months || []).filter(function(m){ return m.ym === ym; })[0] || {}; }
+
+/* ---- TIMU / TEAMS: the ANNUAL sheet (the year) or one month's sheet. */
+function anTeams_(d, month){
+  var yearMode = !month;
+  var rows = yearMode ? d.teams : anMonthRows_(d, month);
+  var tot = yearMode ? d.totals : anMonthOf_(d, month);
+  var cols = anTeamCols_(yearMode);
+  var when = yearMode ? (d.totals.months + ' miezi / months') : anYmLabel_(month) + ' · ' + anStateWords_(tot.state);
+  HEAD += anKpis_(tot, when)
+    + board('anTeams', yearMode ? 'Timu — mwaka ' + d.year + ' / Teams — the year' : 'Timu — ' + anYmLong_(month),
+        money(rows.length) + ' timu / teams · bora kwanza / best first',
+        rows, cols, anTotals_(tot, cols));
+  S.rows = rows; S.cols = cols;
+  S.foldMain = 'anlist'; S.foldLabel = 'Orodha / List — tafuta na panga / search and sort';
+  S.foot = 'Mauzo / Sales: TZS ' + money(tot.sales) + ' · Sales ' + anPc_(tot.salesPct) + ' · Col ' + anPc_(tot.colPct) + ' · Rec ' + anPc_(tot.recPct) + ' · General ' + anPc_(tot.general);
+}
+
+/* ---- KWA MWEZI / BY MONTH: the company month by month (the MONTHLY sheet), then one metric
+   across the months for every team (the SALES / COLN / REC / COUNT sheets, one at a time). */
+function anMonths_(d, metric){
+  var mdef = AN_METRICS.filter(function(x){ return x[0] === metric; })[0] || AN_METRICS[0];
+  var mrows = (d.months || []).filter(function(m){ return m.state !== 'future'; });
+  var mcols = [{ key: 'name', label: 'Mwezi / Month' },
+    { key: 'state', label: 'Chanzo / Source', kind: 'chip', get: function(r){ return r.state ? anStateWords_(r.state) : ''; }, chip: function(r){ return anStateCls_(r.state); } },
+    col('teams', 'Timu / Teams', 'num'), col('sales', 'Mauzo / Sales', 'money'), col('salesPct', 'Sales %', 'pct'),
+    col('loans', 'Count', 'num'), col('trk1', 'TRK1', 'num'), col('retained', 'Retained', 'num'), col('retentionPct', 'Retention %', 'pct'),
+    col('expected', 'Expected', 'money'), col('collected', 'Collected', 'money'), col('colPct', 'Collection %', 'pct'),
+    col('uncollected', 'Uncollected', 'money'), col('ecolPct', 'Early col %', 'pct'), col('recovered', 'Recovered', 'money'), col('recPct', 'Recovery %', 'pct'),
+    { key: 'general', label: 'General %', kind: 'pct', avgKey: 'general' }];
+  var yearTot = anTotals_(d.totals, mcols);
+  yearTot.name = ''; yearTot.teams = d.totals.teams;
+  HEAD += anKpis_(d.totals, d.totals.months + ' miezi / months')
+    + board('anMonths', 'Kampuni kwa mwezi / The company, month by month', 'mwaka ' + d.year + ' · JUMLA = mwaka: wastani wa miezi / the year: the average of the months', mrows, mcols, yearTot);
+  // The metric pills, then the matrix: a team per row, a month per column, the year at the end.
+  var pills = AN_METRICS.map(function(x){ return '<button class="pill' + (x[0] === mdef[0] ? ' on' : '') + '" data-arg="metric" data-val="' + x[0] + '">' + x[1] + '</button>'; }).join('');
+  var xcols = [{ key: 'team', label: 'Timu / Team', nameCol: true }];
+  mrows.forEach(function(m){ xcols.push({ key: 'm' + m.ym.slice(5, 7), label: AN_MON[Number(m.ym.slice(5, 7)) - 1], kind: mdef[2], title: anYmLabel_(m.ym) + ' · ' + anStateWords_(m.state) }); });
+  xcols.push({ key: 'year', label: 'Mwaka / Year', kind: mdef[2], avgKey: mdef[2] === 'pct' ? 'year' : undefined });
+  var xrows = (d.teams || []).map(function(t){
+    var o = { team: t.team, year: t[mdef[0]] };
+    mrows.forEach(function(m){ var c = t.m[m.ym]; o['m' + m.ym.slice(5, 7)] = c ? c[mdef[0]] : null; });
+    return o;
+  });
+  var xtot = { team: '', year: d.totals[mdef[0]] };
+  mrows.forEach(function(m){ xtot['m' + m.ym.slice(5, 7)] = m[mdef[0]]; });
+  HEAD += bar(pills)
+    + board('anMatrix', mdef[1] + ' kwa timu na mwezi / by team and month', 'mwaka ' + d.year + ' · JUMLA = kampuni / the company', xrows, xcols, xtot);
+  S.rows = mrows; S.cols = mcols;
+  S.foldMain = 'anlist'; S.foldLabel = 'Orodha / List — miezi / the months';
+  S.foot = d.totals.months + ' miezi / months · General ' + anPc_(d.totals.general);
+}
+
+/* ---- VIONGOZI / LEADERS: one board per role (the GMO sheets), then everyone in any role. A
+   leader's figure is the average of their teams'; the total row is the company. */
+function anLeaderRows_(rows, month){
+  return rows.map(function(r){
+    var src = month ? r.m[month] : r;
+    if (!src) return null;
+    return { name: r.name, roles: r.roles || '', teams: month ? src.teams : r.teams, teamList: r.teamList, teamKeys: r.teamKeys, months: r.months,
+      sales: src.sales, salesPct: src.salesPct, ecolPct: src.ecolPct, colPct: src.colPct, recPct: src.recPct, general: src.general };
+  }).filter(Boolean).sort(function(a, b){ return (b.general == null ? -1 : b.general) - (a.general == null ? -1 : a.general); });
+}
+function anLeaderCols_(withRoles){
+  var c = [];
+  if (withRoles) c.push(col('roles', 'Nafasi / Roles'));
+  c.push({ key: 'name', label: 'Jina / Name', kind: 'tap', tap: 'anLeader_', nameCol: true, data: function(r){ return { name: r.name, keys: (r.teamKeys || []).join(',') }; } },
+    col('teams', 'Timu / Teams', 'num'), col('teamList', 'Timu zipi / Which teams'), col('months', 'Miezi / Months', 'num'),
+    col('sales', 'Mauzo / Sales', 'money'), col('salesPct', 'Sales %', 'pct'), col('ecolPct', 'Early col %', 'pct'),
+    col('colPct', 'Collection %', 'pct'), col('recPct', 'Recovery %', 'pct'), { key: 'general', label: 'General %', kind: 'pct', avgKey: 'general' });
+  return c;
+}
+function anLeaders_(d, month){
+  var tot = month ? anMonthOf_(d, month) : d.totals;
+  var when = month ? anYmLabel_(month) : 'mwaka ' + d.year + ' / the year';
+  HEAD += anKpis_(tot, when);
+  var L = d.leaders || { roles: [], all: [] };
+  var cols = anLeaderCols_(false);
+  (L.roles || []).forEach(function(sec){
+    var rows = anLeaderRows_(sec.rows || [], month);
+    if (!rows.length) return;
+    var t = anTotals_(tot, cols); t.teams = tot.teams; t.months = tot.months;
+    HEAD += board('anL_' + sec.role, 'Kwa ' + sec.label + ' / By ' + sec.label, money(rows.length) + ' named · ' + when + ' · wastani wa timu zao / the average of their teams', rows, cols, t);
+  });
+  var allCols = anLeaderCols_(true);
+  var all = anLeaderRows_(L.all || [], month);
+  var at = anTotals_(tot, allCols); at.teams = tot.teams; at.months = tot.months;
+  HEAD += board('anAll', 'Wote, nafasi yoyote / Everyone, in any role', money(all.length) + ' named · timu zote wanazoshikilia kwa nafasi yoyote / every team they hold under any heading', all, allCols, at);
+  S.rows = all; S.cols = allCols;
+  S.foldMain = 'anlist'; S.foldLabel = 'Orodha / List — viongozi wote / all leaders';
+  S.foot = money(all.length) + ' viongozi / leaders · ' + when;
+}
+/* The card behind a leader's name: their teams for the period on screen, then every team's
+   General % month by month -- the GMO sheet for one person, with Excel beside the (x). */
+function anLeader_(el){
+  var name = el.getAttribute('data-tap-name'), keys = (el.getAttribute('data-tap-keys') || '').split(',');
+  var d = S.anData;
+  if (!name || !d) return;
+  var month = S.args.month || '';
+  var teams = (d.teams || []).filter(function(t){ return keys.indexOf(t.key) >= 0; });
+  var rows = month ? anMonthRows_({ teams: teams }, month).map(function(r){ r.months = 1; return r; })
+    : teams.map(function(t){ return { team: t.team, months: t.months, sales: t.sales, loans: t.loans, salesPct: t.salesPct, ecolPct: t.ecolPct, colPct: t.colPct, recPct: t.recPct, general: t.general }; });
+  var cols = [{ key: 'team', label: 'Timu / Team', nameCol: true }, col('months', 'Miezi / Months', 'num'), col('sales', 'Mauzo / Sales', 'money'), col('loans', 'Count', 'num'),
+    col('salesPct', 'Sales %', 'pct'), col('ecolPct', 'Early col %', 'pct'), col('colPct', 'Collection %', 'pct'), col('recPct', 'Recovery %', 'pct'),
+    { key: 'general', label: 'General %', kind: 'pct', avgKey: 'general' }];
+  var mean_ = function(k){ var v = rows.map(function(r){ return r[k]; }).filter(function(x){ return x != null; }); return v.length ? Math.round(v.reduce(function(s, x){ return s + Number(x); }, 0) / v.length * 10) / 10 : null; };
+  var tot = { team: '', months: null, sales: rows.reduce(function(s, r){ return s + (Number(r.sales) || 0); }, 0), loans: rows.reduce(function(s, r){ return s + (Number(r.loans) || 0); }, 0),
+    salesPct: mean_('salesPct'), ecolPct: mean_('ecolPct'), colPct: mean_('colPct'), recPct: mean_('recPct'), general: mean_('general') };
+  BOARDS.an_leader = { title: name + ' · ' + (month ? anYmLabel_(month) : d.year), rows: rows, cols: cols };
+  var html = '<h3>' + esc(name) + ' <span class="chip ok">' + esc(month ? anYmLabel_(month) : 'mwaka / year ' + d.year) + '</span></h3>'
+    + '<div class="mut" style="font-size:12px;margin-bottom:8px">' + esc(teams.length) + ' timu / teams · wastani wa timu zake / the average of their teams · JUMLA = kiongozi / the leader</div>'
+    + tableSimple(rows, cols, tot);
+  if (!month) {
+    var had = (d.months || []).filter(function(m){ return m.state !== 'future'; });
+    var xcols = [{ key: 'team', label: 'Timu / Team' }];
+    had.forEach(function(m){ xcols.push({ key: 'm' + m.ym.slice(5, 7), label: AN_MON[Number(m.ym.slice(5, 7)) - 1], kind: 'pct', title: anYmLabel_(m.ym) }); });
+    xcols.push({ key: 'year', label: 'Mwaka / Year', kind: 'pct', avgKey: 'year' });
+    var xrows = teams.map(function(t){ var o = { team: t.team, year: t.general }; had.forEach(function(m){ var c = t.m[m.ym]; o['m' + m.ym.slice(5, 7)] = c ? c.general : null; }); return o; });
+    var xtot = { team: '', year: tot.general };
+    had.forEach(function(m){ var v = teams.map(function(t){ return t.m[m.ym] ? t.m[m.ym].general : null; }).filter(function(x){ return x != null; });
+      xtot['m' + m.ym.slice(5, 7)] = v.length ? Math.round(v.reduce(function(s, x){ return s + x; }, 0) / v.length * 10) / 10 : null; });
+    html += '<h4 style="margin:12px 0 6px">General % kwa mwezi / by month</h4>' + tableSimple(xrows, xcols, xtot);
+  }
+  drawer(html, { wide: true, xls: 'an_leader' });
+}
+
+VIEWS.annual = function(){
+  var year = S.args.year || todayKeyClient().slice(0, 4);
+  var rep = S.args.rep || 'teams';
+  return srv('annual', { year: year }).then(function(d){
+    S.anData = d;
+    S.args.year = String(d.year);
+    var month = S.args.month || '';
+    if (month && month.slice(0, 4) !== String(d.year)) { month = ''; S.args.month = ''; }
+    HEAD = anBar_(d, rep, month) + anSources_(d)
+      + (d.notes || []).map(function(n){ return '<div class="note">' + esc(n) + '</div>'; }).join('');
+    if (rep === 'months') anMonths_(d, S.args.metric || 'salesPct');
+    else if (rep === 'leaders') anLeaders_(d, month);
+    else anTeams_(d, month);
+    HEAD += '<div class="mut" style="font-size:11.5px;margin:8px 0">' + esc(d.rule || '') + '</div>';
+    ONROW = null;
+  });
+};

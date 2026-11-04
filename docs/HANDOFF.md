@@ -3511,6 +3511,73 @@ Staff, `(unassigned)` where none is named, then the team and the figures as befo
 server's `par` reads the teams table once for both the OPM and the branch; the branch stays
 on the row (and so in the Excel/CSV export) but is no longer a column on the screen.
 
+## Part 33 — The Annual Report: the GM's workbook, read off the system
+
+> "we also build a new tab 'Annual' — this will always update the annual statistics, GM wants
+> to always have the report autoupdating … The task is to stamp monthly collection and
+> recovery data jan 2025 – july 2026. Customer retention comes from sales which we already
+> have … in the tab I could go months, years, report types, export excels, jpgs etc."
+
+The annual report used to be a workbook kept by hand: a sheet per month, a sheet per summary
+(ANNUAL, SALES, COLN, REC, COUNT, one per GMO), and a deck built from it in January. The
+**Ripoti ya Mwaka / Annual Report** tab (`public/mod/annual.js`, `api/_lib/annual.js`,
+granted like the audit report: admins from the start, a role when ticked) is that workbook
+read off the system, for any year, as it stands today.
+
+**Where each figure comes from — one rule each, nothing stamped twice.**
+
+| Figure | Source | Every month |
+|---|---|---|
+| Sales, count, TRK1 (first-time), retained, total loan (P+I) | the loans table, `SALES_STAGES` by `approved_date` — the one rule every sales figure uses. Summed by the database (`loan_month_totals_by_team`, RUN-ME-049) or, until that is pasted, from the rows on the server (and the screen says so) | 2024 onward |
+| Collection, early collection, recovery | the **month ledger** the month report fills (`monthLedgerDays_` → `ledgerByTeam_`, the same cells, with Iliyonasia laid over) | the months the app has run (August 2026 →) |
+| Collection, early collection, recovery before the app | `team_months`, stamped from the workbooks by **`db/RUN-ME-049-annual-team-months.sql`** | January–July 2026 per team per month; 2025 as one **year row** per team (the 2025 workbook kept no monthly collection or recovery — only the year's collection %, PAR and total def, and the year's leaders) |
+
+A month that has stamped rows is read from them and nowhere else; a month without is the
+ledger's. Sales are never stamped and never frozen, which is why "customer retention comes
+from sales" needed nothing new. An early-collection % of 0 in the sheets is stamped as NULL
+("not recorded"): February–April carry 0 for every team.
+
+**The arithmetic, as the workbook does it, written once in `annual.js`:** a month's three
+percentages are the month report's own (sales ÷ weekly×4, collected ÷ expected, recovered ÷
+uncollected; nothing left to recover is "not measured", never 100%); a year's percentage is
+**the average of its measured months** (the workbook averages twelve cells; a running year
+averages the months that have happened); GENERAL is the average of the measured three; a
+leader's figure is the average of their teams' for the same period, and "everyone, in any
+role" is judged on the union of every team a person holds under any heading. The company's
+month is sums (collected over expected, as the month report's totals); its year is the
+average of its months, like every other row; 2025, closed per team only, averages the teams.
+
+**Who holds a team** is Teams & Staff as it stands today (`readTeamsAll`, the codes laid
+over the sheet — PMO is the `collection` column, early collection `expected`), except where a
+year row names the holders: 2025's names are 2025's. The 2026 month rows carry no names on
+purpose; how a leader who moved should carry the months they actually held is a decision the
+GM wants to take after seeing the reports themselves, and `team_months` has the columns for
+it when that day comes.
+
+**On the screen:** three report types — **Timu / Teams** (the ANNUAL sheet: every team's
+year in the workbook's columns, or one month's own sheet when a month is picked), **Kwa mwezi
+/ By month** (the company month by month, then any one metric across the months for every
+team — the SALES / COLN / REC / COUNT sheets), **Viongozi / Leaders** (a board per role, the
+GMO sheets, then everyone in any role; a name opens the card with their teams and a General %
+by month, Excel beside the ×). The year steps ◀ ▶, a month narrows Teams and Leaders. Every
+board exports Excel / JPG / CSV; the list behind the chip is the same table with the search.
+Under the bar: which months came from the sheet, the system, or are still pending, and the
+rule in one line. Not on the upload or call paths: one answer per year per scope, the usual
+minute.
+
+**Cost.** The ledger months are filled under one 20-second budget, oldest first; a month the
+budget does not reach says "ledger pending" and is picked up on the next open, because the
+ledger stores its progress. `monthLedgerDays_` now takes the two summary reads in
+(`summaries`), made once for the whole stretch, and **stops a finished month's slices at the
+month's end** — a January read in November used to ask for forty slices, thirty-eight of them
+outside January. The speed table carries the cold year (12 / 83 trips: seven months of slices
+and their stores) and a warm-open test (9 trips: a finished month never costs a slice again).
+
+**What is not there:** 2025's months show sales only (no monthly collection or recovery
+exists for them anywhere); a month before the stamps are pasted shows sales and whatever
+the ledger holds; the hand-made 2026 deck is not generated — the tab's exports are the
+report, and a deck can be cut from them when the year closes.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

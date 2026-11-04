@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -364,6 +364,15 @@ const BUDGETS = [
      is the cost of not pasting RUN-ME-047, measured here so it stays visible; the migrated
      world keeps 800. */
   ['Portfolio at Risk',       'par',                 {}, ADMIN,  7,  3500,  6,  800],
+  /* THE ANNUAL REPORT, COLD: a whole year of every team, measured here on a July with nothing
+     stored. One read of the stamps (team_months), the registry (memoised), ONE call for the
+     year's sales (the database's own sum once RUN-ME-049 is pasted; until then every sale row
+     of the year, which is the un-migrated row budget on the left), the adjustments, the two
+     summary reads made ONCE for the whole stretch, then the ledger month by month -- seven
+     months here, each its week-sized slices plus the one write that stores them. That store is
+     the point: a finished month's ledger is kept, so the second open of a year pays the stamps,
+     the sales and the live week only -- the warm test under this table measures that. */
+  ['Annual report (cold year)', 'annual', { year: 2026 }, ADMIN, 12, 2100, 81, 950],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
   /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
      the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
@@ -501,7 +510,7 @@ const WORLDS = [
   /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
      counts collapse into one grouped call the same way the team-day sums do, and a budget that
      leaves that out is measuring a deployment nobody is running. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC } }, 6, 7],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {
@@ -523,6 +532,23 @@ for (const B of BUDGETS) {
   });
 }
 }
+
+/* THE ANNUAL REPORT, WARM. The cold budget above is a year nobody has opened: every finished
+   month's ledger is filled and STORED on that first open. The second open -- a minute later, the
+   answer cache expired -- reads the stamps, the registry, the year's sales, the adjustments, the
+   two summaries and each stored month's ledger row, and fills only the live week. That is what
+   a year costs on every open after the first, and it must stay flat however many months the
+   year has gathered: a month that is finished never costs a slice again. */
+test('speed: the annual report, warm -- a year whose ledgers are stored costs the stamps, the sales and the live week', async () => {
+  const c = counting(bigBook(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC } });
+  await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW);
+  const cold = c.stat();
+  await portalApi(c.db, ADMIN, 'annual', { year: 2026 }, NOW + 61000);
+  const trips = c.stat().trips - cold.trips, rows = c.stat().rows - cold.rows;
+  assert.ok(trips <= 9, `the warm annual report took ${trips} round trips (budget 9) -- a finished month must never cost a slice again.`);
+  // The live week's team-day totals and the year's team-months of sales: never a customer row.
+  assert.ok(rows <= 700, `the warm annual report read ${rows} rows (budget 700).`);
+});
 
 /* THE PHONE IS THE WORST CONNECTION IN THE COMPANY, so its budgets are the tightest. Every one
    of these is a field officer standing in the sun on mobile data. */

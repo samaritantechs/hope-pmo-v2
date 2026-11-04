@@ -9,7 +9,7 @@ import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
    and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
-import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
+import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC } from './snapshot-totals-rpc.mjs';
 /* A database that HAS the migrations -- which now includes the team-day totals function, because
    the defaulter book asks it which date each team's own latest deck is on. A plain fakeDb() is
    still the un-migrated world, and several tests use it deliberately. */
@@ -12494,4 +12494,160 @@ test('expdf report: a leader is matched to HOPE Calls by number, then by the wor
   assert.equal(sameName('MWASUNGA SULEIMAN', 'SULEIMAN MPOKI MWASUNGA'), true, 'in any order');
   assert.equal(sameName('MWASUNGA', 'SULEIMAN MPOKI MWASUNGA'), false, 'one word is not a match');
   assert.equal(sameName('SULEIMAN JUMA', 'SULEIMAN MPOKI MWASUNGA'), false, 'a different surname is somebody else');
+});
+
+/* ===================================================================================
+   THE ANNUAL REPORT.
+     "stamp monthly collection and recovery data jan 2025 - july 2026. Customer retention comes
+      from sales which we already have ... in the tab i could go months, years, report types"
+   One answer per year: sales, count and retention from the loans table for EVERY month;
+   collection and recovery from the stamped workbook months (team_months, RUN-ME-049) where a
+   month has rows and from the month ledger where it has not; a year's percentages the average
+   of its measured months; GENERAL the average of the measured three; a leader the average of
+   their teams. See api/_lib/annual.js.
+   =================================================================================== */
+function annualTables() {
+  const t = tables();
+  t.settings.push({ key: 'SALES_TARGET_WEEKLY', value: '250000' });   // 1,000,000 a month per team
+  t.loans = [
+    // January: KONGOWE sold 600,000 on two loans, one of them a first-time customer; MBAGALA 200,000.
+    { id: 'a1', team: 'KONGOWE', stage: 'disbursed', principal_amt: 400000, loan_amt: 544000, approved_date: '2026-01-10', track_no: '1' },
+    { id: 'a2', team: 'KONGOWE', stage: 'approved', principal_amt: 200000, loan_amt: 272000, approved_date: '2026-01-20', track_no: '3' },
+    { id: 'a3', team: 'MBAGALA', stage: 'approved', principal_amt: 200000, loan_amt: 272000, approved_date: '2026-01-15', track_no: '1' },
+    // July, the live month: the fixture's own two sales.
+    { id: 'l1', team: 'KONGOWE', stage: 'approved', principal_amt: 300000, approved_date: '2026-07-21', track_no: '1' },
+    { id: 'l3', team: 'KONGOWE', stage: 'disbursed', principal_amt: 100000, approved_date: '2026-07-20', track_no: '2' },
+    // Not sales of 2026: one rejected, one of March 2025.
+    { id: 'x1', team: 'KONGOWE', stage: 'rejected', principal_amt: 900000, approved_date: '2026-01-11', track_no: '1' },
+    { id: 'y1', team: 'KONGOWE', stage: 'approved', principal_amt: 500000, approved_date: '2025-03-05', track_no: '1' },
+  ];
+  t.team_months = [
+    // January 2026 as the workbook kept it: KONGOWE collected 800 of 1,000 and recovered 100 of the 200 left.
+    // Spelled in lower case on purpose -- the sheet's spelling must still land on the registry's row.
+    { team: 'kongowe', ym: '2026-01', source: 'sheet', expected: 1000, collected: 800, uncollected: 200, ecol_pct: 50, recovered: 100 },
+    // MBAGALA collected everything: nothing to recover, so recovery was not measured (never 100%).
+    { team: 'MBAGALA', ym: '2026-01', source: 'sheet', expected: 500, collected: 500, uncollected: 0, ecol_pct: null, recovered: 0 },
+    // 2025: the year row -- the collection the year was closed on, and the year's own GMO and manager.
+    { team: 'KONGOWE', ym: '2025', source: 'sheet', col_pct: 95, total_def: 50000, par_pct: 5, gmo: 'OLD GMO', manager: 'OLD BOSS' },
+  ];
+  return t;
+}
+/* RUN-ME-049's sales function, as Postgres answers it, is LOAN_MONTH_RPC in snapshot-totals-rpc.mjs. */
+
+test('the annual report: a stamped month, the live month and the loans table, one year per team', async () => {
+  const t = annualTables();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'annual', { year: 2026 }, NOW);
+  assert.equal(d.year, 2026); assert.deepEqual(d.years, [2025, 2026]); assert.equal(d.target, 1000000);
+  assert.equal(d.stamped, true); assert.equal(d.light, false, 'no sales function in this world: the rows were summed here');
+  assert.ok(d.notes.some(n => /RUN-ME-049/.test(n)), 'and the screen says so');
+  const [jan, , , , , , jul, aug] = d.months;
+  assert.equal(jan.state, 'sheet'); assert.equal(jul.state, 'live'); assert.equal(aug.state, 'future');
+  assert.equal(d.months.length, 12);
+  const k = d.teams.find(x => x.team === 'KONGOWE');
+  assert.ok(k, 'the registry\'s spelling, whatever the sheet wrote');
+  assert.ok(!d.teams.some(x => x.team === 'kongowe'), 'one row, not two');
+  // January: sales from the loans table, collection and recovery from the stamp.
+  const kj = k.m['2026-01'];
+  assert.equal(kj.src, 'sheet');
+  assert.equal(kj.sales, 600000); assert.equal(kj.loans, 2); assert.equal(kj.trk1, 1); assert.equal(kj.retained, 1); assert.equal(kj.totalLoan, 816000);
+  assert.equal(kj.salesPct, 60, 'against weekly x 4');
+  assert.equal(kj.colPct, 80); assert.equal(kj.recPct, 50); assert.equal(kj.ecolPct, 50);
+  assert.equal(kj.general, 63.3, '(60 + 80 + 50) / 3');
+  assert.equal(kj.retentionPct, 50);
+  const mj = d.teams.find(x => x.team === 'MBAGALA').m['2026-01'];
+  assert.equal(mj.colPct, 100); assert.equal(mj.recPct, null, 'nothing was left to recover: not measured, never 100%');
+  assert.equal(mj.general, 60, 'the average of the two that were measured');
+  // July: the month ledger -- the same cells the month report reads.
+  const kl = k.m['2026-07'];
+  assert.equal(kl.src, 'live');
+  assert.equal(kl.sales, 400000); assert.equal(kl.salesPct, 40);
+  assert.equal(kl.expected, 1900); assert.equal(kl.collected, 500); assert.equal(kl.colPct, 26.3);
+  assert.equal(kl.recovered, 300, 'Friday\'s paired decks: 1,200 initial, 900 current'); assert.equal(kl.recPct, 21.4, '300 of the 1,400 uncollected');
+  // The team's year: sums of the months, percentages the average of the measured months.
+  assert.equal(k.months, 2); assert.equal(k.first, '2026-01');
+  assert.equal(k.sales, 1000000); assert.equal(k.loans, 4); assert.equal(k.trk1, 2); assert.equal(k.retained, 2); assert.equal(k.retentionPct, 50);
+  assert.equal(k.salesPct, 50); assert.equal(k.colPct, 53.2); assert.equal(k.recPct, 35.7); assert.equal(k.ecolPct, 50);
+  assert.equal(k.general, 46.3); assert.equal(k.par, null); assert.equal(k.yearStamped, false);
+  assert.equal(k.manager, 'BOSS', 'Teams & Staff as it stands: no year row names anybody for 2026');
+  assert.equal(k.credit, 'ANALYST A'); assert.equal(k.earlyCol, 'EARLY E'); assert.equal(k.recovery, 'JUMA G');
+  // The company's January: sums, collected over expected; the year: the average of its months.
+  assert.equal(jan.teams, 2); assert.equal(jan.sales, 800000); assert.equal(jan.salesPct, 40, '800,000 over 1,000,000 x 2 teams');
+  assert.equal(jan.colPct, 86.7, '1,300 of 1,500'); assert.equal(jan.recPct, 50, '100 of the 200 that were measured');
+  assert.equal(d.totals.teams, 2); assert.equal(d.totals.sales, 1200000); assert.equal(d.totals.months, 2);
+  assert.equal(jul.colPct, 18.5, 'July across both teams: 500 of 2,700 (MBAGALA\'s deck was unpaid)');
+  assert.equal(d.totals.colPct, 52.6, 'the year: the average of January\'s 86.7 and July\'s 18.5');
+  // MBAGALA's July: no sale and an unpaid deck -- 0% and 0% -- so its year averages below KONGOWE's.
+  const mb = d.teams.find(x => x.team === 'MBAGALA');
+  assert.equal(mb.m['2026-07'].salesPct, 0); assert.equal(mb.m['2026-07'].colPct, 0);
+  assert.equal(mb.m['2026-07'].recPct, 12.5, 'Friday\'s decks: 100 of the 800 uncollected');
+  assert.deepEqual([mb.salesPct, mb.colPct, mb.recPct], [10, 50, 12.5], 'the year: January and July averaged; January\'s recovery was not measured');
+  assert.equal(mb.general, 24.2, '(10 + 50 + 12.5) / 3');
+  assert.equal(d.teams[0].team, 'KONGOWE', 'best general first');
+  // The leaders: each the average of their teams; everyone, in any role, on the union of their teams.
+  const mgr = d.leaders.roles.find(r => r.role === 'manager');
+  assert.equal(mgr.label, 'Manager');
+  const boss = mgr.rows.find(r => r.name === 'BOSS');
+  assert.equal(boss.teams, 1); assert.equal(boss.teamList, 'KONGOWE'); assert.deepEqual(boss.teamKeys, ['KONGOWE']);
+  assert.equal(boss.salesPct, 50); assert.equal(boss.colPct, 53.2); assert.equal(boss.general, 46.3); assert.equal(boss.months, 2);
+  assert.equal(boss.m['2026-01'].general, 63.3, 'and month by month');
+  assert.ok(!d.leaders.roles.find(r => r.role === 'gmo').rows.length, 'nobody is a GMO on this registry');
+  const all = d.leaders.all.find(r => r.name === 'JUMA G');
+  assert.equal(all.roles, 'Recovery'); assert.equal(all.teams, 1);
+  assert.ok(d.rule && /wastani|average/.test(d.rule));
+});
+
+test('the annual report: a year closed per team only (2025) reads its collection and its leaders off the year row', async () => {
+  const t = annualTables();
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'annual', { year: 2025 }, NOW);
+  assert.equal(d.year, 2025);
+  assert.equal(d.months.filter(m => m.state === 'future').length, 0, 'every month of 2025 has happened');
+  const k = d.teams.find(x => x.team === 'KONGOWE');
+  assert.equal(k.months, 1); assert.equal(k.first, '2025-03'); assert.equal(k.sales, 500000); assert.equal(k.salesPct, 50);
+  assert.equal(k.colPct, 95); assert.equal(k.yearStamped, true); assert.equal(k.par, 5); assert.equal(k.totalDef, 50000);
+  assert.equal(k.recPct, null); assert.equal(k.general, 72.5, 'sales 50 and collection 95, recovery not measured');
+  assert.equal(k.gmo, 'OLD GMO'); assert.equal(k.manager, 'OLD BOSS', 'the year row names 2025\'s holders');
+  assert.equal(k.credit, 'ANALYST A', 'a role the year row leaves blank is Teams & Staff\'s');
+  assert.equal(d.totals.colPct, 95, 'the company: the teams\' average, the only figure a year closed per team allows');
+  assert.ok(d.notes.some(n => /2025.*100 − PAR/.test(n)), 'said on the screen');
+  assert.equal(d.leaders.roles.find(r => r.role === 'gmo').rows[0].name, 'OLD GMO');
+  assert.ok(!d.teams.some(x => x.team === 'MBAGALA'), 'a team with nothing in 2025 is not a row');
+});
+
+test('the annual report without RUN-ME-049: the loans table and the ledger alone, and the screen says what is missing', async () => {
+  const t = annualTables();
+  const d = await portalApi(fakeDb(t, { missingTables: ['team_months'], rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC } }), ADMIN, 'annual', { year: 2026 }, NOW);
+  assert.equal(d.stamped, false);
+  assert.ok(d.notes.some(n => /team_months.*RUN-ME-049/.test(n)));
+  const k = d.teams.find(x => x.team === 'KONGOWE');
+  assert.equal(d.months[0].state, 'live', 'January is asked of the ledger instead');
+  assert.equal(k.m['2026-01'].sales, 600000, 'sales never depended on the stamps');
+  assert.equal(k.m['2026-01'].colPct, null, 'and January\'s collection is simply not there');
+  assert.equal(k.m['2026-07'].colPct, 26.3, 'the live month is the ledger\'s, as before');
+});
+
+test('the annual report sums the year\'s sales in the database when RUN-ME-049\'s function is there, and reads the same figures', async () => {
+  const t = annualTables();
+  const withFn = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...LOAN_MONTH_RPC } }), ADMIN, 'annual', { year: 2026 }, NOW);
+  const rows = await portalApi(dbWithRpc(t), ADMIN, 'annual', { year: 2026 }, NOW);
+  assert.equal(withFn.light, true);
+  assert.ok(!withFn.notes.some(n => /mauzo ya mwaka|year's sales/i.test(n)), 'nothing to say');
+  const a = withFn.teams.find(x => x.team === 'KONGOWE'), b = rows.teams.find(x => x.team === 'KONGOWE');
+  assert.deepEqual([a.sales, a.loans, a.trk1, a.retained, a.totalLoan, a.salesPct, a.general], [b.sales, b.loans, b.trk1, b.retained, b.totalLoan, b.salesPct, b.general]);
+  assert.deepEqual(withFn.totals, rows.totals);
+});
+
+test('the annual report is team-scoped at the database and gated on its own tab', async () => {
+  const t = annualTables();
+  const gmo = await portalApi(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...LOAN_MONTH_RPC } }), { ...GMO, tabs: ['annual'] }, 'annual', { year: 2026 }, NOW);
+  assert.deepEqual(gmo.teams.map(x => x.team), ['KONGOWE']);
+  assert.equal(gmo.totals.teams, 1); assert.equal(gmo.months[0].sales, 600000, 'MBAGALA\'s January is not in the company line');
+  assert.ok(!gmo.leaders.all.some(r => r.teamList.includes('MBAGALA')));
+  await assert.rejects(() => portalApi(dbWithRpc(t), { ...GMO, tabs: [] }, 'annual', { year: 2026 }, NOW), e => e.status === 403, 'the annual tab gates it');
+  const { annualYear, K2, mean } = await import('../api/_lib/annual.js');
+  assert.equal(annualYear('2025', '2026-07-24'), 2025);
+  assert.equal(annualYear('2031', '2026-07-24'), 2026, 'never ahead of today');
+  assert.equal(annualYear('', '2026-07-24'), 2026);
+  assert.equal(K2('TENGERU- USARIVER '), K2('tengeru-usariver'), 'the sheet\'s spelling and the registry\'s meet');
+  assert.equal(mean([60, null, 80]), 70, 'a missing month leaves the divisor');
+  assert.equal(mean([]), null);
 });

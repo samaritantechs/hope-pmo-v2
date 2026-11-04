@@ -418,3 +418,32 @@ export const EXPECTED_PHONE_WINDOW_RPC = {
     return out;
   },
 };
+
+/* db/RUN-ME-049-annual-team-months.sql's loan_month_totals_by_team, transcribed: one row per
+   team per month of approval between p_from and p_to, with the count, the first-time count
+   (track number 1), the principal (the loan amount where principal is blank) and the TOTAL LOAN
+   (P+I, or principal + interest where the loan amount is blank), at the stages handed in,
+   team-scoped upper-cased and trimmed. The Annual tab's year of sales in one call. */
+export const LOAN_MONTH_RPC = {
+  loan_month_totals_by_team(store, a = {}) {
+    const rows = store.loans ? store.loans.rows : [];
+    const up = v => String(v == null ? '' : v).trim().toUpperCase();
+    const want = a.p_teams ? a.p_teams.map(up) : null;
+    const stages = a.p_stages ? a.p_stages.map(String) : null;
+    const by = new Map();
+    for (const r of rows) {
+      const d = r.approved_date ? String(r.approved_date).slice(0, 10) : null;
+      if (!d || d < String(a.p_from) || d > String(a.p_to)) continue;
+      if (stages && !stages.includes(String(r.stage == null ? '' : r.stage))) continue;
+      if (want && !want.includes(up(r.team))) continue;
+      const ym = d.slice(0, 7), k = String(r.team) + '|' + ym;
+      let g = by.get(k);
+      if (!g) { g = { team: r.team == null ? null : r.team, ym, loans: 0, trk1: 0, principal: 0, loan_amt: 0 }; by.set(k, g); }
+      g.loans++;
+      if (/^0*1(\.0+)?$/.test(String(r.track_no == null ? '' : r.track_no).trim())) g.trk1++;
+      g.principal += Number(r.principal_amt != null ? r.principal_amt : (r.loan_amt != null ? r.loan_amt : 0)) || 0;
+      g.loan_amt += Number(r.loan_amt != null ? r.loan_amt : (Number(r.principal_amt || 0) + Number(r.interest_amt || 0))) || 0;
+    }
+    return [...by.values()];
+  },
+};
