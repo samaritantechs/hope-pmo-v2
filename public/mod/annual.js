@@ -27,6 +27,11 @@ var AN_MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OC
 var AN_MON_SW = ['Januari', 'Februari', 'Machi', 'Aprili', 'Mei', 'Juni', 'Julai', 'Agosti', 'Septemba', 'Oktoba', 'Novemba', 'Desemba'];
 var AN_STATE = { sheet: ['kutoka ripoti', 'from the sheet', 'ok'], live: ['mfumo', 'the system', 'ok'],
   pending: ['leja inajengwa', 'ledger pending', 'warn'], future: ['bado', 'not yet', 'mut'] };
+/* THE TOP OF THIS SCREEN IS ENGLISH ONLY AND BUILT FOR A PHONE: "The top design ain't user
+   experience friendly". The three report types are one full-width row of big touch targets, the
+   year stepper and the month picker share the row under it, and nothing wraps into a corner. The
+   report-type buttons live inside a `.pills` wrapper because that is where the shared pill style
+   is defined -- outside it they are plain grey browser buttons. */
 var AN_LEADER_COLS = [['opm', 'OPM'], ['pmo', 'PMO'], ['credit', 'Credit'], ['manager', 'Manager'], ['gmo', 'GMO'],
   ['legal', 'Legal'], ['region', 'Region'], ['bike', 'Bike'], ['earlyCol', 'Early col']];
 var AN_METRICS = [['salesPct', 'Sales %', 'pct'], ['sales', 'Mauzo / Sales', 'money'], ['ecolPct', 'Early col %', 'pct'],
@@ -35,7 +40,7 @@ var AN_METRICS = [['salesPct', 'Sales %', 'pct'], ['sales', 'Mauzo / Sales', 'mo
 
 function anYmLabel_(ym){ var i = Number(String(ym).slice(5, 7)) - 1; return (AN_MON[i] || ym) + ' ' + String(ym).slice(0, 4); }
 function anYmLong_(ym){ var i = Number(String(ym).slice(5, 7)) - 1; return (AN_MON_SW[i] || '') + ' / ' + (['JANUARY','FEBRUARY','MARCH','APRIL','MAY','JUNE','JULY','AUGUST','SEPTEMBER','OCTOBER','NOVEMBER','DECEMBER'][i] || ym) + ' ' + String(ym).slice(0, 4); }
-function anStateWords_(st){ var w = AN_STATE[st] || [st, st, 'mut']; return w[0] + ' / ' + w[1]; }
+function anStateWords_(st){ var w = AN_STATE[st] || [st, st, 'mut']; return w[1]; }
 function anStateCls_(st){ return (AN_STATE[st] || [0, 0, 'mut'])[2]; }
 /* A percentage's colour on the cards: at or over its target green, otherwise plain -- the same
    targets the tables use (targetOf_). The tables themselves paint by the one colour rule. */
@@ -48,36 +53,37 @@ function anBar_(d, rep, month){
   var yrs = d.years || [d.year];
   var i = yrs.indexOf(Number(d.year));
   var prev = i > 0 ? yrs[i - 1] : null, next = (i >= 0 && i < yrs.length - 1) ? yrs[i + 1] : null;
-  var pills = [['teams', 'Timu / Teams'], ['months', 'Kwa mwezi / By month'], ['leaders', 'Viongozi / Leaders']].map(function(p){
-    return '<button class="pill' + (rep === p[0] ? ' on' : '') + '" data-arg="rep" data-val="' + p[0] + '">' + p[1] + '</button>'; }).join('');
-  var sel = '<select data-arg="month"><option value="">Mwaka mzima / Whole year ' + esc(d.year) + '</option>'
+  // Row one: the report type, three equal buttons across the full width.
+  var seg = '<div class="pills" style="flex-wrap:nowrap;margin-bottom:8px">' + [['teams', 'Teams'], ['months', 'By month'], ['leaders', 'Leaders']].map(function(p){
+    return '<button class="pill' + (rep === p[0] ? ' on' : '') + '" style="flex:1;padding:10px 6px;font-size:13.5px" data-arg="rep" data-val="' + p[0] + '">' + p[1] + '</button>'; }).join('') + '</div>';
+  // Row two: the year, stepped, and the month, filling what is left.
+  var sel = '<select data-arg="month" aria-label="Month" style="flex:1 1 150px;min-width:0;max-width:100%"><option value="">Whole year</option>'
     + (d.months || []).filter(function(m){ return m.state !== 'future'; }).map(function(m){
-        return '<option value="' + m.ym + '"' + (month === m.ym ? ' selected' : '') + '>' + anYmLabel_(m.ym) + ' · ' + (AN_STATE[m.state] || [m.state, m.state])[1] + '</option>'; }).join('')
+        return '<option value="' + m.ym + '"' + (month === m.ym ? ' selected' : '') + '>' + anYmLabel_(m.ym) + ' · ' + anStateWords_(m.state) + '</option>'; }).join('')
     + '</select>';
-  return bar(pills
-    + '<span class="mut" style="margin-left:auto;font-size:12px">Mwaka / Year</span>'
-    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(prev || d.year) + '"' + (prev ? '' : ' disabled') + ' title="Mwaka uliopita / previous year">&#9664;</button>'
-    + '<b style="padding:0 4px">' + esc(d.year) + '</b>'
-    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(next || d.year) + '"' + (next ? '' : ' disabled') + ' title="Mwaka unaofuata / next year">&#9654;</button>'
-    + sel);
+  var year = '<span style="display:inline-flex;align-items:center;gap:6px;flex:0 0 auto">'
+    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(prev || d.year) + '"' + (prev ? '' : ' disabled') + ' title="Previous year" aria-label="Previous year">&#9664;</button>'
+    + '<b style="min-width:42px;text-align:center">' + esc(d.year) + '</b>'
+    + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(next || d.year) + '"' + (next ? '' : ' disabled') + ' title="Next year" aria-label="Next year">&#9654;</button></span>';
+  return seg + bar(year + sel);
 }
 /* Where each month came from, in one line under the bar -- the sheet, the system, or not yet. */
 function anSources_(d){
   var had = (d.months || []).filter(function(m){ return m.state !== 'future'; });
   var by = {};
   had.forEach(function(m){ (by[m.state] = by[m.state] || []).push(AN_MON[Number(m.ym.slice(5, 7)) - 1]); });
-  return '<div class="mut" style="font-size:12px;margin:2px 0 8px">'
-    + Object.keys(by).map(function(st){ return '<span class="chip ' + anStateCls_(st) + '">' + esc(anStateWords_(st)) + '</span> ' + esc(by[st].join(', ')); }).join(' &nbsp; ')
-    + ' &nbsp; <span class="mut">Lengo la mwezi / month target: TZS ' + money(d.target) + ' kwa timu / per team</span></div>';
+  return '<div class="mut" style="font-size:12px;margin:2px 0 10px;display:flex;flex-direction:column;gap:4px">'
+    + Object.keys(by).map(function(st){ return '<div><span class="chip ' + anStateCls_(st) + '">' + esc(anStateWords_(st)) + '</span> ' + esc(by[st].join(', ')) + '</div>'; }).join('')
+    + '<div>Month target: TZS ' + money(d.target) + ' per team</div></div>';
 }
 function anKpis_(t, when){
   return '<div class="kpis">'
-    + kpi('Mauzo / Sales', money(t.sales), money(t.loans) + ' loans · ' + money(t.trk1) + ' TRK1 · ' + money(t.retained) + ' retained (' + anPc_(t.retentionPct) + ') · ' + when)
-    + kpi('Sales %', anPc_(t.salesPct), 'dhidi ya lengo / against target', anCls_('salesPct', t.salesPct))
-    + kpi('Early col %', anPc_(t.ecolPct), 'orodha ya awali / initial sheet', anCls_('ecolPct', t.ecolPct))
+    + kpi('Sales', money(t.sales), money(t.loans) + ' loans · ' + money(t.trk1) + ' TRK1 · ' + money(t.retained) + ' retained (' + anPc_(t.retentionPct) + ') · ' + when)
+    + kpi('Sales %', anPc_(t.salesPct), 'against target', anCls_('salesPct', t.salesPct))
+    + kpi('Early col %', anPc_(t.ecolPct), 'the initial sheet', anCls_('ecolPct', t.ecolPct))
     + kpi('Collection %', anPc_(t.colPct), t.expected != null ? 'TZS ' + money(t.collected) + ' / ' + money(t.expected) : '', anCls_('colPct', t.colPct))
     + kpi('Recovery %', anPc_(t.recPct), t.recovered != null ? 'TZS ' + money(t.recovered) + ' / ' + money(t.uncollected) : '', anCls_('recPct', t.recPct))
-    + kpi('General %', anPc_(t.general), 'wastani wa sales, collection, recovery / the average of the three', t.general == null ? '' : (t.general >= 70 ? 'good' : (t.general < 50 ? 'bad' : '')))
+    + kpi('General %', anPc_(t.general), 'the average of sales, collection and recovery', t.general == null ? '' : (t.general >= 70 ? 'good' : (t.general < 50 ? 'bad' : '')))
     + '</div>';
 }
 function anTeamCols_(yearMode){
@@ -118,7 +124,7 @@ function anTeams_(d, month){
   var rows = yearMode ? d.teams : anMonthRows_(d, month);
   var tot = yearMode ? d.totals : anMonthOf_(d, month);
   var cols = anTeamCols_(yearMode);
-  var when = yearMode ? (d.totals.months + ' miezi / months') : anYmLabel_(month) + ' · ' + anStateWords_(tot.state);
+  var when = yearMode ? (d.totals.months + ' months') : anYmLabel_(month) + ' · ' + anStateWords_(tot.state);
   HEAD += anKpis_(tot, when)
     + board('anTeams', yearMode ? 'Timu — mwaka ' + d.year + ' / Teams — the year' : 'Timu — ' + anYmLong_(month),
         money(rows.length) + ' timu / teams · bora kwanza / best first',
@@ -142,7 +148,7 @@ function anMonths_(d, metric){
     { key: 'general', label: 'General %', kind: 'pct', avgKey: 'general' }];
   var yearTot = anTotals_(d.totals, mcols);
   yearTot.name = ''; yearTot.teams = d.totals.teams;
-  HEAD += anKpis_(d.totals, d.totals.months + ' miezi / months')
+  HEAD += anKpis_(d.totals, d.totals.months + ' months')
     + board('anMonths', 'Kampuni kwa mwezi / The company, month by month', 'mwaka ' + d.year + ' · JUMLA = mwaka: wastani wa miezi / the year: the average of the months', mrows, mcols, yearTot);
   // The metric pills, then the matrix: a team per row, a month per column, the year at the end.
   var pills = AN_METRICS.map(function(x){ return '<button class="pill' + (x[0] === mdef[0] ? ' on' : '') + '" data-arg="metric" data-val="' + x[0] + '">' + x[1] + '</button>'; }).join('');
@@ -156,11 +162,11 @@ function anMonths_(d, metric){
   });
   var xtot = { team: '', year: d.totals[mdef[0]] };
   mrows.forEach(function(m){ xtot['m' + m.ym.slice(5, 7)] = m[mdef[0]]; });
-  HEAD += bar(pills)
+  HEAD += '<div class="pills">' + pills + '</div>'
     + board('anMatrix', mdef[1] + ' kwa timu na mwezi / by team and month', 'mwaka ' + d.year + ' · JUMLA = kampuni / the company', xrows, xcols, xtot);
   S.rows = mrows; S.cols = mcols;
   S.foldMain = 'anlist'; S.foldLabel = 'Orodha / List — miezi / the months';
-  S.foot = d.totals.months + ' miezi / months · General ' + anPc_(d.totals.general);
+  S.foot = d.totals.months + ' months · General ' + anPc_(d.totals.general);
 }
 
 /* ---- VIONGOZI / LEADERS: one board per role (the GMO sheets), then everyone in any role. A
@@ -184,7 +190,7 @@ function anLeaderCols_(withRoles){
 }
 function anLeaders_(d, month){
   var tot = month ? anMonthOf_(d, month) : d.totals;
-  var when = month ? anYmLabel_(month) : 'mwaka ' + d.year + ' / the year';
+  var when = month ? anYmLabel_(month) : 'the year ' + d.year;
   HEAD += anKpis_(tot, when);
   var L = d.leaders || { roles: [], all: [] };
   var cols = anLeaderCols_(false);
