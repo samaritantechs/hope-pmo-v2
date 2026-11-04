@@ -1,5 +1,5 @@
--- RUN-ME-049a -- THE ANNUAL REPORT, part 1 of 5: the table and the sales function.
--- Run 049a, then b, c, d, e, one at a time. Each is safe to re-run; only 049e is slow.
+-- RUN-ME-049a -- THE ANNUAL REPORT, part 1 of 6: the table and the sales function.
+-- Run 049a, then b, c, d, e, f, one at a time. Each is safe to re-run; only 049f is slow.
 --
 -- team_months holds the collection and recovery of the months the system never saw (2025 and
 -- January-July 2026), stamped from the annual workbooks by 049b-049d. ym is 'YYYY-MM' for a month

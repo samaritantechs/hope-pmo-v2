@@ -1,4 +1,4 @@
--- RUN-ME-049b -- THE ANNUAL REPORT, part 2 of 5: 2025, one year row per team.
+-- RUN-ME-049b -- THE ANNUAL REPORT, part 2 of 6: 2025, one year row per team.
 -- The 2025 workbook kept no monthly collection or recovery -- only the year's collection % (100 - PAR),
 -- the PAR, the total def and the year's leaders. Needs 049a first. Safe to re-run.
 insert into team_months (team, ym, source, col_pct, total_def, par_pct, opm, pmo, credit, manager, gmo, legal, region, bike, early_col, note)
