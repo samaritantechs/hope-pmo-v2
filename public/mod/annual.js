@@ -65,7 +65,20 @@ function anBar_(d, rep, month){
     + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(prev || d.year) + '"' + (prev ? '' : ' disabled') + ' title="Previous year" aria-label="Previous year">&#9664;</button>'
     + '<b style="min-width:42px;text-align:center">' + esc(d.year) + '</b>'
     + '<button class="btn sm ghost" data-arg="year" data-val="' + esc(next || d.year) + '"' + (next ? '' : ' disabled') + ' title="Next year" aria-label="Next year">&#9654;</button></span>';
-  return seg + bar(year + sel);
+  var ppt = '<button class="btn sm" style="flex:0 0 auto" onclick="anPptExport_(this)" title="The deck for ' + esc(d.year) + ', made from what is on screen">Export deck (PPT)</button>';
+  return seg + bar(year + sel + ppt);
+}
+/* THE DECK: the button asks for /deck/annual-ppt.js the first time it is pressed (the file, the
+   PowerPoint library and the two images are never fetched at page load), then runs it. The deck
+   is made in the browser from S.anData and the year before; see the file's own header. */
+function anPptExport_(btn){
+  if (window.anPptRun_) return anPptRun_(btn);
+  if (btn) { btn.disabled = true; btn.textContent = 'Preparing the deck…'; }
+  var s = document.createElement('script');
+  s.src = '/deck/annual-ppt.js?v=' + encodeURIComponent(BUILD);
+  s.onload = function(){ if (btn) { btn.disabled = false; btn.textContent = 'Export deck (PPT)'; } anPptRun_(btn); };
+  s.onerror = function(){ if (s.parentNode) s.parentNode.removeChild(s); if (btn) { btn.disabled = false; btn.textContent = 'Export deck (PPT)'; } toast('The deck did not load. Check the connection and try again.', true); };
+  document.head.appendChild(s);
 }
 /* Where each month came from, in one line under the bar -- the sheet, the system, or not yet. */
 function anSources_(d){

@@ -394,6 +394,15 @@ const BUDGETS = [
      stretches that touch the year, scoped to the user's teams at the database. If this grows
      again the question is whether finished months' holders should be frozen into the ledger. */
   ['Annual report (cold year)', 'annual', { year: 2026 }, ADMIN, 14, 4000, 83, 2800],
+  /* THE ANNUAL DECK'S BOOKS (the Export deck button on Annual Rep, pressed -- never on open, never
+     on upload or call): the PAR tab's answer, the latest Expected deck and the legal register read by
+     the same readers their tabs use, then grouped by region on the server. So its cost is those three
+     tabs' costs added, and it pays what they pay: the defaulter deck twice (PAR and the register each
+     read it, exactly as when both tabs are open), the expected deck once, the loans' all-time totals.
+     The answer is kept a minute. Un-migrated 17 trips / 5,100 rows (the all-time totals read every
+     sale row); migrated 15 / 3,100. If it grows, the question is whether a section is reading
+     customers a tab does not. */
+  ['Annual deck books',       'annualBook',          { year: 2026 }, ADMIN, 18, 5300, 16, 3300],
   ['Complaints',              'complaints',          {}, ADMIN,  4,   800,  4,  800],
   /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
      the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
