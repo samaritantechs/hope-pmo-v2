@@ -3502,6 +3502,15 @@ first name matches nobody. Comments are read under every spelling found (the cod
 included, which is how portal comments are signed). The card's note now says the match is
 by the role's number on Teams & Staff or by name, and what to do.
 
+## Part 32 — PAR: the OPM where the Branch was
+
+> "In orodha/list at par, drop branch column replace with opm name"
+
+The PAR tab's Orodha / List (one row per team) opens with the team's **OPM** from Teams &
+Staff, `(unassigned)` where none is named, then the team and the figures as before. The
+server's `par` reads the teams table once for both the OPM and the branch; the branch stays
+on the row (and so in the Excel/CSV export) but is no longer a column on the screen.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

@@ -536,6 +536,19 @@ test('PAR bands customers by days in arrears', async () => {
   assert.equal(d.totals.arrears, 1700);
 });
 
+/* "In orodha/list at par, drop branch column replace with opm name": each team row carries its
+   OPM from Teams & Staff; a team that names none says so. The branch stays on the row for the
+   export, off the screen. */
+test('PAR Orodha rows carry the team\'s OPM', async () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], opm: 'OPM O' };
+  const d = await portalApi(fakeDb(t), ADMIN, 'par', {}, NOW);
+  const by = Object.fromEntries(d.byTeam.map(r => [r.team.toUpperCase(), r]));
+  assert.equal(by.KONGOWE.opm, 'OPM O');
+  if (by.MBAGALA) assert.equal(by.MBAGALA.opm, '(unassigned)', 'a team with no OPM named');
+  assert.ok('branch' in by.KONGOWE, 'the branch still rides on the row');
+});
+
 /* ALL-TIME PAR -- "the todays defaulter is already the alltime defaulter so comparing it to
    total loan (principle+interest) by all team and grand total is alltime par per team and
    company". The denominator is the TOTAL LOAN column (P+I) of every sale the team ever made
