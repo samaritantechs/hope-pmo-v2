@@ -419,7 +419,7 @@ export const EXPECTED_PHONE_WINDOW_RPC = {
   },
 };
 
-/* db/RUN-ME-049-annual-team-months.sql's loan_month_totals_by_team, transcribed: one row per
+/* db/RUN-ME-049a-annual-table-and-sales-function.sql's loan_month_totals_by_team, transcribed: one row per
    team per month of approval between p_from and p_to, with the count, the first-time count
    (track number 1), the principal (the loan amount where principal is blank) and the TOTAL LOAN
    (P+I, or principal + interest where the loan amount is blank), at the stages handed in,
