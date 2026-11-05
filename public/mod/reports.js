@@ -359,7 +359,7 @@ VIEWS.par = function(){
       + kpi('Outstanding balance', money(t.balance), 'remaining portfolio in default')
       + kpi('Portfolio at risk', pct(t.par), 'arrears ÷ outstanding balance',
             (t.par>=50?'bad':(t.par>=25?'warnc':'')))
-      + kpi('PAR all-time', t.parAll == null ? '—' : pct(t.parAll),
+      + kpi('PAR all-time', t.parAll == null ? '—' : pct1(t.parAll),
             'arrears ÷ total loan (P+I) ever lent: TZS ' + money(at.totalLoan) + ' on ' + money(at.loans) + ' loans' + (at.since ? ' since ' + at.since : ''),
             (t.parAll>=10?'bad':(t.parAll>=5?'warnc':'')))
       + kpi('Defaulters', money(t.customers), d.weekday+' · '+(d.date||''))
@@ -383,10 +383,10 @@ VIEWS.par = function(){
       {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
       col('balance','Balance','money'), {key:'par', label:'PAR %', kind:'pct', lowGood:true},
       col('loans','Loans all-time','num'), col('totalLoan','Total loan all-time (P+I)','money'),
-      {key:'parAll', label:'PAR all-time %', kind:'pct', lowGood:true, title:'Arrears ya leo ÷ jumla ya mikopo (P+I) iliyowahi kutolewa kwa timu / today\'s arrears over everything ever lent to the team'}];
+      {key:'parAll', label:'PAR all-time %', kind:'pct', dec:1, lowGood:true, title:'Arrears ya leo ÷ jumla ya mikopo (P+I) iliyowahi kutolewa kwa timu / today\'s arrears over everything ever lent to the team'}];
     ONROW = null;
     S.foot = 'Defaulters: '+money(t.customers)+' · Arrears: TZS '+money(t.arrears)+' · PAR: '+pct(t.par)
-      + ' · Total loan all-time: TZS '+money(t.totalLoan)+' ('+money(t.loans)+' loans) · PAR all-time: '+(t.parAll == null ? '—' : pct(t.parAll));
+      + ' · Total loan all-time: TZS '+money(t.totalLoan)+' ('+money(t.loans)+' loans) · PAR all-time: '+(t.parAll == null ? '—' : pct1(t.parAll));
   });
 };
 

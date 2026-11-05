@@ -2682,3 +2682,30 @@ test('Expected defaulters: the person box is built by that list, refreshed when 
   assert.ok(/if \(S\.view === 'defexp' && typeof xdSyncLeaders_ === 'function'\) xdSyncLeaders_\(true\);/.test(app), 'and so does every draw, so a remembered screen comes back consistent');
   assert.ok(!/var BUILD = '2026-11-05-e'/.test(app), 'BUILD moved');
 });
+
+/* "PAR all time should include one decimal place" -- the one percentage the screens show to a decimal; every other stays whole, as decided before. */
+test('PAR all-time shows one decimal on the KPI, the table column, its Excel export and the footer; every other percentage stays whole', () => {
+  const app = appSrc();
+  const src = app.slice(app.indexOf('function pct(v){'), app.indexOf('/* What a percentage column exports as'))
+    + app.slice(app.indexOf('/* What a percentage column exports as'), app.indexOf('function pctRound_') + 200).replace(/\n\}[\s\S]*$/, '\n}');
+  const ctx = {}; vm.createContext(ctx); vm.runInContext(src, ctx);
+  // the whole-number rule is untouched
+  assert.equal(ctx.pct(96.7), '97%'); assert.equal(ctx.pct(6.2), '6%'); assert.equal(ctx.pct('~56.7%'), '~57%'); assert.equal(ctx.pct(null), '\u2014');
+  // one decimal, always: 6 reads 6.0%, so a column of them lines up
+  assert.equal(ctx.pct1(6.2), '6.2%'); assert.equal(ctx.pct1(6), '6.0%'); assert.equal(ctx.pct1(9.4), '9.4%'); assert.equal(ctx.pct1(0), '0.0%');
+  assert.equal(ctx.pct1(5.96), '6.0%'); assert.equal(ctx.pct1('12.34'), '12.3%'); assert.equal(ctx.pct1('~56.7%'), '~56.7%');
+  assert.equal(ctx.pct1(null), '\u2014'); assert.equal(ctx.pct1(undefined), '\u2014'); assert.equal(ctx.pct1(''), '\u2014'); assert.equal(ctx.pct1('x'), '\u2014');
+  // what the export writes is what the screen shows
+  assert.equal(ctx.pctRound_({ dec: 1 }, 6.24), 6.2); assert.equal(ctx.pctRound_({ dec: 1 }, 6.26), 6.3); assert.equal(ctx.pctRound_({}, 6.4), 6); assert.equal(ctx.pctRound_({}, 6.5), 7);
+  assert.equal(ctx.pctRound_({ dec: 1 }, null), 0);
+  // the wiring: a column opts in with dec, the cell and both exports honour it
+  assert.ok(/if \(c\.kind==='pct'\) return c\.dec \? pct1\(v\) : pct\(v\);/.test(app), 'a pct column with dec shows its decimal');
+  assert.equal((app.match(/c\.kind==='pct' \? pctRound_\(c, raw\)/g) || []).length, 2, 'the main table and a board both export what the screen shows');
+  assert.ok(!/c\.kind==='pct' \? Math\.round\(Number\(raw\)\|\|0\)/.test(app), 'no export still rounds a percentage blindly');
+  const par = page('reports');
+  assert.ok(/kpi\('PAR all-time', t\.parAll == null \? '\u2014' : pct1\(t\.parAll\),/.test(par), 'the KPI');
+  assert.ok(/\{key:'parAll', label:'PAR all-time %', kind:'pct', dec:1, lowGood:true/.test(par), 'the team column');
+  assert.ok(/PAR all-time: '\+\(t\.parAll == null \? '\u2014' : pct1\(t\.parAll\)\)/.test(par), 'the footer');
+  assert.ok(/kpi\('Portfolio at risk', pct\(t\.par\)/.test(par) && /\{key:'par', label:'PAR %', kind:'pct', lowGood:true\}/.test(par), 'the ordinary PAR stays a whole number');
+  assert.ok(!/var BUILD = '2026-11-05-f'/.test(app), 'BUILD moved');
+});
