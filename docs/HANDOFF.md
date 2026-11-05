@@ -3719,6 +3719,13 @@ regions put where they belong and said on the slide (Kahama into Shinyanga, Coas
 that is none of them, such as a zone (`LAKE ZONE`), is not guessed: it is listed under "Not on the map". Two registry names that
 land on one region are added together (teams, arrears, balance; PAR is recomputed from the sums, never averaged).
 
+**The current-year all-time PAR leads the PAR slide.** "The par all-time current year widget should come first before the real all-time." The first card of
+*Portfolio at risk* is **All-time PAR, <year>**: the arrears on the loans *disbursed in the year* over the *total loan (P+I) lent in the year* (the year's
+`totals.totalLoan` from the annual answer), one decimal, then the all-time PAR over everything ever lent. The arrears by disbursement year come from the same
+defaulter rows the PAR tab already reads (`par().byYear`, no extra read; `annualBook.par.byYear`). It is the loans of the year that are in arrears *today*, over what
+that year lent -- not the year's sales cut by when the arrears arose. A year with no arrears row or no lending says "no <year> lending or arrears to measure" instead
+of a zero. Two bullets beside the doughnut say what each figure is, with the arrears and lent amounts.
+
 **One PAR in the deck: the all-time PAR.** "We drop the arrears over balance concept in all slides ... doesn't want to present it to the directors ... live with all time
 PAR only." The books slides no longer show the balance-based PAR (arrears over the balance of customers in arrears) anywhere. *Portfolio at risk* leads with the
 **all-time PAR** — the arrears over the total loan (principal and interest) of everything ever lent, since the first sale — beside the arrears, what was ever lent and the
@@ -3738,9 +3745,15 @@ gaps" only when there are some.
 
 **The GMO zones.** "I wish a map of gmo zones too." After General on the map comes **"GMO zones on the map"**: each zone (the `zone` set on the
 team in Teams & Staff) a colour, a region taking the colour of the zone with most of its teams (a region shared by two zones is counted and said
-in the footnote), and a key of up to ten zones, each with its GMO (the one who holds most of its teams, "+n" for the others), its teams, regions
-and General %. Teams with no zone are counted and said, not hidden; with fewer than two zones set there is no slide, and past ten the rest share a
-grey. The gaps are dashed here too. (A latent bug found on the way: the label-overlap loop reused `ox`, the map's own x-offset, and moved the
+in the footnote), and a key with **every** GMO of each zone named in full ("GMOs: A, B, C", the one who holds most of its teams first -- the first
+version named the top one and "+n", and the others were missing), with its teams, regions and General %. Also named, because a name missing from a
+zone map reads as a GMO who holds nothing: the GMOs of teams with **no zone set** (a "No zone set" row), the GMO who holds only a team that **sold
+nothing this year** (Teams & Staff teams with no sales are in no figure; `annual` now carries them as `idle`, from the registry it already reads -- no new
+read -- and the deck adds their GMO to the zone; a zone where nothing sold is a row of its own, uncoloured, "none sold in 2026"). A key too long for the
+slide goes on to a **continuation slide** ("GMO zones, continued", two columns), whole rows only; the "Not in yet" row stays on the map slide. Row heights
+are estimated from the names (capitals count wider); the test checks nothing runs off the slide. Zone colours run out at ten; the rest share the grey.
+With fewer than two zones set there is no slide. The gaps are dashed here too. (The *region* slides and the regions table still say "GMO: X +n" for a
+region held by several GMOs -- that is the region's lead GMO, not the zone key.) (A latent bug found on the way: the label-overlap loop reused `ox`, the map's own x-offset, and moved the
 island call-outs into the middle of the country; it only showed once every gap carried a label.)
 
 **Saving the file, in a browser and in the Android app.** The deck is saved through the page's own `download(blob, name)`

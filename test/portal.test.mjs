@@ -581,6 +581,9 @@ test('PAR all-time: today\'s arrears over everything ever lent, per team and for
     assert.equal(d.totals.totalLoan, 18000, world);
     assert.equal(d.totals.loans, 4, world);
     assert.equal(d.totals.parAll, 9.4, world + ': the company, 1,700 over 18,000');
+    // the arrears by the year the loan was disbursed (the deck's current-year all-time PAR is one of these over what that year lent): a re-cut of the same rows
+    assert.ok(Array.isArray(d.byYear) && d.byYear.length >= 1 && d.byYear.every((y, i, a) => y.year >= 2000 && y.customers > 0 && (!i || a[i - 1].year < y.year)), world + ': by year, oldest first: ' + JSON.stringify(d.byYear));
+    assert.equal(d.byYear.reduce((a, y) => a + y.arrears, 0), d.totals.arrears, world + ': the years add up to the company arrears');
     assert.equal(d.allTime.since, '2024-04-17', world + ': the earliest sale on the book');
     assert.equal(d.allTime.light, world === 'migrated', world);
     assert.equal(!!d.allTime.note, world !== 'migrated', world + ': the un-migrated state says so');

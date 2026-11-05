@@ -476,6 +476,16 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
     teamRows.push(row);
   }
   teamRows.sort(byGeneral);
+  /* TEAMS IN TEAMS & STAFF THAT HAD NO SALES THIS YEAR: they are in no figure, but the GMO who holds one is still that zone's GMO, and
+     the deck's zone map names every GMO. Already read (the registry above), so no extra read; a name and two places, no money. */
+  const sawKeys = new Set(teamRows.map(r => r.key));
+  const idle = [];
+  for (const [k, reg] of regByK2) {
+    if (sawKeys.has(k)) continue;
+    const g = reg.gmo == null ? '' : String(reg.gmo).trim(), z = reg.zone == null ? '' : String(reg.zone).trim();
+    if (nobody(g) && nobody(z)) continue;
+    idle.push({ team: String(reg.team).trim(), gmo: nobody(g) ? null : g, zone: nobody(z) ? null : z, region: reg.region == null ? null : String(reg.region).trim() || null });
+  }
 
   /* ---- THE COMPANY, MONTH BY MONTH. */
   const months = yms.map((ym, i) => {
@@ -524,7 +534,7 @@ async function annualCompute_(db, user, year, today, nowMs, deps) {
   const years = [];
   for (let y = Math.min(FIRST_YEAR, year); y <= thisYear; y++) years.push(y);
   return { year, years, today, thisYm, target: monthTarget, weeklyTarget, stamped: stamps.ok, light: sales.light,
-    months, teams: teamRows, totals, leaders, regions, notes,
+    months, teams: teamRows, idle, totals, leaders, regions, notes,
     holders: { ok: holders.ok, stretches: holders.rows.length, loaded: loadedHolders },
     rule: 'Mwezi: mauzo ÷ lengo (wiki × 4), collected ÷ expected, recovered ÷ uncollected. Mwaka: wastani wa asilimia za miezi iliyopimwa. General: wastani wa sales %, collection % na recovery % zilizopimwa. Kiongozi: wastani wa timu zake. '
       + '/ A month: sales ÷ target (weekly × 4), collected ÷ expected, recovered ÷ uncollected. A year: the average of the measured months\' percentages. General: the average of the measured sales %, collection % and recovery %. A leader: the average of their teams.' };
@@ -603,7 +613,7 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
       const regions = regionsRaw.map(x => ({ ...x,
         par: pct(x.arrears, x.balance), parAll: x.totalLoan > 0 ? pct(x.arrears, x.totalLoan) : null }))
         .sort((a, b) => b.arrears - a.arrears);
-      return { date: p.date || null, empty: !p.date, totals: p.totals, bands: p.bands || [], byBand: p.byBand || [], byStatus: (p.byStatus || []).slice(0, 8),
+      return { date: p.date || null, empty: !p.date, totals: p.totals, bands: p.bands || [], byBand: p.byBand || [], byStatus: (p.byStatus || []).slice(0, 8), byYear: p.byYear || [],
         byTeam, byRegion: regions, unplaced: regionsRaw.unplaced, allTime: p.allTime ? { since: p.allTime.since, loans: p.allTime.loans, totalLoan: p.allTime.totalLoan } : null };
     }),
     attempt('expected', 'Expected', async () => {

@@ -3918,9 +3918,16 @@ async function par(db, user, _args, nowMs) {
   // OPM, which the Orodha shows in the branch's place -- "drop branch column replace with opm name".
   const teamRow = new Map((await readTeamsAll(db, nowMs) || []).map(t => [K(t.team), t]));
   const lent = await loanTotalsByTeam(db, user, nowMs);
-  const byStatus = {}, byTeam = {};
+  const byStatus = {}, byTeam = {}, byYear = {};
   let totArrears = 0, totBalance = 0, totLoan = 0;
   for (const r of rows) {
+    /* THE ARREARS BY THE YEAR THE LOAN WAS DISBURSED, from the rows already in hand (no read): the annual deck's "current year" PAR is the
+       arrears on loans disbursed in the year over everything lent in the year. A row with no disbursement date is in no year. */
+    const yr = String(r.disb_date || '').slice(0, 4);
+    if (/^\d{4}$/.test(yr)) {
+      const by = byYear[yr] || (byYear[yr] = { year: Number(yr), customers: 0, arrears: 0, balance: 0 });
+      by.customers++; by.arrears += num(r.arrears); by.balance += num(r.balance);
+    }
     const days = num(r.days_elapsed) || num(r.dc);
     const i = PAR_BANDS.findIndex(b => days >= b.lo && days <= b.hi);
     if (i >= 0) { bands[i].customers++; bands[i].arrears += num(r.arrears); }
@@ -3949,6 +3956,7 @@ async function par(db, user, _args, nowMs) {
     par: pctOf(b.arrears, b.balance), share: pctOf(b.arrears, totArrears) });
   const allTime = b => ({ loans: b.loans, totalLoan: b.totalLoan, parAll: b.totalLoan > 0 ? pctOf(b.arrears, b.totalLoan) : null });
   return { date: snap.date, weekday: currentWeekday(nowMs), bands,
+    byYear: Object.values(byYear).sort((a, b) => a.year - b.year),
     byBand: pbands.map(b => ({ band: b.band, ...finish(b) })),
     byStatus: Object.values(byStatus).sort((a, b) => b.arrears - a.arrears),
     byTeam: Object.values(byTeam).map(({ key, ...t }) => { const tr = teamRow.get(K(t.team)) || {}; return { team: t.team,
