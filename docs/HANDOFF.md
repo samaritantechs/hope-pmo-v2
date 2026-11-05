@@ -3811,7 +3811,10 @@ Staff by name, falling back to the teams on their access code, the OPM named on 
 with a plain message if the migration is not run or no route is saved, moves only requests that are pending and still with the GM (so a second run moves
 nothing), leaves alone what it cannot place (the table says why), and sends no email or phone alert: the OPMs find them in their Requests tab. Checked on
 a real Postgres engine and against the app's own `resolveRoute_` for the same people; if `resolveRoute_` changes, change the SQL with it (it is a one-off
-copy of the rule, which is why it is a RUN-ME file and not a function).
+copy of the rule, which is why it is a RUN-ME file and not a function). Where it cannot place a request, `db/RUN-ME-2026-11-05c-imprest-move-by-hand.sql` moves
+named requesters to a named OPM with no matching at all. The usual cause is a name that is not the sheet's (an access code "DITRICK" against a GMO cell "DITRICK
+MUFURUKI": `sameName` needs two words in the shorter name, so a one-word name matches only exactly); the fix at the source is to give the access code the
+sheet's full name, and until then the route falls back to the teams on the code.
 
 **A route removed.** The OPM's own list follows the rule in force (`imprestMine` reads the waiting rows only for a role that some
 rule routes to, so no other officer's Requests tab gains a read). A request waiting under a route the GM then removes keeps its stamped
