@@ -417,10 +417,7 @@ function anPptBuild_(Pptx, M, A) {
   function zoneNames(r) { return r.gap ? '' : (r.gmos.length ? (r.gmos.length > 1 ? 'GMOs: ' : 'GMO: ') + r.gmos.join(', ') : 'GMO: not named'); }
   function zoneRowH(r, w) {
     if (r.gap) return 0.27;
-    var t = zoneNames(r), em = 0;
-    for (var i = 0; i < t.length; i++) { var ch = t.charAt(i); em += /[A-Z0-9]/.test(ch) ? 0.62 : ch === ' ' ? 0.24 : 0.5; }
-    var lines = Math.max(1, Math.ceil(em * 8 / 72 / (w - 0.12)));
-    return 0.17 + lines * 0.135 + 0.07;
+    return 0.17 + wrapLines(zoneNames(r), 8, w - 0.12) * 0.135 + 0.07;
   }
   /** Rows into columns, whole rows only; what does not fit is `rest`. A row taller than an empty column still goes in (nothing is ever dropped). */
   function zoneFlow(rows, cols, top, bottom) {
@@ -450,11 +447,30 @@ function anPptBuild_(Pptx, M, A) {
   /* A list too long for one slide is PAGED, never squeezed: a real book has two dozen regions, and a table of
      that many rows runs off the page. */
   function pages(items, size) { var out = []; for (var i = 0; i < items.length; i += size) out.push(items.slice(i, i + size)); return out.length ? out : [[]]; }
+  /* Pages by HEIGHT where rows differ in height (a cell that names several GMOs wraps): as many rows as fit the budget, never more than `size`. */
+  function packPages(items, size, budget, hfn) {
+    var out = [], cur = [], used = 0;
+    items.forEach(function (it) { var h = hfn(it); if (cur.length && (cur.length >= size || used + h > budget)) { out.push(cur); cur = []; used = 0; } cur.push(it); used += h; });
+    if (cur.length) out.push(cur);
+    return out.length ? out : [[]];
+  }
+  /* How many lines a text takes at a font size in a width (inches). Capitals are wider than lower case, so it is counted by letter. */
+  function wrapLines(text, fs, w) {
+    var em = 0, t = String(text == null ? '' : text);
+    for (var i = 0; i < t.length; i++) { var ch = t.charAt(i); em += /[A-Z0-9]/.test(ch) ? 0.62 : ch === ' ' ? 0.24 : 0.5; }
+    return Math.max(1, Math.ceil(em * fs / 72 / Math.max(0.3, w)));
+  }
+  /* GMO names: one person however the name is cased; `n` is how many teams they hold (0 for one who holds only teams that sold nothing this year). */
+  function cleanName(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
+  function isNobody(v) { v = cleanName(v); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); }
+  function gmoAdd(map, name, n) { var k = cleanName(name).toUpperCase(), e = map[k] || (map[k] = { name: cleanName(name), n: 0 }); e.n += n; }
+  function gmoSorted(map) { return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return b.n - a.n || (a.name < b.name ? -1 : 1); }).map(function (g) { return g.name; }); }
   function pageTitle(title, i, n) { return n > 1 ? title + ' (' + (i + 1) + ' of ' + n + ')' : title; }
   function short(v, n) { v = String(v == null ? '' : v); return v.length > n ? v.slice(0, n - 1) + '…' : v; }
   /* Regions, ten to a slide: the bars on the left and the table on the right carry the same ten. */
   function regionPages(title, rows, o) {
-    var pg = pages(rows, o.size || 10);
+    // a row that wraps (a region with several GMOs) is taller: the page is filled by height when the caller says how tall a row is
+    var pg = o.rowH ? packPages(rows, o.size || 10, 3.2, o.rowH) : pages(rows, o.size || 10);
     pg.forEach(function (rs, i) {
       var sl = content(pageTitle(title, i, pg.length));
       chart(sl, rs.map(function (r) { return short(r.region, 18); }), [{ name: o.series, values: rs.map(o.value) }], { x: 0.3, y: 1.0, w: 3.9, h: 3.5, dir: 'bar', reverse: true, colors: [o.color], name: o.name + ' ' + (i + 1), fmt: o.fmt, gap: 30, dl: 9, cat: 9 });
@@ -464,12 +480,15 @@ function anPptBuild_(Pptx, M, A) {
   }
   var regKey = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toUpperCase(); };
   var teamsOf = function (region) { return T.filter(function (t) { return regKey(t.region) === regKey(region); }).sort(function (a, b) { return a.team < b.team ? -1 : a.team > b.team ? 1 : 0; }); };
-  /* The GMO of a region: whoever holds the most of its teams, with "+n" for the others. */
-  var gmoOf = function (region) {
-    var c = {}; teamsOf(region).forEach(function (t) { var g = t.gmo && String(t.gmo).trim(); if (g) c[g] = (c[g] || 0) + 1; });
-    var names = Object.keys(c).sort(function (a, b) { return c[b] - c[a] || (a < b ? -1 : 1); });
-    return names.length ? names[0] + (names.length > 1 ? ' +' + (names.length - 1) : '') : '—';
+  /* THE GMOs OF A REGION: every one, the one who holds most of its teams first, never "+n". A GMO who holds only a team that sold nothing this year is named
+     too (those teams are in no figure; the annual answer carries them as `idle`). */
+  var gmosOf = function (region) {
+    var m = {};
+    teamsOf(region).forEach(function (t) { if (!isNobody(t.gmo)) gmoAdd(m, t.gmo, 1); });
+    (M.idle || []).forEach(function (t) { if (regKey(t.region) === regKey(region) && !isNobody(t.gmo)) gmoAdd(m, t.gmo, 0); });
+    return gmoSorted(m);
   };
+  var gmoOf = function (region) { var g = gmosOf(region); return g.length ? g.join(', ') : '—'; };
   var noRegion = T.filter(function (t) { var r = String(t.region == null ? '' : t.region).trim(); return !r || /^(NO[ -]|NONE$|N\/A$|-$)/i.test(r); }).length;
   var unsetNote = noRegion ? ' ' + noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet and are not in the regional figures.' : '';
   var established = T.filter(function (r) { return r.months >= M.minM; });
@@ -489,11 +508,7 @@ function anPptBuild_(Pptx, M, A) {
   var ZONE_PAL = ['1F57D6', '29A8E0', '1E9E63', 'E0A100', 'D93636', '8E44AD', 'E67E22', '16A085', 'C2185B', '5D6D7E'];
   var zoneBook = (function () {
     var by = {}, unset = 0, regionCount = {}, quiet = {}, none = {};
-    var clean = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); };
-    var nobody = function (v) { v = clean(v); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); };
-    /* A GMO is one person however the name is cased; `n` is how many of the year's teams they hold there (0 for one who holds only teams that sold nothing). */
-    var addG = function (map, name, n) { var k = clean(name).toUpperCase(), e = map[k] || (map[k] = { name: clean(name), n: 0 }); e.n += n; };
-    var names = function (map) { return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return b.n - a.n || (a.name < b.name ? -1 : 1); }).map(function (g) { return g.name; }); };
+    var clean = cleanName, nobody = isNobody, addG = gmoAdd, names = gmoSorted;
     T.forEach(function (t) {
       if (nobody(t.zone)) { unset += 1; if (!nobody(t.gmo)) addG(none, t.gmo, 1); return; }
       var name = clean(t.zone).toUpperCase();
@@ -761,9 +776,10 @@ function anPptBuild_(Pptx, M, A) {
     sec('Regions'); sectionsIn.push(['Regions', 'sales, retention and general performance' + (TZ && zoneBook.list.length >= 2 ? ', and the GMO zones' : '')]);
     var zs = Z.slice().sort(function (a, b) { return b.sales - a.sales; });
     regionPages('Regions: sales and general performance', zs, { series: 'Sales (TZS billion)', value: function (z) { return +(z.sales / 1e9).toFixed(2); }, fmt: '0.00', color: C.a1, name: 'Sales by region',
-      head: ['Region', 'GMO', 'Teams', 'Coll.', 'Rec.', 'General'], widths: [1.3, 1.65, 0.5, 0.55, 0.5, 0.7], textCols: [0, 1],
-      line: function (z) { return [short(z.region, 17), short(gmoOf(z.region), 22), z.teams, anPptPc0_(z.colPct), anPptPc0_(z.recPct), anPptPc0_(z.general)]; },
-      note: 'Billions of TZS, regions ranked by sales. A region is its teams\' months added together, the percentages the average of its months. The GMO holds most of its teams. Recovery above 100% lifts General on a small base.' + unsetNote,
+      head: ['Region', 'GMOs', 'Teams', 'Coll.', 'Rec.', 'General'], widths: [1.2, 1.92, 0.5, 0.5, 0.45, 0.63], textCols: [0, 1],
+      line: function (z) { return [short(z.region, 17), gmoOf(z.region), z.teams, anPptPc0_(z.colPct), anPptPc0_(z.recPct), anPptPc0_(z.general)]; },
+      rowH: function (z) { return Math.max(0.3, Math.max(wrapLines(gmoOf(z.region), 8.5, 1.92 - 0.16), wrapLines(short(z.region, 17), 8.8, 1.2 - 0.16)) * 0.142 + 0.07); },
+      note: 'Billions of TZS, regions ranked by sales. A region is its teams\' months added together, the percentages the average of its months. Every GMO of the region is named, the one who holds most of its teams first. Recovery above 100% lifts General on a small base.' + unsetNote,
       noteMore: 'Regions ranked by sales, as on the first slide.' });
     mapSlide('Regions on the map: General performance', Z.map(function (z) { return { region: z.region, general: z.general, teams: z.teams }; }), {
       value: function (g) { var w = 0, a = 0; g.forEach(function (r) { if (r.general != null) { w += r.teams; a += r.general * r.teams; } }); return w ? Math.round(a / w * 10) / 10 : null; },
@@ -779,13 +795,15 @@ function anPptBuild_(Pptx, M, A) {
     newPage();
     order.forEach(function (z) {
       var ts = teamsOf(z.region), names = ts.map(function (t) { return t.team; }).join(', ');
-      var lines = Math.max(1, Math.ceil(names.length / perLine)), h = 0.62 + lines * (order.length > 6 ? 0.125 : 0.14);
+      var gs = gmosOf(z.region), gline = 'GMO' + (gs.length > 1 ? 's' : '') + ': ' + (gs.length ? gs.join(', ') : '—') + '  ·  ' + ts.length + ' team' + (ts.length === 1 ? '' : 's');
+      var lines = Math.max(1, Math.ceil(names.length / perLine)), gl = wrapLines(gline, 8.8, cw - 0.2), lh = order.length > 6 ? 0.125 : 0.14;
+      var h = 0.48 + gl * 0.14 + lines * lh;                      // the title, the GMO line (wrapping when a region has several), then the teams
       var c = heights.indexOf(Math.min.apply(null, heights));
       if (heights[c] + h > 4.1 && heights[c] > 0) { newPage(); c = 0; }
       var x = 0.5 + c * (cw + 0.12), y = 1.0 + heights[c];
       page.addShape(pres.ShapeType.roundRect, { x: x, y: y, w: cw, h: h, rectRadius: 0.06, fill: { color: C.bg2 }, line: { color: C.bg2, width: 0 }, objectName: 'Region card ' + z.region });
       page.addText([{ text: z.region, options: { bold: true, fontSize: 11, color: C.text2, breakLine: true } },
-        { text: 'GMO: ' + gmoOf(z.region) + '  ·  ' + ts.length + ' team' + (ts.length === 1 ? '' : 's'), options: { fontSize: 8.5, color: C.a1, bold: true, breakLine: true } },
+        { text: gline, options: { fontSize: 8.5, color: C.a1, bold: true, breakLine: true } },
         { text: names, options: { fontSize: order.length > 6 ? 7.5 : 8.5, color: C.text1 } }], { x: x + 0.1, y: y + 0.05, w: cw - 0.2, h: h - 0.1, valign: 'top', margin: 0, objectName: 'Region key ' + z.region });
       heights[c] += h + 0.1;
     });

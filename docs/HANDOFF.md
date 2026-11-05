@@ -3752,8 +3752,14 @@ nothing this year** (Teams & Staff teams with no sales are in no figure; `annual
 read -- and the deck adds their GMO to the zone; a zone where nothing sold is a row of its own, uncoloured, "none sold in 2026"). A key too long for the
 slide goes on to a **continuation slide** ("GMO zones, continued", two columns), whole rows only; the "Not in yet" row stays on the map slide. Row heights
 are estimated from the names (capitals count wider); the test checks nothing runs off the slide. Zone colours run out at ten; the rest share the grey.
-With fewer than two zones set there is no slide. The gaps are dashed here too. (The *region* slides and the regions table still say "GMO: X +n" for a
-region held by several GMOs -- that is the region's lead GMO, not the zone key.) (A latent bug found on the way: the label-overlap loop reused `ox`, the map's own x-offset, and moved the
+With fewer than two zones set there is no slide. The gaps are dashed here too.
+
+**The region slides name every GMO too.** "List the GMOs on the region slides too." The regions table (column "GMOs") and the "Regions: who is in them" cards
+used to say "GMO: X +n" (the one holding most of the region's teams and a count of the rest); both now list every GMO of the region in full, the one holding most
+teams first ("GMOs: A, B, C", "GMO: A" for one), and include a GMO who holds only a team that sold nothing this year (`gmosOf`, from `M.idle`). A name is one person
+however it is cased (`gmoAdd`). A region with several GMOs makes a taller table row and card, so the table pages by **height** (`packPages`, `rowH`; at most ten rows,
+3.2 inches of them) and the card columns use the wrapped height (`wrapLines`, the same letter-by-letter width estimate the zone key uses). Checked by rendering the slides
+through LibreOffice with real-length names; `test/annualppt.test.mjs` pins every GMO of every region on its card and in the table, none behind a "+n". (A latent bug found on the way: the label-overlap loop reused `ox`, the map's own x-offset, and moved the
 island call-outs into the middle of the country; it only showed once every gap carried a label.)
 
 **Saving the file, in a browser and in the Android app.** The deck is saved through the page's own `download(blob, name)`

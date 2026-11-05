@@ -221,9 +221,9 @@ test('the deck for a year in progress: every section, the figures the server gav
   // THE KEY: every region with its GMO and its teams
   const key = r.slides.filter(s => s.text.includes('Regions: who is in them')).map(s => s.text).join(' ');
   for (const reg of ['LAKE ZONE', 'DAR ES SALAAM', 'SOUTH', 'NORTH']) assert.ok(key.includes(reg), 'region ' + reg + ' in the key');
-  assert.ok(key.includes('TEAM01') && key.includes('TEAM24') && /GMO: GMO \d/.test(key), 'its teams and a GMO: ' + key.slice(0, 200));
+  assert.ok(key.includes('TEAM01') && key.includes('TEAM24') && /GMOs: GMO \d/.test(key), 'its teams and its GMOs: ' + key.slice(0, 200));
   const regionTable = r.slides.find(s => s.text.includes('Regions: sales and general performance')).text;
-  assert.ok(/GMO \d/.test(regionTable) && regionTable.includes('GMO'), 'the regions table names the GMO');
+  assert.ok(/GMO \d/.test(regionTable) && regionTable.includes('GMOs'), 'the regions table names the GMOs');
 });
 
 test('two dozen regions do not run off the page: they are paged, ten to a slide, and the teams with no region are counted', async () => {
@@ -615,6 +615,37 @@ test('the GMO zones: no slide while fewer than two zones are set, and a book wit
   for (const x of [z, ...more]) for (const m of x.xml.matchAll(/<a:off x="(\d+)" y="(\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/g)) {
     assert.ok((Number(m[2]) + Number(m[4])) / 914400 <= 5.63 && (Number(m[1]) + Number(m[3])) / 914400 <= 10.01, 'inside the slide: ' + m[0]);
   }
+});
+
+/* "list the GMOs on the region slides too" -- the key and the table named a region's lead GMO and "+n". */
+test('the region slides name every GMO of a region: the table and the who-is-in-them cards, none hidden behind "+n"', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  // a GMO who holds only a team that sold nothing this year is still one of the region's GMOs; a region held by one GMO says "GMO:"
+  t.teams.push({ team: 'QUIET1', region: 'ARUSHA', zone: 'LAKE ZONE', gmo: 'IDLE ARUSHA GMO' });
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const cards = r.slides.filter(x => x.text.includes('Regions: who is in them'));
+  const table = r.slides.filter(x => x.text.includes('Regions: sales and general performance'));
+  assert.ok(cards.length && table.length);
+  const cardOf = reg => { for (const c of cards) { const x = shapeText(c, 'Region key ' + reg); if (x) return x; } return null; };
+  let several = 0;
+  for (const z of d.regions.filter(x => x.months > 0)) {
+    const theirs = [...new Set(d.teams.filter(x => String(x.region).toUpperCase() === z.region.toUpperCase() && x.gmo).map(x => x.gmo))];
+    if (z.region.toUpperCase() === 'ARUSHA') theirs.push('IDLE ARUSHA GMO');
+    const card = cardOf(z.region);
+    assert.ok(card, z.region + ' has a card');
+    if (theirs.length > 1) several += 1;
+    for (const g of theirs) {
+      assert.ok(card.includes(g), g + ' is named on the ' + z.region + ' card: ' + card);
+      assert.ok(table.some(x => x.text.includes(g)), g + ' is named in the regions table');
+    }
+    assert.ok(new RegExp('GMO' + (theirs.length > 1 ? 's' : '') + ': ').test(card) && !/GMOs?:[^·]*\+\d/.test(card), 'no "+n" on the card: ' + card);
+  }
+  assert.ok(several >= 6, 'the fixture holds most regions under several GMOs: ' + several);
+  for (const x of cards) assert.ok(!/GMOs?: [^|]*·?[^|]*\+\d/.test(x.text.replace(/\d+ teams?/g, '')), 'no "name +n" left on: ' + x.text.slice(0, 80));
+  // a taller row means fewer to a page: nothing is dropped, every region is in the table once
+  const named = table.map(x => d.regions.filter(z => z.months > 0 && x.text.includes(z.region.toUpperCase().slice(0, 12))).length).reduce((a, b) => a + b, 0);
+  assert.ok(named >= d.regions.filter(z => z.months > 0).length, 'every region is in the table: ' + named);
 });
 
 /* "Gm said we drop the arrears over balance concept in all slides -- doesn't want to present it to the directors -- and replace with the current
