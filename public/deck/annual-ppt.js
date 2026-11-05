@@ -272,28 +272,35 @@ function anPptBuild_(Pptx, M, A) {
       var pts = [];
       rings.forEach(function (r) { r.forEach(function (p, i) { pts.push({ x: p[0] - minX, y: p[1] - minY, moveTo: i === 0 }); }); pts.push({ close: true }); });
       var f = fillFor(reg.n);
-      sl.addShape(pres.ShapeType.custGeom, { x: minX, y: minY, w: w, h: h, points: pts, fill: { color: f ? f.fill : 'E8ECF2' }, line: { color: 'FFFFFF', width: 0.6 }, objectName: 'Region ' + reg.n });
+      /* A REGION WITH NO HOPE TEAM IS DRAWN AS A GAP, not as "no data": white, with a dashed edge, so the places we are not in yet
+         read at a glance and cannot be mistaken for a region that is merely missing a figure. */
+      var gap = !!(f && f.gap);
+      sl.addShape(pres.ShapeType.custGeom, { x: minX, y: minY, w: w, h: h, points: pts, fill: { color: f ? f.fill : 'E8ECF2' },
+        line: gap ? { color: '8A96AE', width: 0.9, dashType: 'dash' } : { color: 'FFFFFF', width: 0.6 }, objectName: (gap ? 'Gap ' : 'Region ') + reg.n });
       var text = f ? labelFor(reg.n) : null;
       if (!text) return;
+      var gapText = gap;
       var cx = X(reg.c[0]), cy = Y(reg.c[1]);
-      if (CALLOUT[reg.n]) { callouts.push({ n: reg.n, text: text, cx: cx, cy: cy }); return; }
-      chips.push({ n: reg.n, text: text, x: cx, y: cy, w: Math.min(1.0, Math.max(0.46, reg.n.length * 0.052 + 0.12)), h: 0.3 });
+      if (CALLOUT[reg.n]) { callouts.push({ n: reg.n, text: text, cx: cx, cy: cy, gap: gapText }); return; }
+      chips.push({ n: reg.n, text: text, x: cx, y: cy, w: Math.min(1.1, Math.max(0.46, reg.n.length * 0.052 + 0.12, String(text).length * 0.068 + 0.14)), h: 0.3, gap: gapText });
     });
     // labels that would sit on each other are pushed apart (the smaller overlap first), then kept inside the map
     for (var it = 0; it < 40; it++) {
       var moved = false;
       for (var i = 0; i < chips.length; i++) for (var j = i + 1; j < chips.length; j++) {
-        var a = chips[i], b = chips[j], ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
-        if (ox <= 0 || oy <= 0) continue;
+        /* NOT `ox`/`oy`: `ox` is the map's own x-offset a few lines up, X() reads it, and `var` has one scope per function -- an
+           overlap measured here overwrote it, and the call-outs in the sea (placed with X() afterwards) landed in the middle of the country. */
+        var a = chips[i], b = chips[j], ovx = (a.w + b.w) / 2 - Math.abs(a.x - b.x), ovy = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
+        if (ovx <= 0 || ovy <= 0) continue;
         moved = true;
-        if (oy <= ox) { var dy = oy / 2 + 0.006; if (a.y <= b.y) { a.y -= dy; b.y += dy; } else { a.y += dy; b.y -= dy; } }
-        else { var dx = ox / 2 + 0.006; if (a.x <= b.x) { a.x -= dx; b.x += dx; } else { a.x += dx; b.x -= dx; } }
+        if (ovy <= ovx) { var dy = ovy / 2 + 0.006; if (a.y <= b.y) { a.y -= dy; b.y += dy; } else { a.y += dy; b.y -= dy; } }
+        else { var dx = ovx / 2 + 0.006; if (a.x <= b.x) { a.x -= dx; b.x += dx; } else { a.x += dx; b.x -= dx; } }
       }
       if (!moved) break;
     }
     chips.forEach(function (c) {
       var x = Math.max(box.x + 0.02, Math.min(box.x + box.w - c.w - 0.02, c.x - c.w / 2)), y = Math.max(box.y, Math.min(box.y + box.h - c.h, c.y - c.h / 2));
-      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: 8.5, bold: true, color: C.text2 } }],
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2 } }],
         { x: x, y: y, w: c.w, h: c.h, align: 'center', valign: 'middle', margin: 0, shape: pres.ShapeType.roundRect, rectRadius: 0.05, fill: { color: 'FFFFFF', transparency: 12 }, objectName: 'Label ' + c.n });
     });
     // the small coastal and island regions: a short leader into the sea and the label beside it, stacked in order of latitude so no leader crosses
@@ -302,7 +309,7 @@ function anPptBuild_(Pptx, M, A) {
     callouts.forEach(function (c, i) {
       var ly = y0 + i * gap;
       sl.addShape(pres.ShapeType.line, { x: c.cx, y: Math.min(c.cy, ly + 0.13), w: Math.max(0.02, lx - 0.04 - c.cx), h: Math.max(0.0, Math.abs(ly + 0.13 - c.cy)), line: { color: C.a6, width: 0.5 }, flipV: ly + 0.13 < c.cy, objectName: 'Leader ' + c.n });
-      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: 8.5, bold: true, color: C.text2 } }],
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2 } }],
         { x: lx, y: ly, w: 0.95, h: 0.28, align: 'left', valign: 'middle', margin: 0, objectName: 'Callout ' + c.n });
     });
   }
@@ -314,9 +321,11 @@ function anPptBuild_(Pptx, M, A) {
     if (keys.length < 2) return false;
     var bk = anPptBuckets_(keys.map(function (k) { return vals[k]; }), o.edges, o.fmt), ramp = RAMPS[o.ramp];
     var sl = content(title);
+    /* No value for a region is two different things: HOPE has a team there but this figure is missing (grey, "no data"), or HOPE
+       has no team there at all (a gap: dashed, white). Only the second is the company's coverage gap. */
     drawMap(sl, { x: 0.35, y: 0.95, w: 5.55, h: 4.25 },
-      function (k) { if (!(k in vals)) return null; var b = bk.step(vals[k]); return { fill: ramp[b], dark: b >= 2 }; },
-      function (k) { return k in vals ? o.label(vals[k]) : null; });
+      function (k) { if (!(k in vals)) return presence[k] ? null : { fill: 'FFFFFF', gap: true }; var b = bk.step(vals[k]); return { fill: ramp[b], dark: b >= 2 }; },
+      function (k) { return k in vals ? o.label(vals[k]) : (!presence[k] && o.gapLabel ? o.gapLabel : null); });
     // the key, at the right
     sl.addText(o.heading, { x: 6.1, y: 0.95, w: 3.4, h: 0.45, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
     sl.addText(o.sub, { x: 6.1, y: 1.4, w: 3.4, h: 0.58, fontSize: 10, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
@@ -327,17 +336,63 @@ function anPptBuild_(Pptx, M, A) {
       sl.addText(it.label + (o.unit ? ' ' + o.unit : '') + '  ·  ' + it.count + ' region' + (it.count === 1 ? '' : 's'), { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, color: C.text1, margin: 0, valign: 'middle', objectName: 'Key text ' + it.label });
       ly += 0.25;
     });
-    sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: ly, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'E8ECF2' }, line: { color: 'C9D0DC', width: 0.5 }, objectName: 'Key none' });
-    sl.addText(o.noneText || 'No data', { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, color: C.a6, margin: 0, valign: 'middle', objectName: 'Key text none' });
+    /* a team is there but this figure is not: grey. No team there at all: the dashed gap, with how many and where they are named. */
+    var noData = Object.keys(presence).filter(function (k) { return !(k in vals); }).length;
+    if (noData) {
+      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: ly, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'E8ECF2' }, line: { color: 'C9D0DC', width: 0.5 }, objectName: 'Key none' });
+      sl.addText((o.noneText || 'No data') + '  ·  ' + noData + ' region' + (noData === 1 ? '' : 's'), { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, color: C.a6, margin: 0, valign: 'middle', objectName: 'Key text none' });
+      ly += 0.25;
+    }
+    if (gaps.length) {
+      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: ly, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'FFFFFF' }, line: { color: '8A96AE', width: 0.9, dashType: 'dash' }, objectName: 'Key gap' });
+      sl.addText('Not in yet  ·  ' + gaps.length + ' region' + (gaps.length === 1 ? '' : 's'), { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, bold: true, color: C.a5, margin: 0, valign: 'middle', objectName: 'Key text gap' });
+      ly += 0.25;
+    }
     var ranked = keys.slice().sort(function (a, b) { return o.low ? vals[a] - vals[b] : vals[b] - vals[a]; });
+    var nTop = ly > 3.4 ? 3 : 4;
     var lines = [{ text: o.listTitle, options: { bold: true, fontSize: 9.5, color: C.text2, breakLine: true } }]
-      .concat(ranked.slice(0, 4).map(function (k, i) { return { text: k + '  ' + o.label(vals[k]), options: { fontSize: 9.5, color: C.text1, breakLine: i < 3 } }; }));
-    sl.addText(lines, { x: 6.1, y: ly + 0.33, w: 3.4, h: 0.92, margin: 0, valign: 'top', objectName: 'Map list' });
+      .concat(ranked.slice(0, nTop).map(function (k, i) { return { text: k + '  ' + o.label(vals[k]), options: { fontSize: 9.5, color: C.text1, breakLine: i < nTop - 1 } }; }));
+    sl.addText(lines, { x: 6.1, y: ly + 0.08, w: 3.4, h: 0.17 * (nTop + 1) + 0.04, margin: 0, valign: 'top', objectName: 'Map list' });
     var foot = [];
+    if (gaps.length && !o.gapLabel) foot.push('Dashed: no HOPE team yet (' + gaps.length + ', named on the coverage slides).');
     if (placed.unplaced.length) foot.push('Not on the map: ' + placed.unplaced.slice(0, 3).map(function (r) { return short(r.region, 18); }).join(', ') + (placed.unplaced.length > 3 ? ' and ' + (placed.unplaced.length - 3) + ' more' : '') + ' (not region names).');
     if (placed.notes.length) foot.push(placed.notes.slice(0, 3).join('; ') + '.');
     foot.push(TZ.attribution + '.');
-    sl.addText(foot.join(' '), { x: 6.1, y: 4.62, w: 3.4, h: 0.58, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
+    sl.addText(foot.join(' '), { x: 6.1, y: 4.7, w: 3.4, h: 0.5, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
+    return true;
+  }
+  /** THE GMO ZONES ON THE MAP: each zone a colour, the key naming the zone's GMO, its teams and its General %. Skipped when fewer than two
+      zones are set in Teams & Staff (a map of one colour says nothing). */
+  function zoneMapSlide() {
+    var L = zoneBook.list;
+    if (!TZ || L.length < 2) return false;
+    var sl = content('GMO zones on the map');
+    drawMap(sl, { x: 0.35, y: 0.95, w: 5.55, h: 4.25 },
+      function (k) { var z = zoneBook.regionZone[k]; if (z) return { fill: z.color }; return presence[k] ? null : { fill: 'FFFFFF', gap: true }; },
+      function (k) { var z = zoneBook.regionZone[k]; return z ? short(z.label, 9) : null; });
+    sl.addText(L.length + ' GMO zones', { x: 6.1, y: 0.95, w: 3.4, h: 0.45, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
+    sl.addText('Each colour is a zone and each zone has a GMO, the one who holds most of its teams. A region takes the colour of the zone with most of its teams.', { x: 6.1, y: 1.4, w: 3.4, h: 0.58, fontSize: 10, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
+    var shown = L.slice(0, 10), rh = Math.min(0.52, 2.55 / (shown.length + (gaps.length ? 1 : 0))), y0 = 2.05;
+    shown.forEach(function (z, i) {
+      var y = y0 + i * rh, regs = Object.keys(z.regions).length;
+      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: y + 0.04, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: z.color }, line: { color: z.color, width: 0 }, objectName: 'Zone key ' + z.name });
+      var facts = z.teams.length + ' team' + (z.teams.length === 1 ? '' : 's') + ', ' + regs + ' region' + (regs === 1 ? '' : 's') + (z.general != null ? ', General ' + anPptPc0_(z.general) : '');
+      sl.addText(rh >= 0.4
+        ? [{ text: short(z.name, 26), options: { bold: true, fontSize: 9.5, color: C.text2, breakLine: true } }, { text: 'GMO ' + short(z.gmoText, 24) + '  ·  ' + facts, options: { fontSize: 8, color: C.text1 } }]
+        : [{ text: short(z.name, 18) + '  ·  GMO ' + short(z.gmoText, 20) + '  ·  ' + z.teams.length, options: { fontSize: 8.5, color: C.text1 } }],
+        { x: 6.45, y: y, w: 3.05, h: rh, margin: 0, valign: 'top', objectName: 'Zone text ' + z.name });
+    });
+    if (gaps.length) {
+      var gy = y0 + shown.length * rh;
+      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: gy + 0.04, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'FFFFFF' }, line: { color: '8A96AE', width: 0.9, dashType: 'dash' }, objectName: 'Key gap' });
+      sl.addText('Not in yet  ·  ' + gaps.length + ' region' + (gaps.length === 1 ? '' : 's'), { x: 6.45, y: gy, w: 3.05, h: 0.26, fontSize: 9.5, bold: true, color: C.a5, margin: 0, valign: 'middle', objectName: 'Key text gap' });
+    }
+    var foot = [];
+    if (L.length > shown.length) foot.push((L.length - shown.length) + ' more zone' + (L.length - shown.length === 1 ? '' : 's') + ' share the grey.');
+    if (zoneBook.unset) foot.push(zoneBook.unset + ' team' + (zoneBook.unset === 1 ? ' has' : 's have') + ' no zone set in Teams & Staff and ' + (zoneBook.unset === 1 ? 'is' : 'are') + ' not coloured.');
+    if (zoneBook.mixed.length) foot.push(zoneBook.mixed.length + ' region' + (zoneBook.mixed.length === 1 ? ' is' : 's are') + ' shared by two zones and coloured for the one with more teams there (' + zoneBook.mixed.slice(0, 2).join(', ') + (zoneBook.mixed.length > 2 ? ' and ' + (zoneBook.mixed.length - 2) + ' more' : '') + ').');
+    foot.push(TZ.attribution + '.');
+    sl.addText(foot.join(' '), { x: 6.1, y: 4.7, w: 3.4, h: 0.5, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
     return true;
   }
   /* A list too long for one slide is PAGED, never squeezed: a real book has two dozen regions, and a table of
@@ -368,6 +423,48 @@ function anPptBuild_(Pptx, M, A) {
   var established = T.filter(function (r) { return r.months >= M.minM; });
   var byKey = function (rows, k) { return rows.filter(function (r) { return r[k] != null; }).sort(function (a, b) { return b[k] - a[k]; }); };
   var Z = M.regions, hasZ = Z.length >= 2;
+  /* WHERE WE ARE AND WHERE WE ARE NOT. A region is "in" when a team in it sold in the period; the rest of the 31 are the gaps,
+     named on the slides and drawn dashed on every map so the company can see what it does not cover. */
+  var presence = {}, regionTeams = {}, gaps = [];
+  if (TZ) {
+    var placedZ = placeRows(Z.map(function (z) { return { region: z.region, teams: z.teams }; }));
+    Object.keys(placedZ.groups).forEach(function (k) { presence[k] = true; regionTeams[k] = placedZ.groups[k].reduce(function (a, r) { return a + r.teams; }, 0); });
+    gaps = TZ.regions.map(function (r) { return r.n; }).filter(function (n) { return !presence[n]; });
+  }
+  var ZANZIBAR = { 'Mjini Magharibi': 1, 'Kusini Unguja': 1, 'Kaskazini Unguja': 1, 'Kaskazini Pemba': 1, 'Kusini Pemba': 1 };
+  /* THE GMO ZONES: the zone a team is set under in Teams & Staff, and the GMO who holds most of its teams. A region on the map takes the
+     colour of the zone that holds most of its teams; one shared by two zones is said on the slide, never hidden. */
+  var ZONE_PAL = ['1F57D6', '29A8E0', '1E9E63', 'E0A100', 'D93636', '8E44AD', 'E67E22', '16A085', 'C2185B', '5D6D7E'];
+  var zoneBook = (function () {
+    var by = {}, unset = 0, regionCount = {};
+    var nobody = function (v) { v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); };
+    T.forEach(function (t) {
+      if (nobody(t.zone)) { unset += 1; return; }
+      var name = String(t.zone).replace(/\s+/g, ' ').trim().toUpperCase();
+      var e = by[name] = by[name] || { name: name, teams: [], gmo: {}, regions: {} };
+      e.teams.push(t);
+      if (!nobody(t.gmo)) { var g = String(t.gmo).replace(/\s+/g, ' ').trim(); e.gmo[g] = (e.gmo[g] || 0) + 1; }
+      var c = anPptCanonRegion_(t.region);
+      if (c) { e.regions[c] = (e.regions[c] || 0) + 1; (regionCount[c] = regionCount[c] || {})[name] = (regionCount[c][name] || 0) + 1; }
+    });
+    var list = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.teams.length - a.teams.length || (a.name < b.name ? -1 : 1); });
+    list.forEach(function (z, i) {
+      z.color = i < ZONE_PAL.length ? ZONE_PAL[i] : '9AA6BC';
+      var gs = Object.keys(z.gmo).sort(function (a, b) { return z.gmo[b] - z.gmo[a] || (a < b ? -1 : 1); });
+      z.gmoText = gs.length ? gs[0] + (gs.length > 1 ? ' +' + (gs.length - 1) : '') : 'not named';
+      z.label = String(z.name.replace(/\s*ZONE\s*/i, ' ').trim() || z.name);
+      z.label = z.label.charAt(0) + z.label.slice(1).toLowerCase();
+      z.general = anPptMean_(z.teams.map(function (t) { return t.general; }));
+      z.sales = anPptSum_(z.teams, 'sales');
+    });
+    var regionZone = {}, mixed = [];
+    Object.keys(regionCount).forEach(function (r) {
+      var zs = Object.keys(regionCount[r]).sort(function (a, b) { return regionCount[r][b] - regionCount[r][a] || (a < b ? -1 : 1); });
+      regionZone[r] = list.filter(function (z) { return z.name === zs[0]; })[0];
+      if (zs.length > 1) mixed.push(r);
+    });
+    return { list: list, regionZone: regionZone, mixed: mixed, unset: unset };
+  })();
   var CR = M.credit, hasCR = CR.length >= 3;
   var colM = M.colMonths, recM = M.recMonths;
   var hasColT = established.filter(function (r) { return r.colPct != null; }).length >= 4;
@@ -409,7 +506,7 @@ function anPptBuild_(Pptx, M, A) {
 
   /* ---- growth and coverage */
   if (had.length >= 2 || hasZ) {
-    sec('Growth and coverage'); sectionsIn.push(['Growth and coverage', 'teams' + (hasZ ? ', regions and the map' : '')]);
+    sec('Growth and coverage'); sectionsIn.push(['Growth and coverage', 'teams' + (hasZ ? ', regions, the map' + (TZ && gaps.length ? ' and the gaps' : '') : '')]);
   }
   if (had.length >= 2) (function () {
     var s = content('Teams went from ' + first.teams + ' to ' + last.teams);
@@ -440,7 +537,26 @@ function anPptBuild_(Pptx, M, A) {
     var nReg = Object.keys(pl.groups).length, nTeams = 0; Object.keys(pl.groups).forEach(function (k) { pl.groups[k].forEach(function (r) { nTeams += r.teams; }); });
     mapSlide('Where HOPE works: ' + nReg + ' of 31 regions', rows, { value: function (g) { return g.reduce(function (a, r) { return a + r.teams; }, 0); }, label: function (v) { return String(v); },
       ramp: 'blue', edges: [1, 3, 7], fmt: function (v) { return String(v); }, heading: nReg + ' of 31 regions', sub: nTeams + ' teams selling in ' + lastLong + ', the number in each region on the map.',
-      legendTitle: 'Teams in the region', noneText: 'No teams', listTitle: 'Most teams' });
+      legendTitle: 'Teams in the region', noneText: 'No teams', listTitle: 'Most teams', gapLabel: 'not yet' });
+  })();
+  /* THE GAPS, NAMED: "even the regions we are not in yet -- so that we are well aware of the gaps". Every region of the 31 with no team in
+     the period, mainland and Zanzibar apart, and the regions held by only one or two teams, which are one closure from being gaps. */
+  if (hasZ && TZ && gaps.length) (function () {
+    var s = content('Regions we are not in yet: ' + gaps.length + ' of 31');
+    var main = gaps.filter(function (n) { return !ZANZIBAR[n]; }), zanz = gaps.filter(function (n) { return ZANZIBAR[n]; });
+    var thin = Object.keys(presence).filter(function (k) { return regionTeams[k] <= 2; }).sort(function (a, b) { return regionTeams[a] - regionTeams[b] || (a < b ? -1 : 1); });
+    card(s, 0.5, 1.05, 2.9, 1.5, 'No team yet', gaps.length + ' of 31', 'regions with no HOPE team selling in ' + lastLong + ' (' + (31 - gaps.length) + ' have one)', { color: C.a5 });
+    card(s, 0.5, 2.7, 2.9, 1.5, 'Only 1 or 2 teams', String(thin.length), thin.length ? 'regions held by one or two teams: one closure from a gap' : 'every region we are in has three teams or more', { color: C.a4 });
+    var runs = [];
+    var group = function (label, names, last) {
+      runs.push({ text: label.toUpperCase() + '  ·  ' + names.length, options: { fontSize: 9, bold: true, color: C.a6, charSpacing: 1, breakLine: true, paraSpaceAfter: 2 } });
+      runs.push({ text: names.join(', '), options: { fontSize: 13, bold: true, color: C.text2, breakLine: !last, paraSpaceAfter: 10 } });
+    };
+    if (main.length) group('Mainland, no team yet', main, !zanz.length && !thin.length);
+    if (zanz.length) group('Zanzibar, no team yet', zanz, !thin.length);
+    if (thin.length) group('Only 1 or 2 teams', thin.map(function (k) { return k + ' ' + regionTeams[k]; }), true);
+    s.addText(runs, { x: 3.7, y: 1.05, w: 5.8, h: 3.15, valign: 'top', margin: 0, color: C.text1, objectName: 'Gaps list' });
+    note(s, 'A region is "in" when a team in it sold in ' + (M.complete ? 'the year' : 'the year so far') + '. Region names are as Teams & Staff spells them' + (noRegion ? '; ' + noRegion + ' team' + (noRegion === 1 ? ' has' : 's have') + ' no region set and ' + (noRegion === 1 ? 'is' : 'are') + ' not placed' : '') + '. Dashed on every map in this report.', 4.35, 0.6);
   })();
 
   /* ---- sales */
@@ -575,7 +691,7 @@ function anPptBuild_(Pptx, M, A) {
 
   /* ---- regions */
   if (hasZ) {
-    sec('Regions'); sectionsIn.push(['Regions', 'sales, retention and general performance']);
+    sec('Regions'); sectionsIn.push(['Regions', 'sales, retention and general performance' + (TZ && zoneBook.list.length >= 2 ? ', and the GMO zones' : '')]);
     var zs = Z.slice().sort(function (a, b) { return b.sales - a.sales; });
     regionPages('Regions: sales and general performance', zs, { series: 'Sales (TZS billion)', value: function (z) { return +(z.sales / 1e9).toFixed(2); }, fmt: '0.00', color: C.a1, name: 'Sales by region',
       head: ['Region', 'GMO', 'Teams', 'Coll.', 'Rec.', 'General'], widths: [1.3, 1.65, 0.5, 0.55, 0.5, 0.7], textCols: [0, 1],
@@ -586,6 +702,7 @@ function anPptBuild_(Pptx, M, A) {
       value: function (g) { var w = 0, a = 0; g.forEach(function (r) { if (r.general != null) { w += r.teams; a += r.general * r.teams; } }); return w ? Math.round(a / w * 10) / 10 : null; },
       label: function (v) { return Math.round(v) + '%'; }, fmt: function (v) { return Math.round(v) + '%'; }, ramp: 'green', heading: 'General %', legendTitle: 'General %', noneText: 'No teams', listTitle: 'Highest',
       sub: 'The average of sales, collection and recovery, region by region. Darker is better; a region with several teams is weighted by them.' });
+    zoneMapSlide();
     /* THE KEY: every region with its GMO and the teams in it, laid in columns so a long list never
        runs off its card; a region that will not fit the page goes on the next one. */
     var order = Z.slice().sort(function (a, b) { return teamsOf(b.region).length - teamsOf(a.region).length; });
