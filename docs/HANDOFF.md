@@ -3675,7 +3675,7 @@ come from `noticeTiles_` in portal-core, extracted so the register and the deck 
 Each section is `{ ok, ... }`; one the code may not open (it needs the PAR, Expected or Legal tab) or that
 fails returns `{ ok: false, reason }` and the deck draws a slide that says why. PAR and the portfolio are
 the book as at the latest deck (the date is on the slides and in the notes), not rebuilt for a past
-year-end; a closed year with a stamped PAR also gets "PAR by team, as the year's report closed it".
+year-end. (A closed year's stamped PAR by team is NOT in the deck -- "out of the PPT deck, can stay in reports but not in PPT" -- it stays in the Annual Rep tab.)
 
 **What the deck holds** (a slide is left out when its data is not there, and the contents slide lists only
 what is in): at a glance, teams and regions, sales by month / against last year / top ten / against
@@ -3724,8 +3724,8 @@ PAR only." The books slides no longer show the balance-based PAR (arrears over t
 **all-time PAR** — the arrears over the total loan (principal and interest) of everything ever lent, since the first sale — beside the arrears, what was ever lent and the
 average loan; the regions are ranked by it (with each region's arrears and what it has lent), the map is coloured by it (a region's arrears over what its teams have lent,
 an alias such as Kahama added to its region), and the team slide shows it beside the arrears. The *Active portfolio* slides carry the arrears as an amount (TZS million)
-where they used to carry "Arrears %" (arrears over the balance). A closed year's **year-close** slide ("Portfolio at risk by team, as the 2025 report closed it") stays: it
-is the workbook's own stamped figure (its collection is 100 − PAR), not the balance ratio. The PAR *tab* in the portal is unchanged (it still reads both, the all-time one
+where they used to carry "Arrears %" (arrears over the balance). A closed year's stamped **year-close PAR** (the workbook's own figure, its collection being 100 − PAR) is **not in the deck at all** -- no slide, no contents line, no note: it
+stays in the Annual Rep tab and the reports. The deck names no PAR but the all-time one (the empty-state messages say "portfolio at risk" and "defaulter deck", not "PAR"). The PAR *tab* in the portal is unchanged (it still reads both, the all-time one
 to one decimal, Part 38). A test fails any slide that says "over the balance", "Arrears %" or names a PAR once the all-time PAR is taken out.
 
 **The gaps: the regions we are not in yet.** "Even the regions we aint in yet -- mention them / show, so that we are well aware of the

@@ -846,20 +846,9 @@ function anPptBuild_(Pptx, M, A) {
   })();
   sectionsIn.push(['Teams, leaders, snapshot', tlItems.join(', ')]);
 
-  /* ---- portfolio at risk, where the year's report stamped it */
-  var parT = T.filter(function (r) { return r.par != null; });
-  if (parT.length >= 4) (function () {
-    sec('PAR at year close'); sectionsIn.push(['Portfolio at risk, as the year closed it', 'by team, from the ' + M.year + ' report']);
-    var s = content('Portfolio at risk by team, as the ' + M.year + ' report closed it');
-    var asc = parT.slice().sort(function (a, b) { return a.par - b.par; });
-    var n = Math.min(8, Math.floor(asc.length / 2));
-    var line = function (r) { return [r.team, anPptPc_(r.par), r.totalDef == null ? '—' : anPptN0_(r.totalDef / 1e6)]; };
-    heading2(s, 'Lowest PAR', 0.5, 1.0, 4.4, C.a3);
-    table(s, [['Team', 'PAR %', 'Total def (TZS M)']].concat(asc.slice(0, n).map(line)), 0.5, 1.35, 4.4, [2.2, 1.0, 1.2], { name: 'Lowest PAR', rowH: 0.3, fs: 9.5 });
-    heading2(s, 'Highest PAR', 5.1, 1.0, 4.4, C.a5);
-    table(s, [['Team', 'PAR %', 'Total def (TZS M)']].concat(asc.slice(-n).reverse().map(line)), 5.1, 1.35, 4.4, [2.2, 1.0, 1.2], { name: 'Highest PAR', rowH: 0.3, fs: 9.5 });
-    note(s, 'PAR is the share of the loan book overdue, as the ' + M.year + ' report closed it. Company average ' + anPptPc_(Y.par) + ' over ' + parT.length + ' teams.', 4.55, 0.3);
-  })();
+  /* ---- NO YEAR-CLOSE PAR HERE. A closed year's report stamped a PAR per team (the workbook's, collection = 100 - PAR); it stays in the Annual
+     Rep tab and its reports and is not in this deck -- "out of the PPT deck, can stay in reports but not in PPT". The deck's PAR is the all-time PAR
+     of the books, below. */
 
   /* ---- THE BOOKS: portfolio at risk, the active portfolio, legal. Each is the portal's own tab's answer. */
   var BK = M.book || {};
@@ -876,9 +865,9 @@ function anPptBuild_(Pptx, M, A) {
   /* -- portfolio at risk */
   (function () {
     var P_ = BK.par;
-    sec('Portfolio at risk'); sectionsIn.push(['Portfolio at risk', P_ && P_.ok && !P_.empty ? 'as at ' + P_.date + ': days overdue, region, team, status' : 'the portal\'s PAR tab']);
+    sec('Portfolio at risk'); sectionsIn.push(['Portfolio at risk', P_ && P_.ok && !P_.empty ? 'as at ' + P_.date + ': days overdue, region, team, status' : 'the portal\'s defaulter deck']);
     if (!P_ || !P_.ok) { sayWhy('Portfolio at risk', P_ ? 'This section ' + P_.reason + '. Export again from a code that holds it.' : 'The books did not load with this export. Check the connection and export again.', 'Not in this export'); return; }
-    if (P_.empty) { sayWhy('Portfolio at risk', 'The portal has no defaulter deck uploaded, so there is no PAR to show. Upload the defaulter deck and export again.', 'No defaulter deck yet'); return; }
+    if (P_.empty) { sayWhy('Portfolio at risk', 'The portal has no defaulter deck uploaded, so there is no portfolio at risk to show. Upload the defaulter deck and export again.', 'No defaulter deck yet'); return; }
     var Tt = P_.totals || {};
     var s1 = content('Portfolio at risk: the book as at ' + P_.date);
     var w = 1.95, h = 1.3, gx = 0.1;
@@ -1078,7 +1067,7 @@ function anPptBuild_(Pptx, M, A) {
     if (hasZ && !TZ) b.push([{ text: 'Map. ', bold: true }, { text: 'The map of Tanzania did not load with this export, so the map slides are left out. Export again.' }]);
     if (noRegion) b.push([{ text: 'Regions. ', bold: true }, { text: noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet, so they are not in the regional slides. Set them there and export again.' }]);
     if (M.pending.length) b.push([{ text: 'Still being built. ', bold: true }, { text: 'Collection and recovery for ' + M.pending.map(function (m) { return anPptLong_(m.ym); }).join(', ') + ' were not ready when this was exported, so they are blank. Export again shortly.' }]);
-    if (M.stamped) b.push([{ text: M.year + '. ', bold: true }, { text: 'Collection and PAR are the year\'s, as the ' + M.year + ' report closed them; there is no monthly collection or recovery for this year.' }]);
+    if (M.stamped) b.push([{ text: M.year + '. ', bold: true }, { text: 'Collection is the year\'s, as the ' + M.year + ' report closed it; there is no monthly collection or recovery for this year.' }]);
     if (BK.par || BK.portfolio || BK.legal) b.push([{ text: 'The books. ', bold: true }, { text: 'Portfolio at risk' + (parDate ? ' and the active portfolio are the portal\'s books as at ' + parDate : ' and the active portfolio are the portal\'s books as at the latest deck') + (M.complete ? ', not rebuilt for the end of ' + M.year : '') + '. Legal counts the notices dated ' + M.year + ', with recovery as at the latest deck.' }]);
     b.push([{ text: 'Not in this report. ', bold: true }, { text: 'See the previous slide.' }]);
     bullets(s, b, 0.6, 1.0, 8.8, 4.2, 12);
