@@ -259,7 +259,8 @@ function anPptBuild_(Pptx, M, A) {
     return { groups: groups, unplaced: unplaced, notes: notes };
   }
   /** Draw the country in `box` (inches). fillFor(region) -> { fill, dark } or null (no data); labelFor(region) -> text or null. */
-  function drawMap(sl, box, fillFor, labelFor) {
+  /* `subFor(region)` is an optional small third line under a region's label (the zone map puts the region's GMOs there). */
+  function drawMap(sl, box, fillFor, labelFor, subFor) {
     var lon0 = 29.45, lon1 = 41.9, latN = -0.85, latS = -11.85, cosl = Math.cos(6.3 * Math.PI / 180);
     var sc = Math.min(box.w / ((lon1 - lon0) * cosl), box.h / (latN - latS));
     var ox = box.x + (box.w - (lon1 - lon0) * cosl * sc) / 2, oy = box.y + (box.h - (latN - latS) * sc) / 2;
@@ -281,8 +282,12 @@ function anPptBuild_(Pptx, M, A) {
       if (!text) return;
       var gapText = gap;
       var cx = X(reg.c[0]), cy = Y(reg.c[1]);
-      if (CALLOUT[reg.n]) { callouts.push({ n: reg.n, text: text, cx: cx, cy: cy, gap: gapText }); return; }
-      chips.push({ n: reg.n, text: text, x: cx, y: cy, w: Math.min(1.1, Math.max(0.46, reg.n.length * 0.052 + 0.12, String(text).length * 0.068 + 0.14)), h: 0.3, gap: gapText });
+      var sub = subFor ? subFor(reg.n) : null;
+      if (CALLOUT[reg.n]) { callouts.push({ n: reg.n, text: text, sub: sub, cx: cx, cy: cy, gap: gapText }); return; }
+      var cw = Math.min(1.1, Math.max(0.46, reg.n.length * 0.052 + 0.12, String(text).length * 0.068 + 0.14)), ch = 0.3;
+      // the names are set small and wrapped; the label grows to hold them (never past 1.25 inches wide) rather than hide one
+      if (sub) { cw = Math.max(cw, Math.min(1.25, textWidth(sub, 5.5) / 2 + 0.1)); ch = 0.3 + wrapLines(sub, 5.5, cw - 0.08) * 0.088; }
+      chips.push({ n: reg.n, text: text, sub: sub, x: cx, y: cy, w: cw, h: ch, gap: gapText });
     });
     // labels that would sit on each other are pushed apart (the smaller overlap first), then kept inside the map
     for (var it = 0; it < 40; it++) {
@@ -300,17 +305,21 @@ function anPptBuild_(Pptx, M, A) {
     }
     chips.forEach(function (c) {
       var x = Math.max(box.x + 0.02, Math.min(box.x + box.w - c.w - 0.02, c.x - c.w / 2)), y = Math.max(box.y, Math.min(box.y + box.h - c.h, c.y - c.h / 2));
-      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2 } }],
-        { x: x, y: y, w: c.w, h: c.h, align: 'center', valign: 'middle', margin: 0, shape: pres.ShapeType.roundRect, rectRadius: 0.05, fill: { color: 'FFFFFF', transparency: 12 }, objectName: 'Label ' + c.n });
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2, breakLine: !!c.sub } }]
+        .concat(c.sub ? [{ text: c.sub, options: { fontSize: 5.5, color: C.a1 } }] : []),
+        { x: x, y: y, w: c.w, h: c.h, align: 'center', valign: 'middle', margin: [0, 0.03, 0, 0.03], shape: pres.ShapeType.roundRect, rectRadius: 0.05, fill: { color: 'FFFFFF', transparency: 12 }, objectName: 'Label ' + c.n });
     });
     // the small coastal and island regions: a short leader into the sea and the label beside it, stacked in order of latitude so no leader crosses
     callouts.sort(function (a, b) { return a.cy - b.cy; });
-    var lx = X(41.0), gap = 0.34, y0 = Math.min(callouts.length ? callouts[0].cy - 0.1 : 0, box.y + box.h - gap * callouts.length - 0.2);
+    var lx = X(41.0), cwid = 0.88, ch0 = 0.34, hs = callouts.map(function (c) { return c.sub ? 0.3 + wrapLines(c.sub, 5.5, cwid) * 0.088 + 0.04 : ch0; });
+    var total = hs.reduce(function (a, b) { return a + b; }, 0), y0 = Math.min(callouts.length ? callouts[0].cy - 0.1 : 0, box.y + box.h - total - 0.1), ly = y0;
     callouts.forEach(function (c, i) {
-      var ly = y0 + i * gap;
+      var h = hs[i];
       sl.addShape(pres.ShapeType.line, { x: c.cx, y: Math.min(c.cy, ly + 0.13), w: Math.max(0.02, lx - 0.04 - c.cx), h: Math.max(0.0, Math.abs(ly + 0.13 - c.cy)), line: { color: C.a6, width: 0.5 }, flipV: ly + 0.13 < c.cy, objectName: 'Leader ' + c.n });
-      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2 } }],
-        { x: lx, y: ly, w: 0.95, h: 0.28, align: 'left', valign: 'middle', margin: 0, objectName: 'Callout ' + c.n });
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: c.gap ? 7.5 : 8.5, bold: !c.gap, italic: !!c.gap, color: c.gap ? C.a5 : C.text2, breakLine: !!c.sub } }]
+        .concat(c.sub ? [{ text: c.sub, options: { fontSize: 5.5, color: C.a1 } }] : []),
+        { x: lx, y: ly, w: cwid, h: h - 0.06, align: 'left', valign: 'top', margin: 0, objectName: 'Callout ' + c.n });
+      ly += h;
     });
   }
   /** One map slide: the country coloured by `value` over the placed rows, with a key and the regions that could not be placed. */
@@ -376,7 +385,8 @@ function anPptBuild_(Pptx, M, A) {
     var sl = content('GMO zones on the map');
     drawMap(sl, { x: 0.35, y: 0.95, w: 5.55, h: 4.25 },
       function (k) { var z = zoneBook.regionZone[k]; if (z) return { fill: z.color }; return presence[k] ? null : { fill: 'FFFFFF', gap: true }; },
-      function (k) { var z = zoneBook.regionZone[k]; return z ? short(z.label, 9) : null; });
+      function (k) { var z = zoneBook.regionZone[k]; return z ? short(z.label, 9) : null; },
+      function (k) { return zoneBook.regionZone[k] ? mapGmoText(gmosOfRegion(k)) : null; });
     sl.addText(L.length + ' GMO zones', { x: 6.1, y: 0.95, w: 3.4, h: 0.4, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
     sl.addText('Each colour is a zone, with all its GMOs named, the one who holds most of its teams first.', { x: 6.1, y: 1.37, w: 3.4, h: 0.34, fontSize: 9, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
     zoneDrawRows(sl, first.placed);
@@ -455,11 +465,12 @@ function anPptBuild_(Pptx, M, A) {
     return out.length ? out : [[]];
   }
   /* How many lines a text takes at a font size in a width (inches). Capitals are wider than lower case, so it is counted by letter. */
-  function wrapLines(text, fs, w) {
+  function textWidth(text, fs) {
     var em = 0, t = String(text == null ? '' : text);
     for (var i = 0; i < t.length; i++) { var ch = t.charAt(i); em += /[A-Z0-9]/.test(ch) ? 0.62 : ch === ' ' ? 0.24 : 0.5; }
-    return Math.max(1, Math.ceil(em * fs / 72 / Math.max(0.3, w)));
+    return em * fs / 72;
   }
+  function wrapLines(text, fs, w) { return Math.max(1, Math.ceil(textWidth(text, fs) / Math.max(0.3, w))); }
   /* GMO names: one person however the name is cased; `n` is how many teams they hold (0 for one who holds only teams that sold nothing this year). */
   function cleanName(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
   function isNobody(v) { v = cleanName(v); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); }
@@ -489,6 +500,29 @@ function anPptBuild_(Pptx, M, A) {
     return gmoSorted(m);
   };
   var gmoOf = function (region) { var g = gmosOf(region); return g.length ? g.join(', ') : '—'; };
+  /* ...and of an OFFICIAL region as the map draws it (Teams & Staff spellings and aliases folded in: Kahama is in Shinyanga). */
+  /* The GMOs on a region's label. A label that lists them in full over two short lines does; one that would cover the region it names (three or more GMOs, long names)
+     gives first name and the initial of the last ("DITRICK M."), and the key beside the map has every name in full. Two different people who would shorten alike keep the full name. */
+  var mapGmoText = function (names) {
+    if (!names.length) return null;
+    var full = names.join(', ');
+    if (textWidth(full, 5.5) <= 2.1) return full;
+    var abbr = function (n) { var w = cleanName(n).split(' '); return w.length > 1 ? w[0] + ' ' + w[w.length - 1].charAt(0) + '.' : n; };
+    var seen = {};
+    allGmos().forEach(function (n) { var a = abbr(n); (seen[a] = seen[a] || {})[cleanName(n).toUpperCase()] = 1; });
+    return names.map(function (n) { var a = abbr(n); return Object.keys(seen[a] || {}).length > 1 ? n : a; }).join(', ');
+  };
+  var allGmos = function () {
+    var m = {};
+    T.concat(M.idle || []).forEach(function (t) { if (!isNobody(t.gmo)) gmoAdd(m, t.gmo, 0); });
+    return gmoSorted(m);
+  };
+  var gmosOfRegion = function (canon) {
+    var m = {};
+    T.forEach(function (t) { if (anPptCanonRegion_(t.region) === canon && !isNobody(t.gmo)) gmoAdd(m, t.gmo, 1); });
+    (M.idle || []).forEach(function (t) { if (anPptCanonRegion_(t.region) === canon && !isNobody(t.gmo)) gmoAdd(m, t.gmo, 0); });
+    return gmoSorted(m);
+  };
   var noRegion = T.filter(function (t) { var r = String(t.region == null ? '' : t.region).trim(); return !r || /^(NO[ -]|NONE$|N\/A$|-$)/i.test(r); }).length;
   var unsetNote = noRegion ? ' ' + noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet and are not in the regional figures.' : '';
   var established = T.filter(function (r) { return r.months >= M.minM; });
