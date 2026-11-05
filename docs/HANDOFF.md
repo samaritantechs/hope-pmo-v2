@@ -3754,6 +3754,14 @@ slide goes on to a **continuation slide** ("GMO zones, continued", two columns),
 are estimated from the names (capitals count wider); the test checks nothing runs off the slide. Zone colours run out at ten; the rest share the grey.
 With fewer than two zones set there is no slide. The gaps are dashed here too.
 
+**The region labels on the zone map carry their GMOs.** "Also add the GMO names to the region labels on the map." On *GMO zones on the map* each region's label
+(and the call-out in the sea for the small coastal and island regions) has a third, small line naming the GMOs who hold teams in that region (`gmosOfRegion`: the
+official region as the map draws it, so Kahama's teams count in Shinyanga, plus a GMO who holds only a team that sold nothing). `drawMap` takes an optional `subFor`; only
+the zone map passes one, so the value maps (General, PAR, portfolio, coverage) keep their plain labels. A label that lists them in full over two short lines does; one that would
+cover the region it names (about three or more GMOs, long names) gives **first name and the initial of the last** ("DITRICK M."), and two different people who would shorten alike keep
+their full names (`mapGmoText`). The key beside the map always has every name in full. The label grows to hold its names (never past 1.25 inches); the sea call-outs are
+stacked by their own heights.
+
 **The region slides name every GMO too.** "List the GMOs on the region slides too." The regions table (column "GMOs") and the "Regions: who is in them" cards
 used to say "GMO: X +n" (the one holding most of the region's teams and a count of the rest); both now list every GMO of the region in full, the one holding most
 teams first ("GMOs: A, B, C", "GMO: A" for one), and include a GMO who holds only a team that sold nothing this year (`gmosOf`, from `M.idle`). A name is one person

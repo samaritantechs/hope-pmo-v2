@@ -595,6 +595,30 @@ test('the GMO zones: a map coloured by zone, the key naming EVERY GMO of each zo
   assert.ok(r.slides.find(x => x.text.includes('What this report covers')).text.includes('the GMO zones'), 'the contents lists them');
 });
 
+/* "also add the GMO names to the region labels on the map" */
+test('the GMO zone map: each region\'s label names its GMOs, in full while they fit and first name + last initial when they would cover the region; the key keeps every name in full', async () => {
+  const t = withBooks(zoned(book({ realRegions: true }), i => ZONES3[i % 3]));
+  const set = (team, gmo) => { t.teams.find(x => x.team === team).gmo = gmo; };
+  set('TEAM01', 'DITRICK MUFURUKI'); set('TEAM13', 'DIWANI RAMADHANI');                      // ARUSHA
+  set('TEAM02', 'MFAUME KINDOLE'); set('TEAM14', 'PATRICK JOHN MWAKASEGE');                  // MBEYA: two, they fit
+  // three more GMOs who hold only an idle team in Arusha: five names there, too many for the label; two of them would shorten alike
+  t.teams.push({ team: 'QUIET1', region: 'ARUSHA', zone: 'LAKE ZONE', gmo: 'JOHN KIBO' }, { team: 'QUIET2', region: 'ARUSHA', zone: 'LAKE ZONE', gmo: 'JOHN KAYA' }, { team: 'QUIET3', region: 'ARUSHA', zone: 'LAKE ZONE', gmo: 'SHAFII MADAI OMARY' });
+  const r = await slidesOf(await annual(t, 2026), null, await annualBook(t, 2026));
+  const z = r.slides.find(x => x.text.includes('GMO zones on the map'));
+  const mbeya = shapeText(z, 'Label Mbeya');
+  assert.ok(mbeya && mbeya.includes('MFAUME KINDOLE') && mbeya.includes('PATRICK JOHN MWAKASEGE'), 'two GMOs fit: in full: ' + mbeya);
+  const arusha = shapeText(z, 'Label Arusha');
+  assert.ok(arusha, 'Arusha has a label');
+  assert.ok(arusha.includes('DITRICK M.') && arusha.includes('DIWANI R.') && arusha.includes('SHAFII O.') && !arusha.includes('MUFURUKI'), 'five names: first name and last initial: ' + arusha);
+  assert.ok(arusha.includes('JOHN KIBO') && arusha.includes('JOHN KAYA') && !arusha.includes('JOHN K.'), 'two who would shorten alike keep their full names: ' + arusha);
+  // every one of them, in full, is in the key
+  const key = [...z.xml.matchAll(/name="Zone text [^"]+"[\s\S]*?<\/p:sp>/g)].map(m => m[0].replace(/<[^>]+>/g, ' ')).join(' ');
+  for (const g of ['DITRICK MUFURUKI', 'DIWANI RAMADHANI', 'JOHN KIBO', 'JOHN KAYA', 'SHAFII MADAI OMARY', 'MFAUME KINDOLE', 'PATRICK JOHN MWAKASEGE']) assert.ok(key.includes(g), g + ' is in the key in full');
+  // the other maps keep their plain labels
+  const gen = r.slides.find(x => x.text.includes('Regions on the map: General performance'));
+  assert.ok(gen && !/MUFURUKI|DITRICK/.test(gen.text), 'the value maps are not crowded with names');
+});
+
 test('the GMO zones: no slide while fewer than two zones are set, and a book with a dozen zones keeps the key on the page', async () => {
   const none = withBooks(book({ realRegions: true }));
   assert.ok(!(await slidesOf(await annual(none, 2026), null, await annualBook(none, 2026))).slides.some(x => /GMO zones on the map/.test(x.text)), 'no zone set: no map of nothing');
