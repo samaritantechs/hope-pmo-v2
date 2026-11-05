@@ -971,7 +971,8 @@ test('imprest queue: the HEAD-counted, filtered read returns EXACTLY the rows an
     const q = await portalApi(db, OFFICER, 'imprestQueue', want ? { state: want } : {}, NOW);
     assert.deepEqual(q.rows.map(r => r.id), old.ids,
       `imprestQueue state=${JSON.stringify(want)} must return the same rows, in the same order`);
-    assert.deepEqual(q.counts, old.counts,
+    /* `waiting` (requests with the OPM, not yet the GM's) is the one count added since; a book nobody routed has none. */
+    assert.deepEqual(q.counts, { ...old.counts, waiting: 0 },
       `imprestQueue state=${JSON.stringify(want)} must report the same KPI counts as before`);
   }
 });
@@ -1037,7 +1038,7 @@ test('imprest report: narrowing travel_date at the database keeps EXACTLY the ro
     const rep = await portalApi(fakeDb(t), OFFICER, 'imprestReport', args, NOW);
     assert.deepEqual(rep.rows.map(r => r.id).sort(), expected.ids,
       `imprestReport ${JSON.stringify(args)} must return the same set of rows as before`);
-    assert.deepEqual(rep.totals, expected.totals,
+    assert.deepEqual(rep.totals, { ...expected.totals, waiting: 0 },
       `imprestReport ${JSON.stringify(args)} must report the same totals as before`);
   }
 });

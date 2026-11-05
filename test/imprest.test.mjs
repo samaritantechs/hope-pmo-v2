@@ -677,3 +677,239 @@ test('push: the test button reaches this code\'s own phones only', async () => {
   assert.equal(r.sent, 1); assert.equal(pushes.length, 1);
   assert.equal(pushes[0].endpoint, SUB(1).endpoint); assert.match(pushes[0].body.title, /jaribio|test/);
 });
+
+/* ===================================================================== THE OPM STEP
+   "GMOs and Managers imprests shouldn't go to GM directly ... I select which roles pass through which at the
+   imprest approvals tab ... their respective OPM finds their requests in the request tab, OPM confirms the request
+   {may adjust amount with comment} - then it proceeds to the approval tab / GM" */
+const GMO = { code: 'G1', name: 'JUMA GMO', role: 'GMO', teams: null, tabs: ['impreq'] };
+const MGR = { code: 'M1', name: 'ZUBERI MANAGER', role: 'MANAGER', teams: null, tabs: ['impreq'] };
+const OPM1 = { code: 'O1', name: 'ASHA OPM', role: 'OPM', teams: null, tabs: ['impreq'] };
+const OPM2 = { code: 'O2', name: 'OTHER OPM', role: 'OPM', teams: null, tabs: ['impreq'] };
+const GM_ROUTE = [{ from: ['GMO', 'MANAGER'], via: 'OPM' }];
+
+function opmTables(extra) {
+  const t = tables();
+  t.access_codes.push(
+    { code: 'G1', name: 'JUMA GMO', role: 'GMO', teams: null, tabs: ['impreq'] },
+    { code: 'M1', name: 'ZUBERI MANAGER', role: 'MANAGER', teams: null, tabs: ['impreq'] },
+    { code: 'O1', name: 'ASHA OPM', role: 'OPM', teams: null, tabs: ['impreq'] },
+    { code: 'O2', name: 'OTHER OPM', role: 'OPM', teams: null, tabs: ['impreq'] });
+  // Teams & Staff: Kongwe and Mikocheni are Juma's (GMO) and Asha is their OPM; Temeke is Zuberi's, also Asha's.
+  t.teams = [
+    { team: 'KONGWE', gmo: 'JUMA GMO', manager: 'ZUBERI MANAGER', credit: '', opm: 'ASHA OPM' },
+    { team: 'MIKOCHENI', gmo: 'JUMA GMO', manager: 'ZUBERI MANAGER', credit: '', opm: 'ASHA OPM' },
+    { team: 'ARUSHA', gmo: 'SOMEONE ELSE', manager: 'ANOTHER MANAGER', credit: '', opm: 'OTHER OPM' },
+  ];
+  if (extra) extra(t);
+  return t;
+}
+async function routed(db) { await portalApi(db, GM, 'imprestRoutesSave', { routes: GM_ROUTE }, NOW); return db; }
+const askAs = (db, user, extra) => portalApi(db, user, 'imprestRequest', { fullName: user.name, email: 'x@x.com',
+  imprestRole: 'field officer', travelDate: TODAY, purpose: 'visit', fareTrips: 2, farePerTrip: 20000, ...extra }, NOW);
+
+test('OPM step: the GM chooses which roles pass through which; a bad rule is refused, a good one is kept and listed', async () => {
+  const db = db_(opmTables());
+  const empty = await portalApi(db, GM, 'imprestRoutes', {}, NOW);
+  assert.deepEqual(empty.routes, []); assert.ok(empty.roles.includes('GM'), 'the role names to pick from');
+  const bad = rule => assert.rejects(portalApi(db, GM, 'imprestRoutesSave', { routes: rule }, NOW));
+  await bad([{ from: ['GMO', 'OPM'], via: 'OPM' }]);                                  // a role through itself
+  await bad([{ from: ['GMO'], via: 'OPM' }, { from: ['GMO'], via: 'CREDIT' }]);        // a role in two routes
+  await bad([{ from: ['GMO'], via: 'OPM' }, { from: ['OPM'], via: 'CREDIT' }]);        // the via role is itself routed
+  await bad([{ from: [], via: 'OPM' }]); await bad([{ from: ['GMO'], via: '' }]); await bad('nope');
+  assert.deepEqual((await portalApi(db, GM, 'imprestRoutes', {}, NOW)).routes, [], 'nothing half-saved');
+  const ok = await portalApi(db, GM, 'imprestRoutesSave', { routes: [{ from: ['gmo', 'manager', 'GMO'], via: 'opm' }] }, NOW);
+  assert.deepEqual(ok.routes, GM_ROUTE, 'upper-cased and de-duplicated, as every role is held');
+  assert.deepEqual((await portalApi(db, GM, 'imprestRoutes', {}, NOW)).routes, GM_ROUTE);
+  assert.equal(db._dump('settings').find(x => x.key === 'IMPREST_ROUTES').value, JSON.stringify(GM_ROUTE));
+  // the pane's holders only, and the read-only wall stands
+  await assert.rejects(portalApi(db, STAFF, 'imprestRoutesSave', { routes: [] }, NOW), /ruhusa|not open|haujafunguliwa/i);
+  await assert.rejects(portalApi(db, AUDITOR, 'imprestRoutesSave', { routes: [] }, NOW));
+  assert.equal((await portalApi(db, GM, 'imprestRoutes', {}, NOW)).ready, true);
+});
+
+test('OPM step: a GMO\'s request waits for their OPM -- not in the GM\'s queue, not emailed, not buzzed -- and the OPM finds it in the Requests tab', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, GMO);
+  assert.equal(r.routed.stage, 'opm'); assert.deepEqual(r.routed.names, ['ASHA OPM']);
+  assert.equal(r.emailed, false); assert.equal(lastMail, null, 'the GM is not emailed yet');
+  assert.equal(r.pushed, 0, 'no GM phone either (the OPM has no phone registered here)');
+  // the GM's side: counted apart, listed only under "with the OPM", and cannot be decided while it waits
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.counts.pending, 0); assert.equal(q.counts.waiting, 1); assert.equal(q.rows.length, 0);
+  assert.equal(q.routed, true);
+  const w = await portalApi(db, GM, 'imprestQueue', { state: 'waiting' }, NOW);
+  assert.deepEqual(w.rows.map(x => x.id), [r.id]); assert.equal(w.rows[0].stage, 'opm'); assert.equal(w.rows[0].routedNames, 'ASHA OPM');
+  const all = await portalApi(db, GM, 'imprestQueue', {}, NOW);
+  assert.equal(all.rows.length, 1, 'All still shows it, flagged');
+  await assert.rejects(portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW), /bado linasubiri OPM|still waiting for the OPM/);
+  // the requester sees where it is
+  const mine = await portalApi(db, GMO, 'imprestMine', {}, NOW);
+  assert.equal(mine.rows[0].stage, 'opm'); assert.deepEqual(mine.confirm, [], 'a GMO confirms nobody');
+  // the respective OPM finds it; the other OPM does not
+  const opm = await portalApi(db, OPM1, 'imprestMine', {}, NOW);
+  assert.deepEqual(opm.confirm.map(x => x.id), [r.id]); assert.equal(opm.confirm[0].total, 40000); assert.equal(opm.confirm[0].purpose, 'visit');
+  assert.deepEqual((await portalApi(db, OPM2, 'imprestMine', {}, NOW)).confirm, [], 'another OPM\'s teams are not theirs');
+  assert.deepEqual((await portalApi(db, STAFF, 'imprestMine', {}, NOW)).confirm, []);
+  // the report counts it apart too
+  const rep = await portalApi(db, REP, 'imprestReport', {}, NOW);
+  assert.equal(rep.totals.waiting, 1);
+});
+
+test('OPM step: a Manager goes the same way, through the teams Teams & Staff gives them', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, MGR);
+  assert.equal(r.routed.stage, 'opm'); assert.deepEqual(r.routed.names, ['ASHA OPM']);
+  assert.deepEqual((await portalApi(db, OPM1, 'imprestMine', {}, NOW)).confirm.map(x => x.id), [r.id]);
+});
+
+test('OPM step: the OPM confirms -- lower with a comment, never higher -- and only then does it reach the GM, at the OPM\'s figure', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, GMO);
+  await assert.rejects(portalApi(db, OPM2, 'imprestConfirm', { id: r.id }, NOW), /si la kuthibitisha na wewe|not yours to confirm/);
+  await assert.rejects(portalApi(db, STAFF, 'imprestConfirm', { id: r.id }, NOW), /si la kuthibitisha na wewe|not yours to confirm/);
+  await assert.rejects(portalApi(db, GMO, 'imprestConfirm', { id: r.id }, NOW), /si la kuthibitisha|not yours|mwenyewe|own/);
+  await assert.rejects(portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 30000 }, NOW), /sababu|comment is required/, 'lowering needs a reason');
+  await assert.rejects(portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 50000, comment: 'more' }, NOW), /zaidi ya kilichoombwa|more than was asked/);
+  await assert.rejects(portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 0, comment: 'x' }, NOW));
+  await assert.rejects(portalApi(db, GM, 'imprestConfirm', { id: r.id }, NOW), /ruhusa|not open|haujafunguliwa/i, 'the GM has the release, not the confirm');
+  assert.equal(lastMail, null, 'nothing refused reached the GM');
+  const c = await portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 30000, comment: 'two trips are enough' }, NOW);
+  assert.equal(c.amount, 30000); assert.equal(c.asked, 40000); assert.equal(c.adjusted, true); assert.equal(c.emailed, true);
+  assert.ok(lastMail, 'the GM is emailed now'); assert.match(lastMail.body.subject, /JUMA GMO/); assert.match(lastMail.body.subject, /30,000/);
+  assert.match(lastMail.body.html, /ASHA OPM/); assert.match(lastMail.body.html, /two trips are enough/);
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.counts.pending, 1); assert.equal(q.counts.waiting, 0);
+  assert.equal(q.rows[0].opmBy, 'ASHA OPM'); assert.equal(q.rows[0].opmAmount, 30000); assert.equal(q.rows[0].opmComment, 'two trips are enough');
+  assert.equal(q.rows[0].total, 40000, 'what was asked stays on the row');
+  assert.deepEqual((await portalApi(db, OPM1, 'imprestMine', {}, NOW)).confirm, [], 'it leaves the OPM\'s list');
+  await assert.rejects(portalApi(db, OPM1, 'imprestConfirm', { id: r.id }, NOW), /halisubiri uthibitisho|no longer waiting/, 'confirmed once');
+  // the GM approves at the OPM's figure by default, and may still go up to what was asked
+  const d = await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW);
+  assert.equal(d.status, 'approved'); assert.equal(d.granted, 30000, 'the OPM\'s figure is the default');
+  assert.equal(db._dump('imprest_requests')[0].approved_amount, 30000);
+});
+
+test('OPM step: the GM may still approve up to what was asked, not above it, after the OPM lowered it', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, GMO);
+  await portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 30000, comment: 'trim' }, NOW);
+  await assert.rejects(portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true, approvedAmount: 45000 }, NOW));
+  const d = await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true, approvedAmount: 40000 }, NOW);
+  assert.equal(d.granted, 40000);
+});
+
+test('OPM step: confirming at the asked amount needs no comment', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, GMO);
+  const c = await portalApi(db, OPM1, 'imprestConfirm', { id: r.id }, NOW);
+  assert.equal(c.amount, 40000); assert.equal(c.adjusted, false);
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.rows[0].opmAmount, 40000);
+  assert.equal((await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW)).granted, 40000);
+});
+
+test('OPM step: the GM can release a waiting request (the OPM is away) and then decide it; nobody else can', async () => {
+  const db = await routed(db_(opmTables()));
+  const r = await askAs(db, GMO);
+  await assert.rejects(portalApi(db, STAFF, 'imprestRelease', { id: r.id }, NOW), /ruhusa|not open|haujafunguliwa/i);
+  await assert.rejects(portalApi(db, OPM1, 'imprestRelease', { id: r.id }, NOW), /ruhusa|not open|haujafunguliwa/i);
+  assert.equal(lastMail, null);
+  const rel = await portalApi(db, GM, 'imprestRelease', { id: r.id }, NOW);
+  assert.equal(rel.emailed, true); assert.ok(lastMail, 'the GM is emailed at release, as at any arrival');
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.counts.pending, 1); assert.equal(q.counts.waiting, 0);
+  assert.match(q.rows[0].routedNote, /THE GM/, 'the row says who released it');
+  assert.equal(q.rows[0].opmBy, '');
+  assert.deepEqual((await portalApi(db, OPM1, 'imprestMine', {}, NOW)).confirm, [], 'it leaves the OPM\'s list');
+  await assert.rejects(portalApi(db, OPM1, 'imprestConfirm', { id: r.id }, NOW), /halisubiri uthibitisho|no longer waiting/);
+  await assert.rejects(portalApi(db, GM, 'imprestRelease', { id: r.id }, NOW), /halisubiri OPM|not waiting for the OPM/);
+  assert.equal((await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW)).granted, 40000);
+});
+
+test('OPM step: two OPMs confirming one request cannot both win', async () => {
+  const db = await routed(db_(opmTables(t => { t.teams[1].opm = 'OTHER OPM'; })));   // Mikocheni is Other\'s, Kongwe is Asha\'s
+  const r = await askAs(db, GMO);
+  assert.deepEqual(r.routed.names.sort(), ['ASHA OPM', 'OTHER OPM']);
+  const [a, b] = await Promise.allSettled([portalApi(db, OPM1, 'imprestConfirm', { id: r.id }, NOW), portalApi(db, OPM2, 'imprestConfirm', { id: r.id }, NOW)]);
+  assert.deepEqual([a, b].map(x => x.status).sort(), ['fulfilled', 'rejected']);
+});
+
+test('OPM step: no OPM to be found is never a dead end -- it goes straight to the GM with the reason on it', async () => {
+  // a GMO whose teams name an OPM who has no sign-in
+  const db = await routed(db_(opmTables(t => { t.teams.forEach(x => { x.opm = 'ROGUE OPM'; }); })));
+  const r = await askAs(db, GMO);
+  assert.equal(r.routed.stage, 'gm'); assert.match(r.routed.note, /ROGUE OPM/);
+  assert.equal(r.emailed, true); assert.ok(lastMail, 'the GM is emailed at once');
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.rows.length, 1); assert.equal(q.rows[0].stage, 'gm'); assert.match(q.rows[0].routedNote, /ROGUE OPM/);
+  // a team whose OPM cell is a placeholder names nobody
+  const db3 = await routed(db_(opmTables(t => { t.teams.forEach(x => { x.opm = 'NO OPM'; }); })));
+  const r3 = await askAs(db3, GMO);
+  assert.equal(r3.routed.stage, 'gm'); assert.match(r3.routed.note, /Hakuna OPM aliyetajwa|No OPM is named/);
+  // a GMO on no team at all
+  const db2 = await routed(db_(opmTables(t => { t.teams = []; })));
+  const r2 = await askAs(db2, GMO);
+  assert.equal(r2.routed.stage, 'gm'); assert.match(r2.routed.note, /Hakuna timu|No teams/);
+});
+
+test('OPM step: a role nobody routed asks exactly as before, and a route changed later never moves a request already waiting', async () => {
+  const db = await routed(db_(opmTables()));
+  const plain = await askAs(db, STAFF);
+  assert.equal(plain.routed, null); assert.equal(plain.emailed, true); assert.ok(lastMail);
+  assert.notEqual(db._dump('imprest_requests')[0].stage, 'opm', 'an unrouted request is never made to wait (the column defaults to gm)');
+  lastMail = null;
+  const r = await askAs(db, GMO);
+  assert.equal(r.routed.stage, 'opm');
+  const dropped = await portalApi(db, GM, 'imprestRoutesSave', { routes: [] }, NOW);   // the rule is dropped
+  assert.equal(dropped.stranded, 1, 'the save says one request is still waiting for an OPM nobody routes to now');
+  assert.deepEqual((await portalApi(db, OPM1, 'imprestMine', {}, NOW)).confirm, [], 'the OPM\'s list follows the rule in force...');
+  const w = await portalApi(db, GM, 'imprestQueue', { state: 'waiting' }, NOW);
+  assert.deepEqual(w.rows.map(x => x.id), [r.id], '...so the GM still sees it, stamped with its OPM, and can release it');
+  assert.equal(w.rows[0].routedNames, 'ASHA OPM'); assert.equal(w.counts.waiting, 1);
+  await portalApi(db, GM, 'imprestRelease', { id: r.id }, NOW);
+  assert.equal((await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW)).granted, 40000);
+  // a rule that still routes it strands nothing
+  const db2 = await routed(db_(opmTables()));
+  await askAs(db2, GMO);
+  assert.equal((await portalApi(db2, GM, 'imprestRoutesSave', { routes: [{ from: ['GMO'], via: 'OPM' }] }, NOW)).stranded, 0);
+});
+
+test('OPM step: until the migration is run nothing breaks -- the request goes to the GM, and every screen says routing is not on', async () => {
+  const missing = { imprest_requests: ['stage', 'routed_via', 'routed_names', 'routed_teams', 'routed_note', 'opm_by', 'opm_at', 'opm_amount', 'opm_comment'] };
+  const db = fakeDb(opmTables(), { missingColumns: missing });
+  await portalApi(db, GM, 'imprestRoutesSave', { routes: GM_ROUTE }, NOW);            // the rule itself lives in settings
+  const r = await askAs(db, GMO);
+  assert.equal(r.total, 40000, 'the request is written');
+  assert.equal(r.emailed, true); assert.ok(lastMail, 'and it reaches the GM, as it did before routing existed');
+  assert.match(r.routingNote, /RUN-ME-2026-11-05-imprest-opm-step/, 'the person who asked is told why it did not wait');
+  // the database is known to lack the columns by now: the NEXT request is told too, not just the one that found out
+  await portalApi(db, GM, 'imprestDecide', { id: r.id, approve: true }, NOW);
+  const again = await askAs(db, MGR, { travelDate: '2026-07-25' });
+  assert.match(again.routingNote, /RUN-ME-2026-11-05-imprest-opm-step/); assert.ok(again.emailed);
+  const q = await portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW);
+  assert.equal(q.counts.waiting, 0); assert.equal(q.routed, false);
+  assert.equal((await portalApi(db, GM, 'imprestRoutes', {}, NOW)).ready, false, 'the routing card can say so');
+  const mine = await portalApi(db, GMO, 'imprestMine', {}, NOW);
+  assert.equal(mine.rows.length, 1);
+  assert.deepEqual((await portalApi(db, OPM1, 'imprestMine', {}, NOW)).confirm, []);
+  const rep = await portalApi(db, REP, 'imprestReport', {}, NOW);
+  assert.equal(rep.rows.length, 2);
+});
+
+test('OPM step: the waiting request is told to the OPM\'s phone, and the confirmation to the requester\'s', async () => {
+  const t = opmTables(x => {
+    x.settings.push({ key: 'PUSH_SUB_O1', value: JSON.stringify([{ ...SUB(11), topics: ['IMPREST_MINE'] }]) });
+    x.settings.push({ key: 'PUSH_SUB_G1', value: JSON.stringify([{ ...SUB(12), topics: ['IMPREST_MINE'] }]) });
+    x.settings.push({ key: 'PUSH_SUB_GM1', value: JSON.stringify([{ ...SUB(13), topics: ['IMPREST'] }]) });
+  });
+  const db = await routed(db_(t));
+  const r = await askAs(db, GMO);
+  assert.deepEqual(pushes.map(p => p.endpoint), [SUB(11).endpoint], 'the OPM hears; the GM does not, yet');
+  assert.match(pushes[0].body.title, /OPM|uthibitisho|confirm/i); assert.equal(pushes[0].body.url, '/dashboard?imp=' + r.id);
+  assert.equal(r.pushed, 1);
+  pushes = [];
+  await portalApi(db, OPM1, 'imprestConfirm', { id: r.id, amount: 35000, comment: 'ok' }, NOW);
+  assert.deepEqual(pushes.map(p => p.endpoint).sort(), [SUB(12).endpoint, SUB(13).endpoint].sort(), 'now the GM hears, and so does the requester');
+  assert.match(pushes.find(p => p.endpoint === SUB(13).endpoint).body.body, /OPM ASHA OPM/);
+});

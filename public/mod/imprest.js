@@ -33,16 +33,35 @@ function imprestNotReady_(){
 function imprestChipCls_(r){
   if (r.status==='approved') return r.retiredAt ? 'ok' : 'warn';
   if (r.status==='rejected') return 'bad';
-  return 'mut';
+  return r.stage==='opm' ? 'warn' : 'mut';
 }
 
 function imprestChipText_(r){
+  /* WAITING FOR THE OPM is its own state, not "pending": the GM has not seen it yet, and the person who asked should
+     be told whose desk it is on. A request the OPM has confirmed is pending with the GM, and says so. */
+  if (r.status==='pending' && r.stage==='opm') return 'Inasubiri OPM / Waiting for OPM' + (r.routedNames ? ' · ' + r.routedNames : '');
   var s = r.status==='approved' ? 'Imeidhinishwa / Approved' + (r.approved!=null && r.approved!==r.total ? ' · ' + money(r.approved) : '')
     : r.status==='rejected' ? 'Imekataliwa / Rejected'
-    : 'Inasubiri / Pending';
+    : (r.opmBy ? 'Inasubiri GM / With the GM' : 'Inasubiri / Pending');
   if (r.retiredAt) s += ' · retired';
   else if (r.status==='approved') s += ' · bila retirement';
   return s;
+}
+
+/* WHAT THE OPM DID, OR WHY THERE WAS NO OPM -- one block, shown in every drawer a request opens in. */
+function imprestOpmHtml_(r){
+  if (!r.routedVia && !r.opmBy && !r.routedNote) return '';
+  var h = '<h4 style="margin:12px 0 4px">Hatua ya OPM / OPM step</h4>';
+  if (r.opmBy) {
+    h += '<div><b>' + esc(r.opmBy) + '</b> alithibitisha / confirmed <b>' + money(r.opmAmount!=null ? r.opmAmount : r.total) + '</b>'
+      + (r.opmAmount!=null && r.opmAmount!==r.total ? ' <span class="mut">(ilioombwa / asked ' + money(r.total) + ')</span>' : '')
+      + (r.opmAt ? '<div class="mut" style="font-size:11px">' + esc(new Date(r.opmAt).toISOString().slice(0,16).replace('T',' ')) + '</div>' : '')
+      + (r.opmComment ? '<div style="white-space:pre-wrap">' + esc(r.opmComment) + '</div>' : '') + '</div>';
+  } else if (r.stage==='opm' && r.status==='pending') {
+    h += '<div>Inasubiri / Waiting for <b>' + esc(r.routedNames || r.routedVia) + '</b> (' + esc(r.routedVia) + ')</div>';
+  }
+  if (r.routedNote) h += '<div class="mut" style="font-size:11.5px;margin-top:4px">' + esc(r.routedNote) + '</div>';
+  return h;
 }
 
 /* THE BALANCE HAS A DIRECTION. Positive means the traveller brings change back; negative means
@@ -211,6 +230,7 @@ function imprestDetailsDrawer_(r, opts){
     + kv('Madhumuni / Purpose', '<div style="white-space:pre-wrap">'+esc(r.purpose||'—')+'</div>')
     + '</tbody></table>'
     + '<h4 style="margin:12px 0 4px">Gharama / Costing</h4>'+imprestCostingHtml_(r)
+    + imprestOpmHtml_(r)
     + (r.status!=='pending'
       ? '<h4 style="margin:12px 0 4px">Uamuzi wa GM / GM decision</h4><div>'
         + (r.approved!=null?'<b>'+money(r.approved)+'</b> · ':'')+esc(imprestChipText_(r))
@@ -247,6 +267,11 @@ function imprestDetailsDrawer_(r, opts){
                 + '</div>'
               : '<button class="btn w" style="margin-top:10px" id="imRetireBtn" data-imr-id="'+esc(r.id)+'">Jaza retirement / File retirement</button>')
           : ''))
+    + (opts.waiting && r.stage==='opm' && r.status==='pending'
+      ? '<div class="note" style="margin-top:12px;display:block">Ombi hili liko kwa <b>' + esc(r.routedNames || r.routedVia || 'OPM') + '</b>, bado halijafika kwako. '
+        + '/ This request is with <b>' + esc(r.routedNames || r.routedVia || 'the OPM') + '</b> and has not reached you yet.</div>'
+        + '<button class="btn w ghost" style="margin-top:8px" id="imRelease" data-imrel-id="' + esc(r.id) + '">Lichukue sasa (acha OPM) / Take it now (skip the OPM)</button>'
+      : '')
     + (opts.canFund && r.status==='approved'
       ? '<h4 style="margin:12px 0 4px">Weka kilicholipwa / Record what was funded</h4>'
         + '<div class="fld"><label>Kiasi kilicholipwa (TZS) / Funded amount</label>'
@@ -266,6 +291,15 @@ function imprestDetailsDrawer_(r, opts){
       .catch(function(e){ b.disabled = false; toast(String(e.message||e), true); });
   };
   var rb = $('#imRetireBtn'); if (rb) rb.onclick = function(){ imprestRetireDrawer_(r); };
+  var rl = $('#imRelease');
+  if (rl) rl.onclick = function(){
+    if (!confirm('Lichukue ombi hili bila OPM kuthibitisha? / Take this request without the OPM confirming it?')) return;
+    rl.disabled = true;
+    srv('imprestRelease', { id: rl.getAttribute('data-imrel-id') }).then(function(d){
+      toast('Limekuja kwako / Released to you' + (d && d.emailed ? ' · email imetumwa / emailed' : ''));
+      closeDrawer(); render({ force:true });
+    }).catch(function(e){ rl.disabled = false; toast(String(e.message || e), true); });
+  };
 }
 
 /* THE RETIREMENT DRAWER. Actuals start at what was asked for -- most trips cost about what
@@ -351,6 +385,56 @@ function imprestRetireDrawer_(r){
   };
 }
 
+/* ---------- THE OPM'S STEP: requests waiting for this person to confirm ----------
+     "their respective OPM finds their requests in the request tab, OPM confirms the request {may adjust
+     amount with comment} - then it proceeds to the approval tab / GM". The server hands over only the rows this
+     code may confirm (imprestMine -> confirm); this draws them and the one drawer that confirms. */
+var IMPREST_CONFIRM_ROWS = [];
+
+function imprestConfirmCard_(rows){
+  if (!rows || !rows.length) return '';
+  return '<div class="card" style="padding:12px;margin:0 0 10px;border-left:3px solid var(--warn,#c97a00)">'
+    + '<div class="card-h">Yanasubiri uthibitisho wako / Waiting for your confirmation (' + rows.length + ')'
+    + '<span class="sub">maombi ya timu zako: thibitisha, au punguza kiasi ukiandika sababu, kisha yanakwenda kwa GM / requests from your teams: confirm, or lower the amount with a reason, and they go on to the GM</span></div>'
+    + '<div class="scroll"><table><thead><tr><th>Jina / Name</th><th>Wadhifa / Role</th><th>Safari / Travel</th><th>Mahali / Destination</th><th class="r">Jumla / Total</th><th class="noxl"></th></tr></thead><tbody>'
+    + rows.map(function(r){
+        return '<tr><td>' + esc(r.fullName || r.staffName || '') + '</td><td>' + esc(r.staffRole || r.imprestRole || '') + '</td>'
+          + '<td>' + esc(r.travelDate || '') + '</td><td>' + esc(r.destination || '') + '</td><td class="r">' + money(r.total) + '</td>'
+          + '<td class="r noxl"><button class="btn sm" onclick="imprestConfirmDrawer_(' + "'" + esc(r.id) + "'" + ')">Thibitisha / Confirm</button></td></tr>';
+      }).join('')
+    + '</tbody></table></div></div>';
+}
+
+function imprestConfirmDrawer_(id){
+  var r = (IMPREST_CONFIRM_ROWS || []).filter(function(x){ return String(x.id) === String(id); })[0];
+  if (!r) { toast('Ombi halionekani tena — huenda limethibitishwa. / That request is no longer waiting — it may already be confirmed.', true); return; }
+  drawer('<h3>Thibitisha ombi la ' + esc(r.fullName || r.staffName || '—') + ' / Confirm request</h3>'
+    + '<div class="sub">' + esc(r.staffName || '') + ' · ' + esc(r.staffRole || r.imprestRole || '') + ' · safari ' + esc(r.travelDate || '—') + ' · ' + esc(r.destination || '') + '</div>'
+    + '<div style="margin:8px 0"><b>Madhumuni / Purpose:</b><div style="white-space:pre-wrap;font-size:12.5px">' + esc(r.purpose || '—') + '</div></div>'
+    + imprestCostingHtml_(r)
+    + '<div class="fld"><label>Kiasi cha kuthibitisha / Amount you confirm (≤ ' + money(r.total) + ')</label>'
+    + '<input id="imcAmt" type="number" min="1" max="' + (r.total || 0) + '" step="1" value="' + (r.total || 0) + '"></div>'
+    + '<div class="fld"><label>Maoni / Comment <span class="mut" style="font-size:10.5px">(lazima ukipunguza kiasi / required when you lower the amount)</span></label>'
+    + '<textarea id="imcCmt" rows="3"></textarea></div>'
+    + '<div class="mut" style="font-size:11px;margin:4px 0">Hakuna kuongeza: huwezi kuthibitisha zaidi ya kilichoombwa. GM ataona kiasi chako na maoni yako. '
+    + '/ You cannot confirm more than was asked. The GM sees your amount and your comment.</div>'
+    + '<button class="btn w" id="imcOk" style="margin-top:8px">Thibitisha na tuma kwa GM / Confirm and send to the GM</button>');
+  $('#imcOk').onclick = function(){
+    var amt = $('#imcAmt').value, cmt = $('#imcCmt').value, b = $('#imcOk');
+    if (amt === '' || !(Number(amt) > 0)) { toast('Andika kiasi. / Enter the amount.', true); return; }
+    if (Number(amt) > Number(r.total)) { toast('Huwezi kuthibitisha zaidi ya ' + money(r.total) + '. / You cannot confirm more than ' + money(r.total) + '.', true); return; }
+    if (Number(amt) !== Number(r.total) && !String(cmt).trim()) { toast('Andika sababu ya kubadilisha kiasi. / A comment is required when the amount is changed.', true); $('#imcCmt').focus(); return; }
+    b.disabled = true;
+    srv('imprestConfirm', { id: r.id, amount: amt, comment: cmt }).then(function(d){
+      toast('Imethibitishwa, imekwenda kwa GM / Confirmed, now with the GM'
+        + (d && d.adjusted ? ' · ' + money(d.amount) + ' (ilioombwa ' + money(d.asked) + ')' : '')
+        + (d && d.emailed ? ' · GM ameambiwa kwa email / GM was emailed' : ' · ⚠️ GM HAKUAMBIWA kwa email: ' + ((d && d.emailNote) || ''))
+        + (d && d.pushNote ? ' · arifa ya simu: ' + d.pushNote : ''), !(d && d.emailed));
+      closeDrawer(); render({ force:true });
+    }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
+  };
+}
+
 /* ---------- OMBA IMPREST: the requester's own dashboard, the form, then their history ---------- */
 VIEWS.impreq = function(){
   return srv('imprestMine', {}).then(function(d){
@@ -373,7 +457,9 @@ VIEWS.impreq = function(){
     var flash = S.imqFlash || null; S.imqFlash = null;
     /* THE PERSONAL DASHBOARD -- "dashboards of applications per signed in user". Built here,
        from the same rows the history table below already holds: no second read for it. */
-    HEAD = '<div class="kpis">'
+    IMPREST_CONFIRM_ROWS = d.confirm || [];
+    HEAD = imprestConfirmCard_(IMPREST_CONFIRM_ROWS)
+      + '<div class="kpis">'
       + kpi('Maombi yangu / My requests', money(rows.length))
       + kpi('Yanasubiri / Pending', money(rows.filter(function(r){ return r.status==='pending'; }).length), '', rows.some(function(r){ return r.status==='pending'; })?'warn':'')
       + kpi('Yameidhinishwa / Approved', money(appr.length), money(appr.reduce(function(s,r){ return s+(r.approved||0); },0))+' TZS', 'good')
@@ -529,22 +615,97 @@ function imprestPushPolicyCard_(pp, allRoles, roles){
     + '</div>';
 }
 
+/* WHICH ROLES PASS THROUGH WHICH -- "I have to select which roles pass through which to get to GM at the imprest
+   approvals tab, so I select those two and choose the OPM role". Each route is: the roles ticked, and the one role
+   they go through. Saved through imprestRoutesSave (it refuses a role that routes to itself, a role in two routes,
+   and a via role that is itself routed); the card redraws itself from a draft held here, so ticking does not
+   reload the page. */
+var IMPREST_ROUTE_DRAFT = [], IMPREST_ROUTE_ROLES = [], IMPREST_ROUTE_READY = true;
+
+function imprestRouteCard_(rt){
+  if (!rt || rt.ok === false) return '';          // a server without routing: nothing to offer, nothing to break
+  IMPREST_ROUTE_ROLES = (rt.roles || []).slice();
+  (rt.routes || []).forEach(function(x){
+    (x.from || []).concat([x.via]).forEach(function(n){ if (n && IMPREST_ROUTE_ROLES.indexOf(n) < 0) IMPREST_ROUTE_ROLES.push(n); });
+  });
+  IMPREST_ROUTE_ROLES.sort();
+  IMPREST_ROUTE_DRAFT = (rt.routes || []).map(function(x){ return { from: (x.from || []).slice(), via: x.via || '' }; });
+  IMPREST_ROUTE_READY = rt.ready !== false;
+  return '<div class="card" style="padding:12px;margin:10px 0"><div class="card-h">Maombi yanapitia nani kabla ya GM / Who requests pass through before the GM'
+    + '<span class="sub">chagua wadhifa unaopitia OPM wake kwanza: OPM anathibitisha (anaweza kupunguza kiasi akiandika sababu), kisha ombi linakuja hapa / tick the roles whose requests go to their OPM first: the OPM confirms (may lower the amount with a comment), and only then does it reach you here</span></div>'
+    + '<div id="imrtBox">' + imprestRouteBody_() + '</div></div>';
+}
+
+function imprestRouteBody_(){
+  var roles = IMPREST_ROUTE_ROLES, draft = IMPREST_ROUTE_DRAFT;
+  return (IMPREST_ROUTE_READY ? '' : '<div class="note bad" style="margin:0 0 8px;display:block">⚠️ <b>Hatua ya OPM haijawashwa kwenye hifadhidata / The OPM step is not switched on in the database yet.</b> '
+      + 'Endesha <b>db/RUN-ME-2026-11-05-imprest-opm-step.sql</b> kwenye Supabase. Hadi hapo, maombi yote yanakuja kwako moja kwa moja. '
+      + '/ Run that file in Supabase. Until then every request still comes straight to you.</div>')
+    + (draft.length ? '' : '<div class="mut" style="margin:0 0 8px">Hakuna njia bado: kila ombi linakuja kwako moja kwa moja. / No routes yet: every request comes straight to you.</div>')
+    + draft.map(function(x, i){
+        return '<div style="border:1px solid var(--line,#ddd);border-radius:8px;padding:8px;margin:0 0 8px">'
+          + '<div class="mut" style="font-size:11px;margin-bottom:4px">Njia ' + (i + 1) + ' · wadhifa wanaopitia / roles that pass through</div>'
+          + '<div style="display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px">'
+          + roles.map(function(n){
+              return '<label style="white-space:nowrap"><input type="checkbox" value="' + esc(n) + '"' + (x.from.indexOf(n) >= 0 ? ' checked' : '')
+                + ' onchange="imprestRouteTick_(' + i + ',this)"> ' + esc(n) + '</label>';
+            }).join('')
+          + '</div>'
+          + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">'
+          + '<span>kupitia / goes through</span>'
+          + '<select onchange="imprestRouteVia_(' + i + ',this.value)" style="min-width:140px"><option value="">— chagua / choose —</option>'
+          + roles.map(function(n){ return '<option value="' + esc(n) + '"' + (x.via === n ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('')
+          + '</select>'
+          + '<button class="btn sm ghost danger" onclick="imprestRouteDel_(' + i + ')">Ondoa / Remove</button></div></div>';
+      }).join('')
+    + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">'
+    + '<button class="btn sm ghost" onclick="imprestRouteAdd_()">+ Njia nyingine / Add a route</button>'
+    + '<button class="btn sm" onclick="imprestRouteSave_(this)">Hifadhi / Save</button></div>'
+    + '<div class="mut" style="font-size:10.5px;margin-top:6px">OPM wa mwombaji ni yule aliyeandikwa kwenye timu zake kwenye Timu na Wafanyakazi (GMO, Meneja, Credit). '
+    + 'Asipopatikana OPM, ombi linakuja kwako moja kwa moja na lina maelezo. Unaweza pia kuliachilia ombi linalosubiri (OPM yuko likizo). '
+    + '/ The requester\'s OPM is the one named on their teams under Teams & Staff (GMO, Manager, Credit). If none can be found the request comes straight to you with a note on it. '
+    + 'You can also release a waiting request yourself (the OPM is away). Changing a route never moves a request already waiting; if you remove one, the requests still waiting for it stay under "With the OPM" for you to release.</div>';
+}
+
+function imprestRouteRedraw_(){ var b = document.getElementById('imrtBox'); if (b) b.innerHTML = imprestRouteBody_(); }
+function imprestRouteTick_(i, el){
+  var x = IMPREST_ROUTE_DRAFT[i]; if (!x) return;
+  var at = x.from.indexOf(el.value);
+  if (el.checked && at < 0) x.from.push(el.value);
+  if (!el.checked && at >= 0) x.from.splice(at, 1);
+}
+function imprestRouteVia_(i, v){ if (IMPREST_ROUTE_DRAFT[i]) IMPREST_ROUTE_DRAFT[i].via = v; }
+function imprestRouteAdd_(){ IMPREST_ROUTE_DRAFT.push({ from: [], via: '' }); imprestRouteRedraw_(); }
+function imprestRouteDel_(i){ IMPREST_ROUTE_DRAFT.splice(i, 1); imprestRouteRedraw_(); }
+function imprestRouteSave_(btn){
+  if (btn) btn.disabled = true;
+  srv('imprestRoutesSave', { routes: IMPREST_ROUTE_DRAFT }).then(function(d){
+    var n = (d && d.routes ? d.routes.length : 0), st = (d && d.stranded) || 0;
+    toast((n ? 'Imehifadhiwa: maombi ya ' + d.routes.map(function(x){ return x.from.join(' + ') + ' → ' + x.via; }).join('; ') + ' / Saved'
+      : 'Imehifadhiwa: hakuna njia, maombi yote yanakuja kwa GM / Saved: no routes, every request goes to the GM')
+      + (st ? ' · ⚠️ maombi ' + st + ' bado yako kwa OPM ambaye njia yake imeondolewa: yaachilie kwenye "Kwa OPM" / ' + st + ' request(s) still wait for an OPM whose route you removed: release them under "With the OPM"' : ''), !!st);
+    render({ force:true });
+  }).catch(function(e){ if (btn) btn.disabled = false; toast(String(e.message || e), true); });
+}
+
 VIEWS.impappr = function(){
   return Promise.all([srv('imprestQueue', { state: IMPQ_STATE }), srv('imprestRoles', {}),
-      srv('pushPolicy', {}).catch(function(){ return null; })]).then(function(a){
-    var d = a[0], roles = (a[1].roles||[]), allRoles = (a[1].all||[]), pp = a[2];
+      srv('pushPolicy', {}).catch(function(){ return null; }),
+      srv('imprestRoutes', {}).catch(function(){ return null; })]).then(function(a){
+    var d = a[0], roles = (a[1].roles||[]), allRoles = (a[1].all||[]), pp = a[2], rt = a[3];
     if (d.notReady) { HEAD = imprestNotReady_(); S.rows=[]; S.cols=[]; ONROW=null; return; }
     var rows = d.rows||[], c = d.counts||{};
     var pick = function(k){ return 'go(\'impappr\')'; };
     HEAD = '<div class="kpis">'
       + kpi('Yanasubiri / Pending', money(c.pending||0), '', c.pending?'bad':'')
+      + (d.routed || c.waiting ? kpi('Kwa OPM / With the OPM', money(c.waiting||0), 'bado hayajafika kwako / not with you yet', c.waiting?'warn':'') : '')
       + kpi('Yameidhinishwa / Approved', money(c.approved||0), '', 'good')
       + kpi('Yamekataliwa / Rejected', money(c.rejected||0))
       + kpi('Bila retirement / Not retired', money(c.toRetire||0), '', c.toRetire?'warn':'')
       + '</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">'
-      + ['', 'pending', 'decided', 'toRetire'].map(function(k){
-          var label = k===''?'Yote / All':k==='pending'?'Yanasubiri / Pending':k==='decided'?'Yaliyoamuliwa / Decided':'Bila retirement / Not retired';
+      + (d.routed || c.waiting ? ['', 'pending', 'waiting', 'decided', 'toRetire'] : ['', 'pending', 'decided', 'toRetire']).map(function(k){
+          var label = k===''?'Yote / All':k==='pending'?'Yanasubiri / Pending':k==='waiting'?'Kwa OPM / With the OPM':k==='decided'?'Yaliyoamuliwa / Decided':'Bila retirement / Not retired';
           return '<button class="btn sm'+(IMPQ_STATE===k?'':' ghost')+'" data-impq="'+k+'">'+label+'</button>';
         }).join('')
       + '</div>'
@@ -569,6 +730,7 @@ VIEWS.impappr = function(){
             + '/ Role not listed? Add it under Teams & Staff / Access codes first, then come back.</div>';
         })()
       + '</div>'
+      + imprestRouteCard_(rt)
       + imprestPushPolicyCard_(pp, allRoles, roles);
     S.rows = rows;
     S.cols = [col('at','Tarehe / Timestamp','dt'), col('fullName','Jina / Name'), col('imprestRole','Wadhifa / Role'),
@@ -577,6 +739,8 @@ VIEWS.impappr = function(){
       {key:'status', label:'Hali / Status', kind:'chip', chip:imprestChipCls_, get:imprestChipText_},
       col('comment','Maoni / Comment')];
     ONROW = function(r){
+      /* WITH THE OPM: the GM may read it and take it, not decide it (the server refuses a decision while it waits). */
+      if (r.status==='pending' && r.stage==='opm') { imprestDetailsDrawer_(r, { waiting:true }); return; }
       if (r.status==='pending') { imprestDecideDrawer_(r); return; }
       imprestDetailsDrawer_(r, {});
     };
@@ -591,9 +755,11 @@ function imprestDecideDrawer_(r){
     + (r.mine ? '<div class="mut" style="font-size:11.5px;margin:6px 0 2px">Hili ni ombi lako mwenyewe. / This is your own request.</div>' : '')
     + '<div style="margin:8px 0"><b>Madhumuni / Purpose:</b><div style="white-space:pre-wrap;font-size:12.5px">'+esc(r.purpose||'—')+'</div></div>'
     + imprestCostingHtml_(r)
+    + imprestOpmHtml_(r)
     + '<div class="mut" style="font-size:11px">Malipo: '+esc(r.payMode||'—')+' · '+esc(r.accountNo||'—')+' · '+esc(r.recipientName||r.fullName||'')+'</div>'
-    + '<div class="fld"><label>Kiasi cha kuidhinisha / Amount to approve (≤ '+money(r.total)+')</label>'
-    + '<input id="imdAmt" type="number" min="1" max="'+(r.total||0)+'" step="1" value="'+(r.total||0)+'"></div>'
+    /* The box starts at what the OPM confirmed, which may be less than was asked; the ceiling is still what was asked. */
+    + '<div class="fld"><label>Kiasi cha kuidhinisha / Amount to approve (≤ '+money(r.total)+')'+(r.opmAmount!=null && r.opmAmount!==r.total ? ' · OPM: '+money(r.opmAmount) : '')+'</label>'
+    + '<input id="imdAmt" type="number" min="1" max="'+(r.total||0)+'" step="1" value="'+(r.opmAmount!=null?r.opmAmount:(r.total||0))+'"></div>'
     + '<div class="fld"><label>Maoni / Comment</label><textarea id="imdCmt" rows="3" placeholder="Lazima ukikataa. / Required when rejecting."></textarea></div>'
     + '<button class="btn w" id="imdOk" style="margin-top:8px">Idhinisha / Approve</button>'
     + '<button class="btn w ghost danger" id="imdNo" style="margin-top:6px">Kataa / Reject</button>');

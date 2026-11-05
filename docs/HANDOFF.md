@@ -3724,6 +3724,65 @@ is read twice, as when both tabs are open); the speed table carries it (18 / 5,3
 migrated) with the reason. Never on `/api/upload` or `/api/call`. `test/annualppt.test.mjs` runs the real
 server, the real deck code and the real vendored library in a VM and reads the slides back out of the file.
 
+## Part 36 — Imprest: some roles go through their OPM before the GM
+
+> "GMOs and Managers imprests shouldn't go to GM directly ... I have to select which roles pass through which
+> to get to GM at the imprest approvals tab, so I select those two and choose the OPM role. When their
+> respective OPM finds their requests in the request tab, the OPM confirms the request (may adjust the amount
+> with a comment) — then it proceeds to the approval tab / GM."
+
+**The rule is a setting, chosen on the Approvals tab.** `IMPREST_ROUTES` in `settings` is a JSON list,
+`[{"from":["GMO","MANAGER"],"via":"OPM"}]`. The "Who requests pass through before the GM" card on Idhini ya imprest
+edits it (`imprestRoutes` / `imprestRoutesSave`, pane `impappr`): tick the roles, pick the role they go through.
+The save refuses a role that routes to itself, a role in two routes, and a "via" role that is itself routed. It
+returns `stranded`, the number of requests still waiting for an OPM whose route was just removed (see below).
+
+**What a routed request does.** A code whose role is in `from` asks as always, but the row is born
+`stage = 'opm'`: waiting. It is **not** in the GM's pending count, queue, email or phone, and the GM cannot decide
+it (`imprestDecide` refuses while it waits). The OPM sign-ins that may confirm it hear on their own handset
+(`IMPREST_MINE`), find it in a "Waiting for your confirmation" card at the top of **their Requests tab**
+(`imprestMine.confirm`), and press Confirm: `imprestConfirm` takes `amount` (default what was asked) and `comment`.
+**The OPM may confirm less than was asked, never more, and a comment is required when the amount is changed.** The
+row moves to `stage = 'gm'` in one guarded update (`where stage = 'opm' and status = 'pending'`, so two OPMs cannot both
+win), the GM is emailed and buzzed then with the OPM's line on the notice, and the requester is told it is with the GM.
+The GM's approve box starts at the OPM's figure and may still go up to what was asked, never above it. Nothing about the
+decision, funding or retirement changed.
+
+**Which OPM.** "Respective" is read off Teams & Staff: the teams the requester holds (the `gmo` column for a GMO,
+`manager` for a Manager, `credit` for Credit; matched by name — exact or `sameName` — and, for a role with no column, the
+teams on the access code) and the name in each team's `opm` column; the OPM-role sign-ins that match are those with that
+name or a team in common. Stamped on the row (`routed_via`, `routed_names`, `routed_teams`), so changing the rule later does not
+move a request already waiting. A confirmer is also never the requester.
+
+**Never a dead end, and never silent.** If no team is found for the requester, or no OPM sign-in matches, the request goes
+**straight to the GM** with `routed_note` saying why (shown on the GM's drawer, the details drawer, and the requester's
+confirmation). The GM can **release** any waiting request (`imprestRelease`, the OPM is away): it goes to the GM, with a note
+naming who released it. On the Approvals tab, "With the OPM" is its own KPI and filter, and "All" shows those rows flagged
+"Waiting for OPM".
+
+**Until the migration is run.** `db/RUN-ME-2026-11-05-imprest-opm-step.sql` adds nine columns to `imprest_requests`
+(`stage` default `'gm'`, `routed_via`, `routed_names`, `routed_teams`, `routed_note`, `opm_by`, `opm_at`, `opm_amount`,
+`opm_comment`), a check on `stage`, a partial index on the waiting rows and an empty `IMPREST_ROUTES`; instant and safe to
+re-run, mirrored in `db/schema.sql`. Without it nothing breaks: reads try the wide column list and fall back to the narrow one
+(memoised for 60 s per process, `rtState` / `readRows_`); a routed request is inserted without the routing fields and **goes to the
+GM**, the requester's confirmation says "OPM routing is not switched on yet (run ...)" on every such request, and the routing card
+on the Approvals tab shows a red "not switched on in the database" banner. A missing routing column is told from a missing table by
+`rtMissing_` (`tableMissing` matches any "does not exist" and must not be used for these columns).
+
+**A route removed.** The OPM's own list follows the rule in force (`imprestMine` reads the waiting rows only for a role that some
+rule routes to, so no other officer's Requests tab gains a read). A request waiting under a route the GM then removes keeps its stamped
+OPM but the OPM no longer sees it; the save tells the GM how many ("still wait for an OPM whose route you removed"), and they sit under
+"With the OPM" for the GM to release.
+
+**Not built, on purpose:** the OPM cannot reject (only lower and comment, or leave it for the GM, who can reject); only a role's
+first matching route applies (a role is in at most one route); there is no second approval level after the OPM.
+
+**Cost.** `imprestRequest` adds one cached settings read (15 s) per ask and, for a routed role only, one `teams` and one
+`access_codes` read; `imprestQueue` adds one head count (and drops waiting rows from the GM's pending list at the database);
+`imprestMine` adds one read of the waiting rows for an OPM-type role only. None of it touches `/api/upload` or `/api/call`.
+Tests: `test/imprest.test.mjs` ("OPM step", 12 scenarios including a database without the columns), `test/pages.test.mjs` (the
+screens' contracts), `test/schema.test.mjs` (the columns exist in `db/schema.sql`).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
