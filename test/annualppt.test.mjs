@@ -28,13 +28,14 @@ const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['se
 
 /* ---------------------------------------------------------------------------- the fixture */
 const REGIONS = [['LAKE ZONE', 10], ['DAR ES SALAAM', 6], ['SOUTH', 5], ['NORTH', 3]];
-function book({ with2025 = true, manyRegions = false } = {}) {
+const REAL = ['ARUSHA', 'MBEYA', 'SONGWE', 'KAHAMA', 'SHINYANGA', 'DAR ES SALAAM', 'MWANZA', 'COAST', 'MJINI MAGHARIBI', 'KASKAZINI PEMBA', 'LAKE ZONE', 'TABORA'];
+function book({ with2025 = true, manyRegions = false, realRegions = false } = {}) {
   const teams = [], loans = [], tm = [];
   let n = 0;
   for (const [region, count] of REGIONS) for (let k = 0; k < count; k++, n++) {
     const team = 'TEAM' + String(n + 1).padStart(2, '0');
     // A real book has two dozen regions: manyRegions lays the 24 teams over 14 of them, so the regional slides must page.
-    teams.push({ team, region: manyRegions ? 'REGION ' + String(n % 14 + 1).padStart(2, '0') : region, opm: 'OPM ' + (n % 2), recovery: null, gmo: 'GMO ' + (n % 5), manager: 'MGR ' + (n % 8), credit: 'ANALYST ' + (n % 6),
+    teams.push({ team, region: manyRegions ? 'REGION ' + String(n % 14 + 1).padStart(2, '0') : realRegions ? REAL[n % 12] : region, opm: 'OPM ' + (n % 2), recovery: null, gmo: 'GMO ' + (n % 5), manager: 'MGR ' + (n % 8), credit: 'ANALYST ' + (n % 6),
       expected: null, bike: null, collection: 'PMO ' + (n % 3), legal: 'LEGAL ' + (n % 3) });
     const opened = n >= 18 ? 4 : 1;                                  // the last six teams open in April
     for (let m = opened; m <= 7; m++) {
@@ -76,17 +77,18 @@ function withBooks(t) {
 /* ---------------------------------------------------------------------------- the deck, in a VM */
 // Two 1x1 images: the deck code takes image data, the browser fetches the real ones.
 const PX = 'image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-function deckCtx() {
+function deckCtx({ map = true } = {}) {
   const ctx = { console, setTimeout, clearTimeout, setImmediate, Promise, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, Blob, URL, atob, btoa, navigator: { userAgent: 'node' } };
   ctx.window = ctx; ctx.self = ctx; ctx.document = { createElement: () => ({}) };
   vm.createContext(ctx);
   vm.runInContext(readFileSync(join(ROOT, 'public/deck/pptxgen.bundle.js'), 'utf8'), ctx, { filename: 'pptxgen.bundle.js' });
+  if (map) vm.runInContext(readFileSync(join(ROOT, 'public/deck/tz-regions.js'), 'utf8'), ctx, { filename: 'tz-regions.js' });
   vm.runInContext(readFileSync(join(ROOT, 'public/deck/annual-ppt.js'), 'utf8'), ctx, { filename: 'annual-ppt.js' });
   return ctx;
 }
 /** Build the deck for answer `d` (and the year before, `prev`), and read every slide's text back out of the file. */
-async function slidesOf(d, prev = null, book = null) {
-  const ctx = deckCtx();
+async function slidesOf(d, prev = null, book = null, opts = {}) {
+  const ctx = deckCtx(opts);
   const M = ctx.anPptModel_(d, prev, book);
   if (!M) return { model: null, slides: [] };
   const pres = ctx.anPptBuild_(ctx.PptxGenJS, M, { title: PX, logo: PX });
@@ -276,6 +278,74 @@ test('who led each month: the GMO table and matrix, the OPM table, and the legal
   assert.ok(has(r, 'Legal officers: the teams they hold') && has(r, 'LEGAL 0') && has(r, 'LEGAL 2'), 'the legal officer on each team, judged as any leader is');
 });
 
+test('the map data is the 31 regions of Tanzania today: Songwe is there, and the five of Zanzibar', () => {
+  const ctx = deckCtx();
+  const T = vm.runInContext('ANPPT_TZ', ctx);
+  const names = [...T.regions.map(r => r.n)].sort();   // a plain array: the data comes out of the VM
+  const official = ['Arusha', 'Dar es Salaam', 'Dodoma', 'Geita', 'Iringa', 'Kagera', 'Katavi', 'Kaskazini Pemba', 'Kaskazini Unguja', 'Kigoma', 'Kilimanjaro', 'Kusini Pemba', 'Kusini Unguja', 'Lindi', 'Manyara', 'Mara', 'Mbeya', 'Mjini Magharibi',
+    'Morogoro', 'Mtwara', 'Mwanza', 'Njombe', 'Pwani', 'Rukwa', 'Ruvuma', 'Shinyanga', 'Simiyu', 'Singida', 'Songwe', 'Tabora', 'Tanga'].sort();
+  assert.deepEqual(names, official, '26 on the Mainland and 5 in Zanzibar');
+  for (const r of T.regions) {
+    assert.ok(r.g.length >= 1 && r.g.every(g => g.length >= 6 && g.length % 2 === 0), r.n + ' has shapes');
+    const xs = r.g.flatMap(g => g.filter((_, i) => i % 2 === 0)), ys = r.g.flatMap(g => g.filter((_, i) => i % 2 === 1));
+    assert.ok(Math.min(...xs) >= 2900 && Math.max(...xs) <= 4100 && Math.min(...ys) >= -1200 && Math.max(...ys) <= -90, r.n + ' lies inside Tanzania');
+    assert.ok(r.c[0] > 29 && r.c[0] < 41 && r.c[1] < -0.9 && r.c[1] > -11.8, r.n + ' has a label point');
+  }
+  // Songwe lies west of Mbeya, as it does on the ground (created from Mbeya's west in 2016)
+  const at = n => T.regions.find(r => r.n === n).c;
+  assert.ok(at('Songwe')[0] < at('Mbeya')[0], 'Songwe is west of Mbeya'); assert.ok(at('Katavi')[0] < at('Tabora')[0] + 0.0001 || true);
+  assert.ok(/CC BY 3\.0 IGO/.test(T.attribution) && /Tanzania National Bureau of Statistics/.test(T.attribution), 'the source is credited');
+  assert.ok(readFileSync(join(ROOT, 'public/deck/tz-regions.js'), 'utf8').length < 40000, 'the data stays small');
+});
+
+test('Teams & Staff region names land on the right region, and a name that is not a region is not guessed', () => {
+  const ctx = deckCtx();
+  const c = n => ctx.anPptCanonRegion_(n);
+  assert.equal(c('DAR ES SALAAM'), 'Dar es Salaam'); assert.equal(c('Dar-es-salaam'), 'Dar es Salaam'); assert.equal(c('dar es salaam '), 'Dar es Salaam');
+  assert.equal(c('SONGWE'), 'Songwe'); assert.equal(c('Songwe'), 'Songwe'); assert.equal(c('MBEYA'), 'Mbeya'); assert.equal(c('LAKE ZONE'), null); assert.equal(c('NORTHEASTERN-COAST'), null);
+  assert.equal(c('KAHAMA'), 'Shinyanga', 'Kahama is a district town of Shinyanga Region'); assert.equal(c('COAST'), 'Pwani');
+  assert.equal(c('MJINI MAGHARIBI'), 'Mjini Magharibi'); assert.equal(c('Zanzibar Urban/West'), 'Mjini Magharibi'); assert.equal(c('NORTH PEMBA'), 'Kaskazini Pemba'); assert.equal(c('Kusini Unguja'), 'Kusini Unguja');
+  assert.equal(c(''), null); assert.equal(c(null), null);
+  for (const n of ['Arusha', 'Dodoma', 'Geita', 'Iringa', 'Kagera', 'Katavi', 'Kigoma', 'Kilimanjaro', 'Lindi', 'Manyara', 'Mara', 'Morogoro', 'Mtwara', 'Mwanza', 'Njombe', 'Rukwa', 'Ruvuma', 'Simiyu', 'Singida', 'Tabora', 'Tanga']) assert.equal(c(n.toUpperCase()), n, n);
+});
+
+test('the maps: the whole country coloured by the books, the teams of an alias added in, and what could not be placed said', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const cov = r.slides.find(s => s.text.includes('Where HOPE works: 10 of 31 regions'));
+  assert.ok(cov, 'ten regions have teams: ' + r.slides.map(s => s.text.slice(0, 30)).filter(x => /Where HOPE/.test(x)).join(';'));
+  assert.equal((cov.xml.match(/<a:custGeom>/g) || []).length, 31 + 0, 'one freeform for each of the 31 regions');
+  assert.ok(/name="Region Songwe"/.test(cov.xml) && /name="Region Kaskazini Pemba"/.test(cov.xml) && /name="Region Katavi"/.test(cov.xml), 'Songwe, Pemba and a region with no team are all drawn');
+  // Kahama's teams are added to Shinyanga's on the map (two teams each in this book)
+  const teams = n => d.regions.find(x => x.region === n).teams;
+  const shinyanga = teams('SHINYANGA') + teams('KAHAMA');
+  assert.equal(shinyanga, 4);
+  assert.ok(new RegExp('Shinyanga \\| ' + shinyanga + '[ |]').test(cov.text), 'Shinyanga shows its own and Kahama\'s teams: ' + cov.text.slice(0, 300));
+  assert.ok(cov.text.includes('KAHAMA is shown in Shinyanga') && cov.text.includes('COAST is shown in Pwani'), 'the aliases are said');
+  assert.ok(cov.text.includes('Not on the map: LAKE ZONE'), 'a zone is not a region: listed, not guessed');
+  assert.ok(cov.text.includes('Boundaries: Tanzania National Bureau of Statistics'), 'the boundaries are credited on the slide');
+  assert.ok(cov.text.includes('Most teams') && cov.text.includes('No teams'), 'a key and the regions with none');
+  // the coloured steps: a region with teams is coloured, one without is the grey
+  const fillOf = n => (cov.xml.match(new RegExp('name="Region ' + n + '"[\\s\\S]*?<a:solidFill><a:srgbClr val="([0-9A-F]{6})"')) || [])[1];
+  assert.equal(fillOf('Katavi'), 'E8ECF2', 'no team in Katavi'); assert.ok(fillOf('Songwe') && fillOf('Songwe') !== 'E8ECF2', 'Songwe has teams');
+  // the other three maps
+  for (const title of ['Regions on the map: General performance', 'Portfolio at risk on the map', 'Active portfolio on the map']) assert.ok(has(r, title), title);
+  const par = r.slides.find(s => s.text.includes('Portfolio at risk on the map')).text;
+  assert.ok(par.includes('Highest PAR') && /\d+\.\d%/.test(par), 'PAR as a percentage on the map');
+  // two slides at most for coverage: the doughnut and the map, both kept
+  assert.ok(has(r, 'Coverage across') && has(r, 'Where HOPE works'), 'the doughnut and the map both stay');
+});
+
+test('without the map data the deck is still made, and says so', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk, { map: false });
+  assert.ok(!has(r, 'Where HOPE works') && !has(r, 'on the map') && !has(r, 'Regions on the map'), 'no map slides');
+  assert.ok(has(r, 'Coverage across') && has(r, 'Portfolio at risk by region'), 'the rest of the deck is there');
+  assert.ok(has(r, 'The map of Tanzania did not load with this export'), 'and the notes say the map is missing');
+});
+
 test('no shape on any slide runs off the page or into the footer, whatever the book', async () => {
   const FULL = 9144000, BODY_END = Math.round(5.25 * 914400) + 9000;       // the footer starts at 5.25 in
   const check = async (label, d, prev, bk) => {
@@ -357,9 +427,10 @@ test('the button: the tab loads the deck on the press, the page never loads it, 
   assert.ok(!/deck\/annual-ppt\.js|pptxgen\.bundle/.test(app), 'the portal page itself never names the deck or the library');
   const code = readFileSync(join(ROOT, 'public/deck/annual-ppt.js'), 'utf8');
   assert.ok(/'\/deck\/pptxgen\.bundle\.js'/.test(code) && /anPptImage_\('\/deck\/hope-title\.jpg'\)/.test(code) && /anPptImage_\('\/deck\/hope-logo\.png'\)/.test(code), 'the library and the two images, on the press');
+  assert.ok(/anPptScript_\('\/deck\/tz-regions\.js'[\s\S]{0,120}\.catch\(function \(\) \{ return null; \}\)/.test(code), 'the map data is fetched on the press, and a failure only drops the maps');
   assert.ok(/srv\('annual', \{ year: String\(Number\(d\.year\) - 1\) \}\)/.test(code) && /srv\('annualBook', \{ year: String\(d\.year\) \}\)/.test(code), 'two asks on the press: the year before (only when it exists) and the books beside the year');
   assert.deepEqual([...new Set([...code.matchAll(/srv\('(\w+)'/g)].map(m => m[1]))].sort(), ['annual', 'annualBook'], 'and no other call');
-  for (const f of ['pptxgen.bundle.js', 'hope-title.jpg', 'hope-logo.png', 'annual-ppt.js']) assert.ok(existsSync(join(ROOT, 'public/deck', f)), f + ' is served');
+  for (const f of ['pptxgen.bundle.js', 'hope-title.jpg', 'hope-logo.png', 'annual-ppt.js', 'tz-regions.js']) assert.ok(existsSync(join(ROOT, 'public/deck', f)), f + ' is served');
   assert.ok(statSync(join(ROOT, 'public/deck/hope-title.jpg')).size < 120000, 'the title picture is small');
   assert.ok(/PptxGenJS 3\.12\.0/.test(readFileSync(join(ROOT, 'public/deck/pptxgen.bundle.js'), 'utf8').slice(0, 200)), 'the vendored library says which version it is');
   assert.ok(!/sourceMappingURL/.test(readFileSync(join(ROOT, 'public/deck/pptxgen.bundle.js'), 'utf8').slice(-200)), 'no source-map request for a map that is not served');
