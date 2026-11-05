@@ -3769,6 +3769,15 @@ GM**, the requester's confirmation says "OPM routing is not switched on yet (run
 on the Approvals tab shows a red "not switched on in the database" banner. A missing routing column is told from a missing table by
 `rtMissing_` (`tableMissing` matches any "does not exist" and must not be used for these columns).
 
+**A missing column is learned from a read that returns rows, never from a head count.** A head request has no body, so
+when the database lacks a column the refusal arrives as `{ message: '' }` — no code, no "does not exist" — and cannot be
+recognised; rethrown, it was printed on the Approvals tab as "[object Object]" the first time the tab was opened before the
+migration was run. `imprestQueue` therefore probes with a one-row get (`select('id', { count: 'exact' }).limit(1)`), whose
+error carries PostgREST's words, and a probe that fails for any reason draws the pane the old way instead of failing it.
+`test/fake-db.mjs` now refuses a head request on a missing column with an empty message, as the real client does, so a test can
+see this; and `withApi` (`api/_lib/auth.js`) says "the database refused the request and gave no reason" for an error object
+with no message instead of `String(e)`. Rule for any future migration: **probe with a get, not a head count.**
+
 **A route removed.** The OPM's own list follows the rule in force (`imprestMine` reads the waiting rows only for a role that some
 rule routes to, so no other officer's Requests tab gains a read). A request waiting under a route the GM then removes keeps its stamped
 OPM but the OPM no longer sees it; the save tells the GM how many ("still wait for an OPM whose route you removed"), and they sit under

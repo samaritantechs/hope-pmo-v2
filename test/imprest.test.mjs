@@ -913,3 +913,38 @@ test('OPM step: the waiting request is told to the OPM\'s phone, and the confirm
   assert.deepEqual(pushes.map(p => p.endpoint).sort(), [SUB(12).endpoint, SUB(13).endpoint].sort(), 'now the GM hears, and so does the requester');
   assert.match(pushes.find(p => p.endpoint === SUB(13).endpoint).body.body, /OPM ASHA OPM/);
 });
+
+/* THE APPROVALS TAB ON A DATABASE WITHOUT THE ROUTING COLUMNS, as the first thing a fresh server does.
+   "approval tab: [object Object]" -- the queue learned whether the columns exist with a HEAD count; a head request has
+   no body, so the refusal came back with no words (`{ message: '' }`), was not recognised as a missing column, and was
+   rethrown as an object. Every screen of the pane must come up, the old way, with nothing memoised beforehand. */
+test('OPM step: the approvals tab opens on a database without the columns, whatever is asked first', async () => {
+  const missing = { imprest_requests: ['stage', 'routed_via', 'routed_names', 'routed_teams', 'routed_note', 'opm_by', 'opm_at', 'opm_amount', 'opm_comment'] };
+  for (const first of ['imprestQueue', 'imprestRoutes', 'imprestMine', 'imprestReport']) {
+    const t = opmTables(x => { x.imprest_requests.push({ id: '11111111-1111-4111-8111-111111111111', requested_at: TODAY + 'T05:00:00Z', staff_code: 'S1', staff_name: 'JOHN OFFICER',
+      full_name: 'JOHN OFFICER', imprest_role: 'FIELD OFFICER', travel_date: TODAY, total_amount: 20000, purpose: 'x', status: 'pending' }); });
+    const db = fakeDb(t, { missingColumns: missing });
+    const user = first === 'imprestMine' ? STAFF : first === 'imprestReport' ? REP : GM;
+    const a = await portalApi(db, user, first, first === 'imprestQueue' ? { state: 'pending' } : {}, NOW);
+    assert.equal(a.ok, true, first + ' answers');
+    if (first === 'imprestQueue') { assert.equal(a.rows.length, 1); assert.equal(a.counts.pending, 1); assert.equal(a.counts.waiting, 0); assert.equal(a.routed, false); }
+    // and then every other screen of the pane, in any order, still answers
+    for (const [fn, who, args] of [['imprestQueue', GM, { state: 'waiting' }], ['imprestQueue', GM, {}], ['imprestRoutes', GM, {}], ['imprestRoles', GM, {}], ['imprestMine', STAFF, {}], ['imprestMine', OPM1, {}], ['imprestReport', REP, {}]]) {
+      const r = await portalApi(db, who, fn, args, NOW);
+      assert.equal(r.ok, true, first + ' then ' + fn);
+    }
+  }
+  // a head count that fails with no words at all must never be shown as "[object Object]"
+  const db = fakeDb(opmTables(), { missingColumns: { imprest_requests: ['stage'] } });
+  await assert.doesNotReject(portalApi(db, GM, 'imprestQueue', { state: 'pending' }, NOW));
+});
+
+test('an error object with no words is never shown as "[object Object]"', async () => {
+  const { withApi } = await import('../api/_lib/auth.js');
+  for (const [thrown, want] of [[{ message: '' }, /bila kutoa sababu.*gave no reason/], [{ message: '', code: '42703' }, /42703/], [new Error('plain words'), /^plain words$/], ['just text', /^just text$/]]) {
+    let out = null;
+    const res = { setHeader() {}, status(c) { this.code = c; return this; }, json(b) { out = b; }, end() {} };
+    await withApi(async () => { throw thrown; })({ method: 'POST' }, res);
+    assert.equal(out.ok, false); assert.match(out.error, want); assert.ok(!/\[object Object\]/.test(out.error));
+  }
+});

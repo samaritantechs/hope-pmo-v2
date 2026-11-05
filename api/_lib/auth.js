@@ -317,8 +317,14 @@ export function withApi(handler) {
       const result = await handler(req, res);
       if (result !== undefined) res.status(200).json({ ok: true, ...result });
     } catch (e) {
-      const status = e.status || 500;
-      res.status(status).json({ ok: false, error: e.message || String(e) });
+      const status = (e && e.status) || 500;
+      /* A DATABASE REFUSAL CAN ARRIVE WITH NO WORDS: a head request has no body, so postgrest-js hands back a plain
+         `{ message: '' }`, and String() of that is "[object Object]" -- which is what a screen showed. Say what it is. */
+      const said = e && e.message ? e.message
+        : (e && typeof e === 'object'
+          ? 'Hifadhidata imekataa ombi bila kutoa sababu' + (e.code ? ' (' + e.code + ')' : '') + '. / The database refused the request and gave no reason' + (e.code ? ' (' + e.code + ')' : '') + '.'
+          : String(e));
+      res.status(status).json({ ok: false, error: said });
     }
   };
 }
