@@ -383,9 +383,9 @@ test('a closed year with only a year\'s collection stamped: no monthly collectio
   assert.ok(has(r, '2025 at a glance') && has(r, 'Sales by month') && has(r, 'Collection by team'), 'sales, and collection by team from the year\'s stamp');
   assert.ok(!has(r, 'Collection by month') && !has(r, 'Recovery by month'), 'no monthly collection or recovery was recorded, so none is drawn');
   assert.ok(!has(r, 'against 2024') && !r.slides.some(s => /against 20\d\d, month by month/.test(s.text)), 'no year before to compare with');
-  assert.ok(has(r, 'Portfolio at risk by team, as the 2025 report closed it') && has(r, 'Total def'), 'PAR by team, as the year\'s report closed it');
+  assert.ok(!has(r, 'Portfolio at risk by team, as the 2025 report closed it') && !has(r, 'Total def') && !has(r, 'PAR at year close'), 'the stamped year-close PAR is out of the deck (it stays in the reports)');
   assert.ok(has(r, 'The books did not load with this export'), 'books that did not arrive are said, not dropped');
-  assert.ok(has(r, 'Collection and PAR are the year\'s'), 'and the notes say so');
+  assert.ok(has(r, 'Collection is the year\'s, as the 2025 report closed it') && !has(r, 'Collection and PAR'), 'and the notes say so, of the collection alone');
   assert.ok(r.slides.find(s => s.text.includes('Statistical snapshot')).text.includes('| Year |') || r.slides.find(s => s.text.includes('Statistical snapshot')).text.includes(' Year '), 'a finished year closes its table on "Year"');
 });
 
@@ -631,9 +631,12 @@ test('no slide presents arrears over balance: the PAR slides carry the all-time 
 });
 const anPct1 = v => Number(v).toFixed(1) + '%';
 
-test('a closed year keeps the year-close slide, which is the workbook\'s own figure (collection = 100 - PAR), not arrears over balance', async () => {
+test('a closed year\'s stamped PAR is not in the deck at all: no slide, no contents line, no note, no figure', async () => {
   const d = await annual(book(), 2025);
+  assert.ok(d.teams.filter(t => t.par != null).length >= 4, 'the year did stamp a PAR per team, so the slide would have been drawn');
   const r = await slidesOf(d, null);
-  const yc = r.slides.find(x => /Portfolio at risk by team, as the 2025 report closed it/.test(x.text));
-  assert.ok(yc && yc.text.includes('PAR %') && yc.text.includes('Total def'), 'the stamped year-close PAR by team is still presented');
+  assert.ok(!r.slides.some(x => /Portfolio at risk by team, as the 2025 report closed it|PAR at year close|Total def/.test(x.text)), 'no year-close PAR slide');
+  assert.ok(!/as the year closed it/.test(r.slides.find(x => x.text.includes('What this report covers')).text), 'nor a contents line for it');
+  const named = r.slides.filter(x => /\bPAR\b/.test(x.text.replace(/all-time PAR/gi, ''))).map(x => x.text.slice(0, 60) + ' => ' + (x.text.replace(/all-time PAR/gi, '').match(/.{0,30}\bPAR\b.{0,20}/) || [''])[0]);
+  assert.deepEqual(named, [], 'a closed year\'s deck names no PAR but the all-time one');
 });
