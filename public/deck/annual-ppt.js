@@ -1003,6 +1003,26 @@ function anPptImage_(url) {
     });
   });
 }
+/** SAVING THE DECK. The page's own saver (`download` in app.html) is the one way a file leaves this system on every
+    device: a link in a browser, and inside the Android app -- whose web view cannot follow a blob: link, and used to
+    close or say "open in Chrome" -- the app's own save bridge into the phone's Downloads folder. PptxGenJS's writeFile
+    makes the blob: link itself, so it works in a browser and nowhere in the app. The deck is therefore made as a file
+    in memory and handed to `download`. The type is set here because the library's file is typed as a plain zip, and
+    Android would then name the saved file "...pptx.zip". Resolves true when the app's saver took it (it tells the
+    person itself), false when it was a browser download. A page without `download` still gets writeFile. */
+var ANPPT_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+function anPptSave_(pres, name) {
+  if (typeof download !== 'function') return pres.writeFile({ fileName: name, compression: true }).then(function () { return false; });
+  /* exportPresentation({ compression: true }) is what writeFile itself calls in a browser, and it returns a compressed
+     blob. write({ outputType: 'blob' }) looks the same but the library then skips compression altogether (it only
+     compresses when no output type is named): the same deck came out 3.3 MB instead of 0.45 MB, which on a phone is
+     a slow save and a very large string across the app's bridge. */
+  var made = typeof pres.exportPresentation === 'function' ? pres.exportPresentation({ compression: true }) : pres.write({ outputType: 'blob', compression: true });
+  return made.then(function (blob) {
+    download(new Blob([blob], { type: ANPPT_MIME }), name);
+    return typeof androidBridge_ === 'function' && !!androidBridge_();
+  });
+}
 /** The press: the library and the two images (cached by the browser after the first time), the year
     before for the comparison slides (a miss only drops those slides), then build and save. */
 function anPptRun_(btn) {
@@ -1022,7 +1042,11 @@ function anPptRun_(btn) {
     if (!M) throw new Error('No month of ' + d.year + ' has data yet.');
     var pres = anPptBuild_(window.PptxGenJS, M, { title: r[1], logo: r[2] });
     var name = 'HOPE_Annual_Report_' + M.year + (M.complete ? '' : '_to_date') + '.pptx';
-    return pres.writeFile({ fileName: name, compression: true }).then(function () { toast('Saved ' + name + ' · ' + (M.prev ? 'with ' + M.prev.year + ' for comparison' : 'no earlier year to compare with')); });
+    return anPptSave_(pres, name).then(function (viaApp) {
+      /* Inside the app the saver says "saved to Downloads" (or why not) itself, once the phone has the file; a second
+         line from here would only talk over it. */
+      if (!viaApp) toast('Saved ' + name + ' \u00B7 ' + (M.prev ? 'with ' + M.prev.year + ' for comparison' : 'no earlier year to compare with'));
+    });
   }).catch(function (e) {
     toast('Could not make the deck: ' + ((e && e.message) || e), true);
   }).then(function () {

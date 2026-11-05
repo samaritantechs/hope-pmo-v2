@@ -3719,6 +3719,17 @@ regions put where they belong and said on the slide (Kahama into Shinyanga, Coas
 that is none of them, such as a zone (`LAKE ZONE`), is not guessed: it is listed under "Not on the map". Two registry names that
 land on one region are added together (teams, arrears, balance; PAR is recomputed from the sums, never averaged).
 
+**Saving the file, in a browser and in the Android app.** The deck is saved through the page's own `download(blob, name)`
+(`app.html`), like the Excel and JPG exports, never by PptxGenJS's `writeFile`: `writeFile` makes a `blob:` link, which works in a
+browser and nowhere in the app's web view (the app answered "open the system in Chrome", or closed). Inside the app `download`
+hands the bytes to the app's `HopeCalls.saveBase64` bridge, which writes them to the phone's Downloads folder and says so; in a
+browser it is an ordinary download. No new app release is needed (the bridge already exists in the installed app); an older
+page without `download` still falls back to `writeFile`. Two traps, both pinned by `test/annualppt.test.mjs`: the file is typed
+as a PowerPoint file (`application/vnd.openxmlformats-officedocument.presentationml.presentation`; the library types it as a zip
+and Android would name the saved file `...pptx.zip`), and it is made with `pres.exportPresentation({ compression: true })`, not
+`write({ outputType: 'blob' })` — the library compresses only when no output type is named, so the latter came out 3.3 MB instead
+of 0.45 MB (a slow save, and a 4.4 MB string across the bridge).
+
 **Cost.** `annualBook` is the PAR tab, the register and the Expected tab added together (the defaulter deck
 is read twice, as when both tabs are open); the speed table carries it (18 / 5,300 un-migrated, 16 / 3,300
 migrated) with the reason. Never on `/api/upload` or `/api/call`. `test/annualppt.test.mjs` runs the real

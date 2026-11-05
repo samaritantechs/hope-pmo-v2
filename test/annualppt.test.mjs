@@ -435,3 +435,53 @@ test('the button: the tab loads the deck on the press, the page never loads it, 
   assert.ok(/PptxGenJS 3\.12\.0/.test(readFileSync(join(ROOT, 'public/deck/pptxgen.bundle.js'), 'utf8').slice(0, 200)), 'the vendored library says which version it is');
   assert.ok(!/sourceMappingURL/.test(readFileSync(join(ROOT, 'public/deck/pptxgen.bundle.js'), 'utf8').slice(-200)), 'no source-map request for a map that is not served');
 });
+
+/* "exporting the ppt works on browser not yet by app". The Android app's web view cannot follow the blob: link PptxGenJS's
+   writeFile makes, so the deck is saved through the page's own `download` (app.html): a link in a browser, the app's
+   save bridge inside the app. The file must arrive typed as a .pptx, or Android names it "...pptx.zip". */
+async function presFor() {
+  const d = await annual(book(), 2026);
+  const ctx = deckCtx();
+  const M = ctx.anPptModel_(d, null, null);
+  return { ctx, pres: ctx.anPptBuild_(ctx.PptxGenJS, M, { title: PX, logo: PX }) };
+}
+test('the deck is saved through the page\'s own saver, typed as a PowerPoint file, and never by writeFile inside the app', async () => {
+  const { ctx, pres } = await presFor();
+  const saved = [];
+  let writeFileCalled = false;
+  const realWriteFile = pres.writeFile.bind(pres);
+  pres.writeFile = (...a) => { writeFileCalled = true; return realWriteFile(...a); };
+  ctx.download = (blob, name) => saved.push({ blob, name });
+  ctx.androidBridge_ = () => ({ saveBase64() {} });                       // inside the app
+  const viaApp = await ctx.anPptSave_(pres, 'HOPE_Annual_Report_2026.pptx');
+  assert.equal(viaApp, true, 'the app\'s saver took it, and tells the person itself');
+  assert.equal(writeFileCalled, false, 'writeFile makes a blob: link, which the app\'s web view cannot follow');
+  assert.equal(saved.length, 1); assert.equal(saved[0].name, 'HOPE_Annual_Report_2026.pptx');
+  assert.equal(saved[0].blob.type, 'application/vnd.openxmlformats-officedocument.presentationml.presentation', 'not application/zip, or Android adds .zip');
+  const bytes = new Uint8Array(await saved[0].blob.arrayBuffer());
+  assert.ok(bytes.length > 20000, 'a real deck, not an empty file');
+  /* COMPRESSED. write({ outputType: 'blob' }) silently skips compression in this library (it only compresses when no output
+     type is named), which made the same deck 3.3 MB instead of 0.45 MB -- a slow save, and a huge string across the app's bridge. */
+  const stored = await pres.write({ outputType: 'arraybuffer' });
+  assert.ok(bytes.length < stored.byteLength * 0.5, 'compressed: ' + bytes.length + ' bytes against ' + stored.byteLength + ' stored');
+  assert.equal(String.fromCharCode(bytes[0], bytes[1]), 'PK', 'a zip package');
+  const zip = await ctx.JSZip.loadAsync(bytes);
+  assert.ok(zip.file('ppt/presentation.xml') && zip.file('[Content_Types].xml'), 'and it is a PowerPoint package');
+});
+
+test('in a browser the same saver is used and the press says it saved; a page with no saver still gets the old save', async () => {
+  const a = await presFor();
+  const got = [];
+  a.ctx.download = (blob, name) => got.push(name);
+  a.ctx.androidBridge_ = () => null;                                       // a browser
+  assert.equal(await a.ctx.anPptSave_(a.pres, 'x.pptx'), false, 'a browser download: the press reports it');
+  assert.deepEqual(got, ['x.pptx']);
+  const b = await presFor();
+  let wrote = null;
+  b.pres.writeFile = o => { wrote = o; return Promise.resolve(); };      // no `download` on this page at all
+  assert.equal(await b.ctx.anPptSave_(b.pres, 'y.pptx'), false);
+  assert.deepEqual({ ...wrote }, { fileName: 'y.pptx', compression: true });
+  const code = readFileSync(join(ROOT, 'public/deck/annual-ppt.js'), 'utf8');
+  assert.ok(/return anPptSave_\(pres, name\)\.then\(function \(viaApp\) \{/.test(code) && /if \(!viaApp\) toast\('Saved '/.test(code), 'the press saves through it and does not talk over the app\'s own message');
+  assert.ok(!/return pres\.writeFile\(\{ fileName: name, compression: true \}\)\.then\(function \(\) \{ toast/.test(code), 'the direct writeFile-and-toast is gone');
+});
