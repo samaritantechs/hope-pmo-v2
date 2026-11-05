@@ -882,27 +882,29 @@ function anPptBuild_(Pptx, M, A) {
     var Tt = P_.totals || {};
     var s1 = content('Portfolio at risk: the book as at ' + P_.date);
     var w = 1.95, h = 1.3, gx = 0.1;
-    card(s1, 0.5, 1.0, w, h, 'PAR', anPptPc_(Tt.par), 'arrears over the balance of customers in arrears', { color: C.a5 });
+    /* ONE PAR: the ALL-TIME PAR, the arrears over the total loan (principal and interest) of everything ever lent. "We drop the arrears over
+       balance concept in all slides ... live with all time PAR only" -- the GM does not present the balance-based figure to the directors. */
+    card(s1, 0.5, 1.0, w, h, 'All-time PAR', anPptPc_(Tt.parAll), 'over everything ever lent', { color: C.a5 });
     card(s1, 0.5 + (w + gx), 1.0, w, h, 'Arrears', 'TZS ' + anPptB2_(Tt.arrears), anPptN0_(Tt.customers) + ' customers in arrears');
-    card(s1, 0.5 + 2 * (w + gx), 1.0, w, h, 'All-time PAR', anPptPc_(Tt.parAll), 'arrears over TZS ' + anPptB2_(Tt.totalLoan) + ' ever lent' + (P_.allTime && P_.allTime.since ? ' since ' + P_.allTime.since : ''), { color: C.a1 });
+    card(s1, 0.5 + 2 * (w + gx), 1.0, w, h, 'Ever lent', 'TZS ' + anPptB2_(Tt.totalLoan), anPptN0_(Tt.loans) + ' loans, with interest', { color: C.a1, vs: 20 });
     card(s1, 0.5 + 3 * (w + gx), 1.0, w, h, 'Average loan', 'TZS ' + anPptN0_(Tt.avgLoan), 'of the customers in arrears', { vs: 20 });
     var bands = (P_.bands || []).filter(function (b) { return b.customers > 0 || b.arrears > 0; });
     if (bands.length) {
       doughnut(s1, bands.map(function (b) { return b.band + ' days'; }), bands.map(function (b) { return Math.round(b.arrears / 1e6); }), { x: 0.4, y: 2.4, w: 5.6, h: 2.8, name: 'Arrears by days overdue', series: 'Arrears (TZS million)' });
       bullets(s1, [[{ text: 'Arrears by days overdue, ', bold: true }, { text: 'in TZS million. ' + bands.reduce(function (a, b) { return b.arrears > a.arrears ? b : a; }, bands[0]).band + ' days holds the most.' }],
-        [{ text: 'PAR ', bold: true }, { text: 'is the arrears over the balance of those customers; all-time PAR puts the same arrears over everything the company has lent.' }]], 6.2, 2.6, 3.3, 2.4, 11.5);
+        [{ text: 'All-time PAR ', bold: true }, { text: 'is the arrears over everything the company has lent: the total loan, principal and interest, of every sale' + (P_.allTime && P_.allTime.since ? ' since ' + P_.allTime.since : '') + '.' }]], 6.2, 2.6, 3.3, 2.4, 11.5);
     }
-    var regs = (P_.byRegion || []).filter(function (r) { return r.par != null; }).sort(function (a, b) { return b.par - a.par; });
+    var regs = (P_.byRegion || []).filter(function (r) { return r.parAll != null; }).sort(function (a, b) { return b.parAll - a.parAll; });
     var pu = P_.unplaced && P_.unplaced.teams ? ' ' + P_.unplaced.teams + ' teams with no region set yet (TZS ' + anPptM1_(P_.unplaced.arrears) + ' in arrears) are not in these rows.' : '';
-    if (regs.length >= 2) regionPages('Portfolio at risk by region', regs, { series: 'PAR %', value: function (r) { return +r.par.toFixed(1); }, fmt: '0.0', color: C.a5, name: 'PAR by region',
-      head: ['Region', 'Cust.', 'Arrears (M)', 'PAR %', 'All-time'], widths: [1.5, 0.75, 1.15, 0.9, 0.9],
-      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), anPptN0_(r.arrears / 1e6), anPptPc_(r.par), anPptPc_(r.parAll)]; },
-      note: 'As at ' + P_.date + ', regions ranked by PAR. A region is its teams\' customers added together: arrears over balance, and over everything its teams have lent.' + pu,
-      noteMore: 'Regions ranked by PAR, highest first, as at ' + P_.date + '.' });
+    if (regs.length >= 2) regionPages('Portfolio at risk by region', regs, { series: 'All-time PAR %', value: function (r) { return +r.parAll.toFixed(1); }, fmt: '0.0', color: C.a5, name: 'All-time PAR by region',
+      head: ['Region', 'Cust.', 'Arrears (M)', 'Lent (M)', 'All-time PAR'], widths: [1.5, 0.75, 1.0, 1.0, 0.95],
+      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), anPptN0_(r.arrears / 1e6), anPptN0_(r.totalLoan / 1e6), anPptPc_(r.parAll)]; },
+      note: 'As at ' + P_.date + ', regions ranked by all-time PAR. A region is its teams added together: their arrears over everything they have lent.' + pu,
+      noteMore: 'Regions ranked by all-time PAR, highest first, as at ' + P_.date + '.' });
     mapSlide('Portfolio at risk on the map', P_.byRegion || [], {
-      value: function (g) { var a = 0, b = 0; g.forEach(function (r) { a += r.arrears; b += r.balance; }); return b > 0 ? Math.round(a / b * 1000) / 10 : null; },
-      label: function (v) { return v.toFixed(1) + '%'; }, fmt: function (v) { return v.toFixed(1) + '%'; }, ramp: 'red', heading: anPptPc_((P_.totals || {}).par) + ' PAR',
-      legendTitle: 'PAR %', noneText: 'No customers in arrears', listTitle: 'Highest PAR', sub: 'Arrears over the balance of customers in arrears, by region, as at ' + P_.date + '. Darker is worse.' });
+      value: function (g) { var a = 0, b = 0; g.forEach(function (r) { a += r.arrears; b += r.totalLoan; }); return b > 0 ? Math.round(a / b * 1000) / 10 : null; },
+      label: function (v) { return v.toFixed(1) + '%'; }, fmt: function (v) { return v.toFixed(1) + '%'; }, ramp: 'red', heading: anPptPc_((P_.totals || {}).parAll) + ' all-time PAR',
+      legendTitle: 'All-time PAR %', noneText: 'Nothing lent yet', listTitle: 'Highest all-time PAR', sub: 'Arrears over everything lent, by region, as at ' + P_.date + '. Darker is worse.' });
     var tms = (P_.byTeam || []).filter(function (t) { return t.customers > 0; });
     if (tms.length >= 4) {
       var s3 = content('Portfolio at risk by team');
@@ -910,7 +912,7 @@ function anPptBuild_(Pptx, M, A) {
       var worst = tms.slice().sort(function (a, b) { return b.arrears - a.arrears; }).slice(0, n);
       var best = (P_.byTeam || []).filter(function (t) { return t.parAll != null; }).sort(function (a, b) { return a.parAll - b.parAll; }).slice(0, n);
       heading2(s3, 'Most arrears', 0.5, 0.95, 4.4, C.a5);
-      table(s3, [['Team', 'Cust.', 'Arrears (M)', 'PAR %']].concat(worst.map(function (t) { return [t.team, t.customers, anPptN0_(t.arrears / 1e6), anPptPc_(t.par)]; })), 0.5, 1.28, 4.4, [1.7, 0.7, 1.1, 0.9], { fs: 9.5, rowH: 0.29, name: 'Most arrears' });
+      table(s3, [['Team', 'Cust.', 'Arrears (M)', 'All-time']].concat(worst.map(function (t) { return [t.team, t.customers, anPptN0_(t.arrears / 1e6), anPptPc_(t.parAll)]; })), 0.5, 1.28, 4.4, [1.7, 0.7, 1.1, 0.9], { fs: 9.5, rowH: 0.29, name: 'Most arrears' });
       heading2(s3, 'Lowest all-time PAR', 5.1, 0.95, 4.4, C.a3);
       table(s3, [['Team', 'Lent (M)', 'Arrears (M)', 'All-time']].concat(best.map(function (t) { return [t.team, anPptN0_(t.totalLoan / 1e6), anPptN0_(t.arrears / 1e6), anPptPc_(t.parAll)]; })), 5.1, 1.28, 4.4, [1.5, 0.9, 1.0, 1.0], { fs: 9.5, rowH: 0.29, name: 'Lowest all-time PAR' });
       note(s3, 'As at ' + P_.date + '. A team with no customer in arrears sits at 0%: the best row on the board, not a missing one.', 4.6, 0.4);
@@ -944,9 +946,9 @@ function anPptBuild_(Pptx, M, A) {
     var regs = (A_.byRegion || []).slice().sort(function (a, b) { return b.balance - a.balance; });
     var au = A_.unplaced && A_.unplaced.teams ? ' ' + A_.unplaced.teams + ' teams with no region set yet (TZS ' + anPptB2_(A_.unplaced.balance) + ' outstanding) are not in these rows.' : '';
     if (regs.length >= 2) regionPages('Active portfolio by region', regs, { series: 'Outstanding (TZS billion)', value: function (r) { return +(r.balance / 1e9).toFixed(2); }, fmt: '0.00', color: C.a1, name: 'Balance by region',
-      head: ['Region', 'Cust.', 'Bal. (B)', 'Behind', 'Arrears %'], widths: [1.5, 0.75, 0.95, 0.95, 1.05],
-      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), (r.balance / 1e9).toFixed(2), anPptN0_(r.behind), anPptPc_(r.arrearsPct)]; },
-      note: 'As at ' + A_.date + ', regions ranked by outstanding balance. Arrears % is arrears over the balance, summed over the region\'s customers.' + au,
+      head: ['Region', 'Cust.', 'Bal. (B)', 'Behind', 'Arrears (M)'], widths: [1.5, 0.75, 0.95, 0.95, 1.05],
+      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), (r.balance / 1e9).toFixed(2), anPptN0_(r.behind), anPptN0_(r.arrears / 1e6)]; },
+      note: 'As at ' + A_.date + ', regions ranked by outstanding balance. Behind is the customers with arrears on the deck, and Arrears the TZS million they owe, summed over the region\'s customers.' + au,
       noteMore: 'Regions ranked by outstanding balance, as at ' + A_.date + '.' });
     var bigBook = (A_.balance || 0) >= 2e9, mny = function (v) { return bigBook ? (v / 1e9).toFixed(2) + 'B' : Math.round(v / 1e6) + 'M'; };
     mapSlide('Active portfolio on the map', A_.byRegion || [], {
@@ -956,7 +958,7 @@ function anPptBuild_(Pptx, M, A) {
     var tms = (A_.byTeam || []).slice(0, 12);
     if (tms.length >= 4) {
       var s3 = content('Active portfolio by team');
-      table(s3, [['Team', 'Region', 'Customers', 'Balance (M)', 'Behind', 'Arrears %']].concat(tms.map(function (t) { return [t.team, t.region || '—', anPptN0_(t.customers), anPptN0_(t.balance / 1e6), anPptN0_(t.behind), anPptPc_(t.arrearsPct)]; })), 0.5, 1.0, 9.0, [2.0, 1.9, 1.1, 1.4, 1.0, 1.6], { fs: 9.5, rowH: 0.28, name: 'Portfolio by team table', textCols: [0, 1] });
+      table(s3, [['Team', 'Region', 'Customers', 'Balance (M)', 'Behind', 'Arrears (M)']].concat(tms.map(function (t) { return [t.team, t.region || '—', anPptN0_(t.customers), anPptN0_(t.balance / 1e6), anPptN0_(t.behind), anPptN0_(t.arrears / 1e6)]; })), 0.5, 1.0, 9.0, [2.0, 1.9, 1.1, 1.4, 1.0, 1.6], { fs: 9.5, rowH: 0.28, name: 'Portfolio by team table', textCols: [0, 1] });
       note(s3, 'The twelve teams with the largest outstanding balance, as at ' + A_.date + '.', 4.7, 0.3);
     }
   })();
