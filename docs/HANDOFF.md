@@ -3804,6 +3804,15 @@ error carries PostgREST's words, and a probe that fails for any reason draws the
 see this; and `withApi` (`api/_lib/auth.js`) says "the database refused the request and gave no reason" for an error object
 with no message instead of `String(e)`. Rule for any future migration: **probe with a get, not a head count.**
 
+**Requests already pending when the route was set.** Routing applies to a request at the moment it is made, so what was pending with the GM stayed there.
+`db/RUN-ME-2026-11-05b-imprest-move-pending-to-opm.sql` moves those once, by the same rule (the saved `IMPREST_ROUTES`, the requester's teams in Teams &
+Staff by name, falling back to the teams on their access code, the OPM named on each, and an OPM-role sign-in that matches by name or by team). It is in
+`'preview'` mode until the word is changed to `'move'`, lists every pending request of a routed role with where it would go or why it would stay, stops
+with a plain message if the migration is not run or no route is saved, moves only requests that are pending and still with the GM (so a second run moves
+nothing), leaves alone what it cannot place (the table says why), and sends no email or phone alert: the OPMs find them in their Requests tab. Checked on
+a real Postgres engine and against the app's own `resolveRoute_` for the same people; if `resolveRoute_` changes, change the SQL with it (it is a one-off
+copy of the rule, which is why it is a RUN-ME file and not a function).
+
 **A route removed.** The OPM's own list follows the rule in force (`imprestMine` reads the waiting rows only for a role that some
 rule routes to, so no other officer's Requests tab gains a read). A request waiting under a route the GM then removes keeps its stamped
 OPM but the OPM no longer sees it; the save tells the GM how many ("still wait for an OPM whose route you removed"), and they sit under
