@@ -39,6 +39,7 @@ import { fetchAll, runQuery } from './supabase.js';
 import { num } from './recovery.js';
 import { sendMail, noticeHtml, noticeButton } from './mail.js';
 import { pushTopic, pushCode, pushNoteOf } from './push.js';
+import { sameName } from './expdf.js';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 function bad(msg) { const e = new Error(msg); e.status = 400; throw e; }
@@ -165,6 +166,11 @@ const IMP_COLS = 'id, requested_at, staff_code, staff_name, staff_role, full_nam
   + 'other1_desc, other1_amount, other2_desc, other2_amount, other3_desc, other3_amount, '
   + 'total_amount, purpose, status, approved_amount, comment, decided_by, decided_at, decided_via_email, '
   + 'funded_amount, funded_by, funded_at, retired_at, retire_total, retire_balance';
+/* THE ROUTING COLUMNS (db/RUN-ME-2026-11-05-imprest-opm-step.sql). Read and written only when the database has them: a
+   deployment that has not run the migration keeps working exactly as before, every request going straight to the
+   GM. `readRows_` below asks for the wide list first and falls back to the narrow one, remembering the answer. */
+const RT_COLS = 'stage, routed_via, routed_names, routed_teams, routed_note, opm_by, opm_at, opm_amount, opm_comment';
+const IMP_COLS_RT = IMP_COLS + ', ' + RT_COLS;
 const IMP_RET_COLS = 'request_id, filed_at, filed_by_name, fare_actual, accom_actual, '
   + 'other1_actual, other2_actual, other3_actual, total_actual, notes, photo_count';
 
@@ -197,6 +203,13 @@ const impRow = (r, me) => ({
   retiredAt: (r.retired_at && r.retire_total != null) ? Date.parse(r.retired_at) : null,
   retireTotal: r.retire_total == null ? null : Number(r.retire_total),
   retireBalance: r.retire_balance == null ? null : Number(r.retire_balance),
+  /* THE OPM STEP. stage 'opm' = waiting for the requester's OPM (the GM does not see it yet); 'gm' = with the GM,
+     whether it never needed the OPM or the OPM has confirmed. routedNote says why a request that should have gone
+     through the OPM went straight to the GM (nobody named, no sign-in) or that the GM released it. */
+  stage: r.stage === 'opm' ? 'opm' : 'gm',
+  routedVia: r.routed_via || '', routedNames: r.routed_names || '', routedNote: r.routed_note || '',
+  opmBy: r.opm_by || '', opmAt: r.opm_at ? Date.parse(r.opm_at) : null,
+  opmAmount: r.opm_amount == null ? null : Number(r.opm_amount), opmComment: r.opm_comment || '',
 });
 
 /* ONE IMPREST AT A TIME: NO NEW REQUEST WHILE AN APPROVED ONE IS UNRETIRED.
@@ -255,6 +268,161 @@ const unfundedNote_ = rows => {
     + '/ You have ' + n + ' unfunded imprest' + (one ? '' : 's') + ': check with Accounts to record '
     + (one ? 'it' : 'them') + ' as funded before you file the retirement.';
 };
+
+/* ---------------------------------------------------------------------------- THE OPM STEP
+     "GMOs and Managers imprests shouldn't go to GM directly ... I have to select which roles pass through which
+      to get to GM at the imprest approvals tab, so I select those two and choose OPM role. When their respective
+      OPM finds their requests in the Requests tab, the OPM confirms the request (may adjust the amount with a
+      comment), then it proceeds to the approval tab / GM."
+
+   THE RULE, in settings (IMPREST_ROUTES, edited on the approvals tab): [{ from: ['GMO','MANAGER'], via: 'OPM' }].
+   A request by a code whose role is in `from` waits for the OPM and is NOT in the GM's queue, email or phone until
+   an OPM confirms it. WHICH OPM: the OPM Teams & Staff names on the teams the requester holds (their GMO or Manager
+   column, by name; their code's teams where the role has no column), and the OPM-role sign-ins that match -- by the
+   same name, or by teams in common. Nobody found is never a dead end: the request goes straight to the GM with a
+   note saying why, and the GM can always release a waiting one. The OPM may confirm LESS than was asked, with a
+   comment; the GM then decides on that amount (and may still approve up to what was asked). */
+const ROUTES_KEY = 'IMPREST_ROUTES';
+const ROUTE_COL = { GMO: 'gmo', MANAGER: 'manager', CREDIT: 'credit', OPM: 'opm' };
+const rtState = new WeakMap(), RT_RETRY_MS = 60 * 1000;
+const rtMissing_ = e => {
+  const s = String((e && (e.message || e.code)) || e || '');
+  return /column\s+\S*\b(stage|routed_\w+|opm_\w+)\b\S*\s+does not exist/i.test(s) || /Could not find the '(stage|routed_\w+|opm_\w+)' column/i.test(s);
+};
+const rtNotReady_ = db => { const st = rtState.get(db); return !!(st && st.ready === false && Date.now() - st.at < RT_RETRY_MS); };
+/** Imprest rows with the routing columns when the database has them, without when it has not. `build(cols)` makes the query. */
+async function readRows_(db, build) {
+  if (!rtNotReady_(db)) {
+    try { const rows = await fetchAll(() => build(IMP_COLS_RT)); rtState.set(db, { ready: true }); return rows; }
+    catch (e) { if (!rtMissing_(e)) throw e; rtState.set(db, { ready: false, at: Date.now() }); }
+  }
+  return fetchAll(() => build(IMP_COLS));
+}
+const routesCache = new WeakMap(), ROUTES_TTL_MS = 15 * 1000;
+function parseRoutes_(raw) {
+  try {
+    const a = JSON.parse(String(raw || '[]'));
+    return (Array.isArray(a) ? a : []).map(x => ({ from: [...new Set((Array.isArray(x && x.from) ? x.from : []).map(K).filter(Boolean))], via: K(x && x.via) }))
+      .filter(x => x.from.length && x.via && !x.from.includes(x.via));
+  } catch (e) { return []; }
+}
+async function readRoutes_(db) {
+  const hit = routesCache.get(db);
+  if (hit && Date.now() - hit.at < ROUTES_TTL_MS) return hit.routes;
+  let routes = [];
+  try {
+    const { data } = await db.from('settings').select('value').eq('key', ROUTES_KEY).maybeSingle();
+    routes = parseRoutes_(data && data.value);
+  } catch (e) { routes = []; }
+  routesCache.set(db, { at: Date.now(), routes });
+  return routes;
+}
+const routeOf_ = (routes, role) => routes.find(r => r.from.includes(K(role))) || null;
+const csv_ = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean);
+const holder_ = (cell, name) => { const c = String(cell == null ? '' : cell).trim(); return !!c && (K(c) === K(name) || sameName(c, name)); };
+
+/** Where a request by `user` has to go first, or null when nothing routes their role. */
+async function resolveRoute_(db, user, routes) {
+  const rule = routeOf_(routes, user.role);
+  if (!rule) return null;
+  const col = ROUTE_COL[K(user.role)] || null;
+  let teamRows = [];
+  try { teamRows = await fetchAll(() => db.from('teams').select(col && col !== 'opm' ? 'team, opm, ' + col : 'team, opm')); }
+  catch (e) { if (!tableMissing(e)) throw e; }
+  let mine = col ? teamRows.filter(t => holder_(t[col], user.name)) : [];
+  if (!mine.length && user.teams && user.teams.length) { const own = new Set(user.teams.map(K)); mine = teamRows.filter(t => own.has(K(t.team))); }
+  const teams = [...new Set(mine.map(t => String(t.team || '').trim()).filter(Boolean))];
+  const names = [...new Set(mine.map(t => String(t.opm == null ? '' : t.opm).trim()).filter(n => n && !/^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(n)))];
+  let codes = [];
+  try { codes = (await fetchAll(() => db.from('access_codes').select('code, name, role, teams'))).filter(c => K(c.role) === rule.via); }
+  catch (e) { codes = []; }
+  const mineSet = new Set(teams.map(K));
+  const confirmers = codes.filter(c => names.some(n => holder_(c.name, n))
+    || (Array.isArray(c.teams) && c.teams.length && c.teams.some(t => mineSet.has(K(t)))));
+  let note = '';
+  if (!teams.length) note = 'Hakuna timu zilizopatikana kwa mwombaji; imekwenda kwa GM moja kwa moja. / No teams found for the requester; it went straight to the GM.';
+  else if (!confirmers.length) note = (names.length
+    ? 'Hakuna kodi ya ' + rule.via + ' inayolingana na ' + names.join(', ')
+    : 'Hakuna ' + rule.via + ' aliyetajwa kwenye timu hizi') + '; imekwenda kwa GM moja kwa moja. / '
+    + (names.length ? 'No ' + rule.via + ' sign-in matches ' + names.join(', ') : 'No ' + rule.via + ' is named on these teams') + '; it went straight to the GM.';
+  return { via: rule.via, teams, names, confirmers, note };
+}
+/** May this code confirm that waiting request? The right role, and the OPM named for it or a team in common. */
+function canConfirm_(user, row) {
+  if (!row || row.stage !== 'opm' || !row.routed_via || K(user.role) !== K(row.routed_via)) return false;
+  if (csv_(row.routed_names).some(n => holder_(user.name, n))) return true;
+  const own = new Set((user.teams || []).map(K));
+  return own.size > 0 && csv_(row.routed_teams).some(t => own.has(K(t)));
+}
+
+/** The GM's email and phone nudge for a request that is now with them. Best effort, after the row exists. */
+async function nudgeGm_(db, q, nowMs) {
+  const links = await gmActionLinks_(db, q.id);
+  const facts = [['Jina / Name', q.fullName], ['Wadhifa / Role', q.imprestRole], ['Safari / Travel', q.travelDate],
+    ['Mahali / Destination', q.destination || '—'], ['Jumla / Total', q.total]];
+  if (q.opmBy) facts.push(['OPM ' + q.opmBy, (q.opmAmount != null && q.opmAmount !== q.total ? 'amethibitisha ' + money0(q.opmAmount) + ' / confirmed ' + money0(q.opmAmount) : 'amethibitisha / confirmed') + (q.opmComment ? ' · ' + q.opmComment.slice(0, 200) : '')]);
+  facts.push(['Madhumuni / Purpose', String(q.purpose || '').slice(0, 300)]);
+  const html = noticeHtml('Ombi jipya la imprest / New imprest request', facts, '') + (links ? `<div style="margin-top:14px">
+      ${noticeButton('Amua sasa / Decide now', links.decide, '#0B2A6B')}
+      ${noticeButton('Fungua kwenye portal / Open in the portal', links.portal, '#334155')}
+    </div>` : `<p style="color:#6b7280;font-size:12px">Fungua Idhini ya imprest kuamua. / Open the imprest approval pane to decide.</p>`);
+  const shown = q.opmAmount != null ? q.opmAmount : q.total;
+  const mail = await sendMail(db, { toKey: 'IMPREST_GM_EMAIL',
+    subject: 'HOPE PMO — ombi la imprest / imprest request: ' + q.fullName + ' · ' + money0(shown) + ' TZS',
+    html });
+  /* THE SECOND NUDGE, TO THE PHONE -- "GM needs phone notifications whenever there is an imprest even if he logs in
+     via browser". Every handset whose code holds the approval pane and has turned alerts on (the bell in the portal;
+     api/_lib/push.js). Same standing as the email: after the row, under a clock, reported rather than depended on. */
+  const push = await pushTopic(db, 'IMPREST', {
+    title: 'Ombi jipya la imprest / New imprest request',
+    body: q.fullName + ' · ' + money0(shown) + ' TZS · ' + q.travelDate + (q.destination ? ' · ' + q.destination : '') + (q.opmBy ? ' · OPM ' + q.opmBy : ''),
+    url: '/dashboard?imp=' + encodeURIComponent(q.id),
+    tag: 'imprest-' + q.id,
+  }, { nowMs });
+  return { mail, push };
+}
+
+/** THE ROUTING CARD'S DATA: the rules, the role names to pick from, and whether the migration has been run. */
+export async function imprestRoutes(db, user) {
+  const [routes, all] = await Promise.all([readRoutes_(db), readRoleNames_(db)]);
+  let ready = rtState.get(db) ? rtState.get(db).ready === true : null;
+  if (ready === null || ready === false) {
+    try { const { error } = await db.from('imprest_requests').select('id, stage').limit(1); ready = !error || !rtMissing_(error) ? !error : false;
+      rtState.set(db, ready ? { ready: true } : { ready: false, at: Date.now() }); } catch (e) { ready = false; }
+  }
+  return { ok: true, routes, roles: all, ready };
+}
+export async function imprestRoutesSave(db, user, args, nowMs, deps) {
+  const list = Array.isArray(args && args.routes) ? args.routes : null;
+  if (!list) bad('Chagua njia. / Choose the routes.');
+  const seen = new Set(), out = [];
+  for (const x of list) {
+    const from = [...new Set((Array.isArray(x && x.from) ? x.from : []).map(K).filter(Boolean))].slice(0, 20), via = K(x && x.via).slice(0, 60);
+    if (!from.length && !via) continue;
+    if (!from.length) bad('Chagua wadhifa wa kupitisha. / Choose the roles that pass through.');
+    if (!via) bad('Chagua wadhifa wa kupitia. / Choose the role they pass through.');
+    if (from.includes(via)) bad('Wadhifa ' + via + ' hauwezi kupitia yenyewe. / ' + via + ' cannot pass through itself.');
+    for (const r of from) { if (seen.has(r)) bad('Wadhifa ' + r + ' uko kwenye njia mbili. / ' + r + ' is in two routes.'); seen.add(r); }
+    out.push({ from, via });
+  }
+  if (out.some(x => seen.has(x.via))) bad('Wadhifa wa kupitia hauwezi kuwa wa kupitishwa pia. / A role that others pass through cannot itself be routed.');
+  const { error } = await db.from('settings').upsert({ key: ROUTES_KEY, value: JSON.stringify(out) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  routesCache.set(db, { at: Date.now(), routes: out });
+  if (deps && deps.noteSettingsWritten) deps.noteSettingsWritten(db);
+  /* A ROUTE TAKEN AWAY DOES NOT MOVE A REQUEST ALREADY WAITING (its OPM was stamped on it), but the OPM's own list
+     follows the rule in force -- so a waiting request whose OPM role is no longer routed to is stranded with an OPM
+     who cannot see it. Say how many, here, so the GM releases them; a handful of rows, read once, on this save only. */
+  let stranded = 0;
+  if (!rtNotReady_(db)) {
+    try {
+      const vias = new Set(out.map(x => x.via));
+      stranded = (await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('status', 'pending').eq('stage', 'opm')))
+        .filter(r => !vias.has(K(r.routed_via))).length;
+    } catch (e) { stranded = 0; }
+  }
+  return { ok: true, routes: out, stranded };
+}
 
 /* --------------------------------------------------------------------------------- THE ASK
    "impRequest": staff_code is stamped from the SESSION, never trusted from the form; the
@@ -334,38 +502,46 @@ export async function imprestRequest(db, user, args, nowMs) {
     other3_desc: others[2].desc || null, other3_amount: others[2].amt,
     total_amount: total, purpose, status: 'pending',
   };
-  const { data, error } = await db.from('imprest_requests').insert([row]).select('id').maybeSingle();
+  /* THROUGH THE OPM FIRST? Only when a rule names the requester's role AND the database has the routing columns; a
+     request that cannot be routed (nobody named, no sign-in) still goes, to the GM, with the reason on it. */
+  const routes = await readRoutes_(db);
+  const rule = routes.length ? routeOf_(routes, user.role) : null;
+  const notSwitchedOn = !!rule && rtNotReady_(db);          // meant to wait, and the database cannot hold the wait: say so
+  const route = rule && !notSwitchedOn ? await resolveRoute_(db, user, routes) : null;
+  const waiting = !!(route && !route.note);
+  const routing = route ? { stage: waiting ? 'opm' : 'gm', routed_via: route.via, routed_names: route.names.join(', ') || null,
+    routed_teams: route.teams.join(', ') || null, routed_note: route.note || null } : null;
+  let ins = await db.from('imprest_requests').insert([routing ? { ...row, ...routing } : row]).select('id').maybeSingle();
+  let routedOk = !!routing;
+  if (ins.error && routing && rtMissing_(ins.error)) {
+    // the migration is not run: remember it, and send the request the old way rather than lose it
+    rtState.set(db, { ready: false, at: Date.now() }); routedOk = false;
+    ins = await db.from('imprest_requests').insert([row]).select('id').maybeSingle();
+  }
+  const { data, error } = ins;
   if (error) { if (tableMissing(error)) bad(IMP_NOT_READY); throw new Error(error.message); }
   const id = data && data.id;
+  const q = { id, fullName, imprestRole, travelDate, destination: row.destination, total, purpose };
 
-  /* THE NUDGE TO THE GM, WITH THE TWO LINKS -- best effort, after the row exists, so a mail
-     provider being down never loses a request. Composed here rather than in the router so
-     there is one place that knows what a request's email looks like. */
-  const links = await gmActionLinks_(db, id);
-  const html = noticeHtml('Ombi jipya la imprest / New imprest request', [
-    ['Jina / Name', fullName], ['Wadhifa / Role', imprestRole], ['Safari / Travel', travelDate],
-    ['Mahali / Destination', row.destination || '—'], ['Jumla / Total', total],
-    ['Madhumuni / Purpose', purpose.slice(0, 300)],
-  ], '') + (links ? `<div style="margin-top:14px">
-      ${noticeButton('Amua sasa / Decide now', links.decide, '#0B2A6B')}
-      ${noticeButton('Fungua kwenye portal / Open in the portal', links.portal, '#334155')}
-    </div>` : `<p style="color:#6b7280;font-size:12px">Fungua Idhini ya imprest kuamua. / Open the imprest approval pane to decide.</p>`);
-  const mail = await sendMail(db, { toKey: 'IMPREST_GM_EMAIL',
-    subject: 'HOPE PMO — ombi la imprest / imprest request: ' + fullName + ' · ' + money0(total) + ' TZS',
-    html });
-  /* THE SECOND NUDGE, TO THE PHONE -- "GM needs phone notifications whenever there is an
-     imprest even if he logs in via browser". Every handset whose code holds the approval pane
-     and has turned alerts on (the bell in the portal; api/_lib/push.js). Same standing as the
-     email: after the row, under a clock, reported rather than depended on. */
-  const push = await pushTopic(db, 'IMPREST', {
-    title: 'Ombi jipya la imprest / New imprest request',
-    body: fullName + ' · ' + money0(total) + ' TZS · ' + travelDate + (row.destination ? ' · ' + row.destination : ''),
-    url: '/dashboard?imp=' + encodeURIComponent(id),
-    tag: 'imprest-' + id,
-  }, { nowMs });
+  if (routedOk && waiting) {
+    /* THE OPM'S NUDGE, not the GM's: the request waits for them. Each OPM sign-in that may confirm it hears on its
+       own handset; the GM hears nothing until it is confirmed. */
+    let pushed = 0, notes = [];
+    for (const c of route.confirmers) {
+      const pr = await pushCode(db, c.code, 'IMPREST_MINE', { title: 'Ombi linasubiri uthibitisho wako / A request needs your confirmation',
+        body: fullName + ' · ' + money0(total) + ' TZS · ' + travelDate + (row.destination ? ' · ' + row.destination : ''),
+        url: impLink_(id), tag: 'imprest-' + id + '-opm' }, { nowMs });
+      pushed += pr.sent; if (pushNoteOf(pr)) notes.push(pushNoteOf(pr));
+    }
+    return { ok: true, id, total, accomRate, routed: { stage: 'opm', via: route.via, names: route.names }, emailed: false, emailNote: '',
+      pushed, pushNote: notes.join(' · ') };
+  }
+  const nudge = await nudgeGm_(db, q, nowMs);
   // pushNote says so whenever a phone was NOT reached -- even when another one was.
-  return { ok: true, id, total, accomRate, emailed: mail.sent, emailNote: mail.sent ? '' : mail.reason,
-    pushed: push.sent, pushNote: pushNoteOf(push) };
+  return { ok: true, id, total, accomRate, emailed: nudge.mail.sent, emailNote: nudge.mail.sent ? '' : nudge.mail.reason,
+    pushed: nudge.push.sent, pushNote: pushNoteOf(nudge.push),
+    routed: route && route.note ? { stage: 'gm', via: route.via, note: route.note } : null,
+    routingNote: notSwitchedOn || (routing && !routedOk) ? 'Njia ya OPM haijawashwa (endesha db/RUN-ME-2026-11-05-imprest-opm-step.sql). / OPM routing is not switched on yet (run db/RUN-ME-2026-11-05-imprest-opm-step.sql).' : '' };
 }
 /* The deep link every imprest push carries: the portal lands on whichever imprest pane the
    code holds and opens the row (imprestOpenDeepLink_ in app.html). */
@@ -376,7 +552,7 @@ const impLink_ = id => '/dashboard?imp=' + encodeURIComponent(id);
 export async function imprestMine(db, user) {
   let rows;
   try {
-    rows = await fetchAll(() => db.from('imprest_requests').select(IMP_COLS)
+    rows = await readRows_(db, cols => db.from('imprest_requests').select(cols)
       .eq('staff_code', user.code || '~none~'));
   } catch (e) {
     if (!tableMissing(e)) throw e;
@@ -392,12 +568,81 @@ export async function imprestMine(db, user) {
      imprestRetire applies, in the sentence it refuses with. */
   const unfunded = rows.filter(isUnfunded_)
     .sort((x, y) => String(x.travel_date || '').localeCompare(String(y.travel_date || '')));
+  /* WAITING FOR THIS PERSON TO CONFIRM: only asked when a rule routes requests through their role, and then one read
+     of the waiting rows (a handful at any time), filtered to those they may confirm. */
+  let confirm = [];
+  const routes = await readRoutes_(db);
+  if (routes.some(r => r.via === K(user.role)) && !rtNotReady_(db)) {
+    try {
+      const waitingRows = await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('status', 'pending').eq('stage', 'opm'));
+      confirm = waitingRows.filter(r => canConfirm_(user, r) && String(r.staff_code) !== String(user.code))
+        .map(r => impRow(r, user.code)).sort((x, y) => (x.at || 0) - (y.at || 0));
+    } catch (e) { if (!tableMissing(e) && !rtMissing_(e)) throw e; }
+  }
   return { ok: true, roles: roles.roles || [],
     unretired: owed.map(r => String(r.id)),
     unretiredNote: owed.length ? unretiredNote_(owed) : '',
     unfunded: unfunded.map(r => String(r.id)),
     unfundedNote: unfunded.length ? unfundedNote_(unfunded) : '',
+    confirm,
     rows: rows.map(r => impRow(r, user.code)).sort((x, y) => (y.at || 0) - (x.at || 0)) };
+}
+
+/** THE OPM CONFIRMS: the request goes on to the GM. The amount may be LOWER than asked (never higher: the requester
+    asked for that much, and a higher figure is a new request), and a comment is required when it is. Guarded on the
+    stage, so two OPMs for one request cannot both win. The GM is emailed and buzzed now, with the OPM's line on it,
+    and the requester hears it is with the GM. */
+export async function imprestConfirm(db, user, args, nowMs) {
+  const a = args || {};
+  const id = String(a.id || '').trim();
+  if (!isUuid(id)) bad('Ombi halijachaguliwa. / No request chosen.');
+  let rows;
+  try { rows = await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('id', id)); }
+  catch (e) { if (!tableMissing(e)) throw e; bad(IMP_NOT_READY); }
+  const row = rows.find(r => String(r.id) === id);
+  if (!row) bad('Ombi halipo. / That request no longer exists.');
+  if (row.stage !== 'opm' || String(row.status) !== 'pending') bad('Ombi hili halisubiri uthibitisho tena. / That request is no longer waiting for confirmation.');
+  if (!canConfirm_(user, row)) bad('Ombi hili si la kuthibitisha na wewe: ni la ' + (row.routed_names || row.routed_via) + '. / That request is not yours to confirm: it waits for ' + (row.routed_names || row.routed_via) + '.');
+  if (String(row.staff_code) === String(user.code)) bad('Huwezi kuthibitisha ombi lako mwenyewe. / You cannot confirm your own request.');
+  const asked = num(row.total_amount);
+  const amount = a.amount == null || a.amount === '' ? asked : intNN(a.amount);
+  if (amount === null || amount <= 0) bad('Kiasi lazima kiwe namba nzima. / The amount must be a whole number.');
+  if (amount > asked) bad('Huwezi kuthibitisha zaidi ya kilichoombwa (' + money0(asked) + '). / You cannot confirm more than was asked (' + money0(asked) + ').');
+  const comment = S_(a.comment, 1000);
+  if (amount !== asked && !comment) bad('Andika sababu ya kubadilisha kiasi. / A comment is required when the amount is changed.');
+  const at = new Date(nowMs || Date.now()).toISOString();
+  const { data, error } = await db.from('imprest_requests').update({ stage: 'gm', opm_by: user.name || '', opm_at: at, opm_amount: amount,
+    opm_comment: comment || null, updated_at: at }).eq('id', id).eq('stage', 'opm').eq('status', 'pending').select('id');
+  if (error) throw new Error(error.message);
+  if (!data || !data.length) bad('Ombi hili limethibitishwa na mtu mwingine sasa hivi. / Somebody else just confirmed this one.');
+  const q = { id, fullName: row.full_name || row.staff_name, imprestRole: row.imprest_role || '', travelDate: String(row.travel_date || '').slice(0, 10),
+    destination: row.destination || '', total: asked, purpose: row.purpose || '', opmBy: user.name || '', opmAmount: amount, opmComment: comment };
+  const nudge = await nudgeGm_(db, q, nowMs);
+  const mine = await pushCode(db, row.staff_code, 'IMPREST_MINE', {
+    title: 'OPM amethibitisha ombi lako / Your OPM confirmed your request',
+    body: (amount !== asked ? money0(amount) + ' TZS (ulioomba ' + money0(asked) + ') · ' : '') + 'sasa liko kwa GM / now with the GM', url: impLink_(id), tag: 'imprest-' + id + '-opm-ok' }, { nowMs });
+  return { ok: true, id, amount, asked, adjusted: amount !== asked, emailed: nudge.mail.sent, emailNote: nudge.mail.sent ? '' : nudge.mail.reason,
+    pushed: nudge.push.sent + mine.sent, pushNote: pushNoteOf(nudge.push, mine) };
+}
+
+/** THE GM'S OVERRIDE: take a request out of the OPM's hands (the OPM is away, or the request cannot wait). */
+export async function imprestRelease(db, user, args, nowMs) {
+  const id = String(args && args.id || '').trim();
+  if (!isUuid(id)) bad('Ombi halijachaguliwa. / No request chosen.');
+  let rows;
+  try { rows = await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('id', id)); }
+  catch (e) { if (!tableMissing(e)) throw e; bad(IMP_NOT_READY); }
+  const row = rows.find(r => String(r.id) === id);
+  if (!row) bad('Ombi halipo. / That request no longer exists.');
+  if (row.stage !== 'opm' || String(row.status) !== 'pending') bad('Ombi hili halisubiri OPM. / That request is not waiting for the OPM.');
+  const at = new Date(nowMs || Date.now()).toISOString();
+  const note = 'Imeachiliwa kwa GM na ' + (user.name || '') + ' / Released to the GM by ' + (user.name || '');
+  const { data, error } = await db.from('imprest_requests').update({ stage: 'gm', routed_note: note, updated_at: at }).eq('id', id).eq('stage', 'opm').eq('status', 'pending').select('id');
+  if (error) throw new Error(error.message);
+  if (!data || !data.length) bad('Ombi hili limebadilika sasa hivi. / That request just changed.');
+  const nudge = await nudgeGm_(db, { id, fullName: row.full_name || row.staff_name, imprestRole: row.imprest_role || '', travelDate: String(row.travel_date || '').slice(0, 10),
+    destination: row.destination || '', total: num(row.total_amount), purpose: row.purpose || '' }, nowMs);
+  return { ok: true, id, emailed: nudge.mail.sent, pushed: nudge.push.sent };
 }
 
 /** THE GM's QUEUE. Every request, pending first; the counts are over the whole table so they
@@ -419,28 +664,45 @@ export async function imprestQueue(db, user, args) {
     if (error) throw error;
     return count || 0;
   };
+  /* WAITING FOR THE OPM is not the GM's to decide: it is counted apart and left out of 'pending'. The count that
+     tells whether the database has the routing columns comes first, so a database without them reads exactly as
+     it always did. */
+  let waiting = 0, routed = false;
+  if (!rtNotReady_(db)) {
+    try {
+      waiting = await headCount(() => db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pending').eq('stage', 'opm'));
+      routed = true; rtState.set(db, { ready: true });
+    } catch (e) {
+      if (rtMissing_(e)) rtState.set(db, { ready: false, at: Date.now() });
+      else if (!tableMissing(e)) throw e;
+      else return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0, waiting: 0 } };
+    }
+  }
   let counts;
   try {
     counts = {
-      pending: await headCount(() => db.from('imprest_requests')
-        .select('id', { count: 'exact', head: true }).eq('status', 'pending')),
+      pending: await headCount(() => { let q = db.from('imprest_requests')
+        .select('id', { count: 'exact', head: true }).eq('status', 'pending'); return routed ? q.neq('stage', 'opm') : q; }),
       approved: await headCount(() => db.from('imprest_requests')
         .select('id', { count: 'exact', head: true }).eq('status', 'approved')),
       rejected: await headCount(() => db.from('imprest_requests')
         .select('id', { count: 'exact', head: true }).eq('status', 'rejected')),
       toRetire: await headCount(() => db.from('imprest_requests')
         .select('id', { count: 'exact', head: true }).eq('status', 'approved').is('retired_at', null)),
+      waiting,
     };
   } catch (e) {
     if (!tableMissing(e)) throw e;
-    return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0 } };
+    return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0, waiting: 0 } };
   }
 
   let rows;
   try {
-    rows = await fetchAll(() => {
-      let q = db.from('imprest_requests').select(IMP_COLS);
-      if (want === 'pending') q = q.eq('status', 'pending');
+    rows = await readRows_(db, cols => {
+      let q = db.from('imprest_requests').select(cols);
+      if (want === 'pending') { q = q.eq('status', 'pending'); if (routed) q = q.neq('stage', 'opm'); }
+      else if (want === 'waiting') q = q.eq('status', 'pending').eq('stage', 'opm');
       else if (want === 'decided') q = q.neq('status', 'pending');
       else if (want === 'toRetire') q = q.eq('status', 'approved').is('retired_at', null);
       return q;
@@ -450,8 +712,8 @@ export async function imprestQueue(db, user, args) {
     return { ok: true, rows: [], notReady: true, counts };
   }
   const shown = rows.map(r => impRow(r, user.code));
-  return { ok: true, counts,
-    rows: shown.sort((x, y) => (x.status === 'pending' ? 0 : 1) - (y.status === 'pending' ? 0 : 1)
+  return { ok: true, counts, routed,
+    rows: shown.sort((x, y) => (x.status === 'pending' && x.stage !== 'opm' ? 0 : 1) - (y.status === 'pending' && y.stage !== 'opm' ? 0 : 1)
       || (y.at || 0) - (x.at || 0)) };
 }
 
@@ -470,7 +732,7 @@ export async function imprestDecide(db, user, args, nowMs) {
   if (!approve && !comment) bad('Andika sababu ya kukataa. / A comment is required when rejecting.');
   let rows;
   try {
-    rows = await fetchAll(() => db.from('imprest_requests').select(IMP_COLS).eq('id', id));
+    rows = await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('id', id));
   } catch (e) {
     if (!tableMissing(e)) throw e;
     bad(IMP_NOT_READY);
@@ -478,10 +740,12 @@ export async function imprestDecide(db, user, args, nowMs) {
   const row = rows.find(r => String(r.id) === id);
   if (!row) bad('Ombi halipo. / That request no longer exists.');
   if (String(row.status) !== 'pending') bad('Ombi hili tayari limeamuliwa. / That request has already been decided.');
+  if (row.stage === 'opm') bad('Ombi hili bado linasubiri OPM (' + (row.routed_names || row.routed_via || '') + ') kulithibitisha. Liachilie kwanza ukitaka kuamua. / That request is still waiting for the OPM (' + (row.routed_names || row.routed_via || '') + ') to confirm it. Release it first if you want to decide it now.');
   const asked = num(row.total_amount);
   let granted = null;
   if (approve) {
-    granted = a.approvedAmount == null ? asked : intNN(a.approvedAmount);
+    // the OPM's confirmed amount is what the GM starts from; the GM may still approve up to what was asked
+    granted = a.approvedAmount == null ? (row.opm_amount != null ? num(row.opm_amount) : asked) : intNN(a.approvedAmount);
     if (granted === null || granted <= 0) bad('Kiasi cha kuidhinisha lazima kiwe namba nzima. / The approved amount must be a whole number.');
     if (granted > asked) bad('Huwezi kuidhinisha zaidi ya kilichoombwa. / You cannot approve more than was requested.');
   }
@@ -498,7 +762,8 @@ export async function imprestDecide(db, user, args, nowMs) {
   const facts = [['Jina / Name', row.full_name || row.staff_name], ['Wadhifa / Role', row.imprest_role || ''],
     ['Safari / Travel', String(row.travel_date || '').slice(0, 10)], ['Mahali / Destination', row.destination || '—'],
     ['Kiliombwa / Requested', asked], ['Uamuzi / Decision', approve ? 'IMEIDHINISHWA · ' + money0(granted) + ' TZS' : 'IMEKATALIWA'],
-    ['Maoni / Comment', comment || '—'], ['Aliyeamua / Decided by', (user.name || '') + (a.viaEmail ? ' (barua pepe / email)' : '')]];
+    ['Maoni / Comment', comment || '—'], ['Aliyeamua / Decided by', (user.name || '') + (a.viaEmail ? ' (barua pepe / email)' : '')]]
+    .concat(row.opm_by ? [['OPM ' + row.opm_by, (row.opm_amount != null ? money0(row.opm_amount) + ' TZS' : 'amethibitisha / confirmed') + (row.opm_comment ? ' · ' + row.opm_comment : '')]] : []);
   const requester = await sendMail(db, { to: row.email,
     subject: 'HOPE PMO — ombi lako la imprest / your imprest request: ' + (approve ? 'imeidhinishwa / approved' : 'imekataliwa / rejected'),
     html: noticeHtml('Ombi lako la imprest / Your imprest request', facts,
@@ -696,8 +961,8 @@ export async function imprestReport(db, user, args) {
   let rows, rets;
   try {
     if (from || to) {
-      rows = await fetchAll(() => {
-        let q = db.from('imprest_requests').select(IMP_COLS);
+      rows = await readRows_(db, cols => {
+        let q = db.from('imprest_requests').select(cols);
         if (from) q = q.gte('travel_date', from);
         if (to) q = q.lte('travel_date', to);
         return q;
@@ -708,7 +973,7 @@ export async function imprestReport(db, user, args) {
         : [];
     } else {
       [rows, rets] = await Promise.all([
-        fetchAll(() => db.from('imprest_requests').select(IMP_COLS)),
+        readRows_(db, cols => db.from('imprest_requests').select(cols)),
         fetchAll(() => db.from('imprest_retirements').select(IMP_RET_COLS)),
       ]);
     }
@@ -738,7 +1003,8 @@ export async function imprestReport(db, user, args) {
   return { ok: true, rows: shown,
     totals: {
       count: inPeriod.length,
-      pending: inPeriod.filter(r => r.status === 'pending').length,
+      pending: inPeriod.filter(r => r.status === 'pending' && r.stage !== 'opm').length,
+      waiting: inPeriod.filter(r => r.status === 'pending' && r.stage === 'opm').length,
       rejected: inPeriod.filter(r => r.status === 'rejected').length,
       approved: approvedRows.length,
       approvedAmount: approvedRows.reduce((s, r) => s + (r.approved || 0), 0),
@@ -848,7 +1114,7 @@ async function gmActionLinks_(db, id) {
 export async function imprestActionRow(db, id) {
   let rows;
   try {
-    rows = await fetchAll(() => db.from('imprest_requests').select(IMP_COLS).eq('id', id));
+    rows = await readRows_(db, cols => db.from('imprest_requests').select(cols).eq('id', id));
   } catch (e) {
     if (tableMissing(e)) return null;
     throw e;

@@ -37,7 +37,8 @@ import { adjReceived_, withAdj_, withAdjDef_, adjCountableRefs_, noteAdjustments
    report. Its own file for the same reason adjustments.js is: it is a whole feature with its
    own tables, not a helper this file's other logic reaches into. */
 import { imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
-  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund } from './imprest.js';
+  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
+  imprestRoutes, imprestRoutesSave, imprestConfirm, imprestRelease } from './imprest.js';
 import { checklistPlan, checklistPlanSave, checklist, checklistTick, checklistPhoto, checklistPhotoGet } from './checklist.js';
 /* PHONE NOTIFICATIONS -- the bell's switch and the subscription it keeps. See _lib/push.js. */
 import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, pushPending, pushPolicy, pushPolicySave } from './push.js';
@@ -9894,7 +9895,8 @@ const FN = {
   callOfficers, recoveryByCredit,
   /* IMPREST -- ask, decide, fund, retire, review. See _lib/imprest.js. */
   imprestRoles, imprestRoleSave, imprestRoleDelete, imprestRequest, imprestMine,
-  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund,
+  imprestQueue, imprestDecide, imprestRetire, imprestPhotos, imprestReport, imprestFund, imprestRoutes, imprestConfirm, imprestRelease,
+  imprestRoutesSave: (db, user, a, now) => imprestRoutesSave(db, user, a, now, { noteSettingsWritten }),
   /* THE DAILY CHECKLIST -- the plan (per role, per weekday) and a leader's own day. See _lib/checklist.js. */
   checklistPlan, checklistPlanSave, checklist, checklistTick, checklistPhoto, checklistPhotoGet,
   /* PHONE NOTIFICATIONS -- turned on and off from the bell. See _lib/push.js. */
@@ -10300,6 +10302,8 @@ const FN_TAB = {
   imprestRoleSave: ['impappr'], imprestRoleDelete: ['impappr'],
   imprestRequest: ['impreq'], imprestMine: ['impreq'],
   imprestQueue: ['impappr'], imprestDecide: ['impappr'],
+  // The OPM step: the routing card and the GM's release are the approvals pane's; the OPM confirms from the Requests pane (the function also checks it is theirs to confirm).
+  imprestRoutes: ['impappr'], imprestRoutesSave: ['impappr'], imprestRelease: ['impappr'], imprestConfirm: ['impreq'],
   imprestRetire: ['impreq'],
   imprestPhotos: ['impreq', 'impappr', 'imprep'],
   /* THE DAILY CHECKLIST. The plan is managed where the bonus is (bonusplan); the day is worked

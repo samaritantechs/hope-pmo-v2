@@ -758,7 +758,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   csSearch:1, managerQueue:1, teamQueue:1, seniorQueue:1, creditQueue:1, disburseQueue:1,
   disburseWindowStatus:1, financeBankReport:1, carriersList:1, adjustmentsList:1, pipelineSummary:1,
   reversalsList:1, paymentsList:1, complaintsList:1, adjustments:1,
-  imprestRoles:1, imprestMine:1, imprestQueue:1, imprestReport:1, imprestPhotos:1,
+  imprestRoles:1, imprestRoutes:1, imprestMine:1, imprestQueue:1, imprestReport:1, imprestPhotos:1,
   contractPhotosForShare:1, planPhotosForShare:1 };
 // key = which remembered screen is on display right now. Views fill in their own defaults as
 // they load (Expected decides the weekday, for one), so the key a screen is FILED under is not
@@ -771,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-05-b';
+var BUILD = '2026-11-05-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5972,10 +5972,17 @@ function imprestOpenDeepLink_(){
   if (!IMPREST_DEEPLINK_ID) return;
   if (['impappr','imprep','impreq'].indexOf(S.view) < 0) { IMPREST_DEEPLINK_ID = null; return; }
   var row = (S.rows||[]).filter(function(r){ return String(r.id)===IMPREST_DEEPLINK_ID; })[0];
+  /* A request WAITING FOR THIS PERSON (the OPM's push lands here) is not in their own history: it is in the confirm
+     card above it, which the imprest module keeps in IMPREST_CONFIRM_ROWS. */
+  if (!row && S.view==='impreq' && typeof IMPREST_CONFIRM_ROWS !== 'undefined'
+      && IMPREST_CONFIRM_ROWS.some(function(r){ return String(r.id)===IMPREST_DEEPLINK_ID; })) {
+    var cid = IMPREST_DEEPLINK_ID; IMPREST_DEEPLINK_ID = null; imprestConfirmDrawer_(cid); return;
+  }
   // Not found -- most likely the id is stale or wrong; nothing to open, and nothing to retry.
   if (!row) { IMPREST_DEEPLINK_ID = null; return; }
   var id = IMPREST_DEEPLINK_ID; IMPREST_DEEPLINK_ID = null;
-  if (S.view==='impappr' && row.status==='pending') imprestDecideDrawer_(row);
+  if (S.view==='impappr' && row.status==='pending' && row.stage==='opm') imprestDetailsDrawer_(row, { waiting:true });
+  else if (S.view==='impappr' && row.status==='pending') imprestDecideDrawer_(row);
   else imprestDetailsDrawer_(row, { canRetire: S.view==='impreq', canFund: S.view==='imprep' });
 }
 function render(opts){
@@ -6833,12 +6840,20 @@ function wireForms(){
            fresh imprestMine, which wiped this note a moment after it was written -- the form came
            back blank and the request looked unsent. It is handed to the next draw (S.imqFlash, read
            by the imprest module) and said as a toast as well. */
-        var html = (d.emailed ? '\u2705 ' : '\u26A0\uFE0F ') + 'Ombi limetumwa \u00B7 ' + money(d.total) + ' TZS'
-          + (d.emailed ? ' \u00B7 GM ameambiwa kwa email / GM was emailed' : ' \u00B7 email haikutumwa: ' + (d.emailNote||''))
+        /* A REQUEST THAT WAITS FOR THE OPM has not reached the GM, and the GM was not emailed: say whose desk it is on, not
+           "email not sent". One that was meant to wait but could not (no OPM named, or the migration not run) went to the GM,
+           and says why. */
+        var waits = !!(d.routed && d.routed.stage === 'opm');
+        var html = (waits || d.emailed ? '\u2705 ' : '\u26A0\uFE0F ') + 'Ombi limetumwa \u00B7 ' + money(d.total) + ' TZS'
+          + (waits ? ' \u00B7 limekwenda kwa OPM wako (' + ((d.routed.names || []).join(', ') || d.routed.via) + ') kuthibitisha, kisha kwa GM / sent to your OPM (' + ((d.routed.names || []).join(', ') || d.routed.via) + ') to confirm, then on to the GM'
+            : d.emailed ? ' \u00B7 GM ameambiwa kwa email / GM was emailed' : ' \u00B7 email haikutumwa: ' + (d.emailNote||''))
+          + (!waits && d.routed && d.routed.note ? ' \u00B7 ' + d.routed.note : '')
+          + (d.routingNote ? ' \u00B7 ' + d.routingNote : '')
           + (d.pushed ? ' \u00B7 simu ' + d.pushed + ' imearifiwa / phone(s) buzzed' : '')
           + (d.pushNote ? ' \u00B7 arifa ya simu: ' + d.pushNote : '');
-        say(html, !d.emailed);
-        S.imqFlash = { html: html, bad: !d.emailed };
+        var flashBad = !waits && !d.emailed;
+        say(html, flashBad);
+        S.imqFlash = { html: html, bad: flashBad };
         toast('Ombi limetumwa \u00B7 ' + money(d.total) + ' TZS. / Request sent.');
         render({ force:true });
       }).catch(function(e){ b.disabled=false; b.textContent = label; say(String(e.message||e), true); });

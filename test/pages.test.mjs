@@ -2526,6 +2526,22 @@ test('the phone\'s search asks the book once per pause, for three letters or mor
 /* THE IMPREST SUBMIT BUTTON -- "GMO is saying he can't submit imprest request that the button ain't working".
    In a clean browser the button is wired and sends (tools/browser-checks/portal-imprest.mjs); what it did NOT do was say
    why it was closed, keep its confirmation past the redraw, or stay closed when there is no rate table. */
+/* THE OPM STEP, on the screens: the OPM finds what waits for them on the Requests tab; the GM picks which roles pass
+   through which on the Approvals tab and sees what is still with the OPM; the person who asked is told whose desk it is on. */
+test('the OPM step: confirm card on Requests, routing card and With-the-OPM on Approvals, and the core says whose desk it is on', () => {
+  const mod = page('imprest'), app = appSrc();
+  assert.ok(/HEAD = imprestConfirmCard_\(IMPREST_CONFIRM_ROWS\)/.test(mod) && /srv\('imprestConfirm', \{ id: r\.id, amount: amt, comment: cmt \}\)/.test(mod), 'the OPM confirms from the Requests tab');
+  assert.ok(/A comment is required when the amount is changed/.test(mod) && /You cannot confirm more than/.test(mod), 'lower with a reason, never higher -- said before the server has to');
+  assert.ok(/srv\('imprestRoutes', \{\}\)\.catch/.test(mod) && /srv\('imprestRoutesSave', \{ routes: IMPREST_ROUTE_DRAFT \}\)/.test(mod), 'the routes are read and saved from the Approvals tab');
+  assert.ok(/data-impq/.test(mod) && /'waiting'/.test(mod) && /srv\('imprestRelease'/.test(mod), 'the GM can list what is with the OPM and release it');
+  assert.ok(/IMPREST_ROUTE_READY \? '' : '<div class="note bad"/.test(mod) && /RUN-ME-2026-11-05-imprest-opm-step\.sql/.test(mod), 'a database without the columns is said on the card, not hidden');
+  assert.ok(/r\.stage==='opm'/.test(mod) && /Waiting for OPM/.test(mod) && /With the GM/.test(mod), 'one vocabulary for the state: waiting for the OPM, then with the GM');
+  assert.ok(/opmAmount!=null\?r\.opmAmount:\(r\.total\|\|0\)/.test(mod), 'the GM\'s box starts at what the OPM confirmed');
+  assert.ok(/imprestRoutes:1/.test(app), 'the routes read is a read');
+  assert.ok(/var waits = !!\(d\.routed && d\.routed\.stage === 'opm'\);/.test(app) && /d\.routingNote/.test(app), 'the request form says it went to the OPM, or why it did not');
+  assert.ok(/IMPREST_CONFIRM_ROWS\.some/.test(app) && /imprestConfirmDrawer_\(cid\)/.test(app), 'the OPM\'s phone tap opens the request waiting for them');
+});
+
 test('the imprest form: every closed state says why under the button, the confirmation survives the redraw, Sending is visible', () => {
   const app = appSrc();
   const wire = app.slice(app.indexOf("var send = document.getElementById('imqSend');"), app.indexOf('/* IDHINI YA IMPREST: the state filter'));
@@ -2534,7 +2550,7 @@ test('the imprest form: every closed state says why under the button, the confir
   assert.ok(/Namba nzima tu \(bila nukta au koma\)/.test(wire) && /Retire imprest ya awali kwanza: bofya ombi hilo/.test(wire) && /hajaweka viwango vya wadhifa/.test(wire), 'three reasons, in words');
   assert.ok(/why\.textContent = reason; why\.className = 'note' \+ \(closed === 'nocost' \? '' : ' bad'\); why\.style\.display = reason \? 'block' : 'none';/.test(wire), 'written under the button, hidden when there is none; the empty-form state said quietly');
   assert.ok(/b\.textContent = 'Inatuma\\u2026 \/ Sending\\u2026';/.test(wire) && /b\.textContent = label;/.test(wire), 'the button says Sending while the request is out, and gets its label back on failure');
-  assert.ok(/S\.imqFlash = \{ html: html, bad: !d\.emailed \};/.test(wire) && /toast\('Ombi limetumwa/.test(wire) && /render\(\{ force:true \}\);/.test(wire), 'the confirmation is handed to the next draw and said as a toast');
+  assert.ok(/S\.imqFlash = \{ html: html, bad: flashBad \};/.test(wire) && /toast\('Ombi limetumwa/.test(wire) && /render\(\{ force:true \}\);/.test(wire), 'the confirmation is handed to the next draw and said as a toast');
   const mod = page('imprest');
   /* The 'rates' closure left with the own-role fallback (a trip without nights goes through on
      an empty rate table); the core computes the live reasons instead -- pinned further down. */

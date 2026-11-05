@@ -371,12 +371,25 @@ create table if not exists imprest_requests (
   retired_at        timestamptz,
   retire_total      integer,
   retire_balance    integer,
+  -- THE OPM STEP (db/RUN-ME-2026-11-05-imprest-opm-step.sql): a routed role's request is born 'opm'
+  -- (waiting for the respective OPM) and becomes 'gm' when the OPM confirms; every other request is 'gm'.
+  stage             text not null default 'gm' check (stage in ('opm', 'gm')),
+  routed_via        text,
+  routed_names      text,
+  routed_teams      text,
+  routed_note       text,
+  opm_by            text,
+  opm_at            timestamptz,
+  opm_amount        integer check (opm_amount is null or opm_amount >= 0),
+  opm_comment       text,
+
   updated_at        timestamptz not null default now()
 );
 create index if not exists imprest_requests_requested_at_idx on imprest_requests (requested_at desc);
 create index if not exists imprest_requests_status_idx on imprest_requests (status) where status = 'pending';
 create index if not exists imprest_requests_staff_code_idx on imprest_requests (staff_code);
 create index if not exists imprest_requests_travel_date_idx on imprest_requests (travel_date);
+create index if not exists imprest_requests_waiting_idx on imprest_requests (requested_at desc) where status = 'pending' and stage = 'opm';
 create table if not exists imprest_retirements (
   id              uuid primary key default gen_random_uuid(),
   request_id      uuid not null unique references imprest_requests (id) on delete cascade,
