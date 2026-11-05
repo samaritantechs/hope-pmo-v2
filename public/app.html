@@ -700,6 +700,20 @@ function pct(v){
   }
   return (v==null||isNaN(v)) ? '\u2014' : Math.round(Number(v)) + '%';
 }
+/* ...EXCEPT WHERE A FIGURE ASKS FOR ONE DECIMAL: "PAR all time should include one decimal place". The all-time PAR is a small number over a very large
+   one (6.2% of TZS 60 billion), and a whole-number 6% hides a move of tens of millions. A column opts in with dec:1; everything else stays whole. */
+function pct1(v){
+  if (typeof v === 'string' && v.charAt(v.length-1) === '%') {
+    var n = parseFloat(v.replace(/[~%\s,]/g, ''));
+    return isNaN(n) ? v : (v.charAt(0) === '~' ? '~' : '') + n.toFixed(1) + '%';
+  }
+  return (v==null||v===''||isNaN(v)) ? '\u2014' : Number(v).toFixed(1) + '%';
+}
+/* What a percentage column exports as: the figure the screen shows -- whole, or to the decimals the column asks for (dec). */
+function pctRound_(c, v){
+  var n = Number(v) || 0, f = c && c.dec ? Math.pow(10, c.dec) : 1;
+  return Math.round(n * f) / f;
+}
 function mb(b){ b = Number(b)||0;
   if (b >= 1073741824) return (b/1073741824).toFixed(2)+' GB';
   if (b >= 1048576) return (b/1048576).toFixed(1)+' MB';
@@ -771,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-05-f';
+var BUILD = '2026-11-05-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1990,7 +2004,7 @@ function cellText(r, c){
   if (c.get) v = c.get(r);
   if (v==null || v==='') return '';
   if (c.kind==='money') return money(v);
-  if (c.kind==='pct') return pct(v);
+  if (c.kind==='pct') return c.dec ? pct1(v) : pct(v);
   if (c.kind==='dur') return fmtDur(v);
   if (c.kind==='date') return String(v).slice(0,10);
   if (c.kind==='dt'){
@@ -2442,8 +2456,8 @@ function exportXls(){
     + rows.map(function(r,i){
         return '<tr>'+cell(i+1,true)+S.cols.map(function(c){
           var raw = c.get ? c.get(r) : r[c.key];
-          // A percentage exports as the whole number the screen shows, never a hidden decimal.
-          return isNum(c) ? cell(c.kind==='pct' ? Math.round(Number(raw)||0) : (Number(raw)||0), true) : cell(cellText(r,c), false);
+          // A percentage exports as the number the screen shows (whole, or to the decimals its column asks for), never a hidden decimal.
+          return isNum(c) ? cell(c.kind==='pct' ? pctRound_(c, raw) : (Number(raw)||0), true) : cell(cellText(r,c), false);
         }).join('')+'</tr>';
       }).join('')
     + '</tbody></table>' + (S.foot ? '<p>'+esc(S.foot)+'</p>' : '') + '</body></html>';
@@ -3370,7 +3384,7 @@ function exportBoard(id, kind){
     + b.rows.map(function(r,i){
         return '<tr><td>'+(i+1)+'</td>'+b.cols.map(function(c){
           var raw = c.get ? c.get(r) : r[c.key];
-          return isNum(c) ? '<td x:num>'+(c.kind==='pct' ? Math.round(Number(raw)||0) : (Number(raw)||0))+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
+          return isNum(c) ? '<td x:num>'+(c.kind==='pct' ? pctRound_(c, raw) : (Number(raw)||0))+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
         }).join('')+'</tr>'; }).join('')
     + '</tbody></table></body></html>';
   download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');

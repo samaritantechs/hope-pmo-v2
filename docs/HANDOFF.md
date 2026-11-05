@@ -3843,6 +3843,16 @@ redrawn, instead of being left over an empty table. The rows are `S.rows`, which
 Client-side only; the server's rows are unchanged. Tests: `test/pages.test.mjs` (the real functions run in a sandbox). Checked in the real page in Chromium
 with the API stubbed.
 
+## Part 38 — PAR all-time to one decimal
+
+> "PAR all time should include one decimal place."
+
+Every percentage on the screens is a whole number (`pct()`, "96.7 = 97 everywhere"); the all-time PAR is the one exception, because a small share of a very
+large book (6.2% of TZS 60 billion) hides a move of tens of millions in a whole number. `pct1()` in `public/app.html` writes one decimal (6 reads 6.0%, so a column
+lines up); a column opts in with `dec:1` (`cellText` honours it, and `pctRound_` makes the main table's and a board's Excel export write the figure the screen
+shows). The PAR tab uses it for the "PAR all-time" KPI, the team table's "PAR all-time %" column (its "~" average row too) and the footer; the ordinary PAR stays a
+whole number. The server already sent one decimal (`pctOf`), so nothing changed there; the Annual deck already shows it to one decimal.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
