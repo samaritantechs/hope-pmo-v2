@@ -106,7 +106,7 @@ function anPptModel_(d, prev, book) {
     colMonths: had.filter(function (m) { return m.colPct != null; }),
     recMonths: had.filter(function (m) { return m.recPct != null; }),
     pending: had.filter(function (m) { return m.state === 'pending'; }),
-    teams: T, Y: Y, regions: regions, credit: credit, legalRole: (roles.legal || []).filter(function (r) { return r.general != null; }), gmo: (roles.gmo || []).filter(function (r) { return r.general != null; }), opm: (roles.opm || []).filter(function (r) { return r.general != null; }),
+    teams: T, idle: (d.idle || []).slice(), Y: Y, regions: regions, credit: credit, legalRole: (roles.legal || []).filter(function (r) { return r.general != null; }), gmo: (roles.gmo || []).filter(function (r) { return r.general != null; }), opm: (roles.opm || []).filter(function (r) { return r.general != null; }),
     stamped: T.some(function (t) { return t.yearStamped; }),
     prev: prev ? { year: Number(prev.year), totals: prev.totals || {}, had: prevHad, same: sameMonthsPrev, cmp: cmp,
       sameSales: anPptSum_(sameMonthsPrev, 'sales'), wholeSales: Number((prev.totals || {}).sales) || 0 } : null,
@@ -361,39 +361,91 @@ function anPptBuild_(Pptx, M, A) {
     sl.addText(foot.join(' '), { x: 6.1, y: 4.7, w: 3.4, h: 0.5, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
     return true;
   }
-  /** THE GMO ZONES ON THE MAP: each zone a colour, the key naming the zone's GMO, its teams and its General %. Skipped when fewer than two
-      zones are set in Teams & Staff (a map of one colour says nothing). */
+  /** THE GMO ZONES ON THE MAP: each zone a colour, the key naming EVERY GMO of the zone (never "and 2 more"), its teams and its General %.
+      A GMO whose teams have no zone set is named too, on a "No zone set" row, and so is one who holds only teams that sold nothing this year.
+      A key too long for the slide goes on to a second slide, whole rows, never squeezed. Skipped when fewer than two zones are set in
+      Teams & Staff (a map of one colour says nothing). */
   function zoneMapSlide() {
     var L = zoneBook.list;
     if (!TZ || L.length < 2) return false;
+    var rows = zoneKeyRows(), gapRow = rows.filter(function (r) { return r.gap; })[0];
+    rows = rows.filter(function (r) { return !r.gap; });
+    // the "Not in yet" row is short and the map shows the same dashed regions: it is kept on the map slide, its room set aside, and only zone rows go on
+    var first = zoneFlow(rows, [{ x: 6.1, w: 3.4 }], 1.78, 4.66 - (gapRow ? zoneRowH(gapRow, 3.0) : 0)), rest = first.rest, more = [];
+    while (rest.length && more.length < 6) { var nx = zoneFlow(rest, [{ x: 0.5, w: 4.3 }, { x: 5.2, w: 4.3 }], 1.05, 4.95); more.push(nx); rest = nx.rest; }
     var sl = content('GMO zones on the map');
     drawMap(sl, { x: 0.35, y: 0.95, w: 5.55, h: 4.25 },
       function (k) { var z = zoneBook.regionZone[k]; if (z) return { fill: z.color }; return presence[k] ? null : { fill: 'FFFFFF', gap: true }; },
       function (k) { var z = zoneBook.regionZone[k]; return z ? short(z.label, 9) : null; });
-    sl.addText(L.length + ' GMO zones', { x: 6.1, y: 0.95, w: 3.4, h: 0.45, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
-    sl.addText('Each colour is a zone and each zone has a GMO, the one who holds most of its teams. A region takes the colour of the zone with most of its teams.', { x: 6.1, y: 1.4, w: 3.4, h: 0.58, fontSize: 10, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
-    var shown = L.slice(0, 10), rh = Math.min(0.52, 2.55 / (shown.length + (gaps.length ? 1 : 0))), y0 = 2.05;
-    shown.forEach(function (z, i) {
-      var y = y0 + i * rh, regs = Object.keys(z.regions).length;
-      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: y + 0.04, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: z.color }, line: { color: z.color, width: 0 }, objectName: 'Zone key ' + z.name });
-      var facts = z.teams.length + ' team' + (z.teams.length === 1 ? '' : 's') + ', ' + regs + ' region' + (regs === 1 ? '' : 's') + (z.general != null ? ', General ' + anPptPc0_(z.general) : '');
-      sl.addText(rh >= 0.4
-        ? [{ text: short(z.name, 26), options: { bold: true, fontSize: 9.5, color: C.text2, breakLine: true } }, { text: 'GMO ' + short(z.gmoText, 24) + '  ·  ' + facts, options: { fontSize: 8, color: C.text1 } }]
-        : [{ text: short(z.name, 18) + '  ·  GMO ' + short(z.gmoText, 20) + '  ·  ' + z.teams.length, options: { fontSize: 8.5, color: C.text1 } }],
-        { x: 6.45, y: y, w: 3.05, h: rh, margin: 0, valign: 'top', objectName: 'Zone text ' + z.name });
-    });
-    if (gaps.length) {
-      var gy = y0 + shown.length * rh;
-      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: gy + 0.04, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'FFFFFF' }, line: { color: '8A96AE', width: 0.9, dashType: 'dash' }, objectName: 'Key gap' });
-      sl.addText('Not in yet  ·  ' + gaps.length + ' region' + (gaps.length === 1 ? '' : 's'), { x: 6.45, y: gy, w: 3.05, h: 0.26, fontSize: 9.5, bold: true, color: C.a5, margin: 0, valign: 'middle', objectName: 'Key text gap' });
+    sl.addText(L.length + ' GMO zones', { x: 6.1, y: 0.95, w: 3.4, h: 0.4, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
+    sl.addText('Each colour is a zone, with all its GMOs named, the one who holds most of its teams first.', { x: 6.1, y: 1.37, w: 3.4, h: 0.34, fontSize: 9, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
+    zoneDrawRows(sl, first.placed);
+    if (gapRow) {
+      var lastP = first.placed[first.placed.length - 1];
+      zoneDrawRows(sl, [{ row: gapRow, x: 6.1, w: 3.4, y: lastP ? lastP.y + lastP.h : 1.78, h: zoneRowH(gapRow, 3.0) }]);
     }
     var foot = [];
-    if (L.length > shown.length) foot.push((L.length - shown.length) + ' more zone' + (L.length - shown.length === 1 ? '' : 's') + ' share the grey.');
+    if (more.length) foot.push('The key goes on to the next slide.');
+    if (L.length > ZONE_PAL.length) foot.push((L.length - ZONE_PAL.length) + ' smaller zone' + (L.length - ZONE_PAL.length === 1 ? '' : 's') + ' share the grey.');
     if (zoneBook.unset) foot.push(zoneBook.unset + ' team' + (zoneBook.unset === 1 ? ' has' : 's have') + ' no zone set in Teams & Staff and ' + (zoneBook.unset === 1 ? 'is' : 'are') + ' not coloured.');
     if (zoneBook.mixed.length) foot.push(zoneBook.mixed.length + ' region' + (zoneBook.mixed.length === 1 ? ' is' : 's are') + ' shared by two zones and coloured for the one with more teams there (' + zoneBook.mixed.slice(0, 2).join(', ') + (zoneBook.mixed.length > 2 ? ' and ' + (zoneBook.mixed.length - 2) + ' more' : '') + ').');
     foot.push(TZ.attribution + '.');
     sl.addText(foot.join(' '), { x: 6.1, y: 4.7, w: 3.4, h: 0.5, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
+    more.forEach(function (pg, i) {
+      var s2 = content(pageTitle('GMO zones, continued', i, more.length));
+      zoneDrawRows(s2, pg.placed);
+    });
     return true;
+  }
+  /** The key's rows: one per zone (every GMO of it), the zones with no selling team this year, the teams with no zone, and the regions not in yet. */
+  function zoneKeyRows() {
+    var rows = zoneBook.list.map(function (z) {
+      var regs = Object.keys(z.regions).length;
+      return { color: z.color, name: z.name, gmos: z.gmos,
+        facts: z.teams.length + ' team' + (z.teams.length === 1 ? '' : 's') + ', ' + regs + ' region' + (regs === 1 ? '' : 's') + (z.general != null ? ', General ' + anPptPc0_(z.general) : '') };
+    });
+    zoneBook.quiet.forEach(function (q) {
+      rows.push({ color: null, name: q.name, gmos: q.gmos, facts: q.teams + ' team' + (q.teams === 1 ? '' : 's') + ', none sold in ' + M.year });
+    });
+    var nz = zoneBook.noZone;
+    if (nz.teams || nz.gmos.length) rows.push({ color: null, name: 'No zone set', gmos: nz.gmos,
+      facts: (nz.teams ? nz.teams + ' team' + (nz.teams === 1 ? '' : 's') : '') + (nz.teams && nz.idle ? ' and ' : '') + (nz.idle ? nz.idle + ' with no sales in ' + M.year : '') });
+    if (gaps.length) rows.push({ gap: true, name: 'Not in yet', facts: gaps.length + ' region' + (gaps.length === 1 ? '' : 's') });
+    return rows;
+  }
+  /* How tall a key row is at a width: the title line, then the GMO names wrapped (capitals are wider than lower case, so it is counted by letter). */
+  function zoneNames(r) { return r.gap ? '' : (r.gmos.length ? (r.gmos.length > 1 ? 'GMOs: ' : 'GMO: ') + r.gmos.join(', ') : 'GMO: not named'); }
+  function zoneRowH(r, w) {
+    if (r.gap) return 0.27;
+    var t = zoneNames(r), em = 0;
+    for (var i = 0; i < t.length; i++) { var ch = t.charAt(i); em += /[A-Z0-9]/.test(ch) ? 0.62 : ch === ' ' ? 0.24 : 0.5; }
+    var lines = Math.max(1, Math.ceil(em * 8 / 72 / (w - 0.12)));
+    return 0.17 + lines * 0.135 + 0.07;
+  }
+  /** Rows into columns, whole rows only; what does not fit is `rest`. A row taller than an empty column still goes in (nothing is ever dropped). */
+  function zoneFlow(rows, cols, top, bottom) {
+    var placed = [], c = 0, y = top, i = 0;
+    while (i < rows.length) {
+      var col = cols[c], h = zoneRowH(rows[i], col.w - 0.36);
+      if (y + h > bottom && y > top) { if (c + 1 < cols.length) { c += 1; y = top; continue; } break; }
+      placed.push({ row: rows[i], x: col.x, w: col.w, y: y, h: h });
+      y += h; i += 1;
+    }
+    return { placed: placed, rest: rows.slice(i) };
+  }
+  function zoneDrawRows(sl, placed) {
+    placed.forEach(function (p) {
+      var r = p.row;
+      if (r.gap) {
+        sl.addShape(pres.ShapeType.roundRect, { x: p.x, y: p.y + 0.04, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'FFFFFF' }, line: { color: '8A96AE', width: 0.9, dashType: 'dash' }, objectName: 'Key gap' });
+        sl.addText(r.name + '  ·  ' + r.facts, { x: p.x + 0.36, y: p.y, w: p.w - 0.36, h: 0.26, fontSize: 9.5, bold: true, color: C.a5, margin: 0, valign: 'middle', objectName: 'Key text gap' });
+        return;
+      }
+      sl.addShape(pres.ShapeType.roundRect, { x: p.x, y: p.y + 0.03, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: r.color || 'E8ECF2' }, line: { color: r.color || 'C9D0DC', width: r.color ? 0 : 0.5 }, objectName: 'Zone key ' + r.name });
+      sl.addText([{ text: short(r.name, 30), options: { bold: true, fontSize: 9, color: C.text2 } }, { text: '  ·  ' + r.facts, options: { fontSize: 7.5, color: C.a6, breakLine: true } },
+        { text: zoneNames(r), options: { fontSize: 8, color: C.text1 } }],
+        { x: p.x + 0.36, y: p.y, w: p.w - 0.36, h: p.h, margin: 0, valign: 'top', objectName: 'Zone text ' + r.name });
+    });
   }
   /* A list too long for one slide is PAGED, never squeezed: a real book has two dozen regions, and a table of
      that many rows runs off the page. */
@@ -436,22 +488,36 @@ function anPptBuild_(Pptx, M, A) {
      colour of the zone that holds most of its teams; one shared by two zones is said on the slide, never hidden. */
   var ZONE_PAL = ['1F57D6', '29A8E0', '1E9E63', 'E0A100', 'D93636', '8E44AD', 'E67E22', '16A085', 'C2185B', '5D6D7E'];
   var zoneBook = (function () {
-    var by = {}, unset = 0, regionCount = {};
-    var nobody = function (v) { v = String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); };
+    var by = {}, unset = 0, regionCount = {}, quiet = {}, none = {};
+    var clean = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); };
+    var nobody = function (v) { v = clean(v); return !v || /^(NO[ -]|NONE$|N\/A$|-$|\(UNASSIGNED\))/i.test(v); };
+    /* A GMO is one person however the name is cased; `n` is how many of the year's teams they hold there (0 for one who holds only teams that sold nothing). */
+    var addG = function (map, name, n) { var k = clean(name).toUpperCase(), e = map[k] || (map[k] = { name: clean(name), n: 0 }); e.n += n; };
+    var names = function (map) { return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return b.n - a.n || (a.name < b.name ? -1 : 1); }).map(function (g) { return g.name; }); };
     T.forEach(function (t) {
-      if (nobody(t.zone)) { unset += 1; return; }
-      var name = String(t.zone).replace(/\s+/g, ' ').trim().toUpperCase();
+      if (nobody(t.zone)) { unset += 1; if (!nobody(t.gmo)) addG(none, t.gmo, 1); return; }
+      var name = clean(t.zone).toUpperCase();
       var e = by[name] = by[name] || { name: name, teams: [], gmo: {}, regions: {} };
       e.teams.push(t);
-      if (!nobody(t.gmo)) { var g = String(t.gmo).replace(/\s+/g, ' ').trim(); e.gmo[g] = (e.gmo[g] || 0) + 1; }
+      if (!nobody(t.gmo)) addG(e.gmo, t.gmo, 1);
       var c = anPptCanonRegion_(t.region);
       if (c) { e.regions[c] = (e.regions[c] || 0) + 1; (regionCount[c] = regionCount[c] || {})[name] = (regionCount[c][name] || 0) + 1; }
+    });
+    /* Teams in Teams & Staff that sold nothing this year are in no figure, but their GMO is still that zone's GMO. */
+    var idleZone = 0, idleNone = 0;
+    (M.idle || []).forEach(function (t) {
+      var g = nobody(t.gmo) ? null : t.gmo;
+      if (nobody(t.zone)) { idleNone += 1; if (g) addG(none, g, 0); return; }
+      var name = clean(t.zone).toUpperCase();
+      if (by[name]) { if (g) addG(by[name].gmo, g, 0); return; }
+      var q = quiet[name] = quiet[name] || { name: name, teams: 0, gmo: {} };
+      q.teams += 1; idleZone += 1; if (g) addG(q.gmo, g, 0);
     });
     var list = Object.keys(by).map(function (k) { return by[k]; }).sort(function (a, b) { return b.teams.length - a.teams.length || (a.name < b.name ? -1 : 1); });
     list.forEach(function (z, i) {
       z.color = i < ZONE_PAL.length ? ZONE_PAL[i] : '9AA6BC';
-      var gs = Object.keys(z.gmo).sort(function (a, b) { return z.gmo[b] - z.gmo[a] || (a < b ? -1 : 1); });
-      z.gmoText = gs.length ? gs[0] + (gs.length > 1 ? ' +' + (gs.length - 1) : '') : 'not named';
+      z.gmos = names(z.gmo);                                      // every GMO of the zone, the one holding most teams first
+      z.gmoText = z.gmos.length ? z.gmos.join(', ') : 'not named';
       z.label = String(z.name.replace(/\s*ZONE\s*/i, ' ').trim() || z.name);
       z.label = z.label.charAt(0) + z.label.slice(1).toLowerCase();
       z.general = anPptMean_(z.teams.map(function (t) { return t.general; }));
@@ -463,7 +529,8 @@ function anPptBuild_(Pptx, M, A) {
       regionZone[r] = list.filter(function (z) { return z.name === zs[0]; })[0];
       if (zs.length > 1) mixed.push(r);
     });
-    return { list: list, regionZone: regionZone, mixed: mixed, unset: unset };
+    var quietList = Object.keys(quiet).map(function (k) { return { name: quiet[k].name, teams: quiet[k].teams, gmos: names(quiet[k].gmo) }; }).sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+    return { list: list, regionZone: regionZone, mixed: mixed, unset: unset, quiet: quietList, noZone: { teams: unset, idle: idleNone, gmos: names(none) } };
   })();
   var CR = M.credit, hasCR = CR.length >= 3;
   var colM = M.colMonths, recM = M.recMonths;
@@ -873,15 +940,21 @@ function anPptBuild_(Pptx, M, A) {
     var w = 1.95, h = 1.3, gx = 0.1;
     /* ONE PAR: the ALL-TIME PAR, the arrears over the total loan (principal and interest) of everything ever lent. "We drop the arrears over
        balance concept in all slides ... live with all time PAR only" -- the GM does not present the balance-based figure to the directors. */
-    card(s1, 0.5, 1.0, w, h, 'All-time PAR', anPptPc_(Tt.parAll), 'over everything ever lent', { color: C.a5 });
-    card(s1, 0.5 + (w + gx), 1.0, w, h, 'Arrears', 'TZS ' + anPptB2_(Tt.arrears), anPptN0_(Tt.customers) + ' customers in arrears');
-    card(s1, 0.5 + 2 * (w + gx), 1.0, w, h, 'Ever lent', 'TZS ' + anPptB2_(Tt.totalLoan), anPptN0_(Tt.loans) + ' loans, with interest', { color: C.a1, vs: 20 });
-    card(s1, 0.5 + 3 * (w + gx), 1.0, w, h, 'Average loan', 'TZS ' + anPptN0_(Tt.avgLoan), 'of the customers in arrears', { vs: 20 });
+    /* THIS YEAR'S ALL-TIME PAR COMES FIRST, then the real all-time: "the PAR all-time current year widget should come first before the real
+       all-time". The year's is the arrears on loans DISBURSED in the year (the defaulter deck's disbursement date, `byYear`) over the total loan
+       (P+I) lent in the year (the year's own sales); the all-time one is the arrears over everything ever lent. */
+    var yrRow = (P_.byYear || []).filter(function (y) { return Number(y.year) === M.year; })[0] || null, lentY = Number(Y.totalLoan) || 0;
+    var yrPar = yrRow && lentY > 0 ? Math.round(yrRow.arrears / lentY * 1000) / 10 : null;
+    card(s1, 0.5, 1.0, w, h, 'All-time PAR, ' + M.year, anPptPc_(yrPar), yrPar == null ? 'no ' + M.year + ' lending or arrears to measure' : 'arrears on ' + M.year + ' loans over what was lent in ' + M.year, { color: C.a5 });
+    card(s1, 0.5 + (w + gx), 1.0, w, h, 'All-time PAR', anPptPc_(Tt.parAll), 'over everything ever lent', { color: C.a1 });
+    card(s1, 0.5 + 2 * (w + gx), 1.0, w, h, 'Arrears', 'TZS ' + anPptB2_(Tt.arrears), anPptN0_(Tt.customers) + ' customers in arrears');
+    card(s1, 0.5 + 3 * (w + gx), 1.0, w, h, 'Ever lent', 'TZS ' + anPptB2_(Tt.totalLoan), anPptN0_(Tt.loans) + ' loans, with interest', { vs: 20 });
     var bands = (P_.bands || []).filter(function (b) { return b.customers > 0 || b.arrears > 0; });
     if (bands.length) {
       doughnut(s1, bands.map(function (b) { return b.band + ' days'; }), bands.map(function (b) { return Math.round(b.arrears / 1e6); }), { x: 0.4, y: 2.4, w: 5.6, h: 2.8, name: 'Arrears by days overdue', series: 'Arrears (TZS million)' });
       bullets(s1, [[{ text: 'Arrears by days overdue, ', bold: true }, { text: 'in TZS million. ' + bands.reduce(function (a, b) { return b.arrears > a.arrears ? b : a; }, bands[0]).band + ' days holds the most.' }],
-        [{ text: 'All-time PAR ', bold: true }, { text: 'is the arrears over everything the company has lent: the total loan, principal and interest, of every sale' + (P_.allTime && P_.allTime.since ? ' since ' + P_.allTime.since : '') + '.' }]], 6.2, 2.6, 3.3, 2.4, 11.5);
+        [{ text: 'All-time PAR, ' + M.year + ' ', bold: true }, { text: 'is the arrears on the loans disbursed in ' + M.year + (yrRow ? ' (TZS ' + anPptB2_(yrRow.arrears) + ')' : '') + ' over the total loan lent in ' + M.year + (lentY ? ' (TZS ' + anPptB2_(lentY) + ')' : '') + '.' }],
+        [{ text: 'All-time PAR ', bold: true }, { text: 'is the arrears over everything the company has lent, principal and interest' + (P_.allTime && P_.allTime.since ? ', since ' + P_.allTime.since : '') + '.' }]], 6.2, 2.5, 3.3, 2.6, 10.5);
     }
     var regs = (P_.byRegion || []).filter(function (r) { return r.parAll != null; }).sort(function (a, b) { return b.parAll - a.parAll; });
     var pu = P_.unplaced && P_.unplaced.teams ? ' ' + P_.unplaced.teams + ' teams with no region set yet (TZS ' + anPptM1_(P_.unplaced.arrears) + ' in arrears) are not in these rows.' : '';

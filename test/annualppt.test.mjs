@@ -544,19 +544,41 @@ test('the gaps: a region with a team but no figure is "no data", not a gap; ever
   assert.ok(!/and the gaps/.test(rr.slides.find(x => x.text.includes('What this report covers')).text), 'nor listed in the contents');
 });
 
-/* "i wish a map of gmo zones too" */
+/** The text of the one shape called `name` on a slide (the file is read back out of the zip, so this is what PowerPoint will show). */
+function shapeText(sl, name) {
+  const m = sl.xml.match(new RegExp('name="' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"[\\s\\S]*?</p:sp>'));
+  return m ? [...m[0].matchAll(/<a:t>([^<]*)<\/a:t>/g)].map(x => x[1].replace(/&amp;/g, '&')).join(' ') : null;
+}
+
+/* "i wish a map of gmo zones too" ... "make sure all gmo names are on respective zones on the map, some are missing" */
 const ZONES3 = ['LAKE ZONE', 'EASTERN ZONE', 'SOUTHERN ZONE'];
 function zoned(t, f) { t.teams.forEach((tm, i) => { const z = f(i, tm); if (z === null) delete tm.zone; else tm.zone = z; }); return t; }
-test('the GMO zones: a map coloured by zone, the key naming each zone\'s GMO, its teams and General %, and what could not be coloured said', async () => {
+test('the GMO zones: a map coloured by zone, the key naming EVERY GMO of each zone, its teams and General %, and what could not be coloured said', async () => {
   // the second team of each region sits in the next zone, so every region is shared and the larger share wins; every seventh has no zone
   const t = withBooks(zoned(book({ realRegions: true }), i => (i % 7 === 0 ? null : ZONES3[(i + (i >= 12 ? 1 : 0)) % 3])));
+  // teams in Teams & Staff that sold nothing this year: one in a zone that sold, one with no zone, one in a zone where nothing sold
+  t.teams.push({ team: 'QUIET1', region: 'ARUSHA', zone: 'LAKE ZONE', gmo: 'IDLE GMO' }, { team: 'QUIET2', region: 'ARUSHA', gmo: 'ZONELESS IDLE GMO' }, { team: 'QUIET3', region: 'ARUSHA', zone: 'NORTHERN ZONE', gmo: 'QUIET ZONE GMO' });
   const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  assert.equal(d.idle.length, 3, 'the answer carries the teams that sold nothing: ' + JSON.stringify(d.idle));
   const r = await slidesOf(d, null, bk);
   const z = r.slides.find(x => x.text.includes('GMO zones on the map'));
   assert.ok(z, 'a zone map: ' + r.slides.map(x => x.text.slice(0, 24)).filter(x => /zone/i.test(x)).join(';'));
   assert.ok(z.text.includes('3 GMO zones'), 'how many zones');
   for (const name of ZONES3) assert.ok(z.text.includes(name), name + ' is in the key');
-  assert.ok(/GMO GMO \d/.test(z.text), 'each zone names its GMO: ' + z.text.slice(0, 400));
+  // EVERY GMO of a zone is named on its row, in full: no "GMO X +2"
+  for (const name of ZONES3) {
+    const row = shapeText(z, 'Zone text ' + name);
+    assert.ok(row, name + ' has a row');
+    const theirs = [...new Set(d.teams.filter(x => x.zone === name && x.gmo).map(x => x.gmo))];
+    assert.ok(theirs.length >= 3, 'the fixture gives each zone several GMOs: ' + theirs.join(','));
+    for (const g of theirs) assert.ok(row.includes(g), g + ' is named on ' + name + ': ' + row);
+    assert.ok(!/\+\d/.test(row), 'no "+n" hiding a name: ' + row);
+  }
+  assert.ok(shapeText(z, 'Zone text LAKE ZONE').includes('IDLE GMO'), 'a GMO who holds only a team that sold nothing is still named on the zone');
+  const nz = shapeText(z, 'Zone text No zone set');
+  assert.ok(nz && [...new Set(d.teams.filter(x => !x.zone && x.gmo).map(x => x.gmo))].every(g => nz.includes(g)) && nz.includes('ZONELESS IDLE GMO'), 'the GMOs of teams with no zone are named too: ' + nz);
+  const quiet = shapeText(z, 'Zone text NORTHERN ZONE');
+  assert.ok(quiet && quiet.includes('QUIET ZONE GMO') && quiet.includes('none sold in 2026'), 'a zone where nothing sold is named, with its GMO: ' + quiet);
   assert.ok(/\d+ teams?, \d+ regions?/.test(z.text) && /General \d+%/.test(z.text), 'its teams, regions and General %');
   assert.ok(z.text.includes('no zone set in Teams & Staff') && /\d+ teams? (has|have) no zone/.test(z.text), 'the teams with no zone are counted, not hidden');
   assert.ok(/\d+ regions? (is|are) shared by two zones and coloured for the one with more teams there \(/.test(z.text.replace(/\s+/g, ' ')), 'a region shared by two zones says so: ' + z.text.slice(-420));
@@ -566,8 +588,8 @@ test('the GMO zones: a map coloured by zone, the key naming each zone\'s GMO, it
   const colourOf = n => (z.xml.match(new RegExp('name="Region ' + n + '"[\\s\\S]*?<a:solidFill><a:srgbClr val="([0-9A-F]{6})"')) || [])[1];
   const colours = new Set(['Arusha', 'Mbeya', 'Songwe', 'Mwanza', 'Tabora', 'Pwani', 'Shinyanga'].map(colourOf).filter(Boolean));
   assert.ok(colours.size >= 2 && [...colours].every(c => /^[0-9A-F]{6}$/.test(c) && c !== 'FFFFFF'), 'the zones are different colours: ' + [...colours].join(','));
-  // each key row has a swatch the colour of its zone
-  const keyColours = [...z.xml.matchAll(/name="Zone key [^"]+"[\s\S]*?<a:srgbClr val="([0-9A-F]{6})"/g)].map(m => m[1]);
+  // each coloured key row has a swatch the colour of its zone (the zones with no colour on the map are drawn grey)
+  const keyColours = [...z.xml.matchAll(/name="Zone key (?:LAKE|EASTERN|SOUTHERN) ZONE"[\s\S]*?<a:srgbClr val="([0-9A-F]{6})"/g)].map(m => m[1]);
   assert.equal(new Set(keyColours).size, 3, 'three swatches, three colours');
   assert.ok([...colours].every(c => keyColours.includes(c)), 'every region colour is in the key');
   assert.ok(r.slides.find(x => x.text.includes('What this report covers')).text.includes('the GMO zones'), 'the contents lists them');
@@ -581,8 +603,18 @@ test('the GMO zones: no slide while fewer than two zones are set, and a book wit
   const dozen = withBooks(zoned(book({ realRegions: true }), i => 'ZONE ' + String.fromCharCode(65 + (i % 12))));
   const r = await slidesOf(await annual(dozen, 2026), null, await annualBook(dozen, 2026));
   const z = r.slides.find(x => /GMO zones on the map/.test(x.text));
-  assert.ok(z && z.text.includes('12 GMO zones') && z.text.includes('2 more zones share the grey'), 'ten are named, the rest are grouped and said');
-  assert.equal((z.xml.match(/name="Zone key /g) || []).length, 10);
+  assert.ok(z && z.text.includes('12 GMO zones') && z.text.includes('2 smaller zones share the grey'), 'the colours run out at ten, the rest share the grey, and it is said');
+  // twelve rows do not fit one slide: the key goes on to the next, whole rows, none dropped
+  const more = r.slides.filter(x => /GMO zones, continued/.test(x.text));
+  assert.ok(more.length >= 1 && z.text.includes('The key goes on to the next slide'), 'the key continues on its own slide');
+  const keys = [z, ...more].flatMap(x => [...x.xml.matchAll(/name="Zone key ([^"]+)"/g)].map(m => m[1]));
+  assert.equal(keys.length, 12, 'every zone is in the key once: ' + keys.join(','));
+  assert.equal(new Set(keys).size, 12);
+  assert.ok([...z.xml.matchAll(/name="Key gap"/g)].length + more.reduce((a, x) => a + (x.xml.match(/name="Key gap"/g) || []).length, 0) === 1, 'the gap row is there once');
+  // nothing runs off the slide: every shape of every key slide ends inside 5.625 inches
+  for (const x of [z, ...more]) for (const m of x.xml.matchAll(/<a:off x="(\d+)" y="(\d+)"\/><a:ext cx="(\d+)" cy="(\d+)"\/>/g)) {
+    assert.ok((Number(m[2]) + Number(m[4])) / 914400 <= 5.63 && (Number(m[1]) + Number(m[3])) / 914400 <= 10.01, 'inside the slide: ' + m[0]);
+  }
 });
 
 /* "Gm said we drop the arrears over balance concept in all slides -- doesn't want to present it to the directors -- and replace with the current
@@ -603,6 +635,19 @@ test('no slide presents arrears over balance: the PAR slides carry the all-time 
   const first = r.slides.find(x => x.text.includes('Portfolio at risk: the book as at')).text;
   assert.ok(first.includes('ALL-TIME PAR') && first.includes(bk.par.totals.parAll.toFixed(1) + '%') && first.includes('EVER LENT') && first.includes('over everything ever lent') && first.includes('principal and interest'), 'the all-time PAR, over everything lent: ' + first.slice(0, 260));
   assert.ok(!first.includes(bk.par.totals.par.toFixed(1) + '%') || bk.par.totals.par.toFixed(1) === bk.par.totals.parAll.toFixed(1), 'the balance-based figure is not on it');
+  // "the all-time current year widget should come first before the real all-time": arrears on the loans disbursed in the year, over what the year lent
+  const lent = d.totals.totalLoan, yrArrears = 1.2e8, want = (Math.round(yrArrears / lent * 1000) / 10).toFixed(1) + '%';
+  bk.par.byYear = [{ year: 2025, customers: 10, arrears: 5e7, balance: 1e8 }, { year: 2026, customers: 40, arrears: yrArrears, balance: 3e8 }];
+  const firstY = (await slidesOf(d, null, bk)).slides.find(x => x.text.includes('Portfolio at risk: the book as at')).text;
+  const iYear = firstY.indexOf('ALL-TIME PAR, 2026'), iAll = firstY.search(/ALL-TIME PAR(?!,)/);
+  assert.ok(iYear >= 0 && iAll > iYear, 'the year\'s all-time PAR card comes before the all-time one: ' + firstY.slice(0, 300));
+  assert.ok(firstY.slice(iYear, iAll).includes(want), 'it is the year\'s arrears over the year\'s lending, ' + want + ': ' + firstY.slice(iYear, iAll));
+  assert.ok(/arrears on 2026 loans over what was lent in 2026/.test(firstY.replace(/\s+/g, ' ')), 'and says what it is over');
+  assert.ok(firstY.indexOf('EVER LENT') > iAll, 'the rest follows');
+  // a year with no arrears row says so rather than showing 0
+  bk.par.byYear = [{ year: 2025, customers: 10, arrears: 5e7, balance: 1e8 }];
+  const firstN = (await slidesOf(d, null, bk)).slides.find(x => x.text.includes('Portfolio at risk: the book as at')).text;
+  assert.ok(/no 2026 lending or arrears to measure/.test(firstN.replace(/\s+/g, ' ')) && firstN.indexOf('ALL-TIME PAR, 2026') < firstN.search(/ALL-TIME PAR(?!,)/), 'no year row: said, not a made-up zero: ' + firstN.slice(0, 260));
   // regions, ranked by the all-time PAR, with what each has lent
   const reg = r.slides.find(x => /Portfolio at risk by region/.test(x.text));
   assert.ok(reg && reg.text.includes('All-time PAR') && reg.text.includes('Lent (M)') && reg.text.includes('ranked by all-time PAR'), 'the region slide: ' + (reg && reg.text.slice(0, 200)));
