@@ -3830,6 +3830,19 @@ first matching route applies (a role is in at most one route); there is no secon
 Tests: `test/imprest.test.mjs` ("OPM step", 12 scenarios including a database without the columns), `test/pages.test.mjs` (the
 screens' contracts), `test/schema.test.mjs` (the columns exist in `db/schema.sql`).
 
+## Part 37 — Expected defaulters: the person box follows the role
+
+> "At Expected defaulters, after choosing a role I expect choosing the person to list the people of the chosen role too, not stuck on all."
+
+The four boxes above the table are team, status, role (GMO / MANAGER / BIKE) and person. The person box used to be built once, from every leader due that
+day, and the other three only narrowed the table, so the box still offered everybody. It is now `xdLeaderList_` in `public/app.html`: the leaders of the
+customers the team, status and role boxes leave on screen (never the person box itself). `xdSyncLeaders_` rebuilds it when one of those three changes
+(the `data-filter` handler) and on every draw of the screen (`wireBar`), so a screen brought back from the remembered-screen cache, whose HEAD was drawn with
+the boxes it had then, comes back consistent. A person who is no longer on the list (Ali chosen, then the role set to MANAGER) is cleared, and the table is
+redrawn, instead of being left over an empty table. The rows are `S.rows`, which on this screen are the day's customers before any box narrows them.
+Client-side only; the server's rows are unchanged. Tests: `test/pages.test.mjs` (the real functions run in a sandbox). Checked in the real page in Chromium
+with the API stubbed.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

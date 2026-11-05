@@ -24,6 +24,7 @@ import { readFileSync, readdirSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
+import vm from 'node:vm';
 
 const PUBLIC = new URL('../public/', import.meta.url).pathname;
 /* THE PORTAL IS THE CORE PAGE PLUS ITS TAB-OPENED MODULES (public/mod/*.js, fetched by modLoad_
@@ -2614,4 +2615,70 @@ test('the legal screen shows the deck\'s DS (default summary) where it showed a 
   assert.equal(core.split('function dsOf(').length - 1, 1, 'one reading of D.S');
   const src = readFileSync(join(PUBLIC, 'app.html'), 'latin1');
   assert.ok(!/var BUILD = '2026-10-19-d'/.test(src), 'BUILD moved');
+});
+
+/* "At Expected defaulters, after choosing a role I expect choosing the person to list the people of the chosen role too, not stuck on all." */
+function xdFns_() {
+  const app = appSrc();
+  const src = app.slice(app.indexOf('function xdLeaderList_(rows)'), app.indexOf('VIEWS.defexp = function'));
+  const sel = { value: '', innerHTML: '' };
+  const painted = [];
+  const ctx = { S: { view: 'defexp', filters: {}, rows: [] }, esc: x => String(x), paint: a => painted.push(a),
+    document: { querySelector: q => (q === 'select[data-filter="leader"]' ? sel : null) } };
+  vm.createContext(ctx); vm.runInContext(src, ctx);
+  return { ctx, sel, painted };
+}
+const XD_ROWS = [
+  { team: 'KONGOWE', role: 'GMO', leader: 'ALI', status: 'DEFAULTER' }, { team: 'MBAGALA', role: 'GMO', leader: 'BETTY', status: 'CHRONIC' },
+  { team: 'KONGOWE', role: 'MANAGER', leader: 'CHUMA', status: 'DEFAULTER' }, { team: 'MBAGALA', role: 'MANAGER', leader: 'DAVID', status: 'EXPIRED' },
+  { team: 'KONGOWE', role: 'BIKE', leader: 'EZRA', status: 'CHRONIC' }, { team: 'MBAGALA', role: 'GMO', leader: '(unassigned)', status: 'DEFAULTER' },
+  { team: 'KONGOWE', role: 'GMO', leader: 'ALI', status: 'CHRONIC' }, { team: 'KONGOWE', role: 'GMO', leader: '', status: 'DEFAULTER' },
+];
+test('Expected defaulters: the person list is the people of the chosen role, team and status -- not everybody', () => {
+  const { ctx } = xdFns_();
+  const list = f => { ctx.S.filters = f; return JSON.parse(JSON.stringify(ctx.xdLeaderList_(XD_ROWS))); };
+  assert.deepEqual(list({}), ['(unassigned)', 'ALI', 'BETTY', 'CHUMA', 'DAVID', 'EZRA'], 'no box chosen: every leader with customers, once each, none blank');
+  assert.deepEqual(list({ role: 'GMO' }), ['(unassigned)', 'ALI', 'BETTY'], 'a role: only its people');
+  assert.deepEqual(list({ role: 'MANAGER' }), ['CHUMA', 'DAVID']);
+  assert.deepEqual(list({ role: 'BIKE' }), ['EZRA']);
+  assert.deepEqual(list({ role: 'GMO', team: 'KONGOWE' }), ['ALI'], 'the role and the team boxes together');
+  assert.deepEqual(list({ team: 'MBAGALA' }), ['(unassigned)', 'BETTY', 'DAVID']);
+  assert.deepEqual(list({ status: 'CHRONIC' }), ['BETTY', 'EZRA', 'ALI'].sort(), 'the status box too');
+  assert.deepEqual(list({ role: 'GMO', status: 'CHRONIC' }), ['ALI', 'BETTY']);
+  assert.deepEqual(list({ role: 'GMO', leader: 'ALI' }), ['(unassigned)', 'ALI', 'BETTY'], 'the person box itself never narrows its own list');
+  assert.deepEqual(list({ role: 'NOBODY' }), [], 'a role with no customers that day offers nobody');
+});
+test('Expected defaulters: picking a role rebuilds the person box and clears a person who is no longer on it', () => {
+  const { ctx, sel, painted } = xdFns_();
+  ctx.S.rows = XD_ROWS;
+  // Ali is chosen, then the role becomes MANAGER: Ali is not a manager, so the box goes back to "Every leader" and the table is redrawn
+  ctx.S.filters = { leader: 'ALI', role: 'MANAGER' };
+  ctx.xdSyncLeaders_(true);
+  assert.equal(ctx.S.filters.leader, '', 'no longer on the list: cleared, not left over an empty table');
+  assert.equal(sel.value, '');
+  assert.deepEqual(painted, [true], 'and the table is drawn again');
+  assert.ok(sel.innerHTML.startsWith('<option value="">Kila mtu / Every leader</option>') && /<option>CHUMA<\/option>/.test(sel.innerHTML) && /<option>DAVID<\/option>/.test(sel.innerHTML)
+    && !/ALI|BETTY|EZRA/.test(sel.innerHTML), 'the box lists the managers only: ' + sel.innerHTML);
+  // a person who is still on the list stays chosen and marked
+  painted.length = 0; ctx.S.filters = { leader: 'CHUMA', role: 'MANAGER' };
+  ctx.xdSyncLeaders_(true);
+  assert.equal(ctx.S.filters.leader, 'CHUMA'); assert.equal(sel.value, 'CHUMA'); assert.deepEqual(painted, [], 'nothing to redraw');
+  assert.ok(/<option selected>CHUMA<\/option>/.test(sel.innerHTML), 'the chosen person is the selected option');
+  // the role is cleared again: everybody is back
+  ctx.S.filters = { leader: 'CHUMA' }; ctx.xdSyncLeaders_(true);
+  assert.ok(/ALI/.test(sel.innerHTML) && /EZRA/.test(sel.innerHTML) && /DAVID/.test(sel.innerHTML), 'every leader again');
+  // the handler path does not repaint by itself (the handler paints once, after)
+  painted.length = 0; ctx.S.filters = { leader: 'ALI', role: 'BIKE' }; ctx.xdSyncLeaders_();
+  assert.deepEqual(painted, []); assert.equal(ctx.S.filters.leader, '');
+  // not this screen, or no box on it: nothing happens
+  ctx.S.view = 'other'; ctx.S.filters = { leader: 'ALI', role: 'BIKE' }; ctx.xdSyncLeaders_(true); assert.equal(ctx.S.filters.leader, 'ALI');
+});
+test('Expected defaulters: the person box is built by that list, refreshed when a filter changes, and again on every draw (including a remembered screen)', () => {
+  const app = appSrc();
+  const view = app.slice(app.indexOf('VIEWS.defexp = function'), app.indexOf('VIEWS.assignments = function'));
+  assert.ok(/'<select data-filter="leader">' \+ xdLeaderOptions_\(onDay\) \+ '<\/select>'/.test(view), 'built from the same list the refresh uses');
+  assert.ok(!/Kila mtu \/ Every leader<\/option>'\s*\+ Object\.keys\(onDay/.test(view), 'no longer every leader of the day');
+  assert.ok(/if \(which !== 'leader' && S\.view === 'defexp' && typeof xdSyncLeaders_ === 'function'\) xdSyncLeaders_\(\);/.test(app), 'picking a team, status or role refreshes the person box');
+  assert.ok(/if \(S\.view === 'defexp' && typeof xdSyncLeaders_ === 'function'\) xdSyncLeaders_\(true\);/.test(app), 'and so does every draw, so a remembered screen comes back consistent');
+  assert.ok(!/var BUILD = '2026-11-05-e'/.test(app), 'BUILD moved');
 });

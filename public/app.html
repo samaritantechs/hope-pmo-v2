@@ -771,7 +771,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-05-e';
+var BUILD = '2026-11-05-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3036,6 +3036,8 @@ function wireBar(){
     var want = S.filters[el.getAttribute('data-filter')] || '';
     if (el.value !== want) el.value = want;
   });
+  // Expected defaulters: the person box follows the team, status and role boxes (xdLeaderList_), including on a screen brought back from memory.
+  if (S.view === 'defexp' && typeof xdSyncLeaders_ === 'function') xdSyncLeaders_(true);
   Array.prototype.forEach.call(document.querySelectorAll('[data-arg]'), function(el){
     // A button carrying data-val sets the arg on CLICK; inputs and selects still use change.
     if (el.hasAttribute('data-val')) {
@@ -3147,7 +3149,10 @@ function wireBar(){
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-filter]'), function(el){
     el.onchange = function(){
-      S.filters[el.getAttribute('data-filter')] = el.value;
+      var which = el.getAttribute('data-filter');
+      S.filters[which] = el.value;
+      // On Expected defaulters the person box follows the team, status and role boxes (xdLeaderList_).
+      if (which !== 'leader' && S.view === 'defexp' && typeof xdSyncLeaders_ === 'function') xdSyncLeaders_();
       // Narrowing the list needs no trip to the server -- but remember the choice with the
       // screen, so coming back to this tab shows the same box ticked and the same rows.
       if (VC.store[VC.key]) VC.store[VC.key].filters = JSON.parse(JSON.stringify(S.filters));
@@ -4441,6 +4446,41 @@ function xdLeader_(el){
     drawer(html, { wide: true, xls: 'xd_leader' });
   }).catch(function(e){ drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
 }
+/* THE PERSON LIST FOLLOWS THE OTHER FILTERS -- "after choosing role I expect choosing the person lists people of the chosen role too, not
+   stuck on all". The dropdown used to be built once, from every leader due that day, and picking a team, a status or a role afterwards only
+   narrowed the TABLE: the box still offered everybody. The names offered are now those of the customers the other three boxes leave on screen
+   (never the person box itself, or choosing one person would leave only that person to choose), and a person who no longer fits the role or
+   team just chosen is cleared rather than left over an empty table. The rows are the day's (S.rows). */
+function xdLeaderList_(rows){
+  var f = S.filters || {}, want = String(f.status || '').toUpperCase(), seen = {};
+  (rows || []).forEach(function(r){
+    if (!r.leader) return;
+    if (f.team && String(r.team || '') !== f.team) return;
+    if (want) {
+      var v = r.todays_status == null || r.todays_status === '' ? r.status : r.todays_status;
+      if (String(v || '').trim().toUpperCase() !== want && !(!v && want === '(BLANK)')) return;
+    }
+    if (f.role && String(r.role == null ? '' : r.role).trim() !== f.role) return;
+    seen[r.leader] = 1;
+  });
+  return Object.keys(seen).sort();
+}
+function xdLeaderOptions_(rows){
+  return '<option value="">Kila mtu / Every leader</option>' + xdLeaderList_(rows).map(function(x){
+    return '<option'+(S.filters.leader===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('');
+}
+/* Rebuild the person box from the other three boxes, and clear the person if they are no longer on the list. Called when a team, status or role is
+   picked, and on every draw of the screen -- a screen remembered from earlier comes back with the boxes it had then, and its person list must
+   follow the filters it comes back with. The rows are S.rows: on this screen that is the day's customers, before any box narrows them. */
+function xdSyncLeaders_(repaint){
+  var sel = document.querySelector('select[data-filter="leader"]');
+  if (!sel || S.view !== 'defexp' || !S.rows) return;
+  var cleared = false;
+  if (S.filters.leader && xdLeaderList_(S.rows).indexOf(S.filters.leader) < 0) { S.filters.leader = ''; cleared = true; }
+  sel.innerHTML = xdLeaderOptions_(S.rows);
+  sel.value = S.filters.leader || '';
+  if (cleared && repaint) paint(true);       // the table was drawn with the person who is no longer on the list
+}
 VIEWS.defexp = function(){
   return srv('expectedDefaulters').then(function(d){
     // 0 is a real selection (the "no disbursement date" bucket), so it must not be treated
@@ -4537,10 +4577,7 @@ VIEWS.defexp = function(){
         + '<select data-filter="role"><option value="">Viongozi wote / All leaders</option>'
         + ['GMO','MANAGER','BIKE'].map(function(s){
             return '<option'+(S.filters.role===s?' selected':'')+'>'+s+'</option>'; }).join('') + '</select>'
-        + '<select data-filter="leader"><option value="">Kila mtu / Every leader</option>'
-        + Object.keys(onDay.reduce(function(m,r){ if (r.leader) m[r.leader]=1; return m; },{})).sort()
-            .map(function(x){
-              return '<option'+(S.filters.leader===x?' selected':'')+'>'+esc(x)+'</option>'; }).join('') + '</select>'
+        + '<select data-filter="leader">' + xdLeaderOptions_(onDay) + '</select>'
         + '</div>';
     S.rows = onDay;
     /* "Remove branch column, add recovered so after DS (initial arrears, current arrears,
