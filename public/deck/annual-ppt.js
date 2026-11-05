@@ -45,6 +45,42 @@ function anPptSum_(rows, k) { return rows.reduce(function (s, r) { return s + (N
 function anPptMon_(ym) { return ANPPT_MON[Number(String(ym).slice(5, 7)) - 1] || String(ym); }
 function anPptLong_(ym) { return ANPPT_LONG[Number(String(ym).slice(5, 7)) - 1] || String(ym); }
 
+/* ---------------------------------------------------------------------------- regions on the map */
+/* The 31 regions of Tanzania (/deck/tz-regions.js) and how Teams & Staff spells them. A name matches by its letters
+   only, so "Dar-es-salaam", "DAR ES SALAAM" and "dar es salaam" are one. A few are not regions at all and are put
+   where they belong, said on the slide: Kahama is a district town of Shinyanga Region, Coast is Pwani's English
+   name, Zanzibar is its Mjini Magharibi (Urban West) region. A name that is none of them (a zone such as "LAKE
+   ZONE") is not placed, and the slide lists it rather than dropping it. */
+var ANPPT_REG_ALIAS = (function () {
+  var m = {}, k = function (v) { return String(v).toUpperCase().replace(/[^A-Z]/g, ''); };
+  var add = function (canon, list) { list.forEach(function (x) { m[k(x)] = canon; }); };
+  ['Arusha', 'Dodoma', 'Geita', 'Iringa', 'Kagera', 'Katavi', 'Kigoma', 'Kilimanjaro', 'Lindi', 'Manyara', 'Mara', 'Mbeya', 'Morogoro', 'Mtwara', 'Mwanza', 'Njombe', 'Pwani',
+    'Rukwa', 'Ruvuma', 'Shinyanga', 'Simiyu', 'Singida', 'Songwe', 'Tabora', 'Tanga'].forEach(function (n) { add(n, [n]); });
+  add('Dar es Salaam', ['Dar es Salaam', 'DSM', 'Dar']);
+  add('Pwani', ['Coast', 'Coast Region']);
+  add('Shinyanga', ['Kahama']);
+  add('Mjini Magharibi', ['Mjini Magharibi', 'Zanzibar Urban', 'Zanzibar West', 'Zanzibar Urban West', 'Zanzibar', 'Unguja Mjini', 'Magharibi']);
+  add('Kusini Unguja', ['Kusini Unguja', 'South Unguja', 'Zanzibar South', 'Zanzibar Central', 'Zanzibar South and Central', 'Zanzibar Central South']);
+  add('Kaskazini Unguja', ['Kaskazini Unguja', 'North Unguja', 'Zanzibar North']);
+  add('Kaskazini Pemba', ['Kaskazini Pemba', 'North Pemba', 'Pemba North']);
+  add('Kusini Pemba', ['Kusini Pemba', 'South Pemba', 'Pemba South']);
+  return { map: m, key: k };
+})();
+/** The official region a Teams & Staff region name stands for, or null. */
+function anPptCanonRegion_(name) { return ANPPT_REG_ALIAS.map[ANPPT_REG_ALIAS.key(name)] || null; }
+/** Four colour steps for a set of values: fixed edges (value <= edge falls in the lower step) or quartiles.
+    Returns the step of a value and the legend rows for the steps that hold something. */
+function anPptBuckets_(vals, edges, fmt) {
+  var sorted = vals.slice().sort(function (a, b) { return a - b; }), n = sorted.length, e = edges ? edges.slice() : [0.25, 0.5, 0.75].map(function (p) { return sorted[Math.min(n - 1, Math.floor(p * n))]; });
+  var step = function (x) { var b = 0; while (b < e.length && x > e[b]) b++; return b; };
+  var items = [];
+  for (var b = 0; b <= e.length; b++) {
+    var inB = vals.filter(function (x) { return step(x) === b; });
+    if (inB.length) { var lo = Math.min.apply(null, inB), hi = Math.max.apply(null, inB); items.push({ b: b, count: inB.length, label: lo === hi ? fmt(lo) : fmt(lo) + ' to ' + fmt(hi) }); }
+  }
+  return { step: step, items: items };
+}
+
 /* ---------------------------------------------------------------------------- the model */
 /** Everything a slide needs, from the year's answer `d` and (optionally) the year before `prev`.
     Pure: no DOM, no network -- so a test can run it. Returns null when the year has no month yet. */
@@ -206,6 +242,104 @@ function anPptBuild_(Pptx, M, A) {
     table(s, [head].concat(low.map(line)), 5.1, 1.35, 4.4, [2.2, 1.0, 1.2], { name: 'Lowest ' + title, rowH: 0.3 });
     return n;
   }
+  /* ---- THE MAP: each region a native freeform shape (so it can be recoloured in PowerPoint), coloured by a four-step
+     scale, named and valued on the map where it is big enough and by a call-out in the sea where it is not. */
+  var TZ = (typeof ANPPT_TZ !== 'undefined') ? ANPPT_TZ : null;
+  var RAMPS = { blue: ['D6E6FA', '9DC4F3', '5B93E6', '1F57D6'], green: ['DDF1E6', 'A9DCC0', '5DBB88', '1E8E5A'], red: ['FBE0E0', 'F4B0B0', 'E36B6B', 'C53030'] };
+  var CALLOUT = { 'Dar es Salaam': 1, 'Mjini Magharibi': 1, 'Kusini Unguja': 1, 'Kaskazini Unguja': 1, 'Kaskazini Pemba': 1, 'Kusini Pemba': 1 };
+  /** Group rows ({ region, ... }) by the official region they stand for. */
+  function placeRows(rows) {
+    var groups = {}, unplaced = [], notes = [];
+    (rows || []).forEach(function (r) {
+      var c = anPptCanonRegion_(r.region);
+      if (!c) { unplaced.push(r); return; }
+      (groups[c] = groups[c] || []).push(r);
+      if (ANPPT_REG_ALIAS.key(r.region) !== ANPPT_REG_ALIAS.key(c)) notes.push(short(r.region, 22) + ' is shown in ' + c);
+    });
+    return { groups: groups, unplaced: unplaced, notes: notes };
+  }
+  /** Draw the country in `box` (inches). fillFor(region) -> { fill, dark } or null (no data); labelFor(region) -> text or null. */
+  function drawMap(sl, box, fillFor, labelFor) {
+    var lon0 = 29.45, lon1 = 41.9, latN = -0.85, latS = -11.85, cosl = Math.cos(6.3 * Math.PI / 180);
+    var sc = Math.min(box.w / ((lon1 - lon0) * cosl), box.h / (latN - latS));
+    var ox = box.x + (box.w - (lon1 - lon0) * cosl * sc) / 2, oy = box.y + (box.h - (latN - latS) * sc) / 2;
+    var X = function (lon) { return ox + (lon - lon0) * cosl * sc; }, Y = function (lat) { return oy + (latN - lat) * sc; };
+    var callouts = [], chips = [];
+    TZ.regions.forEach(function (reg) {
+      var rings = reg.g.map(function (g) { var pts = []; for (var i = 0; i < g.length; i += 2) pts.push([X(g[i] / 100), Y(g[i + 1] / 100)]); return pts; });
+      var xs = [], ys = []; rings.forEach(function (r) { r.forEach(function (p) { xs.push(p[0]); ys.push(p[1]); }); });
+      var minX = Math.min.apply(null, xs), minY = Math.min.apply(null, ys), w = Math.max(0.02, Math.max.apply(null, xs) - minX), h = Math.max(0.02, Math.max.apply(null, ys) - minY);
+      var pts = [];
+      rings.forEach(function (r) { r.forEach(function (p, i) { pts.push({ x: p[0] - minX, y: p[1] - minY, moveTo: i === 0 }); }); pts.push({ close: true }); });
+      var f = fillFor(reg.n);
+      sl.addShape(pres.ShapeType.custGeom, { x: minX, y: minY, w: w, h: h, points: pts, fill: { color: f ? f.fill : 'E8ECF2' }, line: { color: 'FFFFFF', width: 0.6 }, objectName: 'Region ' + reg.n });
+      var text = f ? labelFor(reg.n) : null;
+      if (!text) return;
+      var cx = X(reg.c[0]), cy = Y(reg.c[1]);
+      if (CALLOUT[reg.n]) { callouts.push({ n: reg.n, text: text, cx: cx, cy: cy }); return; }
+      chips.push({ n: reg.n, text: text, x: cx, y: cy, w: Math.min(1.0, Math.max(0.46, reg.n.length * 0.052 + 0.12)), h: 0.3 });
+    });
+    // labels that would sit on each other are pushed apart (the smaller overlap first), then kept inside the map
+    for (var it = 0; it < 40; it++) {
+      var moved = false;
+      for (var i = 0; i < chips.length; i++) for (var j = i + 1; j < chips.length; j++) {
+        var a = chips[i], b = chips[j], ox = (a.w + b.w) / 2 - Math.abs(a.x - b.x), oy = (a.h + b.h) / 2 - Math.abs(a.y - b.y);
+        if (ox <= 0 || oy <= 0) continue;
+        moved = true;
+        if (oy <= ox) { var dy = oy / 2 + 0.006; if (a.y <= b.y) { a.y -= dy; b.y += dy; } else { a.y += dy; b.y -= dy; } }
+        else { var dx = ox / 2 + 0.006; if (a.x <= b.x) { a.x -= dx; b.x += dx; } else { a.x += dx; b.x -= dx; } }
+      }
+      if (!moved) break;
+    }
+    chips.forEach(function (c) {
+      var x = Math.max(box.x + 0.02, Math.min(box.x + box.w - c.w - 0.02, c.x - c.w / 2)), y = Math.max(box.y, Math.min(box.y + box.h - c.h, c.y - c.h / 2));
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: 8.5, bold: true, color: C.text2 } }],
+        { x: x, y: y, w: c.w, h: c.h, align: 'center', valign: 'middle', margin: 0, shape: pres.ShapeType.roundRect, rectRadius: 0.05, fill: { color: 'FFFFFF', transparency: 12 }, objectName: 'Label ' + c.n });
+    });
+    // the small coastal and island regions: a short leader into the sea and the label beside it, stacked in order of latitude so no leader crosses
+    callouts.sort(function (a, b) { return a.cy - b.cy; });
+    var lx = X(41.0), gap = 0.34, y0 = Math.min(callouts.length ? callouts[0].cy - 0.1 : 0, box.y + box.h - gap * callouts.length - 0.2);
+    callouts.forEach(function (c, i) {
+      var ly = y0 + i * gap;
+      sl.addShape(pres.ShapeType.line, { x: c.cx, y: Math.min(c.cy, ly + 0.13), w: Math.max(0.02, lx - 0.04 - c.cx), h: Math.max(0.0, Math.abs(ly + 0.13 - c.cy)), line: { color: C.a6, width: 0.5 }, flipV: ly + 0.13 < c.cy, objectName: 'Leader ' + c.n });
+      sl.addText([{ text: c.n, options: { fontSize: 6, color: C.text1, breakLine: true } }, { text: c.text, options: { fontSize: 8.5, bold: true, color: C.text2 } }],
+        { x: lx, y: ly, w: 0.95, h: 0.28, align: 'left', valign: 'middle', margin: 0, objectName: 'Callout ' + c.n });
+    });
+  }
+  /** One map slide: the country coloured by `value` over the placed rows, with a key and the regions that could not be placed. */
+  function mapSlide(title, rows, o) {
+    if (!TZ) return false;
+    var placed = placeRows(rows), vals = {}, keys = [];
+    Object.keys(placed.groups).forEach(function (k) { var v = o.value(placed.groups[k]); if (v != null && !isNaN(v)) { vals[k] = v; keys.push(k); } });
+    if (keys.length < 2) return false;
+    var bk = anPptBuckets_(keys.map(function (k) { return vals[k]; }), o.edges, o.fmt), ramp = RAMPS[o.ramp];
+    var sl = content(title);
+    drawMap(sl, { x: 0.35, y: 0.95, w: 5.55, h: 4.25 },
+      function (k) { if (!(k in vals)) return null; var b = bk.step(vals[k]); return { fill: ramp[b], dark: b >= 2 }; },
+      function (k) { return k in vals ? o.label(vals[k]) : null; });
+    // the key, at the right
+    sl.addText(o.heading, { x: 6.1, y: 0.95, w: 3.4, h: 0.45, fontSize: 20, bold: true, color: C.text2, margin: 0, valign: 'middle', objectName: 'Map heading' });
+    sl.addText(o.sub, { x: 6.1, y: 1.4, w: 3.4, h: 0.58, fontSize: 10, color: C.text1, margin: 0, valign: 'top', objectName: 'Map sub' });
+    sl.addText(o.legendTitle.toUpperCase(), { x: 6.1, y: 2.02, w: 3.4, h: 0.2, fontSize: 8.5, bold: true, color: C.a6, charSpacing: 1, margin: 0, objectName: 'Legend title' });
+    var ly = 2.25;
+    bk.items.forEach(function (it) {
+      sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: ly, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: ramp[it.b] }, line: { color: ramp[it.b], width: 0 }, objectName: 'Key ' + it.label });
+      sl.addText(it.label + (o.unit ? ' ' + o.unit : '') + '  ·  ' + it.count + ' region' + (it.count === 1 ? '' : 's'), { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, color: C.text1, margin: 0, valign: 'middle', objectName: 'Key text ' + it.label });
+      ly += 0.25;
+    });
+    sl.addShape(pres.ShapeType.roundRect, { x: 6.1, y: ly, w: 0.26, h: 0.18, rectRadius: 0.04, fill: { color: 'E8ECF2' }, line: { color: 'C9D0DC', width: 0.5 }, objectName: 'Key none' });
+    sl.addText(o.noneText || 'No data', { x: 6.45, y: ly - 0.02, w: 3.05, h: 0.22, fontSize: 9.5, color: C.a6, margin: 0, valign: 'middle', objectName: 'Key text none' });
+    var ranked = keys.slice().sort(function (a, b) { return o.low ? vals[a] - vals[b] : vals[b] - vals[a]; });
+    var lines = [{ text: o.listTitle, options: { bold: true, fontSize: 9.5, color: C.text2, breakLine: true } }]
+      .concat(ranked.slice(0, 4).map(function (k, i) { return { text: k + '  ' + o.label(vals[k]), options: { fontSize: 9.5, color: C.text1, breakLine: i < 3 } }; }));
+    sl.addText(lines, { x: 6.1, y: ly + 0.33, w: 3.4, h: 0.92, margin: 0, valign: 'top', objectName: 'Map list' });
+    var foot = [];
+    if (placed.unplaced.length) foot.push('Not on the map: ' + placed.unplaced.slice(0, 3).map(function (r) { return short(r.region, 18); }).join(', ') + (placed.unplaced.length > 3 ? ' and ' + (placed.unplaced.length - 3) + ' more' : '') + ' (not region names).');
+    if (placed.notes.length) foot.push(placed.notes.slice(0, 3).join('; ') + '.');
+    foot.push(TZ.attribution + '.');
+    sl.addText(foot.join(' '), { x: 6.1, y: 4.62, w: 3.4, h: 0.58, fontSize: 7, italic: true, color: C.a6, margin: 0, valign: 'top', objectName: 'Map footnote' });
+    return true;
+  }
   /* A list too long for one slide is PAGED, never squeezed: a real book has two dozen regions, and a table of
      that many rows runs off the page. */
   function pages(items, size) { var out = []; for (var i = 0; i < items.length; i += size) out.push(items.slice(i, i + size)); return out.length ? out : [[]]; }
@@ -275,7 +409,7 @@ function anPptBuild_(Pptx, M, A) {
 
   /* ---- growth and coverage */
   if (had.length >= 2 || hasZ) {
-    sec('Growth and coverage'); sectionsIn.push(['Growth and coverage', 'teams' + (hasZ ? ' and regions' : '')]);
+    sec('Growth and coverage'); sectionsIn.push(['Growth and coverage', 'teams' + (hasZ ? ', regions and the map' : '')]);
   }
   if (had.length >= 2) (function () {
     var s = content('Teams went from ' + first.teams + ' to ' + last.teams);
@@ -299,6 +433,14 @@ function anPptBuild_(Pptx, M, A) {
     if (all.length >= 3) b.push([{ text: all[1].region + ' and ' + all[2].region + ' ', bold: true }, { text: 'follow with ' + all[1].teams + ' and ' + all[2].teams + ' teams.' }]);
     if (noRegion) b.push([{ text: noRegion + ' teams ', bold: true }, { text: 'have no region set in Teams & Staff yet and are not counted here.' }]);
     bullets(s, b, 6.5, 1.2, 3.0, 3.6, 12.5);
+  })();
+  /* the same coverage on the map: every region, Songwe and Zanzibar's five included */
+  if (hasZ && TZ) (function () {
+    var rows = Z.map(function (z) { return { region: z.region, teams: z.teams }; }), pl = placeRows(rows);
+    var nReg = Object.keys(pl.groups).length, nTeams = 0; Object.keys(pl.groups).forEach(function (k) { pl.groups[k].forEach(function (r) { nTeams += r.teams; }); });
+    mapSlide('Where HOPE works: ' + nReg + ' of 31 regions', rows, { value: function (g) { return g.reduce(function (a, r) { return a + r.teams; }, 0); }, label: function (v) { return String(v); },
+      ramp: 'blue', edges: [1, 3, 7], fmt: function (v) { return String(v); }, heading: nReg + ' of 31 regions', sub: nTeams + ' teams selling in ' + lastLong + ', the number in each region on the map.',
+      legendTitle: 'Teams in the region', noneText: 'No teams', listTitle: 'Most teams' });
   })();
 
   /* ---- sales */
@@ -440,6 +582,10 @@ function anPptBuild_(Pptx, M, A) {
       line: function (z) { return [short(z.region, 17), short(gmoOf(z.region), 22), z.teams, anPptPc0_(z.colPct), anPptPc0_(z.recPct), anPptPc0_(z.general)]; },
       note: 'Billions of TZS, regions ranked by sales. A region is its teams\' months added together, the percentages the average of its months. The GMO holds most of its teams. Recovery above 100% lifts General on a small base.' + unsetNote,
       noteMore: 'Regions ranked by sales, as on the first slide.' });
+    mapSlide('Regions on the map: General performance', Z.map(function (z) { return { region: z.region, general: z.general, teams: z.teams }; }), {
+      value: function (g) { var w = 0, a = 0; g.forEach(function (r) { if (r.general != null) { w += r.teams; a += r.general * r.teams; } }); return w ? Math.round(a / w * 10) / 10 : null; },
+      label: function (v) { return Math.round(v) + '%'; }, fmt: function (v) { return Math.round(v) + '%'; }, ramp: 'green', heading: 'General %', legendTitle: 'General %', noneText: 'No teams', listTitle: 'Highest',
+      sub: 'The average of sales, collection and recovery, region by region. Darker is better; a region with several teams is weighted by them.' });
     /* THE KEY: every region with its GMO and the teams in it, laid in columns so a long list never
        runs off its card; a region that will not fit the page goes on the next one. */
     var order = Z.slice().sort(function (a, b) { return teamsOf(b.region).length - teamsOf(a.region).length; });
@@ -636,6 +782,10 @@ function anPptBuild_(Pptx, M, A) {
       line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), anPptN0_(r.arrears / 1e6), anPptPc_(r.par), anPptPc_(r.parAll)]; },
       note: 'As at ' + P_.date + ', regions ranked by PAR. A region is its teams\' customers added together: arrears over balance, and over everything its teams have lent.' + pu,
       noteMore: 'Regions ranked by PAR, highest first, as at ' + P_.date + '.' });
+    mapSlide('Portfolio at risk on the map', P_.byRegion || [], {
+      value: function (g) { var a = 0, b = 0; g.forEach(function (r) { a += r.arrears; b += r.balance; }); return b > 0 ? Math.round(a / b * 1000) / 10 : null; },
+      label: function (v) { return v.toFixed(1) + '%'; }, fmt: function (v) { return v.toFixed(1) + '%'; }, ramp: 'red', heading: anPptPc_((P_.totals || {}).par) + ' PAR',
+      legendTitle: 'PAR %', noneText: 'No customers in arrears', listTitle: 'Highest PAR', sub: 'Arrears over the balance of customers in arrears, by region, as at ' + P_.date + '. Darker is worse.' });
     var tms = (P_.byTeam || []).filter(function (t) { return t.customers > 0; });
     if (tms.length >= 4) {
       var s3 = content('Portfolio at risk by team');
@@ -681,6 +831,11 @@ function anPptBuild_(Pptx, M, A) {
       line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), (r.balance / 1e9).toFixed(2), anPptN0_(r.behind), anPptPc_(r.arrearsPct)]; },
       note: 'As at ' + A_.date + ', regions ranked by outstanding balance. Arrears % is arrears over the balance, summed over the region\'s customers.' + au,
       noteMore: 'Regions ranked by outstanding balance, as at ' + A_.date + '.' });
+    var bigBook = (A_.balance || 0) >= 2e9, mny = function (v) { return bigBook ? (v / 1e9).toFixed(2) + 'B' : Math.round(v / 1e6) + 'M'; };
+    mapSlide('Active portfolio on the map', A_.byRegion || [], {
+      value: function (g) { return g.reduce(function (a, r) { return a + r.balance; }, 0); }, label: mny, fmt: mny,
+      ramp: 'blue', heading: 'TZS ' + anPptB2_(A_.balance), legendTitle: 'Balance outstanding, TZS', noneText: 'No customers', listTitle: 'Largest balance',
+      sub: 'Outstanding balance of the customers on the ' + A_.date + ' expected deck, by region. Darker is larger.' });
     var tms = (A_.byTeam || []).slice(0, 12);
     if (tms.length >= 4) {
       var s3 = content('Active portfolio by team');
@@ -801,6 +956,7 @@ function anPptBuild_(Pptx, M, A) {
       [{ text: 'Percentages. ', bold: true }, { text: 'Sales % is sales over TZS ' + anPptM1_(M.target) + ' per team per month; collection % is collected over expected; recovery % is recovered over uncollected. A year is the average of the months that have happened.' }],
       [{ text: 'Retention. ', bold: true }, { text: 'A loan whose track number is not 1 belongs to a returning customer, so retention is loans less track 1 loans, over loans.' }],
     ];
+    if (hasZ && !TZ) b.push([{ text: 'Map. ', bold: true }, { text: 'The map of Tanzania did not load with this export, so the map slides are left out. Export again.' }]);
     if (noRegion) b.push([{ text: 'Regions. ', bold: true }, { text: noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet, so they are not in the regional slides. Set them there and export again.' }]);
     if (M.pending.length) b.push([{ text: 'Still being built. ', bold: true }, { text: 'Collection and recovery for ' + M.pending.map(function (m) { return anPptLong_(m.ym); }).join(', ') + ' were not ready when this was exported, so they are blank. Export again shortly.' }]);
     if (M.stamped) b.push([{ text: M.year + '. ', bold: true }, { text: 'Collection and PAR are the year\'s, as the ' + M.year + ' report closed them; there is no monthly collection or recovery for this year.' }]);
@@ -859,6 +1015,8 @@ function anPptRun_(btn) {
   return Promise.all([
     anPptScript_('/deck/pptxgen.bundle.js', function () { return !!window.PptxGenJS; }),
     anPptImage_('/deck/hope-title.jpg'), anPptImage_('/deck/hope-logo.png'), prevP, bookP,
+    // the regions of Tanzania, for the maps: if they do not load the deck is still made, without them
+    anPptScript_('/deck/tz-regions.js', function () { return !!window.ANPPT_TZ; }).catch(function () { return null; }),
   ]).then(function (r) {
     var M = anPptModel_(d, r[3], r[4]);
     if (!M) throw new Error('No month of ' + d.year + ' has data yet.');

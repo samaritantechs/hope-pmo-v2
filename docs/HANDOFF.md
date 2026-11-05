@@ -3704,6 +3704,21 @@ officers:** the register's issuer is the officer, so `annualBook.legal.byOfficer
 customers, demanded, paid since, recovery % and cleared per officer (each customer once, by `noticeTiles_`),
 and the legal officer recorded on each team in Teams & Staff is shown beside it with the teams they hold.
 
+**The map of Tanzania.** The coverage doughnut stays and the same coverage is drawn on a map beside it ("Where HOPE works:
+N of 31 regions"), with the same machinery for General performance, PAR and the active portfolio ("... on the map"), so
+every region is on one slide however many there are. Each region is a native freeform shape (recolourable in PowerPoint),
+four colour steps with a key, a label chip on the region and a call-out in the sea for the small coastal and island ones
+(Dar es Salaam, the three Zanzibar and two Pemba regions), and a side panel of the biggest few. **All 31 regions**: 26 on the
+Mainland and 5 in Zanzibar, **Songwe included**. The open region-level boundary sets (geoBoundaries ADM1, Natural Earth) are the
+2015 map with 30 regions and no Songwe, so `public/deck/tz-regions.js` is built by `tools/build-tz-regions.py` from the
+district-level set of the Tanzania National Bureau of Statistics / UN OCHA ROSA (2021, CC BY 3.0 IGO, via geoBoundaries ADM2):
+districts merged per region, Songwe's five (Ileje, Mbozi, Momba, Songwe, Tunduma) taken out of Mbeya; 27 KB, credited on every map
+slide. The file is fetched on the press beside the library; if it does not load the deck is still made without the maps and the
+notes say so. **Matching Teams & Staff names**: by letters only (`Dar-es-salaam` = `DAR ES SALAAM`), with three that are not
+regions put where they belong and said on the slide (Kahama into Shinyanga, Coast into Pwani, Zanzibar into Mjini Magharibi); a name
+that is none of them, such as a zone (`LAKE ZONE`), is not guessed: it is listed under "Not on the map". Two registry names that
+land on one region are added together (teams, arrears, balance; PAR is recomputed from the sums, never averaged).
+
 **Cost.** `annualBook` is the PAR tab, the register and the Expected tab added together (the defaulter deck
 is read twice, as when both tabs are open); the speed table carries it (18 / 5,300 un-migrated, 16 / 3,300
 migrated) with the reason. Never on `/api/upload` or `/api/call`. `test/annualppt.test.mjs` runs the real
