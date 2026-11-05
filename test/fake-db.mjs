@@ -185,7 +185,11 @@ class FakeQuery {
   }
   _exec() {
     // A column the schema lacks refuses the whole query, exactly as PostgREST does.
-    if (this.rejectWith) return { data: null, error: this.rejectWith };
+    /* A HEAD REQUEST HAS NO BODY, so a refusal comes back with NO WORDS: postgrest-js builds `{ message: '' }` from the
+       empty body (no code, no "column ... does not exist"). A head count that names a column the schema lacks therefore
+       cannot be told from any other failure -- and printed as-is it is "[object Object]". Learn whether a column exists
+       with a read that returns rows (a GET carries the message), never with a head count. */
+    if (this.rejectWith) return { data: null, error: this.headOnly && this.rejectWith.code === '42703' ? { message: '' } : this.rejectWith };
     /* AND A WRITE CARRYING ONE IS REFUSED TOO, with PostgREST's own words. Only the select
        side was modelled, so a test could prove a screen READS correctly against an un-migrated
        database while its save -- the half that actually fails there -- passed silently. */

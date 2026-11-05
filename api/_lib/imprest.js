@@ -666,17 +666,26 @@ export async function imprestQueue(db, user, args) {
   };
   /* WAITING FOR THE OPM is not the GM's to decide: it is counted apart and left out of 'pending'. The count that
      tells whether the database has the routing columns comes first, so a database without them reads exactly as
-     it always did. */
+     it always did.
+
+     IT IS A READ THAT RETURNS ROWS (one at most), NOT A HEAD COUNT. A head request has no body, so when the column is
+     missing the refusal comes back with no words at all (`{ message: '' }`): it cannot be told from any other failure
+     and, rethrown, it is what the approvals tab printed as "[object Object]". A get carries PostgREST's message
+     ("column ... does not exist"), which rtMissing_ recognises. And the probe never takes the tab down: whatever
+     goes wrong in it, the pane is drawn the old way (nothing waits, nothing is left out of pending). */
   let waiting = 0, routed = false;
   if (!rtNotReady_(db)) {
     try {
-      waiting = await headCount(() => db.from('imprest_requests')
-        .select('id', { count: 'exact', head: true }).eq('status', 'pending').eq('stage', 'opm'));
+      const res = await runQuery(() => db.from('imprest_requests')
+        .select('id', { count: 'exact' }).eq('status', 'pending').eq('stage', 'opm').limit(1));
+      if (res.error) throw res.error;
+      waiting = res.count || 0;
       routed = true; rtState.set(db, { ready: true });
     } catch (e) {
+      /* rtMissing_ FIRST: tableMissing matches any "does not exist", a missing COLUMN included. */
       if (rtMissing_(e)) rtState.set(db, { ready: false, at: Date.now() });
-      else if (!tableMissing(e)) throw e;
-      else return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0, waiting: 0 } };
+      else if (tableMissing(e)) return { ok: true, rows: [], notReady: true, counts: { pending: 0, approved: 0, rejected: 0, toRetire: 0, waiting: 0 } };
+      waiting = 0; routed = false;
     }
   }
   let counts;
@@ -699,7 +708,10 @@ export async function imprestQueue(db, user, args) {
 
   let rows;
   try {
-    rows = await readRows_(db, cols => {
+    /* "With the OPM" on a database that cannot hold a wait (or whose probe above failed) is simply empty: asking it to
+       filter on a column it may not have would be a read that fails, and "tables not created" would be the wrong thing
+       to say about it. */
+    rows = want === 'waiting' && !routed ? [] : await readRows_(db, cols => {
       let q = db.from('imprest_requests').select(cols);
       if (want === 'pending') { q = q.eq('status', 'pending'); if (routed) q = q.neq('stage', 'opm'); }
       else if (want === 'waiting') q = q.eq('status', 'pending').eq('stage', 'opm');
