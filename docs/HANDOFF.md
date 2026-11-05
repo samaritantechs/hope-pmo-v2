@@ -3719,6 +3719,21 @@ regions put where they belong and said on the slide (Kahama into Shinyanga, Coas
 that is none of them, such as a zone (`LAKE ZONE`), is not guessed: it is listed under "Not on the map". Two registry names that
 land on one region are added together (teams, arrears, balance; PAR is recomputed from the sums, never averaged).
 
+**The gaps: the regions we are not in yet.** "Even the regions we aint in yet -- mention them / show, so that we are well aware of the
+gaps." A region is *in* when a team in it sold in the period (`presence`, from the same regions the coverage map uses); the rest of the
+31 are `gaps`. They are drawn on **every** map as a white region with a dashed edge (`Gap <name>` in the file), apart from a grey region
+that has a team but no figure ("no data"): the key says "Not in yet · N regions", and on the coverage map each is also labelled "not yet"
+on the map itself. After the coverage map comes **"Regions we are not in yet: N of 31"**: the count, the mainland ones and the Zanzibar ones
+by name, and the regions held by only one or two teams (one closure from being a gap). No gaps, no slide; the contents line says "and the
+gaps" only when there are some.
+
+**The GMO zones.** "I wish a map of gmo zones too." After General on the map comes **"GMO zones on the map"**: each zone (the `zone` set on the
+team in Teams & Staff) a colour, a region taking the colour of the zone with most of its teams (a region shared by two zones is counted and said
+in the footnote), and a key of up to ten zones, each with its GMO (the one who holds most of its teams, "+n" for the others), its teams, regions
+and General %. Teams with no zone are counted and said, not hidden; with fewer than two zones set there is no slide, and past ten the rest share a
+grey. The gaps are dashed here too. (A latent bug found on the way: the label-overlap loop reused `ox`, the map's own x-offset, and moved the
+island call-outs into the middle of the country; it only showed once every gap carried a label.)
+
 **Saving the file, in a browser and in the Android app.** The deck is saved through the page's own `download(blob, name)`
 (`app.html`), like the Excel and JPG exports, never by PptxGenJS's `writeFile`: `writeFile` makes a `blob:` link, which works in a
 browser and nowhere in the app's web view (the app answered "open the system in Chrome", or closed). Inside the app `download`

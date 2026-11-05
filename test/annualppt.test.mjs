@@ -316,7 +316,7 @@ test('the maps: the whole country coloured by the books, the teams of an alias a
   const cov = r.slides.find(s => s.text.includes('Where HOPE works: 10 of 31 regions'));
   assert.ok(cov, 'ten regions have teams: ' + r.slides.map(s => s.text.slice(0, 30)).filter(x => /Where HOPE/.test(x)).join(';'));
   assert.equal((cov.xml.match(/<a:custGeom>/g) || []).length, 31 + 0, 'one freeform for each of the 31 regions');
-  assert.ok(/name="Region Songwe"/.test(cov.xml) && /name="Region Kaskazini Pemba"/.test(cov.xml) && /name="Region Katavi"/.test(cov.xml), 'Songwe, Pemba and a region with no team are all drawn');
+  assert.ok(/name="Region Songwe"/.test(cov.xml) && /name="Region Kaskazini Pemba"/.test(cov.xml) && /name="Gap Katavi"/.test(cov.xml), 'Songwe and Pemba are drawn as regions, Katavi, with no team, as a gap');
   // Kahama's teams are added to Shinyanga's on the map (two teams each in this book)
   const teams = n => d.regions.find(x => x.region === n).teams;
   const shinyanga = teams('SHINYANGA') + teams('KAHAMA');
@@ -325,10 +325,13 @@ test('the maps: the whole country coloured by the books, the teams of an alias a
   assert.ok(cov.text.includes('KAHAMA is shown in Shinyanga') && cov.text.includes('COAST is shown in Pwani'), 'the aliases are said');
   assert.ok(cov.text.includes('Not on the map: LAKE ZONE'), 'a zone is not a region: listed, not guessed');
   assert.ok(cov.text.includes('Boundaries: Tanzania National Bureau of Statistics'), 'the boundaries are credited on the slide');
-  assert.ok(cov.text.includes('Most teams') && cov.text.includes('No teams'), 'a key and the regions with none');
-  // the coloured steps: a region with teams is coloured, one without is the grey
-  const fillOf = n => (cov.xml.match(new RegExp('name="Region ' + n + '"[\\s\\S]*?<a:solidFill><a:srgbClr val="([0-9A-F]{6})"')) || [])[1];
-  assert.equal(fillOf('Katavi'), 'E8ECF2', 'no team in Katavi'); assert.ok(fillOf('Songwe') && fillOf('Songwe') !== 'E8ECF2', 'Songwe has teams');
+  assert.ok(cov.text.includes('Most teams') && cov.text.includes('Not in yet') && cov.text.includes('21 regions'), 'a key, and how many regions have no team');
+  // the coloured steps: a region with teams is coloured; one without is a white, dashed gap
+  const fillOf = n => (cov.xml.match(new RegExp('name="(?:Region|Gap) ' + n + '"[\\s\\S]*?<a:solidFill><a:srgbClr val="([0-9A-F]{6})"')) || [])[1];
+  assert.equal(fillOf('Katavi'), 'FFFFFF', 'no team in Katavi'); assert.ok(fillOf('Songwe') && fillOf('Songwe') !== 'FFFFFF' && fillOf('Songwe') !== 'E8ECF2', 'Songwe has teams');
+  const shapeOf = (xml, n) => { const i = xml.indexOf('name="' + n + '"'); return xml.slice(i, xml.indexOf('</p:sp>', i)); };
+  assert.ok(/<a:prstDash val="dash"\/>/.test(shapeOf(cov.xml, 'Gap Katavi')) && !/prstDash val="dash"/.test(shapeOf(cov.xml, 'Region Songwe')), 'a gap has a dashed edge, a region with teams has not');
+  assert.ok(/not yet/.test(cov.text) && cov.text.includes('Katavi') && /Label Katavi/.test(cov.xml), 'and the coverage map names it on the map');
   // the other three maps
   for (const title of ['Regions on the map: General performance', 'Portfolio at risk on the map', 'Active portfolio on the map']) assert.ok(has(r, title), title);
   const par = r.slides.find(s => s.text.includes('Portfolio at risk on the map')).text;
@@ -364,6 +367,11 @@ test('no shape on any slide runs off the page or into the footer, whatever the b
   const few = withBooks(book()), many = withBooks(book({ manyRegions: true }));
   const n1 = await check('four regions', await annual(few, 2026), await annual(few, 2025), await annualBook(few, 2026));
   const n2 = await check('fourteen regions', await annual(many, 2026), await annual(many, 2025), await annualBook(many, 2026));
+  // the gaps slide and the zone map, with real region names, three zones and a dozen
+  const gapsBook = withBooks(zoned(book({ realRegions: true }), i => ['LAKE ZONE', 'EASTERN ZONE', 'SOUTHERN ZONE'][i % 3]));
+  await check('gaps and three zones', await annual(gapsBook, 2026), await annual(gapsBook, 2025), await annualBook(gapsBook, 2026));
+  const dozenBook = withBooks(zoned(book({ realRegions: true }), i => 'ZONE ' + String.fromCharCode(65 + (i % 12))));
+  await check('gaps and twelve zones', await annual(dozenBook, 2026), await annual(dozenBook, 2025), await annualBook(dozenBook, 2026));
   assert.ok(n2 > n1, 'more regions, more slides, never a squeezed one: ' + n1 + ' then ' + n2);
 });
 
@@ -484,4 +492,95 @@ test('in a browser the same saver is used and the press says it saved; a page wi
   const code = readFileSync(join(ROOT, 'public/deck/annual-ppt.js'), 'utf8');
   assert.ok(/return anPptSave_\(pres, name\)\.then\(function \(viaApp\) \{/.test(code) && /if \(!viaApp\) toast\('Saved '/.test(code), 'the press saves through it and does not talk over the app\'s own message');
   assert.ok(!/return pres\.writeFile\(\{ fileName: name, compression: true \}\)\.then\(function \(\) \{ toast/.test(code), 'the direct writeFile-and-toast is gone');
+});
+
+/* "Even the regions we aint in yet - mention them / show, so that we are well aware of the gaps." */
+test('the gaps: every region with no team is named, on its own slide and on every map', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const g = r.slides.find(x => x.text.includes('Regions we are not in yet: 21 of 31'));
+  assert.ok(g, 'a slide for the gaps: ' + r.slides.map(x => x.text.slice(0, 30)).filter(x => /not in yet/i.test(x)).join(';'));
+  assert.ok(g.text.includes('NO TEAM YET') && g.text.includes('21 of 31') && g.text.includes('10 have one'), 'how many, and how many are in');
+  // mainland and Zanzibar apart, by name; a region we are in is not in the list
+  assert.ok(/MAINLAND, NO TEAM YET\s*\S*\s*18/.test(g.text) && /ZANZIBAR, NO TEAM YET\s*\S*\s*3/.test(g.text), 'eighteen on the mainland, three in Zanzibar: ' + g.text.slice(0, 400));
+  for (const n of ['Katavi', 'Kigoma', 'Rukwa', 'Kusini Pemba', 'Kusini Unguja', 'Kaskazini Unguja']) assert.ok(g.text.includes(n), n + ' is named');
+  const listed = g.text.slice(g.text.indexOf('MAINLAND'), g.text.indexOf('ONLY 1 OR 2'));
+  for (const n of ['Arusha', 'Songwe', 'Mjini Magharibi', 'Kaskazini Pemba']) assert.ok(!listed.includes(n), n + ' has teams, so it is not a gap');
+  // the thin ones, one closure from a gap, with their teams
+  assert.ok(/ONLY 1 OR 2 TEAMS/.test(g.text) && g.text.includes('Arusha 2') && g.text.includes('Songwe 2') && !g.text.includes('Shinyanga 4'), 'regions of one or two teams, with the count');
+  // every other map draws them dashed and says how many
+  for (const title of ['Where HOPE works', 'Regions on the map: General performance', 'Portfolio at risk on the map', 'Active portfolio on the map']) {
+    const m = r.slides.find(x => x.text.includes(title));
+    assert.ok(m, title);
+    assert.equal((m.xml.match(/name="Gap /g) || []).length, 21, title + ': the 21 regions with no team are drawn as gaps');
+    assert.equal((m.xml.match(/<a:prstDash val="dash"\/>/g) || []).length >= 21, true, title + ': dashed');
+    assert.ok(m.text.includes('Not in yet') && m.text.includes('21 regions'), title + ': the key says so');
+  }
+  assert.ok(r.slides.find(x => x.text.includes('Regions on the map: General performance')).text.includes('Dashed: no HOPE team yet (21'), 'the maps that do not label them point to the slide that names them');
+  // the contents says it
+  assert.ok(r.slides.find(x => x.text.includes('What this report covers')).text.includes('and the gaps'), 'the contents lists the gaps');
+});
+
+test('the gaps: a region with a team but no figure is "no data", not a gap; every region in is no slide at all', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const par = r.slides.find(x => x.text.includes('Portfolio at risk on the map'));
+  // PAR is computed per region from the defaulter deck, which only some regions' teams are in
+  const noData = (par.text.match(/No customers in arrears\s*\S*\s*(\d+) region/) || [])[1];
+  const drawnAsRegion = (par.xml.match(/name="Region /g) || []).length, gap = (par.xml.match(/name="Gap /g) || []).length;
+  assert.equal(drawnAsRegion + gap, 31, 'all 31 drawn');
+  assert.ok(gap === 21, 'only the regions with no team at all are gaps, however many have no figure: ' + gap + (noData ? ' (no data: ' + noData + ')' : ''));
+  // every region of the 31 has a team: no gaps slide, and the map says so
+  const dd = await annual(t, 2026);
+  const ALL = ['Arusha', 'Dodoma', 'Geita', 'Iringa', 'Kagera', 'Katavi', 'Kigoma', 'Kilimanjaro', 'Lindi', 'Manyara', 'Mara', 'Mbeya', 'Morogoro', 'Mtwara', 'Mwanza', 'Njombe', 'Pwani', 'Rukwa', 'Ruvuma', 'Shinyanga', 'Simiyu', 'Singida', 'Songwe', 'Tabora', 'Tanga',
+    'Dar es Salaam', 'Mjini Magharibi', 'Kusini Unguja', 'Kaskazini Unguja', 'Kaskazini Pemba', 'Kusini Pemba'];
+  dd.regions = ALL.map(n => ({ region: n, teams: 1, months: 6, sales: 1e8, salesPct: 60, colPct: 80, recPct: 50, general: 63, retentionPct: 50, loans: 10 }));
+  const rr = await slidesOf(dd, null, null);
+  assert.ok(!rr.slides.some(x => /Regions we are not in yet/.test(x.text)), 'no gap, no slide');
+  assert.ok(rr.slides.some(x => /Where HOPE works: 31 of 31 regions/.test(x.text)), 'the map says how many are in');
+  assert.ok(!rr.slides.some(x => /name="Gap /.test(x.xml)) && !rr.slides.some(x => /Not in yet/.test(x.text)), 'and nothing is drawn as a gap');
+  assert.ok(!/and the gaps/.test(rr.slides.find(x => x.text.includes('What this report covers')).text), 'nor listed in the contents');
+});
+
+/* "i wish a map of gmo zones too" */
+const ZONES3 = ['LAKE ZONE', 'EASTERN ZONE', 'SOUTHERN ZONE'];
+function zoned(t, f) { t.teams.forEach((tm, i) => { const z = f(i, tm); if (z === null) delete tm.zone; else tm.zone = z; }); return t; }
+test('the GMO zones: a map coloured by zone, the key naming each zone\'s GMO, its teams and General %, and what could not be coloured said', async () => {
+  // the second team of each region sits in the next zone, so every region is shared and the larger share wins; every seventh has no zone
+  const t = withBooks(zoned(book({ realRegions: true }), i => (i % 7 === 0 ? null : ZONES3[(i + (i >= 12 ? 1 : 0)) % 3])));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const z = r.slides.find(x => x.text.includes('GMO zones on the map'));
+  assert.ok(z, 'a zone map: ' + r.slides.map(x => x.text.slice(0, 24)).filter(x => /zone/i.test(x)).join(';'));
+  assert.ok(z.text.includes('3 GMO zones'), 'how many zones');
+  for (const name of ZONES3) assert.ok(z.text.includes(name), name + ' is in the key');
+  assert.ok(/GMO GMO \d/.test(z.text), 'each zone names its GMO: ' + z.text.slice(0, 400));
+  assert.ok(/\d+ teams?, \d+ regions?/.test(z.text) && /General \d+%/.test(z.text), 'its teams, regions and General %');
+  assert.ok(z.text.includes('no zone set in Teams & Staff') && /\d+ teams? (has|have) no zone/.test(z.text), 'the teams with no zone are counted, not hidden');
+  assert.ok(/\d+ regions? (is|are) shared by two zones and coloured for the one with more teams there \(/.test(z.text.replace(/\s+/g, ' ')), 'a region shared by two zones says so: ' + z.text.slice(-420));
+  assert.ok(z.text.includes('Not in yet') && z.text.includes('21 regions'), 'the gaps stay on the zone map');
+  assert.equal((z.xml.match(/name="Gap /g) || []).length, 21, 'dashed');
+  // a region is the colour of one of the zones; two zones, two different colours
+  const colourOf = n => (z.xml.match(new RegExp('name="Region ' + n + '"[\\s\\S]*?<a:solidFill><a:srgbClr val="([0-9A-F]{6})"')) || [])[1];
+  const colours = new Set(['Arusha', 'Mbeya', 'Songwe', 'Mwanza', 'Tabora', 'Pwani', 'Shinyanga'].map(colourOf).filter(Boolean));
+  assert.ok(colours.size >= 2 && [...colours].every(c => /^[0-9A-F]{6}$/.test(c) && c !== 'FFFFFF'), 'the zones are different colours: ' + [...colours].join(','));
+  // each key row has a swatch the colour of its zone
+  const keyColours = [...z.xml.matchAll(/name="Zone key [^"]+"[\s\S]*?<a:srgbClr val="([0-9A-F]{6})"/g)].map(m => m[1]);
+  assert.equal(new Set(keyColours).size, 3, 'three swatches, three colours');
+  assert.ok([...colours].every(c => keyColours.includes(c)), 'every region colour is in the key');
+  assert.ok(r.slides.find(x => x.text.includes('What this report covers')).text.includes('the GMO zones'), 'the contents lists them');
+});
+
+test('the GMO zones: no slide while fewer than two zones are set, and a book with a dozen zones keeps the key on the page', async () => {
+  const none = withBooks(book({ realRegions: true }));
+  assert.ok(!(await slidesOf(await annual(none, 2026), null, await annualBook(none, 2026))).slides.some(x => /GMO zones on the map/.test(x.text)), 'no zone set: no map of nothing');
+  const one = withBooks(zoned(book({ realRegions: true }), () => 'LAKE ZONE'));
+  assert.ok(!(await slidesOf(await annual(one, 2026), null, await annualBook(one, 2026))).slides.some(x => /GMO zones on the map/.test(x.text)), 'one zone: one colour says nothing');
+  const dozen = withBooks(zoned(book({ realRegions: true }), i => 'ZONE ' + String.fromCharCode(65 + (i % 12))));
+  const r = await slidesOf(await annual(dozen, 2026), null, await annualBook(dozen, 2026));
+  const z = r.slides.find(x => /GMO zones on the map/.test(x.text));
+  assert.ok(z && z.text.includes('12 GMO zones') && z.text.includes('2 more zones share the grey'), 'ten are named, the rest are grouped and said');
+  assert.equal((z.xml.match(/name="Zone key /g) || []).length, 10);
 });
