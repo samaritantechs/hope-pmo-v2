@@ -580,15 +580,18 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
   };
   /** Teams grouped by region: each group's sums, with whatever ratio the caller derives from them. */
   const byRegion = (rows, teamOf, fields) => {
-    const g = new Map();
+    const g = new Map(), none = { teams: new Set() };
+    for (const f of fields) none[f] = 0;
     for (const r of rows) {
       const name = regionOf(teamOf(r));
-      if (!name) continue;
+      if (!name) { none.teams.add(K2(teamOf(r))); for (const f of fields) none[f] += num(r[f]); continue; }
       if (!g.has(name)) g.set(name, { region: name, teams: new Set() });
       const x = g.get(name); x.teams.add(K2(teamOf(r)));
       for (const f of fields) x[f] = (x[f] || 0) + num(r[f]);
     }
-    return [...g.values()].map(x => ({ ...x, teams: x.teams.size }));
+    const out = [...g.values()].map(x => ({ ...x, teams: x.teams.size }));
+    out.unplaced = { ...none, teams: none.teams.size };      // teams with no region in Teams & Staff yet: counted nowhere, said on the slide
+    return out;
   };
 
   const [par, portfolio, legal] = await Promise.all([
@@ -596,11 +599,12 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
       const p = await deps.par(db, user, {}, nowMs);
       const byTeam = (p.byTeam || []).map(t => ({ team: t.team, region: regionOf(t.team), customers: t.customers, arrears: t.arrears, balance: t.balance,
         par: t.par, loans: t.loans, totalLoan: t.totalLoan, parAll: t.parAll }));
-      const regions = byRegion(byTeam, t => t.team, ['customers', 'arrears', 'balance', 'totalLoan']).map(x => ({ ...x,
+      const regionsRaw = byRegion(byTeam, t => t.team, ['customers', 'arrears', 'balance', 'totalLoan']);
+      const regions = regionsRaw.map(x => ({ ...x,
         par: pct(x.arrears, x.balance), parAll: x.totalLoan > 0 ? pct(x.arrears, x.totalLoan) : null }))
         .sort((a, b) => b.arrears - a.arrears);
       return { date: p.date || null, empty: !p.date, totals: p.totals, bands: p.bands || [], byBand: p.byBand || [], byStatus: (p.byStatus || []).slice(0, 8),
-        byTeam, byRegion: regions, allTime: p.allTime ? { since: p.allTime.since, loans: p.allTime.loans, totalLoan: p.allTime.totalLoan } : null };
+        byTeam, byRegion: regions, unplaced: regionsRaw.unplaced, allTime: p.allTime ? { since: p.allTime.since, loans: p.allTime.loans, totalLoan: p.allTime.totalLoan } : null };
     }),
     attempt('expected', 'Expected', async () => {
       const e = await deps.expected(db, user, { type: 'today' }, nowMs);
@@ -619,13 +623,14 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
         x.customers++; x.balance += num(r.balance); x.arrears += num(r.arrears); if (num(r.arrears) > 0) x.behind++; team.set(K2(t), x);
       }
       const byTeam = [...team.values()].map(x => ({ ...x, region: regionOf(x.team), arrearsPct: pct(x.arrears, x.balance) })).sort((a, b) => b.balance - a.balance);
-      const regions = byRegion(byTeam, t => t.team, ['customers', 'balance', 'arrears', 'behind']).map(x => ({ ...x, arrearsPct: pct(x.arrears, x.balance) }))
+      const regionsRaw = byRegion(byTeam, t => t.team, ['customers', 'balance', 'arrears', 'behind']);
+      const regions = regionsRaw.map(x => ({ ...x, arrearsPct: pct(x.arrears, x.balance) }))
         .sort((a, b) => b.balance - a.balance);
       const t = e.totals || {};
       return { date: e.date || null, empty: !e.date || !rows.length, customers: rows.length, balance: sumBy_(rows, 'balance'),
         expected: num(t.expected), collected: num(t.collected), collectedPct: t.pct == null ? null : t.pct,
         behind: { customers: behind.length, arrears: sumBy_(behind, 'arrears'), balance: sumBy_(behind, 'balance') },
-        byStatus: [...status.values()].sort((a, b) => b.customers - a.customers), byTeam, byRegion: regions };
+        byStatus: [...status.values()].sort((a, b) => b.customers - a.customers), byTeam, byRegion: regions, unplaced: regionsRaw.unplaced };
     }),
     attempt('legal', 'Legal', async () => {
       const dn = await deps.demandNotices(db, user, {}, nowMs);
@@ -642,12 +647,18 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
       const byTeam = [...team.values()].map(x => { const tl = deps.noticeTiles_(x.rows); return { team: x.team, region: regionOf(x.team), notices: x.rows.length, customers: tl.customers,
         demanded: sumBy_(x.rows, 'total_demand'), fines: sumBy_(x.rows, 'fine'), paidSince: tl.paidSince, recovery: tl.recovery, recoveryPct: tl.recoveryPct, cleared: tl.cleared }; })
         .sort((a, b) => b.demanded - a.demanded);
+      const officer = new Map();
+      for (const r of rows) { const nm = String(r.issued_by || '').trim() || '(not recorded)'; const k = K(nm); if (!officer.has(k)) officer.set(k, { officer: nm, rows: [] }); officer.get(k).rows.push(r); }
+      const byOfficer = [...officer.values()].map(x => { const tl = deps.noticeTiles_(x.rows); return { officer: x.officer, notices: x.rows.length, customers: tl.customers, teams: new Set(x.rows.map(r => K2(r.team))).size,
+        demanded: sumBy_(x.rows, 'total_demand'), fines: sumBy_(x.rows, 'fine'), paidSince: tl.paidSince, recovery: tl.recovery, recoveryPct: tl.recoveryPct, cleared: tl.cleared,
+        first: x.rows.map(r => String(r.notice_date || '').slice(0, 10)).sort()[0] || null }; })
+        .sort((a, b) => b.notices - a.notices || b.demanded - a.demanded);
       const state = new Map();
       for (const r of rows) { const k = String(r.notice_state || '').trim(); state.set(k, (state.get(k) || 0) + 1); }
       return { empty: !rows.length, asOf: dn.asOf || null, paymentsOn: !!dn.paymentsOn, notices: rows.length, customers: tiles.customers, cleared: tiles.cleared,
         demanded: sumBy_(rows, 'total_demand'), fines: sumBy_(rows, 'fine'), atNotice: sumBy_(rows, 'arrears_at_notice'),
         recovery: tiles.recovery, owed: tiles.owed, recoveryPct: tiles.recoveryPct, paidSince: tiles.paidSince,
-        byMonth, byTeam, byState: [...state.entries()].map(([s, n]) => ({ state: s, notices: n })).sort((a, b) => b.notices - a.notices) };
+        byMonth, byTeam, byOfficer, byState: [...state.entries()].map(([s, n]) => ({ state: s, notices: n })).sort((a, b) => b.notices - a.notices) };
     }),
   ]);
   return { year, asAt: today, par, portfolio, legal };

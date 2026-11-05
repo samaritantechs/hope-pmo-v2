@@ -70,7 +70,7 @@ function anPptModel_(d, prev, book) {
     colMonths: had.filter(function (m) { return m.colPct != null; }),
     recMonths: had.filter(function (m) { return m.recPct != null; }),
     pending: had.filter(function (m) { return m.state === 'pending'; }),
-    teams: T, Y: Y, regions: regions, credit: credit, gmo: (roles.gmo || []).filter(function (r) { return r.general != null; }), opm: (roles.opm || []).filter(function (r) { return r.general != null; }),
+    teams: T, Y: Y, regions: regions, credit: credit, legalRole: (roles.legal || []).filter(function (r) { return r.general != null; }), gmo: (roles.gmo || []).filter(function (r) { return r.general != null; }), opm: (roles.opm || []).filter(function (r) { return r.general != null; }),
     stamped: T.some(function (t) { return t.yearStamped; }),
     prev: prev ? { year: Number(prev.year), totals: prev.totals || {}, had: prevHad, same: sameMonthsPrev, cmp: cmp,
       sameSales: anPptSum_(sameMonthsPrev, 'sales'), wholeSales: Number((prev.totals || {}).sales) || 0 } : null,
@@ -151,6 +151,41 @@ function anPptBuild_(Pptx, M, A) {
     for (var k in fontOpts) opts[k] = fontOpts[k];
     s.addChart(pres.charts.BAR, data, opts);
   }
+  /* Not every chart is a bar: a TREND is a line, a SHARE is a doughnut, a spread of teams is a scatter. Bars stay
+     where something is being ranked. All native, so each can be restyled in PowerPoint. */
+  var PALETTE = [C.a1, C.a2, C.a3, C.a4, C.a5, C.a6, '8E6BD8', 'F28E2B'];
+  function lineChart(s, cats, series, o) {
+    var data = series.map(function (se) { return { name: se.name, labels: cats, values: se.values }; });
+    var opts = { x: o.x, y: o.y, w: o.w, h: o.h, chartColors: o.colors || PALETTE, lineSize: 3, lineDataSymbol: 'circle', lineDataSymbolSize: 8,
+      showValue: o.showValue !== false, dataLabelPosition: 't', dataLabelFontSize: o.dl || 9, dataLabelColor: C.text1, dataLabelFormatCode: o.fmt || '0.0',
+      showLegend: series.length > 1, legendPos: 'b', legendFontSize: 10, legendColor: C.text1,
+      catAxisLabelFontSize: 10, catAxisLabelColor: C.text1, valAxisLabelFontSize: 9, valAxisLabelColor: C.a6, valAxisLabelFormatCode: o.axisFmt || '0',
+      valGridLine: { color: 'E3E8F2', size: 0.5 }, catGridLine: { style: 'none' }, showTitle: false, objectName: o.name };
+    if (o.min != null) opts.valAxisMinVal = o.min;
+    if (o.max != null) opts.valAxisMaxVal = o.max;
+    for (var k in fontOpts) opts[k] = fontOpts[k];
+    s.addChart(pres.charts.LINE, data, opts);
+  }
+  function doughnut(s, labels, values, o) {
+    var opts = { x: o.x, y: o.y, w: o.w, h: o.h, holeSize: 55, chartColors: PALETTE.slice(0, labels.length), showLegend: true, legendPos: o.legend || 'r', legendFontSize: 10, legendColor: C.text1,
+      showPercent: true, showValue: false, showLabel: false, dataLabelColor: 'FFFFFF', dataLabelFontSize: 10, dataLabelFormatCode: '0%', dataBorder: { pt: 1.5, color: 'FFFFFF' }, showTitle: false, objectName: o.name };
+    for (var k in fontOpts) opts[k] = fontOpts[k];
+    s.addChart(pres.charts.DOUGHNUT, [{ name: o.series, labels: labels, values: values }], opts);
+  }
+  function scatter(s, xs, ys, o) {
+    var opts = { x: o.x, y: o.y, w: o.w, h: o.h, chartColors: [C.a1], lineSize: 0, lineDataSymbol: 'circle', lineDataSymbolSize: 9, showLegend: false, showValue: false,
+      showCatAxisTitle: true, catAxisTitle: o.xTitle, showValAxisTitle: true, valAxisTitle: o.yTitle, catAxisTitleFontSize: 10, valAxisTitleFontSize: 10, catAxisTitleColor: C.a6, valAxisTitleColor: C.a6,
+      catAxisLabelFontSize: 9, valAxisLabelFontSize: 9, catAxisLabelColor: C.a6, valAxisLabelColor: C.a6, valGridLine: { color: 'E3E8F2', size: 0.5 }, catGridLine: { color: 'E3E8F2', size: 0.5 }, showTitle: false, objectName: o.name };
+    for (var k in fontOpts) opts[k] = fontOpts[k];
+    s.addChart(pres.charts.SCATTER, [{ name: 'X-Axis', values: xs }, { name: o.series, values: ys }], opts);
+  }
+  /* The n biggest of a list as named slices, the rest grouped, for a doughnut. */
+  function slices(rows, n, labelFn, valueFn, otherLabel) {
+    var sorted = rows.slice().sort(function (a, b) { return valueFn(b) - valueFn(a); }), top = sorted.slice(0, n), rest = sorted.slice(n);
+    var labels = top.map(labelFn), values = top.map(valueFn);
+    if (rest.length) { labels.push(otherLabel); values.push(rest.reduce(function (a, r) { return a + valueFn(r); }, 0)); }
+    return { labels: labels, values: values };
+  }
   function table(s, rows, x, y, w, colW, o) {
     o = o || {};
     var head = rows[0].map(function (t) { return { text: t, options: { bold: true, color: C.bg1, fill: { color: C.text2 }, fontSize: o.fs || 10, align: 'center', valign: 'middle' } }; });
@@ -171,6 +206,21 @@ function anPptBuild_(Pptx, M, A) {
     table(s, [head].concat(low.map(line)), 5.1, 1.35, 4.4, [2.2, 1.0, 1.2], { name: 'Lowest ' + title, rowH: 0.3 });
     return n;
   }
+  /* A list too long for one slide is PAGED, never squeezed: a real book has two dozen regions, and a table of
+     that many rows runs off the page. */
+  function pages(items, size) { var out = []; for (var i = 0; i < items.length; i += size) out.push(items.slice(i, i + size)); return out.length ? out : [[]]; }
+  function pageTitle(title, i, n) { return n > 1 ? title + ' (' + (i + 1) + ' of ' + n + ')' : title; }
+  function short(v, n) { v = String(v == null ? '' : v); return v.length > n ? v.slice(0, n - 1) + '…' : v; }
+  /* Regions, ten to a slide: the bars on the left and the table on the right carry the same ten. */
+  function regionPages(title, rows, o) {
+    var pg = pages(rows, o.size || 10);
+    pg.forEach(function (rs, i) {
+      var sl = content(pageTitle(title, i, pg.length));
+      chart(sl, rs.map(function (r) { return short(r.region, 18); }), [{ name: o.series, values: rs.map(o.value) }], { x: 0.3, y: 1.0, w: 3.9, h: 3.5, dir: 'bar', reverse: true, colors: [o.color], name: o.name + ' ' + (i + 1), fmt: o.fmt, gap: 30, dl: 9, cat: 9 });
+      table(sl, [o.head].concat(rs.map(o.line)), 4.3, 1.05, 5.2, o.widths, { fs: 8.5, rowH: 0.3, name: o.name + ' table ' + (i + 1), textCols: o.textCols || [0] });
+      note(sl, i === 0 ? o.note : o.noteMore, 4.62, 0.55);
+    });
+  }
   var regKey = function (v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().toUpperCase(); };
   var teamsOf = function (region) { return T.filter(function (t) { return regKey(t.region) === regKey(region); }).sort(function (a, b) { return a.team < b.team ? -1 : a.team > b.team ? 1 : 0; }); };
   /* The GMO of a region: whoever holds the most of its teams, with "+n" for the others. */
@@ -179,6 +229,8 @@ function anPptBuild_(Pptx, M, A) {
     var names = Object.keys(c).sort(function (a, b) { return c[b] - c[a] || (a < b ? -1 : 1); });
     return names.length ? names[0] + (names.length > 1 ? ' +' + (names.length - 1) : '') : '—';
   };
+  var noRegion = T.filter(function (t) { var r = String(t.region == null ? '' : t.region).trim(); return !r || /^(NO[ -]|NONE$|N\/A$|-$)/i.test(r); }).length;
+  var unsetNote = noRegion ? ' ' + noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet and are not in the regional figures.' : '';
   var established = T.filter(function (r) { return r.months >= M.minM; });
   var byKey = function (rows, k) { return rows.filter(function (r) { return r[k] != null; }).sort(function (a, b) { return b[k] - a[k]; }); };
   var Z = M.regions, hasZ = Z.length >= 2;
@@ -227,7 +279,7 @@ function anPptBuild_(Pptx, M, A) {
   }
   if (had.length >= 2) (function () {
     var s = content('Teams went from ' + first.teams + ' to ' + last.teams);
-    chart(s, labels, [{ name: 'Teams selling', values: had.map(function (m) { return m.teams; }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, colors: [C.a1], name: 'Teams by month', fmt: '0' });
+    lineChart(s, labels, [{ name: 'Teams selling', values: had.map(function (m) { return m.teams; }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, colors: [C.a1], name: 'Teams by month', fmt: '0' });
     var newTeams = T.filter(function (r) { return r.first && r.first > first.ym; }).length;
     var gone = T.filter(function (r) { return r.m && r.m[first.ym] && !r.m[last.ym]; }).length;
     var step = 0, stepAt = 1; for (var i = 1; i < had.length; i++) { var dlt = had[i].teams - had[i - 1].teams; if (Math.abs(dlt) > Math.abs(step)) { step = dlt; stepAt = i; } }
@@ -237,14 +289,16 @@ function anPptBuild_(Pptx, M, A) {
     bullets(s, b, 6.5, 1.2, 3.0, 3.6, 13);
   })();
   if (hasZ) (function () {
+    var all = Z.slice().sort(function (a, b) { return b.teams - a.teams; }), zs = all.slice(0, 12);
     var s = content('Coverage across ' + Z.length + ' regions');
-    var zs = Z.slice().sort(function (a, b) { return b.teams - a.teams; });
-    chart(s, zs.map(function (z) { return z.region; }), [{ name: 'Teams', values: zs.map(function (z) { return z.teams; }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, dir: 'bar', reverse: true, colors: [C.a2], name: 'Teams by region', fmt: '0', gap: 35 });
-    var tot = zs.reduce(function (a, z) { return a + z.teams; }, 0);
-    var b = [[{ text: tot + ' teams ', bold: true }, { text: 'across ' + zs.length + ' regions in ' + lastLong + '.' }],
-      [{ text: zs[0].region + ' ', bold: true }, { text: 'is the largest with ' + zs[0].teams + ' teams, ' + Math.round(zs[0].teams / tot * 100) + '% of the network.' }]];
-    if (zs.length >= 3) b.push([{ text: zs[1].region + ' and ' + zs[2].region + ' ', bold: true }, { text: 'follow with ' + zs[1].teams + ' and ' + zs[2].teams + ' teams.' }]);
-    bullets(s, b, 6.5, 1.2, 3.0, 3.6, 13);
+    var sl8 = slices(all, 8, function (z) { return short(z.region, 16); }, function (z) { return z.teams; }, 'Other regions');
+    doughnut(s, sl8.labels, sl8.values, { x: 0.4, y: 1.0, w: 5.9, h: 4.1, name: 'Teams by region', series: 'Teams' });
+    var tot = all.reduce(function (a, z) { return a + z.teams; }, 0);
+    var b = [[{ text: tot + ' teams ', bold: true }, { text: 'across ' + all.length + ' regions in ' + lastLong + (all.length > 8 ? '; the eight largest are named, the rest grouped.' : '.') }],
+      [{ text: all[0].region + ' ', bold: true }, { text: 'is the largest with ' + all[0].teams + ' teams, ' + Math.round(all[0].teams / tot * 100) + '% of the regional network.' }]];
+    if (all.length >= 3) b.push([{ text: all[1].region + ' and ' + all[2].region + ' ', bold: true }, { text: 'follow with ' + all[1].teams + ' and ' + all[2].teams + ' teams.' }]);
+    if (noRegion) b.push([{ text: noRegion + ' teams ', bold: true }, { text: 'have no region set in Teams & Staff yet and are not counted here.' }]);
+    bullets(s, b, 6.5, 1.2, 3.0, 3.6, 12.5);
   })();
 
   /* ---- sales */
@@ -262,8 +316,8 @@ function anPptBuild_(Pptx, M, A) {
   if (P && P.same.length) (function () {
     var s = content(M.year + ' against ' + P.year + ', month by month');
     var cmpV = P.cmp.map(function (m) { return m ? +(m.sales / 1e9).toFixed(2) : 0; });
-    chart(s, labels, [{ name: String(P.year), values: cmpV }, { name: String(M.year), values: sales.map(function (v) { return +(v / 1e9).toFixed(2); }) }],
-      { x: 0.4, y: 1.0, w: 6.4, h: 4.1, colors: [C.a2, C.a1], name: 'Sales ' + P.year + ' and ' + M.year, fmt: '0.0', dl: 8, gap: 35 });
+    lineChart(s, labels, [{ name: String(P.year), values: cmpV }, { name: String(M.year), values: sales.map(function (v) { return +(v / 1e9).toFixed(2); }) }],
+      { x: 0.4, y: 1.0, w: 6.4, h: 4.1, colors: [C.a2, C.a1], name: 'Sales ' + P.year + ' and ' + M.year, fmt: '0.0', axisFmt: '0.0', dl: 8 });
     var cur = anPptSum_(had.filter(function (m, i) { return P.cmp[i]; }), 'sales');
     var diff = P.sameSales ? Math.round((cur / P.sameSales - 1) * 100) : null;
     var b = [[{ text: 'Same months: ', bold: true }, { text: 'TZS ' + anPptB2_(cur) + ' in ' + M.year + ' against ' + anPptB2_(P.sameSales) + ' in ' + P.year + (diff == null ? '.' : ', ' + Math.abs(diff) + '% ' + (diff >= 0 ? 'more' : 'less') + '.') }]];
@@ -293,7 +347,8 @@ function anPptBuild_(Pptx, M, A) {
   (function () {
     var s = content('First-time and returning customers');
     chart(s, labels, [{ name: 'First-time (TRK 1)', values: had.map(function (m) { return m.trk1; }) }, { name: 'Returning', values: had.map(function (m) { return m.retained; }) }],
-      { x: 0.4, y: 1.0, w: 6.4, h: 4.1, stacked: true, colors: [C.a2, C.a1], name: 'First-time and returning', fmt: '#,##0', dl: 8, gap: 35 });
+      { x: 0.3, y: 1.0, w: 4.4, h: 4.1, stacked: true, colors: [C.a2, C.a1], name: 'First-time and returning', fmt: '#,##0', dl: 8, gap: 35 });
+    doughnut(s, ['First-time', 'Returning'], [Y.trk1, Y.retained], { x: 4.75, y: 1.0, w: 2.2, h: 2.9, name: 'Share first-time and returning', series: 'Loans', legend: 'b' });
     var ret = had.map(function (m) { return m.retentionPct; });
     var bi = ret.indexOf(Math.max.apply(null, ret.filter(function (v) { return v != null; }))), wi = ret.indexOf(Math.min.apply(null, ret.filter(function (v) { return v != null; })));
     var b = [[{ text: anPptN0_(Y.loans) + ' loans, ', bold: true }, { text: anPptN0_(Y.trk1) + ' first-time and ' + anPptN0_(Y.retained) + ' returning.' }],
@@ -311,14 +366,19 @@ function anPptBuild_(Pptx, M, A) {
   if (hasZ) (function () {
     var zr = Z.filter(function (z) { return z.retentionPct != null; }).sort(function (a, b) { return b.retentionPct - a.retentionPct; });
     if (zr.length < 2) return;
-    var s = content('Retention by region');
-    chart(s, zr.map(function (z) { return z.region; }), [{ name: 'Retention %', values: zr.map(function (z) { return +z.retentionPct.toFixed(1); }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, dir: 'bar', reverse: true, colors: [C.a1], name: 'Retention by region', fmt: '0.0', gap: 35, min: 0, max: 100 });
-    var hi = zr[0], lo = zr[zr.length - 1], big = Z.slice().sort(function (a, b) { return b.teams - a.teams; })[0];
-    var b = [[{ text: hi.region + ' is highest at ' + anPptPc_(hi.retentionPct) + ', ', bold: true }, { text: 'with ' + hi.teams + ' teams.' }],
-      [{ text: big.region + ' is the largest region, ', bold: true }, { text: big.teams + ' teams, at ' + anPptPc_(big.retentionPct) + '.' }]];
-    if (lo.region !== hi.region && lo.region !== big.region) b.push([{ text: lo.region + ' is lowest at ' + anPptPc_(lo.retentionPct) + ', ', bold: true }, { text: lo.teams + ' teams.' }]);
-    b.push([{ text: 'Company retention ' + anPptPc_(Y.retentionPct) + (P && P.totals.retentionPct != null ? ', ' : '.'), bold: true }, { text: P && P.totals.retentionPct != null ? 'against ' + anPptPc_(P.totals.retentionPct) + ' for ' + P.year + '.' : '' }]);
-    bullets(s, b, 6.5, 1.1, 3.0, 3.9, 12.5);
+    var pg = pages(zr, 12);
+    pg.forEach(function (rs, i) {
+      var s = content(pageTitle('Retention by region', i, pg.length));
+      chart(s, rs.map(function (z) { return short(z.region, 18); }), [{ name: 'Retention %', values: rs.map(function (z) { return +z.retentionPct.toFixed(1); }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, dir: 'bar', reverse: true, colors: [C.a1], name: 'Retention by region ' + (i + 1), fmt: '0.0', gap: 35, min: 0, max: 100, dl: 9, cat: 9 });
+      if (i > 0) { bullets(s, [[{ text: 'Regions ranked by retention, ', bold: true }, { text: 'continued from the previous slide.' }], [{ text: 'Company retention ' + anPptPc_(Y.retentionPct) + '.', bold: true }]], 6.5, 1.2, 3.0, 3.6, 12.5); return; }
+      var hi = zr[0], lo = zr[zr.length - 1], big = Z.slice().sort(function (a, b) { return b.teams - a.teams; })[0];
+      var b = [[{ text: hi.region + ' is highest at ' + anPptPc_(hi.retentionPct) + ', ', bold: true }, { text: 'with ' + hi.teams + ' teams.' }],
+        [{ text: big.region + ' is the largest region, ', bold: true }, { text: big.teams + ' teams, at ' + anPptPc_(big.retentionPct) + '.' }]];
+      if (lo.region !== hi.region && lo.region !== big.region) b.push([{ text: lo.region + ' is lowest at ' + anPptPc_(lo.retentionPct) + ', ', bold: true }, { text: lo.teams + ' teams.' }]);
+      b.push([{ text: 'Company retention ' + anPptPc_(Y.retentionPct) + (P && P.totals.retentionPct != null ? ', ' : '.'), bold: true }, { text: P && P.totals.retentionPct != null ? 'against ' + anPptPc_(P.totals.retentionPct) + ' for ' + P.year + '.' : '' }]);
+      if (noRegion) b.push([{ text: noRegion + ' teams ', bold: true }, { text: 'have no region set yet.' }]);
+      bullets(s, b, 6.5, 1.1, 3.0, 3.9, 12.5);
+    });
   })();
 
   /* ---- collection */
@@ -328,7 +388,7 @@ function anPptBuild_(Pptx, M, A) {
     var s = content('Collection by month');
     var vals = colM.map(function (m) { return m.colPct; });
     var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
-    chart(s, colM.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Collection %', values: vals }], { x: 0.4, y: 1.0, w: 6.2, h: 4.1, colors: [C.a3], name: 'Collection by month', fmt: '0.0', min: Math.max(0, Math.floor((lo - 10) / 10) * 10), max: Math.max(100, Math.ceil(hi / 10) * 10) });
+    lineChart(s, colM.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Collection %', values: vals }], { x: 0.4, y: 1.0, w: 6.2, h: 4.1, colors: [C.a3], name: 'Collection by month', fmt: '0.0', min: Math.max(0, Math.floor((lo - 10) / 10) * 10), max: Math.max(100, Math.ceil(hi / 10) * 10) });
     var ecolM = had.filter(function (m) { return m.ecolPct != null; });
     var b = [[{ text: 'TZS ' + anPptB2_(Y.collected) + ' collected ', bold: true }, { text: 'of ' + anPptB2_(Y.expected) + ' due.' }],
       [{ text: 'From ' + anPptPc_(vals[0]) + ' in ' + anPptLong_(colM[0].ym) + ' ', bold: true }, { text: 'to ' + anPptPc_(vals[vals.length - 1]) + ' in ' + anPptLong_(colM[colM.length - 1].ym) + '.' }]];
@@ -347,7 +407,7 @@ function anPptBuild_(Pptx, M, A) {
     sec('Recovery'); sectionsIn.push(['Recovery', 'what came back from arrears']);
     var s = content('Recovery by month');
     var vals = recM.map(function (m) { return m.recPct; });
-    chart(s, recM.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Recovery %', values: vals }], { x: 0.4, y: 1.0, w: 6.2, h: 4.1, colors: [C.a1], name: 'Recovery by month', fmt: '0.0', min: 0, max: Math.max(100, Math.ceil(Math.max.apply(null, vals) / 10) * 10) });
+    lineChart(s, recM.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Recovery %', values: vals }], { x: 0.4, y: 1.0, w: 6.2, h: 4.1, colors: [C.a1], name: 'Recovery by month', fmt: '0.0', min: 0, max: Math.max(100, Math.ceil(Math.max.apply(null, vals) / 10) * 10) });
     var bi = vals.indexOf(Math.max.apply(null, vals)), wi = vals.indexOf(Math.min.apply(null, vals));
     bullets(s, [
       [{ text: 'TZS ' + anPptB2_(Y.recovered) + ' recovered ', bold: true }, { text: 'out of TZS ' + anPptB2_(Y.uncollected) + ' left uncollected after the due dates.' }],
@@ -356,14 +416,30 @@ function anPptBuild_(Pptx, M, A) {
     ], 6.8, 1.2, 2.7, 3.6, 12.5);
   }
 
+  /* ---- how the year moved: the three measures and General on one line chart */
+  var both = had.filter(function (m) { return m.colPct != null && m.recPct != null && m.salesPct != null; });
+  if (both.length >= 3) (function () {
+    var s = content('How the year moved');
+    var pick = function (k) { return both.map(function (m) { return Math.round(m[k]); }); };
+    var top = Math.max.apply(null, [].concat(pick('salesPct'), pick('colPct'), pick('recPct'), pick('general')));
+    lineChart(s, both.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Sales %', values: pick('salesPct') }, { name: 'Collection %', values: pick('colPct') }, { name: 'Recovery %', values: pick('recPct') }, { name: 'General %', values: pick('general') }],
+      { x: 0.3, y: 1.0, w: 6.6, h: 4.1, colors: [C.a1, C.a3, C.a4, C.text2], name: 'The measures by month', fmt: '0', dl: 8, min: 0, max: Math.max(100, Math.ceil(top / 10) * 10) });
+    var g = both.map(function (m) { return m.general; }), bi = g.indexOf(Math.max.apply(null, g)), wi = g.indexOf(Math.min.apply(null, g));
+    bullets(s, [[{ text: anPptLong_(both[bi].ym) + ' was the best month overall, ', bold: true }, { text: 'General ' + anPptPc_(g[bi]) + '.' }],
+      [{ text: anPptLong_(both[wi].ym) + ' the weakest, ', bold: true }, { text: 'General ' + anPptPc_(g[wi]) + '.' }],
+      [{ text: 'Collection holds steadiest; ', bold: true }, { text: 'sales and recovery swing the most from month to month.' }]], 7.1, 1.2, 2.4, 3.6, 12);
+    if (!sectionsIn.some(function (x) { return x[0] === 'Recovery'; })) sectionsIn.push(['The year\'s trend', 'the measures month by month']);
+  })();
+
   /* ---- regions */
   if (hasZ) {
     sec('Regions'); sectionsIn.push(['Regions', 'sales, retention and general performance']);
-    var sR = content('Regions: sales and general performance');
     var zs = Z.slice().sort(function (a, b) { return b.sales - a.sales; });
-    chart(sR, zs.map(function (z) { return z.region; }), [{ name: 'Sales (TZS billion)', values: zs.map(function (z) { return +(z.sales / 1e9).toFixed(2); }) }], { x: 0.3, y: 1.0, w: 4.1, h: 3.5, dir: 'bar', reverse: true, colors: [C.a1], name: 'Sales by region', fmt: '0.00', gap: 30, dl: 9, cat: 9 });
-    table(sR, [['Region', 'GMO', 'Teams', 'Collect.', 'Recov.', 'General']].concat(zs.map(function (z) { return [z.region, gmoOf(z.region), z.teams, anPptPc0_(z.colPct), anPptPc0_(z.recPct), anPptPc0_(z.general)]; })), 4.5, 1.05, 5.0, [1.3, 1.2, 0.5, 0.7, 0.65, 0.65], { fs: 9, rowH: 0.32, name: 'Region table', textCols: [0, 1] });
-    note(sR, 'Billions of TZS on the chart. A region is its teams\' months added together, the percentages the average of its months. The GMO is the one holding most of the region\'s teams. Recovery above 100% means more came back than was left uncollected that month, on a small base, and it lifts General.', 4.55, 0.55);
+    regionPages('Regions: sales and general performance', zs, { series: 'Sales (TZS billion)', value: function (z) { return +(z.sales / 1e9).toFixed(2); }, fmt: '0.00', color: C.a1, name: 'Sales by region',
+      head: ['Region', 'GMO', 'Teams', 'Coll.', 'Rec.', 'General'], widths: [1.3, 1.65, 0.5, 0.55, 0.5, 0.7], textCols: [0, 1],
+      line: function (z) { return [short(z.region, 17), short(gmoOf(z.region), 22), z.teams, anPptPc0_(z.colPct), anPptPc0_(z.recPct), anPptPc0_(z.general)]; },
+      note: 'Billions of TZS, regions ranked by sales. A region is its teams\' months added together, the percentages the average of its months. The GMO holds most of its teams. Recovery above 100% lifts General on a small base.' + unsetNote,
+      noteMore: 'Regions ranked by sales, as on the first slide.' });
     /* THE KEY: every region with its GMO and the teams in it, laid in columns so a long list never
        runs off its card; a region that will not fit the page goes on the next one. */
     var order = Z.slice().sort(function (a, b) { return teamsOf(b.region).length - teamsOf(a.region).length; });
@@ -410,6 +486,16 @@ function anPptBuild_(Pptx, M, A) {
   sec('Teams and leaders');
   var tlItems = [];
   var genT = byKey(established, 'general');
+  var scT = established.filter(function (r) { return r.salesPct != null && r.colPct != null; });
+  if (scT.length >= 8) (function () {
+    tlItems.push('where teams sit');
+    var s = content('Where each team sits: sales against collection');
+    scatter(s, scT.map(function (r) { return +r.salesPct.toFixed(1); }), scT.map(function (r) { return +r.colPct.toFixed(1); }), { x: 0.4, y: 1.0, w: 6.2, h: 4.1, name: 'Sales against collection by team', series: 'Teams', xTitle: 'Sales, % of target', yTitle: 'Collection, %' });
+    var hiS = scT.filter(function (r) { return r.salesPct >= 100; }).length, hiC = scT.filter(function (r) { return r.colPct >= 92; }).length, both = scT.filter(function (r) { return r.salesPct >= 100 && r.colPct >= 92; });
+    bullets(s, [[{ text: scT.length + ' teams, one dot each, ', bold: true }, { text: 'with ' + M.minM + ' month' + (M.minM === 1 ? '' : 's') + ' or more.' }],
+      [{ text: hiS + ' reach the sales target, ' + hiC + ' collect 92% or more; ', bold: true }, { text: both.length + ' do both' + (both.length ? ': ' + both.slice(0, 4).map(function (r) { return r.team; }).join(', ') + (both.length > 4 ? ' and ' + (both.length - 4) + ' more' : '') + '.' : '.') }],
+      [{ text: 'Top right ', bold: true }, { text: 'is the best place to be; a dot far left sells little, a dot low down collects little.' }]], 6.8, 1.2, 2.7, 3.6, 12);
+  })();
   if (hasGeneralT) (function () {
     tlItems.push('general performance');
     var s = content('General performance by team');
@@ -421,6 +507,55 @@ function anPptBuild_(Pptx, M, A) {
     table(s, [['Team', 'Sales', 'Collect.', 'Recov.', 'General']].concat(genT.slice(-n).reverse().map(row)), 5.25, 1.25, 4.25, [1.5, 0.6, 0.7, 0.7, 0.75], { fs: 9.5, rowH: 0.27, name: 'Bottom general' });
     note(s, 'General is the average of sales, collection and recovery over the months a team has been selling (' + M.minM + ' or more). Recovery passes 100% where the uncollected amount was small, which lifts the top of this list; read the recovery column beside it.', 4.4, 0.65);
   })();
+  /* WHO LED EACH MONTH: a leader's month is the average of the teams they held that month (the server's
+     leader rows carry m[ym]); the table names the first three of every month, the matrix lays the year's
+     best leaders out month by month with each month's leader marked. */
+  function leaderTrend(rows, label, withMatrix) {
+    var ms = had.filter(function (m) { return rows.some(function (r) { return r.m && r.m[m.ym] && r.m[m.ym].general != null; }); });
+    if (ms.length < 2 || rows.length < 2) return;
+    var ranked = ms.map(function (m) { return { ym: m.ym, list: rows.filter(function (r) { return r.m && r.m[m.ym] && r.m[m.ym].general != null; }).sort(function (a, b) { return b.m[m.ym].general - a.m[m.ym].general; }) }; });
+    var led = {}; ranked.forEach(function (x) { if (x.list[0]) led[x.list[0].name] = (led[x.list[0].name] || 0) + 1; });
+    var ledTop = Object.keys(led).sort(function (a, b) { return led[b] - led[a] || (a < b ? -1 : 1); });
+    tlItems.push('who led each month');
+    var s = content(label + 's: who led each month');
+    var cell = function (x, i) { var r = x.list[i]; return r ? [short(r.name, 22), anPptPc0_(r.m[x.ym].general)] : ['—', '—']; };
+    var body = ranked.map(function (x) { return [anPptLong_(x.ym)].concat(cell(x, 0), cell(x, 1), cell(x, 2)); });
+    table(s, [['Month', 'Led by', 'General', 'Second', 'General', 'Third', 'General']].concat(body), 0.5, 1.0, 9.0, [1.1, 2.1, 0.75, 1.9, 0.75, 1.65, 0.75], { fs: 9.5, rowH: Math.min(0.29, 3.7 / (body.length + 1)), name: label + ' leaders by month', textCols: [0, 1, 3, 5] });
+    note(s, 'Most months led: ' + ledTop.slice(0, 3).map(function (n) { return n + ' ' + led[n]; }).join(', ') + '. A ' + label + ' is judged each month on the teams they held that month: the average of those teams\' sales, collection and recovery.', 4.72, 0.5);
+    if (!withMatrix) return;
+    var pick = rows.slice(0, 10), seen = {}; pick.forEach(function (r) { seen[r.name] = 1; });
+    rows.forEach(function (r) { if (led[r.name] && !seen[r.name] && pick.length < 14) { pick.push(r); seen[r.name] = 1; } });
+    var s2 = content(label + 's by month: General %');
+    var cw = (9.0 - 1.6 - 0.65 - 0.5) / ms.length;
+    var hd = function (t) { return { text: t, options: { bold: true, color: C.bg1, fill: { color: C.text2 }, fontSize: 8.5, align: 'center', valign: 'middle' } }; };
+    var trs = [[hd(label)].concat(ms.map(function (m) { return hd(anPptMon_(m.ym)); }), [hd('Year'), hd('Led')])];
+    pick.forEach(function (r, i) {
+      var base = i % 2 ? C.bg1 : C.bg2;
+      var row = [{ text: short(r.name, 22), options: { fontSize: 8.5, bold: true, color: C.text1, align: 'left', valign: 'middle', fill: { color: base } } }];
+      ranked.forEach(function (x) {
+        var v = r.m && r.m[x.ym] ? r.m[x.ym].general : null, isLead = x.list[0] && x.list[0].name === r.name;
+        row.push({ text: v == null ? '—' : String(Math.round(v)) + '%', options: { fontSize: 8.5, bold: !!isLead, color: isLead ? '0B5D36' : C.text1, align: 'center', valign: 'middle', fill: { color: isLead ? 'CFEFDD' : base } } });
+      });
+      row.push({ text: anPptPc0_(r.general), options: { fontSize: 8.5, bold: true, color: C.text2, align: 'center', valign: 'middle', fill: { color: base } } });
+      row.push({ text: String(led[r.name] || 0), options: { fontSize: 8.5, color: C.text1, align: 'center', valign: 'middle', fill: { color: base } } });
+      trs.push(row);
+    });
+    var colW = [1.6].concat(ms.map(function () { return cw; }), [0.65, 0.5]);
+    s2.addTable(trs, { x: 0.5, y: 1.0, w: 9.0, colW: colW, rowH: Math.min(0.28, 3.7 / trs.length), border: { type: 'solid', pt: 0.5, color: 'E3E8F2' }, margin: [0.02, 0.05, 0.02, 0.05], objectName: label + ' by month matrix', autoPage: false });
+    var racers = rows.slice(0, 5);
+    // the axis spans what the five actually scored, so the lines separate instead of hugging the top
+    var raceVals = []; racers.forEach(function (r) { ranked.forEach(function (x) { if (r.m && r.m[x.ym] && r.m[x.ym].general != null) raceVals.push(r.m[x.ym].general); }); });
+    var raceMin = Math.max(0, Math.floor((Math.min.apply(null, raceVals) - 5) / 10) * 10), raceMax = Math.ceil((Math.max.apply(null, raceVals) + 5) / 10) * 10;
+    var s3 = content(label + 's: the monthly race');
+    lineChart(s3, ranked.map(function (x) { return anPptMon_(x.ym); }), racers.map(function (r) { return { name: short(r.name, 20), values: ranked.map(function (x) { return r.m && r.m[x.ym] ? Math.round(r.m[x.ym].general) : null; }) }; }),
+      { x: 0.3, y: 1.0, w: 6.6, h: 4.1, name: label + ' monthly race', fmt: '0', showValue: false, min: raceMin, max: raceMax });
+    bullets(s3, [[{ text: 'The five best ' + label + 's of the year, ', bold: true }, { text: 'General % each month.' }],
+      [{ text: ledTop[0] + ' led the most months, ', bold: true }, { text: led[ledTop[0]] + ' of ' + ranked.length + '.' }],
+      [{ text: 'A line that breaks ', bold: true }, { text: 'is a month the ' + label + ' held no team.' }]], 7.1, 1.2, 2.4, 3.6, 12);
+    note(s2, 'Green marks the month\'s leader. ' + label + 's shown: the ' + Math.min(10, rows.length) + ' with the best year, plus anyone who led a month. Led is the number of months at the top.', 4.72, 0.4);
+  }
+  leaderTrend(M.gmo, 'GMO', true);
+  leaderTrend(M.opm, 'OPM', false);
   if (M.gmo.length || M.opm.length) (function () {
     tlItems.push('leaders');
     var s = content('General performance by leader');
@@ -490,17 +625,17 @@ function anPptBuild_(Pptx, M, A) {
     card(s1, 0.5 + 3 * (w + gx), 1.0, w, h, 'Average loan', 'TZS ' + anPptN0_(Tt.avgLoan), 'of the customers in arrears', { vs: 20 });
     var bands = (P_.bands || []).filter(function (b) { return b.customers > 0 || b.arrears > 0; });
     if (bands.length) {
-      chart(s1, bands.map(function (b) { return b.band; }), [{ name: 'Arrears (TZS million)', values: bands.map(function (b) { return Math.round(b.arrears / 1e6); }) }], { x: 0.4, y: 2.45, w: 5.6, h: 2.7, colors: [C.a5], name: 'Arrears by days overdue', fmt: '#,##0', gap: 35 });
+      doughnut(s1, bands.map(function (b) { return b.band + ' days'; }), bands.map(function (b) { return Math.round(b.arrears / 1e6); }), { x: 0.4, y: 2.4, w: 5.6, h: 2.8, name: 'Arrears by days overdue', series: 'Arrears (TZS million)' });
       bullets(s1, [[{ text: 'Arrears by days overdue, ', bold: true }, { text: 'in TZS million. ' + bands.reduce(function (a, b) { return b.arrears > a.arrears ? b : a; }, bands[0]).band + ' days holds the most.' }],
         [{ text: 'PAR ', bold: true }, { text: 'is the arrears over the balance of those customers; all-time PAR puts the same arrears over everything the company has lent.' }]], 6.2, 2.6, 3.3, 2.4, 11.5);
     }
     var regs = (P_.byRegion || []).filter(function (r) { return r.par != null; }).sort(function (a, b) { return b.par - a.par; });
-    if (regs.length >= 2) {
-      var s2 = content('Portfolio at risk by region');
-      chart(s2, regs.map(function (r) { return r.region; }), [{ name: 'PAR %', values: regs.map(function (r) { return +r.par.toFixed(1); }) }], { x: 0.3, y: 1.0, w: 4.3, h: 3.5, dir: 'bar', reverse: true, colors: [C.a5], name: 'PAR by region', fmt: '0.0', gap: 30, dl: 9, cat: 9 });
-      table(s2, [['Region', 'Customers', 'Arrears (M)', 'PAR %', 'All-time']].concat(regs.map(function (r) { return [r.region, anPptN0_(r.customers), anPptN0_(r.arrears / 1e6), anPptPc_(r.par), anPptPc_(r.parAll)]; })), 4.7, 1.05, 4.8, [1.5, 0.85, 0.95, 0.75, 0.75], { fs: 9, rowH: 0.3, name: 'PAR by region table' });
-      note(s2, 'As at ' + P_.date + '. A region is its teams\' customers added together: arrears over balance, and over everything its teams have lent.', 4.6, 0.4);
-    }
+    var pu = P_.unplaced && P_.unplaced.teams ? ' ' + P_.unplaced.teams + ' teams with no region set yet (TZS ' + anPptM1_(P_.unplaced.arrears) + ' in arrears) are not in these rows.' : '';
+    if (regs.length >= 2) regionPages('Portfolio at risk by region', regs, { series: 'PAR %', value: function (r) { return +r.par.toFixed(1); }, fmt: '0.0', color: C.a5, name: 'PAR by region',
+      head: ['Region', 'Cust.', 'Arrears (M)', 'PAR %', 'All-time'], widths: [1.5, 0.75, 1.15, 0.9, 0.9],
+      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), anPptN0_(r.arrears / 1e6), anPptPc_(r.par), anPptPc_(r.parAll)]; },
+      note: 'As at ' + P_.date + ', regions ranked by PAR. A region is its teams\' customers added together: arrears over balance, and over everything its teams have lent.' + pu,
+      noteMore: 'Regions ranked by PAR, highest first, as at ' + P_.date + '.' });
     var tms = (P_.byTeam || []).filter(function (t) { return t.customers > 0; });
     if (tms.length >= 4) {
       var s3 = content('Portfolio at risk by team');
@@ -516,7 +651,7 @@ function anPptBuild_(Pptx, M, A) {
     var sts = (P_.byStatus || []).filter(function (x) { return x.arrears > 0; });
     if (sts.length >= 2) {
       var s4 = content('Arrears by status');
-      chart(s4, sts.map(function (x) { return x.status; }), [{ name: 'Arrears (TZS million)', values: sts.map(function (x) { return Math.round(x.arrears / 1e6); }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, colors: [C.a5], name: 'Arrears by status', fmt: '#,##0', gap: 40 });
+      doughnut(s4, sts.map(function (x) { return x.status; }), sts.map(function (x) { return Math.round(x.arrears / 1e6); }), { x: 0.4, y: 1.0, w: 5.9, h: 4.1, name: 'Arrears by status', series: 'Arrears (TZS million)' });
       bullets(s4, sts.slice(0, 4).map(function (x) { return [{ text: x.status + ': ', bold: true }, { text: anPptN0_(x.customers) + ' customers, TZS ' + anPptM1_(x.arrears) + ' in arrears.' }]; }), 6.5, 1.2, 3.0, 3.6, 12.5);
     }
   })();
@@ -535,17 +670,17 @@ function anPptBuild_(Pptx, M, A) {
     card(s1, 0.5 + 3 * (w + gx), 1.0, w, h, 'Collected that day', anPptPc_(A_.collectedPct), 'TZS ' + anPptM1_(A_.collected) + ' of ' + anPptM1_(A_.expected) + ' due', { color: C.a3 });
     var sts = (A_.byStatus || []).slice(0, 6);
     if (sts.length) {
-      chart(s1, sts.map(function (x) { return x.status; }), [{ name: 'Customers', values: sts.map(function (x) { return x.customers; }) }], { x: 0.4, y: 2.45, w: 5.6, h: 2.7, colors: [C.a2], name: 'Customers by status', fmt: '#,##0', gap: 35 });
+      doughnut(s1, sts.map(function (x) { return x.status; }), sts.map(function (x) { return x.customers; }), { x: 0.4, y: 2.4, w: 5.6, h: 2.8, name: 'Customers by status', series: 'Customers' });
       bullets(s1, [[{ text: 'Customers by today\'s status ', bold: true }, { text: 'on the deck, ' + sts[0].status + ' the largest with ' + anPptN0_(sts[0].customers) + '.' }],
         [{ text: 'Behind ', bold: true }, { text: 'means arrears on the deck: ' + anPptN0_(A_.behind.customers) + ' of ' + anPptN0_(A_.customers) + ' customers, holding TZS ' + anPptB2_(A_.behind.balance) + ' of the balance.' }]], 6.2, 2.6, 3.3, 2.4, 11.5);
     }
     var regs = (A_.byRegion || []).slice().sort(function (a, b) { return b.balance - a.balance; });
-    if (regs.length >= 2) {
-      var s2 = content('Active portfolio by region');
-      chart(s2, regs.map(function (r) { return r.region; }), [{ name: 'Outstanding (TZS billion)', values: regs.map(function (r) { return +(r.balance / 1e9).toFixed(2); }) }], { x: 0.3, y: 1.0, w: 4.3, h: 3.5, dir: 'bar', reverse: true, colors: [C.a1], name: 'Balance by region', fmt: '0.00', gap: 30, dl: 9, cat: 9 });
-      table(s2, [['Region', 'Customers', 'Balance (B)', 'Behind', 'Arrears %']].concat(regs.map(function (r) { return [r.region, anPptN0_(r.customers), (r.balance / 1e9).toFixed(2), anPptN0_(r.behind), anPptPc_(r.arrearsPct)]; })), 4.7, 1.05, 4.8, [1.5, 0.85, 0.95, 0.75, 0.75], { fs: 9, rowH: 0.3, name: 'Portfolio by region table' });
-      note(s2, 'As at ' + A_.date + '. Arrears % is arrears over the outstanding balance, summed over the region\'s customers.', 4.6, 0.4);
-    }
+    var au = A_.unplaced && A_.unplaced.teams ? ' ' + A_.unplaced.teams + ' teams with no region set yet (TZS ' + anPptB2_(A_.unplaced.balance) + ' outstanding) are not in these rows.' : '';
+    if (regs.length >= 2) regionPages('Active portfolio by region', regs, { series: 'Outstanding (TZS billion)', value: function (r) { return +(r.balance / 1e9).toFixed(2); }, fmt: '0.00', color: C.a1, name: 'Balance by region',
+      head: ['Region', 'Cust.', 'Bal. (B)', 'Behind', 'Arrears %'], widths: [1.5, 0.75, 0.95, 0.95, 1.05],
+      line: function (r) { return [short(r.region, 18), anPptN0_(r.customers), (r.balance / 1e9).toFixed(2), anPptN0_(r.behind), anPptPc_(r.arrearsPct)]; },
+      note: 'As at ' + A_.date + ', regions ranked by outstanding balance. Arrears % is arrears over the balance, summed over the region\'s customers.' + au,
+      noteMore: 'Regions ranked by outstanding balance, as at ' + A_.date + '.' });
     var tms = (A_.byTeam || []).slice(0, 12);
     if (tms.length >= 4) {
       var s3 = content('Active portfolio by team');
@@ -571,9 +706,9 @@ function anPptBuild_(Pptx, M, A) {
     note(s1, 'Notices dated ' + M.year + (L_.asOf ? ', recovery as at the ' + L_.asOf + ' defaulter deck' : '') + '. Each customer is counted once, at their earliest notice.', 4.75, 0.3);
     var s2 = content('Notices by month and by state');
     var ms = L_.byMonth.filter(function (m) { return m.notices > 0; });
-    chart(s2, ms.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Notices', values: ms.map(function (m) { return m.notices; }) }], { x: 0.3, y: 1.0, w: 5.0, h: 3.6, colors: [C.a1], name: 'Notices by month', fmt: '#,##0', gap: 40 });
+    lineChart(s2, ms.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Notices', values: ms.map(function (m) { return m.notices; }) }], { x: 0.3, y: 1.0, w: 5.0, h: 3.6, colors: [C.a1], name: 'Notices by month', fmt: '#,##0', axisFmt: '0', min: 0 });
     var st = (L_.byState || []).filter(function (x) { return x.notices > 0; }).slice(0, 5);
-    if (st.length) chart(s2, st.map(function (x) { return stateWord(x.state); }), [{ name: 'Notices', values: st.map(function (x) { return x.notices; }) }], { x: 5.4, y: 1.0, w: 4.3, h: 3.6, dir: 'bar', reverse: true, colors: [C.a2], name: 'Notices by state', fmt: '#,##0', gap: 35, dl: 9, cat: 9 });
+    if (st.length) doughnut(s2, st.map(function (x) { return stateWord(x.state); }), st.map(function (x) { return x.notices; }), { x: 5.4, y: 1.0, w: 4.3, h: 3.6, name: 'Notices by state', series: 'Notices' });
     heading2(s2, 'By month', 0.5, 0.75, 4.0, C.text2); heading2(s2, 'Where the notices stand now', 5.5, 0.75, 4.0, C.text2);
     note(s2, 'The busiest month was ' + anPptLong_(ms.reduce(function (a, m) { return m.notices > a.notices ? m : a; }, ms[0]).ym) + ' with ' + ms.reduce(function (a, m) { return Math.max(a, m.notices); }, 0) + ' notices.', 4.7, 0.3);
     var tms = (L_.byTeam || []).slice(0, 12);
@@ -581,6 +716,29 @@ function anPptBuild_(Pptx, M, A) {
       var s3 = content('Legal by team');
       table(s3, [['Team', 'Region', 'Notices', 'Demanded (M)', 'Paid since (M)', 'Recovery %']].concat(tms.map(function (t) { return [t.team, t.region || '—', anPptN0_(t.notices), anPptN0_(t.demanded / 1e6), L_.paymentsOn ? anPptN0_(t.paidSince / 1e6) : '—', anPptPc_(t.recoveryPct)]; })), 0.5, 1.0, 9.0, [2.0, 1.9, 1.0, 1.5, 1.4, 1.2], { fs: 9.5, rowH: 0.28, name: 'Legal by team table', textCols: [0, 1] });
       note(s3, 'The twelve teams with the most demanded in ' + M.year + '. Recovery % is the arrears drop over what the letters chased.', 4.7, 0.3);
+    }
+    /* THE LEGAL OFFICERS: the register records who issued each notice, so volume and what came back are
+       read per officer, each customer counted once at their earliest notice from that officer. */
+    var ofs = (L_.byOfficer || []).slice(0, 12);
+    if (ofs.length) {
+      var s4 = content('Legal officers: notices and results');
+      table(s4, [['Officer', 'Notices', 'Customers', 'Teams', 'Demanded (M)', 'Paid since (M)', 'Recovery %', 'Cleared']].concat(ofs.map(function (o) { return [short(o.officer, 26), anPptN0_(o.notices), anPptN0_(o.customers), anPptN0_(o.teams), anPptN0_(o.demanded / 1e6), L_.paymentsOn ? anPptN0_(o.paidSince / 1e6) : '—', anPptPc_(o.recoveryPct), anPptN0_(o.cleared)]; })),
+        0.5, 1.0, 9.0, [2.3, 0.8, 0.95, 0.7, 1.2, 1.2, 1.0, 0.85], { fs: 9.5, rowH: 0.28, name: 'Legal officers table', textCols: [0] });
+      note(s4, 'The officer who issued each notice, ' + M.year + ', most notices first. Recovery % is the arrears drop over what that officer\'s letters chased. Cleared is customers who owe nothing now.', 4.72, 0.45);
+      var rc = ofs.filter(function (o) { return o.recoveryPct != null; }).sort(function (a, b) { return b.recoveryPct - a.recoveryPct; }).slice(0, 10);
+      if (rc.length >= 3) {
+        var s5 = content('Recovery by legal officer');
+        chart(s5, rc.map(function (o) { return short(o.officer, 20); }), [{ name: 'Recovery %', values: rc.map(function (o) { return +o.recoveryPct.toFixed(1); }) }], { x: 0.4, y: 1.0, w: 5.9, h: 4.1, dir: 'bar', reverse: true, colors: [C.a3], name: 'Recovery by legal officer', fmt: '0.0', gap: 30, min: 0, max: Math.max(100, Math.ceil(Math.max.apply(null, rc.map(function (o) { return o.recoveryPct; })) / 10) * 10), dl: 9, cat: 9 });
+        bullets(s5, [[{ text: rc[0].officer + ' leads at ' + anPptPc_(rc[0].recoveryPct) + ', ', bold: true }, { text: 'on ' + anPptN0_(rc[0].notices) + ' notices.' }],
+          [{ text: 'Ranked by recovery, ', bold: true }, { text: 'the arrears drop over what each officer\'s letters chased.' }],
+          [{ text: 'Register ' + anPptPc_(L_.recoveryPct) + ', ', bold: true }, { text: 'all officers together.' }]], 6.5, 1.2, 3.0, 3.6, 12.5);
+      }
+    }
+    if (M.legalRole.length) {
+      var s6 = content('Legal officers: the teams they hold');
+      table(s6, [['Officer', 'Teams', 'Months', 'Sales %', 'Collect.', 'Recov.', 'General']].concat(M.legalRole.slice(0, 12).map(function (r) { return [short(r.name, 26), anPptN0_(r.teams), anPptN0_(r.months), anPptPc0_(r.salesPct), anPptPc0_(r.colPct), anPptPc0_(r.recPct), anPptPc0_(r.general)]; })),
+        0.5, 1.0, 9.0, [2.8, 0.9, 0.95, 1.0, 1.1, 1.1, 1.15], { fs: 9.5, rowH: 0.28, name: 'Legal officers teams table', textCols: [0] });
+      note(s6, 'The legal officer recorded on each team in Teams & Staff, judged on those teams as any leader is: the average of their sales, collection and recovery, month by month.', 4.72, 0.45);
     }
   })();
 
@@ -643,6 +801,7 @@ function anPptBuild_(Pptx, M, A) {
       [{ text: 'Percentages. ', bold: true }, { text: 'Sales % is sales over TZS ' + anPptM1_(M.target) + ' per team per month; collection % is collected over expected; recovery % is recovered over uncollected. A year is the average of the months that have happened.' }],
       [{ text: 'Retention. ', bold: true }, { text: 'A loan whose track number is not 1 belongs to a returning customer, so retention is loans less track 1 loans, over loans.' }],
     ];
+    if (noRegion) b.push([{ text: 'Regions. ', bold: true }, { text: noRegion + ' of ' + T.length + ' teams have no region set in Teams & Staff yet, so they are not in the regional slides. Set them there and export again.' }]);
     if (M.pending.length) b.push([{ text: 'Still being built. ', bold: true }, { text: 'Collection and recovery for ' + M.pending.map(function (m) { return anPptLong_(m.ym); }).join(', ') + ' were not ready when this was exported, so they are blank. Export again shortly.' }]);
     if (M.stamped) b.push([{ text: M.year + '. ', bold: true }, { text: 'Collection and PAR are the year\'s, as the ' + M.year + ' report closed them; there is no monthly collection or recovery for this year.' }]);
     if (BK.par || BK.portfolio || BK.legal) b.push([{ text: 'The books. ', bold: true }, { text: 'Portfolio at risk' + (parDate ? ' and the active portfolio are the portal\'s books as at ' + parDate : ' and the active portfolio are the portal\'s books as at the latest deck') + (M.complete ? ', not rebuilt for the end of ' + M.year : '') + '. Legal counts the notices dated ' + M.year + ', with recovery as at the latest deck.' }]);

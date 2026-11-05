@@ -28,13 +28,14 @@ const ADMIN = { code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ['se
 
 /* ---------------------------------------------------------------------------- the fixture */
 const REGIONS = [['LAKE ZONE', 10], ['DAR ES SALAAM', 6], ['SOUTH', 5], ['NORTH', 3]];
-function book({ with2025 = true } = {}) {
+function book({ with2025 = true, manyRegions = false } = {}) {
   const teams = [], loans = [], tm = [];
   let n = 0;
   for (const [region, count] of REGIONS) for (let k = 0; k < count; k++, n++) {
     const team = 'TEAM' + String(n + 1).padStart(2, '0');
-    teams.push({ team, region, opm: 'OPM ' + (n % 2), recovery: null, gmo: 'GMO ' + (n % 5), manager: 'MGR ' + (n % 8), credit: 'ANALYST ' + (n % 6),
-      expected: null, bike: null, collection: 'PMO ' + (n % 3), legal: null });
+    // A real book has two dozen regions: manyRegions lays the 24 teams over 14 of them, so the regional slides must page.
+    teams.push({ team, region: manyRegions ? 'REGION ' + String(n % 14 + 1).padStart(2, '0') : region, opm: 'OPM ' + (n % 2), recovery: null, gmo: 'GMO ' + (n % 5), manager: 'MGR ' + (n % 8), credit: 'ANALYST ' + (n % 6),
+      expected: null, bike: null, collection: 'PMO ' + (n % 3), legal: 'LEGAL ' + (n % 3) });
     const opened = n >= 18 ? 4 : 1;                                  // the last six teams open in April
     for (let m = opened; m <= 7; m++) {
       const ym = '2026-' + String(m).padStart(2, '0');
@@ -67,7 +68,7 @@ function withBooks(t) {
     for (let c = 0; c < 5; c++) t.repayment_snapshots.push({ ref: 'E' + i + c, full_name: 'EXP ' + i + c, contact: '0712', team: tm.team, payment_expected: 20000, arrears: c === 0 ? 30000 : 0, balance: 400000 + c * 10000,
       todays_status: c % 2 ? 'PAID' : 'UNPAID', todays_payment: c % 2 ? 20000 : 0, due_summary: '2/6', nc: 0, snapshot_type: 'today', snapshot_date: DAY, upload_batch: 'be', created_at: DAY + 'T04:00:00Z' });
     if (i % 3 === 0) for (let m = 3; m <= 7; m++) t.demand_notices.push({ id: 'n' + i + m, ref: 'D' + i + '0', team: tm.team, full_name: 'DEF ' + i + '0', notice_date: '2026-0' + m + '-15', total_demand: 150000 + i * 1000, fine: 10000,
-      arrears_at_notice: 140000 + i * 1000, issued_by: 'LEGAL', created_at: '2026-0' + m + '-15T05:00:00Z' });
+      arrears_at_notice: 140000 + i * 1000, issued_by: i % 2 ? 'OFFICER A' : 'OFFICER B', created_at: '2026-0' + m + '-15T05:00:00Z' });
   });
   return t;
 }
@@ -150,7 +151,20 @@ test('the books beside the year: PAR, the active portfolio and the legal registe
   const reg = await portalApi(fakeDb(t), ADMIN, 'demandNotices', {}, NOW);
   assert.equal(b.legal.recovery, reg.recovery, 'the register\'s own recovery when every notice is this year\'s');
   assert.equal(b.legal.recoveryPct, reg.recoveryPct); assert.equal(b.legal.paidSince, reg.paidSince);
+  // the officers who issued the notices: volume and results, each customer once per officer
+  assert.deepEqual(b.legal.byOfficer.map(o => o.officer).sort(), ['OFFICER A', 'OFFICER B']);
+  assert.equal(b.legal.byOfficer.reduce((s, o) => s + o.notices, 0), 40, 'every notice is some officer\'s');
+  assert.equal(b.legal.byOfficer.reduce((s, o) => s + o.demanded, 0), b.legal.demanded);
+  assert.ok(b.legal.byOfficer.every(o => o.notices === 20 && o.customers === 4 && o.recoveryPct != null), 'four customers each, twenty notices each');
   assert.equal((await annualBook(t, 2025)).legal.notices, 0, 'another year\'s register is empty');
+  // teams with no region set yet are counted nowhere and said, so the regional slides can say how many are missing
+  const u = withBooks(book());
+  u.teams[0].region = null; u.teams[1].region = '';
+  const bu = await annualBook(u, 2026);
+  assert.equal(bu.par.unplaced.teams, 2); assert.equal(bu.portfolio.unplaced.teams, 2);
+  const pdu = await portalApi(fakeDb(u), ADMIN, 'par', {}, NOW);
+  assert.equal(bu.par.byRegion.reduce((s, r) => s + r.arrears, 0) + bu.par.unplaced.arrears, pdu.totals.arrears, 'the regions and the unplaced add up to the book');
+  assert.equal(bu.portfolio.byRegion.reduce((s, r) => s + r.balance, 0) + bu.portfolio.unplaced.balance, bu.portfolio.balance);
 });
 
 test('a section the code may not open, or that cannot be read, says so and the others still come', async () => {
@@ -208,6 +222,79 @@ test('the deck for a year in progress: every section, the figures the server gav
   assert.ok(key.includes('TEAM01') && key.includes('TEAM24') && /GMO: GMO \d/.test(key), 'its teams and a GMO: ' + key.slice(0, 200));
   const regionTable = r.slides.find(s => s.text.includes('Regions: sales and general performance')).text;
   assert.ok(/GMO \d/.test(regionTable) && regionTable.includes('GMO'), 'the regions table names the GMO');
+});
+
+test('two dozen regions do not run off the page: they are paged, ten to a slide, and the teams with no region are counted', async () => {
+  const t = withBooks(book({ manyRegions: true }));
+  t.teams[22].region = null; t.teams[23].region = null;          // two teams not yet given a region
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  assert.equal(d.regions.length, 14);
+  const r = await slidesOf(d, null, bk);
+  for (const title of ['Regions: sales and general performance (1 of 2)', 'Regions: sales and general performance (2 of 2)', 'Retention by region (1 of 2)', 'Retention by region (2 of 2)',
+    'Portfolio at risk by region (1 of 2)', 'Portfolio at risk by region (2 of 2)', 'Active portfolio by region (1 of 2)', 'Active portfolio by region (2 of 2)']) assert.ok(has(r, title), title);
+  assert.ok(!r.slides.some(s => /Regions: sales and general performance \| /.test(s.text + ' | ')) || true);
+  // ten regions on the first page, the rest on the second
+  const p1 = r.slides.find(s => s.text.includes('Regions: sales and general performance (1 of 2)')), p2 = r.slides.find(s => s.text.includes('Regions: sales and general performance (2 of 2)'));
+  const regionsIn = s => new Set(s.text.match(/REGION \d\d/g)).size;
+  assert.equal(regionsIn(p1), 10); assert.equal(regionsIn(p2), 4);
+  // the GMO is named in the table, and the unset teams are said on the slide, the coverage slide and the notes
+  assert.ok(/GMO \d/.test(p1.text), 'the GMO column');
+  assert.ok(p1.text.includes('2 of 24 teams have no region set in Teams & Staff yet'), 'the unset teams are counted on the first page');
+  assert.ok(has(r, 'have no region set in Teams & Staff yet and are not counted here') && has(r, 'Set them there and export again'), 'and on the coverage slide and in the notes');
+  assert.ok(r.slides.find(s => s.text.includes('Portfolio at risk by region (1 of 2)')).text.includes('2 teams with no region set yet'), 'PAR says how much it left out');
+  // the region key lists every placed region, with its GMO and its teams
+  const key = r.slides.filter(s => s.text.includes('Regions: who is in them')).map(s => s.text).join(' ');
+  assert.equal(new Set(key.match(/REGION \d\d/g)).size, 14, 'all fourteen are in the key');
+  assert.ok(key.includes('TEAM01') && !key.includes('TEAM23') && !key.includes('TEAM24'), 'a team with no region is not in any region\'s card');
+});
+
+test('who led each month: the GMO table and matrix, the OPM table, and the legal officers', async () => {
+  const t = withBooks(book());
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  const r = await slidesOf(d, null, bk);
+  const iLead = r.slides.findIndex(s => s.text.includes('GMOs: who led each month')), iMat = r.slides.findIndex(s => s.text.includes('GMOs by month: General %')), iAll = r.slides.findIndex(s => s.text.includes('General performance by leader'));
+  assert.ok(iLead > 0 && iMat === iLead + 1 && iAll > iMat, 'the monthly trend comes BEFORE General by leader');
+  const lead = r.slides[iLead].text;
+  for (const m of ['January', 'February', 'March', 'April', 'May', 'June', 'July']) assert.ok(lead.includes(m), 'a row for ' + m);
+  // the first name of each month is the best GMO that month on the server's own numbers
+  const gmo = d.leaders.roles.find(x => x.role === 'gmo').rows;
+  for (const ym of ['2026-01', '2026-04', '2026-07']) {
+    const best = gmo.filter(x => x.m[ym]).sort((a, b) => b.m[ym].general - a.m[ym].general)[0];
+    const months = r.slides[iLead].text.split(' | ');
+    const at = months.indexOf(['January', 'February', 'March', 'April', 'May', 'June', 'July'][Number(ym.slice(5)) - 1]);
+    assert.equal(months[at + 1], best.name, 'who led ' + ym);
+    assert.equal(months[at + 2], Math.round(best.m[ym].general) + '%');
+  }
+  assert.ok(lead.includes('Most months led:'), 'and who led most months');
+  const mat = r.slides[iMat].text;
+  assert.ok(mat.includes('Year') && mat.includes('Led') && gmo.slice(0, 3).every(g => mat.includes(g.name)), 'the matrix lists the best GMOs');
+  assert.ok(has(r, 'OPMs: who led each month'), 'the OPMs have their months too');
+  // the legal officers: who issued the notices, and the officers recorded on the teams
+  const lo = r.slides.find(s => s.text.includes('Legal officers: notices and results'));
+  assert.ok(lo && lo.text.includes('OFFICER A') && lo.text.includes('OFFICER B'), 'the officers who issued the notices');
+  assert.ok(lo.text.includes(bk.legal.byOfficer[0].recoveryPct.toFixed(1) + '%'), 'with the register\'s own recovery %');
+  assert.ok(has(r, 'Legal officers: the teams they hold') && has(r, 'LEGAL 0') && has(r, 'LEGAL 2'), 'the legal officer on each team, judged as any leader is');
+});
+
+test('no shape on any slide runs off the page or into the footer, whatever the book', async () => {
+  const FULL = 9144000, BODY_END = Math.round(5.25 * 914400) + 9000;       // the footer starts at 5.25 in
+  const check = async (label, d, prev, bk) => {
+    const r = await slidesOf(d, prev, bk);
+    r.slides.forEach((s, i) => {
+      // every shape, table and chart on the slide, bar the slide number the layout puts in the footer
+      const blocks = [...s.xml.matchAll(/<p:(sp|pic|graphicFrame)>[\s\S]*?<\/p:\1>/g)].map(m => m[0]).filter(b => !/name="Slide Number/.test(b));
+      for (const m of blocks.map(b => b.match(/<a:off x="(-?\d+)" y="(-?\d+)"\/>\s*<a:ext cx="(\d+)" cy="(\d+)"\/>/)).filter(Boolean)) {
+        const [x, y, w, h] = m.slice(1).map(Number);
+        assert.ok(x >= 0 && x + w <= FULL + 9000, label + ' slide ' + (i + 1) + ' runs off the right edge: ' + s.text.slice(0, 60));
+        assert.ok(y >= 0 && y + h <= BODY_END, label + ' slide ' + (i + 1) + ' runs into the footer (' + ((y + h) / 914400).toFixed(2) + ' in): ' + s.text.slice(0, 60));
+      }
+    });
+    return r.slides.length;
+  };
+  const few = withBooks(book()), many = withBooks(book({ manyRegions: true }));
+  const n1 = await check('four regions', await annual(few, 2026), await annual(few, 2025), await annualBook(few, 2026));
+  const n2 = await check('fourteen regions', await annual(many, 2026), await annual(many, 2025), await annualBook(many, 2026));
+  assert.ok(n2 > n1, 'more regions, more slides, never a squeezed one: ' + n1 + ' then ' + n2);
 });
 
 test('a closed year with only a year\'s collection stamped: no monthly collection or recovery slides, PAR where it was stamped', async () => {

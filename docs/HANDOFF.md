@@ -3687,6 +3687,23 @@ observations, what to focus on, what is not here, notes. Not in it, said on its 
 headcount, loan-application pipeline (the portal keeps no history of stages), court cases and lawyer cost
 (the portal holds notices), fleet.
 
+**Fitting a real book (two dozen regions).** Lists that can be long are PAGED, ten regions to a slide (bars and
+table carry the same ten, titles read "(1 of 3)"), never squeezed; names are shortened, the region key flows
+into columns across slides, and a test fails any shape that runs off a slide or into the footer. Teams with
+no region set in Teams & Staff are counted nowhere and said, on the regional slides, the coverage slide and
+the notes (`unplaced` on the PAR and portfolio sections says how much arrears or balance that leaves out).
+
+**Not every chart is a bar.** A trend is a line (teams, sales against last year, collection, recovery, notices,
+"How the year moved" with the three measures and General), a share is a doughnut (network by region,
+first-time against returning, arrears by days overdue and by status, the portfolio by status, notices by
+state), a spread of teams is a scatter ("Where each team sits": sales against collection), and bars are kept
+for rankings. All native charts. **Who led each month:** before General by leader, a table of each month's
+top three GMOs, a matrix of the best GMOs month by month with each month's leader marked and a count of
+months led, and a line chart of the five best ("the monthly race"); the OPMs get the table. **Legal
+officers:** the register's issuer is the officer, so `annualBook.legal.byOfficer` carries notices,
+customers, demanded, paid since, recovery % and cleared per officer (each customer once, by `noticeTiles_`),
+and the legal officer recorded on each team in Teams & Staff is shown beside it with the teams they hold.
+
 **Cost.** `annualBook` is the PAR tab, the register and the Expected tab added together (the defaulter deck
 is read twice, as when both tabs are open); the speed table carries it (18 / 5,300 un-migrated, 16 / 3,300
 migrated) with the reason. Never on `/api/upload` or `/api/call`. `test/annualppt.test.mjs` runs the real
