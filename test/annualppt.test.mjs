@@ -213,7 +213,7 @@ test('the deck for a year in progress: every section, the figures the server gav
   assert.ok(!contents.includes('as the year closed it'), '2026 carries no stamped PAR, so no year-close PAR section');
   // the figures on the books slides are the server's
   const par = r.slides.find(s => s.text.includes('Portfolio at risk: the book as at')).text;
-  assert.ok(par.includes(bk.par.totals.par.toFixed(1) + '%') && par.includes('TZS ' + (bk.par.totals.arrears / 1e9).toFixed(2) + 'B'), 'PAR and arrears: ' + par.slice(0, 160));
+  assert.ok(par.includes(bk.par.totals.parAll.toFixed(1) + '%') && par.includes('TZS ' + (bk.par.totals.arrears / 1e9).toFixed(2) + 'B'), 'the all-time PAR and the arrears: ' + par.slice(0, 160));
   const act = r.slides.find(s => s.text.includes('Active portfolio: customers on')).text;
   assert.ok(act.includes('120') && act.includes('TZS ' + (bk.portfolio.balance / 1e9).toFixed(2) + 'B'), 'the active portfolio\'s customers and balance');
   const leg = r.slides.find(s => s.text.includes('Legal: demand notices in')).text;
@@ -335,7 +335,7 @@ test('the maps: the whole country coloured by the books, the teams of an alias a
   // the other three maps
   for (const title of ['Regions on the map: General performance', 'Portfolio at risk on the map', 'Active portfolio on the map']) assert.ok(has(r, title), title);
   const par = r.slides.find(s => s.text.includes('Portfolio at risk on the map')).text;
-  assert.ok(par.includes('Highest PAR') && /\d+\.\d%/.test(par), 'PAR as a percentage on the map');
+  assert.ok(par.includes('Highest all-time PAR') && /\d+\.\d%/.test(par), 'the all-time PAR as a percentage on the map');
   // two slides at most for coverage: the doughnut and the map, both kept
   assert.ok(has(r, 'Coverage across') && has(r, 'Where HOPE works'), 'the doughnut and the map both stay');
 });
@@ -583,4 +583,57 @@ test('the GMO zones: no slide while fewer than two zones are set, and a book wit
   const z = r.slides.find(x => /GMO zones on the map/.test(x.text));
   assert.ok(z && z.text.includes('12 GMO zones') && z.text.includes('2 more zones share the grey'), 'ten are named, the rest are grouped and said');
   assert.equal((z.xml.match(/name="Zone key /g) || []).length, 10);
+});
+
+/* "Gm said we drop the arrears over balance concept in all slides -- doesn't want to present it to the directors -- and replace with the current
+   year PAR (all time per year, not balance) ... drop the PAR concept and live with all time PAR only." */
+test('no slide presents arrears over balance: the PAR slides carry the all-time PAR only, the active portfolio carries arrears as an amount', async () => {
+  const t = withBooks(book({ realRegions: true }));
+  const d = await annual(t, 2026), bk = await annualBook(t, 2026);
+  // the fixture's regions all come out at 0.1%: give each its own arrears and lent amount, so a ranking can tell them apart (and differ from balance)
+  bk.par.byRegion.forEach((x, i) => { x.totalLoan = 1e9 + i * 1e8; x.arrears = (i + 1) * 1.1e7; x.balance = x.arrears * 2.5; x.parAll = Math.round(x.arrears / x.totalLoan * 1000) / 10; x.par = 40; });
+  const r = await slidesOf(d, null, bk);
+  for (const x of r.slides) {
+    assert.ok(!/over the balance|arrears over balance|Arrears %/.test(x.text), 'no balance-based wording on: ' + x.text.slice(0, 70));
+    // once the all-time PAR is taken out, no slide names a PAR at all: the old balance-based one is gone, not renamed
+    const left = x.text.replace(/all-time PAR/gi, '');
+    assert.ok(!/\bPAR\b/.test(left), 'a bare PAR is named on: ' + x.text.slice(0, 70) + ' -> ' + (left.match(/.{0,25}\bPAR\b.{0,15}/) || [''])[0]);
+  }
+  // the PAR slide: the all-time PAR leads, with what it is over
+  const first = r.slides.find(x => x.text.includes('Portfolio at risk: the book as at')).text;
+  assert.ok(first.includes('ALL-TIME PAR') && first.includes(bk.par.totals.parAll.toFixed(1) + '%') && first.includes('EVER LENT') && first.includes('over everything ever lent') && first.includes('principal and interest'), 'the all-time PAR, over everything lent: ' + first.slice(0, 260));
+  assert.ok(!first.includes(bk.par.totals.par.toFixed(1) + '%') || bk.par.totals.par.toFixed(1) === bk.par.totals.parAll.toFixed(1), 'the balance-based figure is not on it');
+  // regions, ranked by the all-time PAR, with what each has lent
+  const reg = r.slides.find(x => /Portfolio at risk by region/.test(x.text));
+  assert.ok(reg && reg.text.includes('All-time PAR') && reg.text.includes('Lent (M)') && reg.text.includes('ranked by all-time PAR'), 'the region slide: ' + (reg && reg.text.slice(0, 200)));
+  // the map is coloured by arrears over what the region has lent, summed over its teams (an alias such as Kahama added to its region)
+  const ctx = deckCtx(), canon = n => ctx.anPptCanonRegion_(n), sums = {};
+  for (const x of bk.par.byRegion) { const c = canon(x.region); if (!c) continue; const e = sums[c] = sums[c] || { a: 0, l: 0 }; e.a += x.arrears; e.l += x.totalLoan; }
+  const ranked = Object.entries(sums).filter(([, e]) => e.l > 0).map(([n, e]) => [n, Math.round(e.a / e.l * 1000) / 10]).sort((a, b) => b[1] - a[1]);
+  const map = r.slides.find(x => x.text.includes('Portfolio at risk on the map'));
+  assert.ok(map.text.includes('Highest all-time PAR') && map.text.includes('ALL-TIME PAR %'), 'the map says what it shows');
+  // the list under the key: the highest three (four when there is no gap row to make room), each at arrears over what its teams have lent -- not over balance (which the fixture makes 40%)
+  const listed = ranked.slice(0, 3).map(([n, v]) => n + '  ' + v.toFixed(1) + '%');
+  const flat = map.text.replace(/\s*\|\s*/g, ' | ');
+  assert.ok(listed.every(x => flat.includes(x)), 'the highest, by arrears over lent: ' + listed.join('; ') + ' in ' + flat.slice(flat.indexOf('Highest all-time PAR'), flat.indexOf('Highest all-time PAR') + 200));
+  assert.ok(!/\b40\.0%/.test(map.text), 'and none at the old balance-based 40%');
+  const regText = reg.text.replace(/\s+/g, ' ').toLowerCase();
+  assert.ok(regText.indexOf(ranked[0][0].toLowerCase()) >= 0 && regText.includes(ranked[0][1].toFixed(1)), 'the region slide has the same top region, at the same figure: ' + ranked[0].join(' ') + ' in ' + regText.slice(0, 300));
+  assert.ok(map.text.includes(anPct1(bk.par.totals.parAll) + ' all-time PAR'), 'its heading is the company\'s all-time PAR');
+  // the teams: arrears, and the all-time PAR beside it
+  const teams = r.slides.find(x => x.text.includes('Portfolio at risk by team'));
+  assert.ok(teams && teams.text.includes('Lowest all-time PAR') && teams.text.includes('Most arrears') && teams.text.includes('All-time'), 'the team slide');
+  // the active portfolio: arrears as an amount, never over the balance
+  const act = r.slides.filter(x => /Active portfolio/.test(x.text)).map(x => x.text).join(' ');
+  assert.ok(act.includes('Arrears (M)') && !/Arrears %/.test(act) && /regions ranked by outstanding balance\. Behind is the customers with arrears/.test(act.replace(/\s+/g, ' ')), 'the active portfolio says arrears in TZS million');
+  const reg0 = bk.portfolio.byRegion.slice().sort((a, b) => b.balance - a.balance)[0];
+  assert.ok(act.includes(Math.round(reg0.arrears / 1e6).toLocaleString('en-US')), 'a region\'s arrears amount is on the table');
+});
+const anPct1 = v => Number(v).toFixed(1) + '%';
+
+test('a closed year keeps the year-close slide, which is the workbook\'s own figure (collection = 100 - PAR), not arrears over balance', async () => {
+  const d = await annual(book(), 2025);
+  const r = await slidesOf(d, null);
+  const yc = r.slides.find(x => /Portfolio at risk by team, as the 2025 report closed it/.test(x.text));
+  assert.ok(yc && yc.text.includes('PAR %') && yc.text.includes('Total def'), 'the stamped year-close PAR by team is still presented');
 });

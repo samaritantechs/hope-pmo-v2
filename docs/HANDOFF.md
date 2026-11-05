@@ -3719,6 +3719,15 @@ regions put where they belong and said on the slide (Kahama into Shinyanga, Coas
 that is none of them, such as a zone (`LAKE ZONE`), is not guessed: it is listed under "Not on the map". Two registry names that
 land on one region are added together (teams, arrears, balance; PAR is recomputed from the sums, never averaged).
 
+**One PAR in the deck: the all-time PAR.** "We drop the arrears over balance concept in all slides ... doesn't want to present it to the directors ... live with all time
+PAR only." The books slides no longer show the balance-based PAR (arrears over the balance of customers in arrears) anywhere. *Portfolio at risk* leads with the
+**all-time PAR** — the arrears over the total loan (principal and interest) of everything ever lent, since the first sale — beside the arrears, what was ever lent and the
+average loan; the regions are ranked by it (with each region's arrears and what it has lent), the map is coloured by it (a region's arrears over what its teams have lent,
+an alias such as Kahama added to its region), and the team slide shows it beside the arrears. The *Active portfolio* slides carry the arrears as an amount (TZS million)
+where they used to carry "Arrears %" (arrears over the balance). A closed year's **year-close** slide ("Portfolio at risk by team, as the 2025 report closed it") stays: it
+is the workbook's own stamped figure (its collection is 100 − PAR), not the balance ratio. The PAR *tab* in the portal is unchanged (it still reads both, the all-time one
+to one decimal, Part 38). A test fails any slide that says "over the balance", "Arrears %" or names a PAR once the all-time PAR is taken out.
+
 **The gaps: the regions we are not in yet.** "Even the regions we aint in yet -- mention them / show, so that we are well aware of the
 gaps." A region is *in* when a team in it sold in the period (`presence`, from the same regions the coverage map uses); the rest of the
 31 are `gaps`. They are drawn on **every** map as a white region with a dashed edge (`Gap <name>` in the file), apart from a grey region
