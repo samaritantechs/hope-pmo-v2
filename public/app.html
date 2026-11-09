@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-05-l';
+var BUILD = '2026-11-09-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3148,16 +3148,6 @@ function wireBar(){
   }
   var ob = document.getElementById('ordBtn');
   if (ob) ob.onclick = function(){ openOrderPanel(S.sort || (S.cols[0]||{}).key); };
-  var mw = document.getElementById('mailWeekly');
-  if (mw) mw.onclick = function(){
-    if (!confirm('Tuma ripoti ya wiki kwa admin? / Email this week’s report to the admin address?')) return;
-    mw.disabled = true; mw.textContent = 'Inatuma… / Sending…';
-    srv('emailWeeklyExpdf', {})
-      .then(function(r){ toast('Imetumwa kwa ' + r.to + '. / Sent.'); mw.disabled = false;
-        mw.textContent = '✉ Tuma wiki kwa admin / Email weekly report'; })
-      .catch(function(e){ toast(String(e.message||e), true); mw.disabled = false;
-        mw.textContent = '✉ Tuma wiki kwa admin / Email weekly report'; });
-  };
   Array.prototype.forEach.call(document.querySelectorAll('[data-wd]'), function(el){
     el.onclick = function(){ S.args.weekday = el.getAttribute('data-wd'); render(); };
   });
@@ -4357,7 +4347,7 @@ VIEWS.expdfrep = function(){
     var t = d.totals, w = XD_WORDS[d.period] || XD_WORDS.day;
     var byRole = {};
     (d.sections || []).forEach(function(sec){ byRole[sec.role] = sec.totals || {}; });
-    HEAD = xdBar_(d, '<button class="btn sm" id="mailWeekly" style="margin-left:auto">✉ Tuma wiki kwa admin / Email weekly report</button>')
+    HEAD = xdBar_(d)
       + '<div class="kpis">'
       + kpi('Wateja / Customers', money(t.customers), xdSpan_(d))
       + kpi('Deni la awali / Initial', money(t.initial), w.base + (d.baseDate ? ' · ' + d.baseDate : ''))
