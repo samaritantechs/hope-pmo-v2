@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-09-d';
+var BUILD = '2026-11-09-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4321,9 +4321,11 @@ function xdSpan_(d){ var p = XD_WORDS[d.period] || XD_WORDS.day; return p.of + '
    week, before Recovered, on each board and on a leader's card: what that day recovered, by the DAILY report's own figure for that officer
    (server: byDay), so an officer lays their own daily numbers beside the row and the columns add up to Recovered. A day nobody filed shows
    blank and says so in its header's tooltip. Same getters feed the cells, the sort, the totals and the Excel/CSV/JPG. */
+/* A Sunday nobody filed is not a day a deck is expected for (the rotation rolls Sunday into Monday): it gets no column and no tab. A Sunday that WAS filed does. */
+function xdShowDay_(x){ return x.measured || String(x.weekday).toUpperCase() !== 'SUN'; }
 function xdDayCols_(d){
   if (d.period !== 'week' || !d.days || !d.days.length) return [];
-  return d.days.map(function(x){
+  return d.days.filter(xdShowDay_).map(function(x){
     var dt = String(x.date);
     return { key: 'd_' + dt, label: x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8), kind: 'money',
       title: x.measured
@@ -4456,14 +4458,22 @@ VIEWS.expdfrep = function(){
 function xdLeader_(el){
   var role = el.getAttribute('data-tap-role'), leader = el.getAttribute('data-tap-leader');
   if (!leader) return;
+  xdLeaderOpen_(role, leader, S.args.weekOf || '', null);
+}
+var XD_SEQ_ = 0;   // the newest card request: a slower answer to an older tap never paints over it
+/* One read per card, whichever week it shows: the first tap and every step to the next or the previous week are the same call. */
+function xdLeaderOpen_(role, leader, weekOf, wantDay){
+  var seq = ++XD_SEQ_;
   drawer('<h3>'+esc(leader)+' <span class="chip ok">'+esc(role)+'</span></h3><div class="sk"></div>', { wide: true });
   // The same period as the report on screen, so the card says what the row says.
-  srv('expdfLeader', { role: role, leader: leader, period: S.args.period || 'day', weekOf: S.args.weekOf || '' }).then(function(d){
+  srv('expdfLeader', { role: role, leader: leader, period: S.args.period || 'day', weekOf: weekOf || '' }).then(function(d){
+    if (seq !== XD_SEQ_) return;
     var t = d.totals || {};
     var mins = xdMins_;
     var head = '<h3>'+esc(d.leader)+' <span class="chip ok">'+esc(d.role)+'</span></h3>'
-      + '<div class="mut" style="font-size:12px;margin-bottom:8px">'+esc(xdSpan_(d))
-      + (d.pastWeek ? ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') : '') + '</div>';
+      + (d.period === 'week' ? xdWeekStep_(d)
+        : '<div class="mut" style="font-size:12px;margin-bottom:8px">'+esc(xdSpan_(d))
+          + (d.pastWeek ? ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') : '') + '</div>');
     var html = '<div class="kpis">'
       + kpi('Wateja / Customers', money(t.customers), 'kwenye mzunguko wake katika kipindi hiki / in their rotation this period')
       + kpi('Simu za portfolio / Portfolio calls', money(t.calls), money(t.dials)+' dials · '+money(t.reached)+' wateja / customers · '+mins(t.talk)+' talk', t.calls?'good':'bad')
@@ -4491,9 +4501,37 @@ function xdLeader_(el){
           : '');
     /* THE DAY TABS (a week only): Week | Mon 20 | Tue 21 ... inside the card, like the expected days' tabs. The body below the tabs is the only
        part that changes, so a tab opens no second drawer and asks the server for nothing: the days came with the card. */
-    XD_CARD_ = { d: d, weekBody: html, weekBoard: BOARDS.xd_leader, tab: 'week' };
+    XD_CARD_ = { d: d, weekBody: html, weekBoard: BOARDS.xd_leader, tab: 'week', role: role, leader: leader };
     drawer(head + xdTabs_(d, 'week') + '<div id="xdCardBody">' + html + '</div>', { wide: true, xls: 'xd_leader' });
-  }).catch(function(e){ drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
+    // Stepping to another week keeps the weekday you were on: Tuesday of this week -> Tuesday of the week before.
+    if (wantDay && (d.dayTabs || []).some(function(y){ return String(y.date) === wantDay; })) xdLeaderTab_(wantDay);
+  }).catch(function(e){ if (seq === XD_SEQ_) drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
+}
+/* THE WEEK, FORWARD AND BACK, INSIDE THE CARD -- "we can swap the forward and backward weeks in the cards". The weekly card steps a week at a time
+   without closing it, like the arrows on the report's bar, and says which week it is on, and where it is past or upcoming. The report behind
+   stays on its own week. */
+function xdWeekStep_(d){
+  var chip = d.pastWeek
+      ? '<span class="chip warn">Kipindi kilichopita / past \u00b7 kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') + '</span>'
+      : (d.weekFuture ? '<span class="chip ok">Kipindi kijacho / upcoming</span>' : '<span class="chip mut">wiki hii / this week</span>');
+  return '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+    + '<button type="button" class="btn sm ghost" onclick="xdLeaderStep_(-1)" title="Wiki iliyopita / previous week">\u25c0</button>'
+    + '<b style="font-size:12.5px">' + esc(xdSpan_(d)) + '</b>'
+    + '<button type="button" class="btn sm ghost" onclick="xdLeaderStep_(1)" title="Wiki ijayo / next week">\u25b6</button>'
+    + chip
+    + ((d.pastWeek || d.weekFuture) ? '<button type="button" class="btn sm ghost" onclick="xdLeaderStep_(0)">Rudi wiki hii / Back to this week</button>' : '')
+    + '</div>';
+}
+function xdLeaderStep_(n){
+  var c = XD_CARD_, from = c && c.d && (c.d.from || c.d.weekOf);
+  if (!from) return;
+  var at = function(k){ return new Date(k + 'T09:00:00Z'); }, key = function(dt){ return dt.toISOString().slice(0, 10); };
+  var mon;
+  if (n === 0) { mon = at(today()); mon.setUTCDate(mon.getUTCDate() - ((mon.getUTCDay() + 6) % 7)); }
+  else { mon = at(from); mon.setUTCDate(mon.getUTCDate() + 7 * n); }
+  var want = null;
+  if (c.tab && c.tab !== 'week') { var w = at(key(mon)); w.setUTCDate(w.getUTCDate() + Math.round((at(c.tab) - at(from)) / 86400000)); want = key(w); }
+  xdLeaderOpen_(c.role, c.leader, key(mon), want);
 }
 var XD_CARD_ = null;   // the card on screen: its answer, its week body and the tab it shows
 function xdMins_(sec){ sec = Number(sec)||0; return sec >= 3600 ? Math.floor(sec/3600)+'h '+Math.round((sec%3600)/60)+'m' : Math.round(sec/60)+'m'; }
@@ -4502,7 +4540,7 @@ function xdTabs_(d, tab){
   var wk = d.totals || {};
   return '<div class="pills" id="xdCardTabs" style="margin:4px 0 10px">'
     + '<button type="button" class="pill'+(tab==='week'?' on':'')+'" data-xdtab="week" onclick="xdLeaderTab_(\'week\')">Wiki / Week <b>('+money(wk.recovered||0)+')</b></button>'
-    + d.dayTabs.map(function(x){
+    + d.dayTabs.filter(xdShowDay_).map(function(x){
         var dt = String(x.date), nm = x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8);
         return '<button type="button" class="pill'+(tab===dt?' on':'')+'" data-xdtab="'+esc(dt)+'" onclick="xdLeaderTab_(\''+esc(dt)+'\')"'
           + (x.measured ? '' : ' title="'+esc(dt)+' haikupakiwa / not filed" style="opacity:.55"')+'>'+esc(nm)

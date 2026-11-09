@@ -4823,6 +4823,28 @@ test('the weekly card files a comment under the EAT day it was written, not the 
   assert.equal(tab.FRI.totals.comments, 1); assert.equal(tab.THU.totals.comments, 0);
 });
 
+/* STEPPING THE CARD A WEEK BACK -- "we can swap the forward and backward weeks in the cards". The card asks for the week it is on by its Monday;
+   a week behind is read as it stood on its Friday, with its own day tabs, the same as the report for that week. */
+test('the weekly card for an earlier week is that week\'s own card, tabs and all, read as it stood on its Friday', async () => {
+  const t = expdfWeekTables();
+  const LATER = Date.parse('2026-07-31T09:00:00Z');   // the Friday a week after the decks
+  const db = fakeDb(t);
+  const back = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-20' }, LATER);
+  assert.equal(back.pastWeek, true); assert.equal(back.from, '2026-07-20'); assert.equal(back.to, '2026-07-26');
+  assert.deepEqual(back.dayTabs.map(x => [x.date, x.measured]), [['2026-07-20', true], ['2026-07-21', true], ['2026-07-22', true], ['2026-07-23', true], ['2026-07-24', true]]);
+  assert.equal(back.totals.recovered, 600);
+  // The same card as when it was the current week; only the way it is read differs.
+  const now = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
+  assert.deepEqual(back.dayTabs.map(x => x.totals && x.totals.recovered), now.dayTabs.map(x => x.totals && x.totals.recovered));
+  // The week before it has no decks in this book: its tabs are there, unfiled, and nothing is borrowed.
+  const before = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-13' }, LATER);
+  assert.equal(before.from, '2026-07-13'); assert.equal(before.pastWeek, true); assert.equal(before.totals.recovered, 0); assert.deepEqual(before.rows, []);
+  assert.ok(before.dayTabs.every(x => !x.measured && x.rows.length === 0));
+  // The week after: upcoming, nothing filed yet.
+  const next = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-08-03' }, LATER);
+  assert.equal(next.weekFuture, true); assert.equal(next.from, '2026-08-03');
+});
+
 test('the weekly card\'s day tab for an unfiled day is there, empty, and says why', async () => {
   const t = expdfWeekTables();
   t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.weekday === 'WED' && r.snapshot_type === 'current'));

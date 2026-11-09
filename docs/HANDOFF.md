@@ -3553,6 +3553,14 @@ exactly as the week matches), and a comment's day is its EAT day. So a tab equal
 (`test/portal.test.mjs` compares them tab by tab); work done on a customer on another day is in the Week figures, not on that day's tab,
 and the tab says so. Switching tabs is client-side: the card's body swaps and the Excel button exports whichever tab is open (`XD_CARD_`).
 
+**Stepping the weekly card a week back or forward** ("We can swap the forward and backward weeks in the cards"; BUILD 2026-11-09-e). The weekly
+officer card has **◀ week ▶** arrows beside the week it shows, a chip saying whether it is this week, a past one ("as it stood" its Friday) or an upcoming
+one, and *Rudi wiki hii / Back to this week* when it is not the current one. A step is the same single `expdfLeader` read as opening the card, asked
+for the week by its Monday, so each week is the card for that week with its own day tabs; the weekday tab you were on is kept (Tuesday this week
+-> Tuesday last week) where that week has it. The report behind the card stays on its own week. A newer tap wins over a slower older answer
+(`XD_SEQ_`). Day and month cards have no arrows. An unfiled Sunday gets no day column or tab (the rotation rolls Sunday into Monday; a Sunday
+that WAS filed still shows). Nothing here touches `/api/upload` or `/api/call`; no migration.
+
 **The "Tuma wiki kwa admin / Email weekly report" button is gone** from the report's bar ("Remove the tuma weekly
 report kwa admin button at expected defaulters"; BUILD 2026-11-09-a): the bar is the three pills, the date and the arrows.
 The server action `emailWeeklyExpdf` (admin only, uses `RESEND_API_KEY`, `ADMIN_EMAIL`, `EMAIL_FROM`) is left in place and
