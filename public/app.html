@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-09-c';
+var BUILD = '2026-11-09-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4460,11 +4460,11 @@ function xdLeader_(el){
   // The same period as the report on screen, so the card says what the row says.
   srv('expdfLeader', { role: role, leader: leader, period: S.args.period || 'day', weekOf: S.args.weekOf || '' }).then(function(d){
     var t = d.totals || {};
-    var mins = function(sec){ sec = Number(sec)||0; return sec >= 3600 ? Math.floor(sec/3600)+'h '+Math.round((sec%3600)/60)+'m' : Math.round(sec/60)+'m'; };
-    var html = '<h3>'+esc(d.leader)+' <span class="chip ok">'+esc(d.role)+'</span></h3>'
+    var mins = xdMins_;
+    var head = '<h3>'+esc(d.leader)+' <span class="chip ok">'+esc(d.role)+'</span></h3>'
       + '<div class="mut" style="font-size:12px;margin-bottom:8px">'+esc(xdSpan_(d))
-      + (d.pastWeek ? ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') : '') + '</div>'
-      + '<div class="kpis">'
+      + (d.pastWeek ? ' · kama ilivyokuwa / as it stood ' + esc(d.asOfDate||'') : '') + '</div>';
+    var html = '<div class="kpis">'
       + kpi('Wateja / Customers', money(t.customers), 'kwenye mzunguko wake katika kipindi hiki / in their rotation this period')
       + kpi('Simu za portfolio / Portfolio calls', money(t.calls), money(t.dials)+' dials · '+money(t.reached)+' wateja / customers · '+mins(t.talk)+' talk', t.calls?'good':'bad')
       + kpi('Maoni / Comments', money(t.comments), money(t.commented)+' wateja / customers', t.comments?'good':'bad')
@@ -4489,8 +4489,67 @@ function xdLeader_(el){
               + (c.fu_status ? ' <span class="chip '+chipFor(c.fu_status)+'">'+esc(c.fu_status)+'</span>' : '')
               + ' <span class="mut">'+esc(String(c.created_at||'').slice(0,10))+'</span><br>'+esc(c.comment||'')+'</div>'; }).join('')
           : '');
-    drawer(html, { wide: true, xls: 'xd_leader' });
+    /* THE DAY TABS (a week only): Week | Mon 20 | Tue 21 ... inside the card, like the expected days' tabs. The body below the tabs is the only
+       part that changes, so a tab opens no second drawer and asks the server for nothing: the days came with the card. */
+    XD_CARD_ = { d: d, weekBody: html, weekBoard: BOARDS.xd_leader, tab: 'week' };
+    drawer(head + xdTabs_(d, 'week') + '<div id="xdCardBody">' + html + '</div>', { wide: true, xls: 'xd_leader' });
   }).catch(function(e){ drawer('<div class="msg bad">'+esc(String(e.message||e))+'</div>'); });
+}
+var XD_CARD_ = null;   // the card on screen: its answer, its week body and the tab it shows
+function xdMins_(sec){ sec = Number(sec)||0; return sec >= 3600 ? Math.floor(sec/3600)+'h '+Math.round((sec%3600)/60)+'m' : Math.round(sec/60)+'m'; }
+function xdTabs_(d, tab){
+  if (!d.dayTabs || !d.dayTabs.length) return '';
+  var wk = d.totals || {};
+  return '<div class="pills" id="xdCardTabs" style="margin:4px 0 10px">'
+    + '<button type="button" class="pill'+(tab==='week'?' on':'')+'" data-xdtab="week" onclick="xdLeaderTab_(\'week\')">Wiki / Week <b>('+money(wk.recovered||0)+')</b></button>'
+    + d.dayTabs.map(function(x){
+        var dt = String(x.date), nm = x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8);
+        return '<button type="button" class="pill'+(tab===dt?' on':'')+'" data-xdtab="'+esc(dt)+'" onclick="xdLeaderTab_(\''+esc(dt)+'\')"'
+          + (x.measured ? '' : ' title="'+esc(dt)+' haikupakiwa / not filed" style="opacity:.55"')+'>'+esc(nm)
+          + ' <b>('+(x.measured ? money(x.totals.recovered) : '\u2014')+')</b></button>'; }).join('')
+    + '</div>';
+}
+function xdLeaderTab_(tab){
+  var c = XD_CARD_, body = document.getElementById('xdCardBody');
+  if (!c || !body) return;
+  c.tab = tab;
+  var x = tab === 'week' ? null : (c.d.dayTabs || []).filter(function(y){ return String(y.date) === tab; })[0];
+  if (!x) { body.innerHTML = c.weekBody; BOARDS.xd_leader = c.weekBoard; }
+  else { var day = xdDayBody_(c.d, x); body.innerHTML = day.html; BOARDS.xd_leader = day.board; }
+  Array.prototype.forEach.call(document.querySelectorAll('#xdCardTabs .pill'), function(el){ el.classList.toggle('on', el.getAttribute('data-xdtab') === tab); });
+}
+/* ONE DAY OF THE WEEK'S CARD: the daily card for that day -- the customers whose cycle day it was, that day's initial deck against that day's
+   current one, and that day's calls and comments on them -- so an officer lays their own day beside it. A day nobody filed says so. */
+function xdDayBody_(d, x){
+  var dt = String(x.date), nm = x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8);
+  if (!x.measured) return { board: { title: d.leader + ' \u00b7 ' + d.role + ' \u00b7 ' + dt, rows: [], cols: [] },
+    html: '<div class="note">' + esc(dt) + ' haikupakiwa (' + esc(x.why || '') + ') \u2014 hakuna kilichoongezwa kwa siku hii. / not filed (' + esc(x.why || '') + ') \u2014 nothing is added for this day.</div>' };
+  var t = x.totals || {};
+  var html = '<div class="kpis">'
+    + kpi('Wateja / Customers', money(t.customers), 'kwenye orodha yake ' + dt + ' / on their list that day')
+    + kpi('Simu za portfolio / Portfolio calls', money(t.calls), money(t.dials)+' dials \u00b7 '+money(t.reached)+' wateja / customers \u00b7 '+xdMins_(t.talk)+' talk', t.calls?'good':'bad')
+    + kpi('Maoni / Comments', money(t.comments), money(t.commented)+' wateja / customers', t.comments?'good':'bad')
+    + kpi('Marejesho / Recovered', money(t.recovered), (t.pct==null?'\u2014':t.pct+'%')+' ya awali / of initial \u00b7 '+money(t.recoveredCustomers)+' wateja / customers', t.recovered>0?'good':'')
+    + '</div>'
+    + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyelinganishwa na <b>'+esc(d.leader)+'</b>, hivyo simu zinasoma 0. / Nobody in HOPE Calls matches <b>'+esc(d.leader)+'</b>, so calls read 0.</div>')
+    + '<div class="mut" style="font-size:11.5px;margin:6px 0">Hii ni kadi ya siku ' + esc(nm) + ': wateja wa mzunguko wa siku hiyo, orodha yake ya awali dhidi ya ya mwisho wa siku hiyo, na simu na maoni ya siku hiyo kwa wateja hao. Kazi ya siku nyingine kwa mteja huyu ipo kwenye Wiki. / '
+    + 'This is the daily card for ' + esc(nm) + ': that day\u2019s rotation list, the day\u2019s own initial deck against its own current one, and that day\u2019s calls and comments on those customers. Work done on another day counts in the Week tab.</div>';
+  var cols = [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'), col('status','Status'),
+    col('calls','Calls','num'), col('dials','Dials','num'), col('lastCall','Last call','date'),
+    col('comments','Comments','num'), col('lastStatus','Last status'), col('lastComment','Last comment'),
+    col('initial','Initial','money'), {key:'arrears', label:'Arrears', kind:'money', cls:function(){ return 'bad'; }},
+    {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}];
+  var rows = x.rows || [];
+  var board = { title: d.leader + ' \u00b7 ' + d.role + ' \u00b7 ' + dt, rows: rows, cols: cols };
+  html += rows.length
+    ? tableSimple(rows, cols, {full_name:'', ref:'', team:'', cycle:'', status:'', calls:t.calls, dials:t.dials, lastCall:'', comments:t.comments, lastStatus:'', lastComment:'',
+        initial:t.initial, arrears:t.arrears, recovered:t.recovered})
+    : '<div class="note">Hakuna mteja kwenye orodha yake siku hii. / Nobody was on their list this day.</div>';
+  html += (x.recent||[]).length ? '<h4 style="margin:12px 0 6px">Maoni ya siku / Comments of the day</h4>'
+    + x.recent.map(function(c){ return '<div style="font-size:12px;padding:5px 0;border-bottom:1px solid var(--line)"><b>'+esc(c.full_name||c.ref)+'</b>'
+        + (c.fu_status ? ' <span class="chip '+chipFor(c.fu_status)+'">'+esc(c.fu_status)+'</span>' : '')
+        + ' <span class="mut">'+esc(String(c.created_at||'').slice(0,10))+'</span><br>'+esc(c.comment||'')+'</div>'; }).join('') : '';
+  return { html: html, board: board };
 }
 /* THE PERSON LIST FOLLOWS THE OTHER FILTERS -- "after choosing role I expect choosing the person lists people of the chosen role too, not
    stuck on all". The dropdown used to be built once, from every leader due that day, and picking a team, a status or a role afterwards only
