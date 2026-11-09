@@ -187,8 +187,9 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
       /* byDay: what THIS day added to this leader's book on this customer -- the daily report's own figure for the day, kept so the
          week can show its days (the proof that an officer's week is their days added). */
-      if (!c) cells.set(k, { ...r, days: 1, byDay: { [d]: { initial: r.initial, recovered: r.recovered } } });
-      else { c.byDay[d] = { initial: r.initial, recovered: r.recovered };
+      const dayCell = { initial: r.initial, arrears: r.arrears, recovered: r.recovered, status: r.status };   // arrears + status: the day's own, for the card's day tabs
+      if (!c) cells.set(k, { ...r, days: 1, byDay: { [d]: dayCell } });
+      else { c.byDay[d] = dayCell;
         Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1, byDay: c.byDay }); }
     }
     days.push({ date: d, weekday: wd, measured: true, customers: list.length });
@@ -351,10 +352,10 @@ export function sameName(a, b) {
 function bad_(msg) { const e = new Error(msg); e.status = 400; throw e; }
 const per_ = () => ({ calls: new Set(), dials: 0, talk: 0, lastCall: null, comments: 0, lastComment: null, lastStatus: null, lastAt: null });
 
-export async function weekWork(db, books, weekOf, weekEnd) {
+export async function weekWork(db, books, weekOf, weekEnd, { perDay = false } = {}) {
   const work = {};
   for (const b of books) work[b.key] = { dayNums: new Set(), dials: 0, talk: 0, connected: new Set(), called: new Set(),
-    comments: 0, commented: new Set(), per: {}, recent: [] };
+    comments: 0, commented: new Set(), per: {}, recent: [], days: {} };
   const named = books.filter(b => b.leader && b.leader !== '(unassigned)' && b.rows.length);
   for (const b of named) b.phones = new Set((b.phones ? [...b.phones] : []).concat(b.rows.map(r => nine_(r.leaderPhone))).filter(Boolean));
   const inCalls = {};
@@ -403,19 +404,36 @@ export async function weekWork(db, books, weekOf, weekEnd) {
     try { alts = await fetchAll(() => db.from('followup_comments').select('ref, new_number').not('new_number', 'is', null).neq('new_number', '')); } catch (e) { alts = []; }
     for (const a of alts) { const r = K(a.ref), d = nine_(a.new_number); if (r && d) (altByRef[r] = altByRef[r] || []).push(d); }
   }
-  const index = b => {
-    if (b._idx) return b._idx;
+  const indexOf = rows => {
     const refSet = new Set(), byPhone = {};
-    for (const r of b.rows) {
+    for (const r of rows) {
       const ref = K(r.ref); refSet.add(ref);
       for (const ph of [r.contact, r.guarantor_contact].concat(altByRef[ref] || [])) { const n = nine_(ph); if (n && !byPhone[n]) byPhone[n] = ref; }
     }
-    return (b._idx = { refSet, byPhone });
+    return { refSet, byPhone };
   };
+  const index = b => b._idx || (b._idx = indexOf(b.rows));
+  /* PER DAY (the weekly card's day tabs). The day's book is the customers on this leader's list THAT day -- the daily report's own list --
+     and a call or a comment counts on a day only for them, by the same matching, so a day tab reads what the daily card for that day reads.
+     Same rows, same two reads as the week: nothing here asks the database for more. */
+  const dayIndex = (b, day) => { b._didx = b._didx || {}; return b._didx[day] || (b._didx[day] = indexOf(b.rows.filter(r => r.byDay && r.byDay[day]))); };
+  const dayWork = (w, day) => w.days[day] || (w.days[day] = { dayNums: new Set(), dials: 0, talk: 0, connected: new Set(), called: new Set(),
+    comments: 0, commented: new Set(), per: {}, recent: [] });
   for (const c of calls) {
     for (const b of (idBooks[c.user_id] || [])) {
       const { refSet, byPhone } = index(b);
       const ref = refSet.has(K(c.ref)) ? K(c.ref) : (byPhone[nine_(c.phone)] || null);
+      if (perDay) {
+        const day = String(c.call_date).slice(0, 10), di = dayIndex(b, day);
+        const dref = di.refSet.has(K(c.ref)) ? K(c.ref) : (di.byPhone[nine_(c.phone)] || null);
+        if (dref) {
+          const dw = dayWork(work[b.key], day), dk = day + '|' + nine_(c.phone), dp = dw.per[dref] || (dw.per[dref] = per_());
+          dp.calls.add(dk); dp.dials++; dp.talk += num(c.duration);
+          if (!dp.lastCall || String(c.call_date) > dp.lastCall) dp.lastCall = String(c.call_date);
+          dw.dayNums.add(dk); dw.dials++; dw.talk += num(c.duration); dw.called.add(dref);
+          if (K(c.outcome) === 'CONNECTED') dw.connected.add(dk);
+        }
+      }
       if (!ref) continue;
       const w = work[b.key], key = String(c.call_date) + '|' + nine_(c.phone);
       const p = w.per[ref] || (w.per[ref] = per_());
@@ -442,6 +460,17 @@ export async function weekWork(db, books, weekOf, weekEnd) {
   for (const c of comments) {
     for (const b of (nameBooks[K(c.created_by)] || [])) {
       const { refSet } = index(b); const ref = K(c.ref);
+      if (perDay) {
+        const day = todayKey(Date.parse(c.created_at));        // the EAT day it was written, the clock the daily report keeps
+        if (dayIndex(b, day).refSet.has(ref)) {
+          const dw = dayWork(work[b.key], day), dp = dw.per[ref] || (dw.per[ref] = per_());
+          dp.comments++;
+          if (!dp.lastAt || String(c.created_at) > dp.lastAt) { dp.lastAt = String(c.created_at); dp.lastComment = c.comment || null; dp.lastStatus = c.fu_status || null; }
+          dw.comments++; dw.commented.add(ref);
+          dw.recent.push({ ref: c.ref, full_name: c.full_name || null, comment: c.comment || '', fu_status: c.fu_status || null,
+            promise_date: c.promise_date || null, promise_amt: c.promise_amt == null ? null : num(c.promise_amt), created_at: c.created_at });
+        }
+      }
       if (!refSet.has(ref)) continue;
       const w = work[b.key], p = w.per[ref] || (w.per[ref] = per_());
       p.comments++;
@@ -458,8 +487,14 @@ function finish_(work) {
   for (const k of Object.keys(work)) {
     const w = work[k];
     w.recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const days = {};
+    for (const [d, x] of Object.entries(w.days)) {
+      x.recent.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      days[d] = { calls: x.dayNums.size, dials: x.dials, talk: x.talk, connected: x.connected.size, reached: x.called.size,
+        comments: x.comments, commented: x.commented.size, per: x.per, recent: x.recent };
+    }
     out[k] = { calls: w.dayNums.size, dials: w.dials, talk: w.talk, connected: w.connected.size, reached: w.called.size,
-      comments: w.comments, commented: w.commented.size, per: w.per, recent: w.recent };
+      comments: w.comments, commented: w.commented.size, per: w.per, recent: w.recent, days };
   }
   return out;
 }
@@ -531,7 +566,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
   const win = bookWeek_(nowMs, weekOf, weekEnd);
   const core = weekly ? await expdfWeekCore(db, user, nowMs, { from: win.weekOf, to: win.weekEnd }) : await expdfCore(db, user, nowMs, { weekly, monthly });
   const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && K(r.leader) === K(L));
-  const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd);
+  const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd, { perDay: weekly });
   const w = work.one;
   const out = rows.map(r => { const p = w.per[K(r.ref)] || per_(); return {
     ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, cycle: r.cycle, status: r.status,
@@ -541,8 +576,29 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
     comments: p.comments, lastComment: p.lastComment, lastStatus: p.lastStatus }; })
     .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
   const t = sumExpdf(rows);
+  /* THE DAY TABS (a week only): "after opening officer card have day tabs within, as the expected days tabs" -- what this leader's list was
+     on each day of the week and what came of it, so an officer can refer to any day. Each tab is the daily card for that day: the day's own
+     initial deck against the day's own current one for the customers whose cycle day it was, and the calls and comments of that day on them.
+     Built from the rows and the two reads the week already made. A day nobody filed has its tab and no rows. */
+  const dayTabs = weekly ? (core.days || []).map(x => {
+    if (!x.measured) return { date: x.date, weekday: x.weekday, measured: false, why: x.why || null, rows: [], totals: null, recent: [] };
+    const dw = (w.days || {})[x.date] || {}, per = dw.per || {};
+    const list = rows.filter(r => r.byDay && r.byDay[x.date]).map(r => { const v = r.byDay[x.date], p = per[K(r.ref)] || per_(); return {
+      ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, cycle: r.cycle, status: v.status || r.status,
+      initial: v.initial, arrears: v.arrears, recovered: v.recovered,
+      calls: p.calls.size, dials: p.dials, talk: p.talk, lastCall: p.lastCall,
+      comments: p.comments, lastComment: p.lastComment, lastStatus: p.lastStatus }; })
+      .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
+    const sum = f => list.reduce((s, r) => s + r[f], 0);
+    return { date: x.date, weekday: x.weekday, measured: true, rows: list,
+      totals: { customers: list.length, initial: sum('initial'), arrears: sum('arrears'), recovered: sum('recovered'), pct: pctOf(sum('recovered'), sum('initial')),
+        recoveredCustomers: list.filter(r => r.recovered > 0).length,
+        calls: dw.calls || 0, dials: dw.dials || 0, talk: dw.talk || 0, connected: dw.connected || 0, reached: dw.reached || 0,
+        comments: dw.comments || 0, commented: dw.commented || 0 },
+      recent: (dw.recent || []).slice(0, 10) };
+  }) : null;
   return { role: R, leader: L, period: core.baseline, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
-    days: core.days || null,
+    days: core.days || null, ...(dayTabs ? { dayTabs } : {}),
     totals: { ...t, recoveredCustomers: rows.filter(r => r.recovered > 0).length,
       calls: w.calls, dials: w.dials, talk: w.talk, connected: w.connected,
       reached: w.reached, comments: w.comments, commented: w.commented },

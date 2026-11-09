@@ -4762,6 +4762,76 @@ test('the expdf week is the sum of its days, officer by officer -- what each off
   assert.equal(dayRep.totals.byDay, undefined); assert.equal(Object.values(keyed_(dayRep))[0].byDay, undefined);
 });
 
+/* THE DAY TABS ON THE WEEKLY CARD -- "for the weekly tab only, so that they can refer what was achieved each day by officer; maybe after opening
+   officer card have day tabs within, as the expected days tabs". Each day tab is the DAILY card for that day, so an officer can lay the two
+   side by side: the customers on their list that day, the day's own recovery, and the calls and comments of that day on THOSE customers.
+   BIKE BEE holds A1 on Tuesday and C1 on Friday (see expdfWeekTables); a call or a comment on A1 on Wednesday is in the week's work but not on
+   Wednesday's tab, because A1 was not on BIKE's list that day. */
+test('the weekly leader card carries a tab per day, each equal to the daily card for that day, from the same reads', async () => {
+  const t = expdfWeekTables();
+  t.call_users.push({ user_id: 'UBB', name: 'Bike Bee', team: 'KONGOWE', role: 'BIKE', is_leader: true });
+  t.call_logs.push(
+    { id: 'k1', user_id: 'UBB', officer: 'Bike Bee', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: '2026-07-21', duration: 100, portfolio: true, outcome: 'CONNECTED' },
+    { id: 'k2', user_id: 'UBB', officer: 'Bike Bee', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: '2026-07-21', duration: 20, portfolio: true, outcome: 'MISSED' },    // same number, same day: one call, two dials
+    { id: 'k3', user_id: 'UBB', officer: 'Bike Bee', team: 'KONGOWE', phone: '071400001', ref: 'A1', call_date: '2026-07-22', duration: 60, portfolio: true, outcome: 'CONNECTED' },  // Wednesday: A1 is not on BIKE's list that day
+    { id: 'k4', user_id: 'UBB', officer: 'Bike Bee', team: 'KONGOWE', phone: '071400077', ref: 'C1', call_date: '2026-07-24', duration: 45, portfolio: true, outcome: 'CONNECTED' });
+  t.followup_comments.push(
+    { id: 'm1', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'ameahidi kesho', fu_status: 'AMETOA AHADI', created_by: 'BIKE BEE', created_at: '2026-07-21T07:00:00Z' },
+    { id: 'm2', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'Jumatano', fu_status: 'AMETOA AHADI', created_by: 'BIKE BEE', created_at: '2026-07-22T08:00:00Z' },        // Wednesday: not his list that day
+    { id: 'm3', ref: 'C1', team: 'KONGOWE', full_name: 'CC1', comment: 'amelipa nusu', fu_status: 'AMELIPA', created_by: 'BIKE BEE', created_at: '2026-07-24T07:00:00Z' },
+    { id: 'm4', ref: 'A1', team: 'KONGOWE', full_name: 'CA1', comment: 'jioni', fu_status: 'AMETOA AHADI', created_by: 'BIKE BEE', created_at: '2026-07-21T15:00:00Z' });        // 18:00 EAT, still Tuesday
+  const db = fakeDb(t);
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
+  assert.deepEqual(card.dayTabs.map(x => [x.weekday, x.measured]), [['MON', true], ['TUE', true], ['WED', true], ['THU', true], ['FRI', true]]);
+  const tab = Object.fromEntries(card.dayTabs.map(x => [x.weekday, x]));
+  // The days: who was on the list, and what each day recovered.
+  assert.deepEqual(tab.MON.rows, []); assert.equal(tab.MON.totals.customers, 0);
+  assert.deepEqual(tab.TUE.rows.map(r => [r.ref, r.initial, r.arrears, r.recovered]), [['A1', 1000, 700, 300]]);
+  assert.deepEqual(tab.WED.rows, []); assert.deepEqual(tab.THU.rows, []);
+  assert.deepEqual(tab.FRI.rows.map(r => [r.ref, r.initial, r.arrears, r.recovered]), [['C1', 400, 100, 300]]);
+  // The work of the day, on that day's customers only: Tuesday's two dials are one call; Wednesday's call and comment on A1 are not his that day.
+  assert.deepEqual([tab.TUE.totals.calls, tab.TUE.totals.dials, tab.TUE.totals.talk, tab.TUE.totals.comments], [1, 2, 120, 2], 'Tuesday\'s two comments');
+  assert.equal(tab.TUE.rows[0].lastComment, 'jioni', 'the newest of the day'); assert.equal(tab.TUE.rows[0].lastCall, '2026-07-21');
+  assert.deepEqual([tab.WED.totals.calls, tab.WED.totals.comments], [0, 0]);
+  assert.deepEqual([tab.FRI.totals.calls, tab.FRI.totals.dials, tab.FRI.totals.comments], [1, 1, 1]);
+  assert.deepEqual(tab.TUE.recent.map(c => c.comment), ['jioni', 'ameahidi kesho']);
+  // The week still counts all of A1's work for the week's book; the days are the daily reading of it.
+  assert.deepEqual([card.totals.calls, card.totals.comments], [3, 4]);
+  assert.equal(card.dayTabs.reduce((a, x) => a + x.totals.recovered, 0), card.totals.recovered, 'the days add up to the week');
+  // Each tab IS the daily card for that day (the same rows, the same figures, the same calls and comments).
+  for (const x of card.dayTabs) {
+    const dc = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'day', weekOf: x.date }, NOW);
+    assert.deepEqual(x.rows.map(r => [r.ref, r.initial, r.arrears, r.recovered, r.calls, r.dials, r.comments]).sort(),
+      dc.rows.map(r => [r.ref, r.initial, r.arrears, r.recovered, r.calls, r.dials, r.comments]).sort(), x.weekday + ': the tab is the daily card\'s rows');
+    for (const f of ['customers', 'initial', 'arrears', 'recovered', 'calls', 'dials', 'talk', 'comments']) assert.equal(x.totals[f], dc.totals[f], x.weekday + ' ' + f);
+    assert.equal(dc.dayTabs, undefined, 'a daily card carries no tabs');
+  }
+  const month = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'month' }, NOW);
+  assert.equal(month.dayTabs, undefined, 'tabs are for the week only');
+  // The report does not pay for any of it: no per-day work unless a card asks.
+  const rep = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.equal(rep.sections.find(s => s.role === 'BIKE').rows[0].calls, 3);
+});
+
+test('the weekly card files a comment under the EAT day it was written, not the UTC one', async () => {
+  const t = expdfWeekTables();
+  t.call_users.push({ user_id: 'UBB', name: 'Bike Bee', team: 'KONGOWE', role: 'BIKE', is_leader: true });
+  // 00:30 EAT on Friday is still Thursday in UTC; BIKE has nobody on Thursday, C1 is on his Friday list.
+  t.followup_comments.push({ id: 'm9', ref: 'C1', team: 'KONGOWE', full_name: 'CC1', comment: 'usiku wa manane', fu_status: 'AMELIPA', created_by: 'BIKE BEE', created_at: '2026-07-23T21:30:00Z' });
+  const card = await portalApi(fakeDb(t), ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
+  const tab = Object.fromEntries(card.dayTabs.map(x => [x.weekday, x]));
+  assert.equal(tab.FRI.totals.comments, 1); assert.equal(tab.THU.totals.comments, 0);
+});
+
+test('the weekly card\'s day tab for an unfiled day is there, empty, and says why', async () => {
+  const t = expdfWeekTables();
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.weekday === 'WED' && r.snapshot_type === 'current'));
+  const card = await portalApi(fakeDb(t), ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  const wed = card.dayTabs.find(x => x.weekday === 'WED');
+  assert.equal(wed.measured, false); assert.equal(wed.why, 'no current deck'); assert.deepEqual(wed.rows, []); assert.equal(wed.totals, null);
+  assert.equal(card.dayTabs.length, 5);
+});
+
 test('the expdf week adds only the days that were filed; an older deck on the same weekday never stands in', async () => {
   const t = expdfWeekTables();
   // Wednesday's current deck was never uploaded this week; LAST Wednesday's decks are still in the book.

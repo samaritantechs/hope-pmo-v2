@@ -1598,7 +1598,7 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(/'<div class="dxbar">' \+ xls \+ '<button class="dx"/.test(drawer), 'Excel comes before the (x)');
   const leaderCard = app.slice(app.indexOf('function xdLeader_(el)'), app.indexOf('VIEWS.defexp = function'));
   assert.ok(/BOARDS\.xd_leader = \{ title: d\.leader \+ ' · ' \+ d\.role/.test(leaderCard) && /rows: d\.rows \|\| \[\], cols: cols \}/.test(leaderCard), 'the leader card registers its customers as a board');
-  assert.ok(/drawer\(html, \{ wide: true, xls: 'xd_leader' \}\)/.test(leaderCard), 'and asks for the Excel button');
+  assert.ok(/drawer\(head \+ xdTabs_\(d, 'week'\) \+ '<div id="xdCardBody">' \+ html \+ '<\/div>', \{ wide: true, xls: 'xd_leader' \}\)/.test(leaderCard), 'and asks for the Excel button (the heading, the day tabs, then the body)');
   assert.ok(!/var BUILD = '2026-11-03-a'/.test(app), 'BUILD moved for the Excel button');
   /* "Exp.Def Report should be daily . . put a weekly and monthly on buttons in front of calendar
      date picker there": three pills before the date, day by default, the arrows step by the
@@ -1839,6 +1839,17 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
   assert.ok(/row\.byDay = \(totals \|\| \{\}\)\.byDay/.test(dayTot), 'a total row carries byDay, because the day columns\' getter reads r.byDay (keys like d_<date> read as 0 across the whole row)');
   const lead = app.slice(app.indexOf('function xdLeader_(el){'), app.indexOf('function xdLeaderList_(rows){'));
   assert.ok(/\.concat\(xdDayCols_\(d\)\)/.test(lead) && /xdDayTotals_\(d, t, \{full_name:/.test(lead), 'the leader\'s card carries them too, and its Excel exports them');
+  // "For the weekly tab only ... after opening officer card have day tabs within, as the expected days tabs": Week | Mon 20 | ... inside the card.
+  assert.ok(/XD_CARD_ = \{ d: d, weekBody: html, weekBoard: BOARDS\.xd_leader, tab: 'week' \};/.test(lead) && /xdTabs_\(d, 'week'\) \+ '<div id="xdCardBody">'/.test(lead), 'the card opens on the Week with the day tabs above one body');
+  const tabs = app.slice(app.indexOf('function xdTabs_(d, tab){'), app.indexOf('function xdDayBody_(d, x){'));
+  assert.ok(/!d\.dayTabs \|\| !d\.dayTabs\.length\) return ''/.test(tabs), 'a day or a month card has no tabs');
+  assert.ok(/data-xdtab="week"/.test(tabs) && /d\.dayTabs\.map\(function\(x\)/.test(tabs) && /haikupakiwa \/ not filed/.test(tabs), 'Week first, then a tab per day, the unfiled ones marked');
+  assert.ok(/body\.innerHTML = day\.html; BOARDS\.xd_leader = day\.board;/.test(tabs) && /body\.innerHTML = c\.weekBody; BOARDS\.xd_leader = c\.weekBoard;/.test(tabs), 'a tab swaps the body and the Excel table, and asks the server for nothing');
+  assert.ok(!/srv\(/.test(tabs.slice(tabs.indexOf('function xdLeaderTab_'), tabs.indexOf('function xdDayBody_'))) , 'switching tabs makes no request');
+  const dayBody = app.slice(app.indexOf('function xdDayBody_(d, x){'), app.indexOf('/* THE PERSON LIST FOLLOWS THE OTHER FILTERS'));
+  assert.ok(/if \(!x\.measured\)/.test(dayBody) && /not filed/.test(dayBody), 'a day nobody filed says so');
+  assert.ok(/daily card for/.test(dayBody) && /Work done on another day counts in the Week tab/.test(dayBody), 'the tab says it is the daily card and where the rest of the work is');
+  assert.ok(/col\('status','Status'\)/.test(dayBody) && /Recovered/.test(dayBody) && /Maoni ya siku \/ Comments of the day/.test(dayBody), 'the day\'s customers, their status, calls, comments and recovery');
   assert.ok(/Marejesho kwa siku \/ Recovered by day/.test(note) && /equals the week/.test(note), 'a by-day line under the cards says the days equal the week');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)

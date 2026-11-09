@@ -3539,6 +3539,20 @@ use the same values. The total row hands the same getter `byDay` (`xdDayTotals_`
 total cell read 0 -- `test/pages.test.mjs` now pins it. Server side `test/portal.test.mjs` asserts `byDay` equals the daily reports cell
 by cell. Day and month views carry no `byDay` and no day columns; phone figures are unchanged.
 
+**Day tabs inside the weekly officer card** ("For the weekly tab only, so that they can refer what was achieved each day by officer -- maybe
+after opening officer card have day tabs within, as the expected days tabs"; BUILD 2026-11-09-d). Open an officer's name on the weekly
+report and the card has pills under its heading: **Wiki / Week | Mon 20 | Tue 21 | ...** (each day's recovery in brackets). The Week
+tab is the card as before; a day tab is the *daily card* for that day -- the customers on the officer's list that day (the rotation's own
+list), that day's initial deck against that day's current one (Initial, Arrears, Recovered, Status), and that day's calls and comments
+on those customers, with the comments of the day listed. Day and month cards have no tabs; a day nobody filed has its tab, greyed and
+empty, saying why. `expdfLeader` (week only) returns `dayTabs: [{date, weekday, measured, rows, totals, recent}]`; the week's day cells
+now also keep the day's own `arrears` and `status`, and `weekWork(..., {perDay: true})` buckets the SAME call and comment rows the week
+already read by day -- **no extra read, nothing on `/api/upload` or `/api/call`, and the report does not ask for per-day work.** One rule
+for what belongs to a day: a call or comment counts on a day only for a customer on the officer's list that day (matched by ref or number
+exactly as the week matches), and a comment's day is its EAT day. So a tab equals the daily card for that day
+(`test/portal.test.mjs` compares them tab by tab); work done on a customer on another day is in the Week figures, not on that day's tab,
+and the tab says so. Switching tabs is client-side: the card's body swaps and the Excel button exports whichever tab is open (`XD_CARD_`).
+
 **The "Tuma wiki kwa admin / Email weekly report" button is gone** from the report's bar ("Remove the tuma weekly
 report kwa admin button at expected defaulters"; BUILD 2026-11-09-a): the bar is the three pills, the date and the arrows.
 The server action `emailWeeklyExpdf` (admin only, uses `RESEND_API_KEY`, `ADMIN_EMAIL`, `EMAIL_FROM`) is left in place and
