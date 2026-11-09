@@ -1830,6 +1830,16 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
   assert.ok(/\+ xdDaysNote_\(d\)/.test(view), 'the note naming the days added sits under the cards');
   const note = app.slice(app.indexOf('function xdDaysNote_(d){'), app.indexOf('function xdBar_(d, extra){'));
   assert.ok(/d\.period !== 'week'/.test(note) && /Days added/.test(note) && /Not filed \(nothing added\)/.test(note), 'a week names the days added and the days not filed');
+  // "Show recovery by day in the weekly tab. We need proof": a column per day before Recovered, on the three boards, their total rows, and the card.
+  const dayCols = app.slice(app.indexOf('function xdDayCols_(d){'), app.indexOf('function xdDaysNote_(d){'));
+  assert.ok(/d\.period !== 'week'/.test(dayCols) && /key: 'd_' \+ dt/.test(dayCols) && /get: function\(r\)\{ return x\.measured \? \(\(\(r\.byDay/.test(dayCols), 'a column per day, read from the officer\'s byDay, blank where the day was not filed');
+  assert.ok(/\.concat\(xdDayCols_\(d\)\)\.concat\(\[\s*\{key:'recovered'/.test(view), 'the three boards carry the days just before Recovered');
+  assert.ok(/xdDayTotals_\(d, sec\.totals, \{opm:/.test(view), 'and on each board\'s total row');
+  const dayTot = app.slice(app.indexOf('function xdDayTotals_('), app.indexOf('function xdDaysNote_(d){'));
+  assert.ok(/row\.byDay = \(totals \|\| \{\}\)\.byDay/.test(dayTot), 'a total row carries byDay, because the day columns\' getter reads r.byDay (keys like d_<date> read as 0 across the whole row)');
+  const lead = app.slice(app.indexOf('function xdLeader_(el){'), app.indexOf('function xdLeaderList_(rows){'));
+  assert.ok(/\.concat\(xdDayCols_\(d\)\)/.test(lead) && /xdDayTotals_\(d, t, \{full_name:/.test(lead), 'the leader\'s card carries them too, and its Excel exports them');
+  assert.ok(/Marejesho kwa siku \/ Recovered by day/.test(note) && /equals the week/.test(note), 'a by-day line under the cards says the days equal the week');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)
     && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one recovered card per recycling category, the period\'s total');

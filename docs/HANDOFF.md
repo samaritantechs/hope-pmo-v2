@@ -3527,6 +3527,18 @@ speed fixture (every day filed): 12 trips, 5,040 rows, then 0 more deck reads on
 its first-deck baseline** -- a month of decks is not a request's worth of reads; if the month should be its weeks added, it needs the
 month ledger the dashboard keeps, so say so. `expdfCore`'s own `weekly` option (Monday's deck) stays only for callers that still ask for it.
 
+**Recovery by day, in the weekly tab** ("Find how to show recovery by day in the weekly tab. We need proof"; BUILD 2026-11-09-c). The
+week is the sum of its days, so the tab now shows the days. On the three boards (GMO / MANAGER / BIKE) and on a leader's card, one column per
+day of the week sits just before **Recovered** (`Mon 20 ... Fri 24`): that day's recovery by the *daily* report's own figure for that officer
+(`byDay` on the officer row, built from the day rows `expdfWeekCompute_` already holds -- no extra read, nothing on `/api/upload` or
+`/api/call`). A board's total row carries the day sums, and a day nobody filed reads blank (header tooltip says so) and adds nothing.
+Under the cards a line reads "Marejesho kwa siku / Recovered by day: MON 0 + TUE 300 + ... = 1,400" with a green chip *sawa na wiki / equals
+the week* -- or a red *tofauti na wiki / differs from the week* if the days ever stop adding to the figure (they cannot today; the line is
+the proof an officer can hold their own daily numbers against). The columns are custom `get` columns, so sort, totals, Excel, CSV and JPG
+use the same values. The total row hands the same getter `byDay` (`xdDayTotals_`); a first cut keyed the total row `d_<date>` and every
+total cell read 0 -- `test/pages.test.mjs` now pins it. Server side `test/portal.test.mjs` asserts `byDay` equals the daily reports cell
+by cell. Day and month views carry no `byDay` and no day columns; phone figures are unchanged.
+
 **The "Tuma wiki kwa admin / Email weekly report" button is gone** from the report's bar ("Remove the tuma weekly
 report kwa admin button at expected defaulters"; BUILD 2026-11-09-a): the bar is the three pills, the date and the arrows.
 The server action `emailWeeklyExpdf` (admin only, uses `RESEND_API_KEY`, `ADMIN_EMAIL`, `EMAIL_FROM`) is left in place and

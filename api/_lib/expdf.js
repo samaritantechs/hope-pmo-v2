@@ -185,8 +185,11 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     const list = periodRows_({ rows: buildRows_(user, cur.rows, baseBy, teamBy, strat, at) }, { daily: true, day: null });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
-      if (!c) cells.set(k, { ...r, days: 1 });
-      else { Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1 }); }
+      /* byDay: what THIS day added to this leader's book on this customer -- the daily report's own figure for the day, kept so the
+         week can show its days (the proof that an officer's week is their days added). */
+      if (!c) cells.set(k, { ...r, days: 1, byDay: { [d]: { initial: r.initial, recovered: r.recovered } } });
+      else { c.byDay[d] = { initial: r.initial, recovered: r.recovered };
+        Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1, byDay: c.byDay }); }
     }
     days.push({ date: d, weekday: wd, measured: true, customers: list.length });
   }
@@ -238,7 +241,14 @@ function periodRows_(core, { daily, day }) {
   return assigned.filter(r => r.onToday);
 }
 
+/** What each day of a week recovered over a list of week rows: { 'YYYY-MM-DD': recovered }. Empty for a day or a month. */
+function dayTotals_(list) {
+  const out = {};
+  for (const r of list) for (const [d, v] of Object.entries(r.byDay || {})) out[d] = (out[d] || 0) + v.recovered;
+  return out;
+}
 const sumExpdf = list => ({
+  ...(list.some(r => r.byDay) ? { byDay: dayTotals_(list) } : {}),     // only a week carries its days: the phone's totals stay as they were
   customers: new Set(list.map(r => K(r.ref))).size,
   arrears: list.reduce((s, r) => s + r.arrears, 0),
   initial: list.reduce((s, r) => s + r.initial, 0),
@@ -487,7 +497,7 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
       teams: Object.keys(b.teams).length, customers: b.customers,
       calls: w.calls || 0, dials: w.dials || 0, talk: w.talk || 0, comments: w.comments || 0,
       inCalls: !!inCalls[K(b.key)],
-      arrears: b.arrears, initial: b.initial, recovered: b.recovered,
+      arrears: b.arrears, initial: b.initial, recovered: b.recovered, ...(b.rows.some(r => r.byDay) ? { byDay: dayTotals_(b.rows) } : {}),
       pct: pctOf(b.recovered, b.initial) }; }).sort((a, b) => b.recovered - a.recovered);
     const sum = f => rows.reduce((s, r) => s + r[f], 0);
     return { role, rows, totals: { ...sumExpdf(mine), calls: sum('calls'), dials: sum('dials'), talk: sum('talk'), comments: sum('comments') },
@@ -526,6 +536,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
   const out = rows.map(r => { const p = w.per[K(r.ref)] || per_(); return {
     ref: r.ref, full_name: r.full_name, contact: r.contact, team: r.team, cycle: r.cycle, status: r.status,
     initial: r.initial, arrears: r.arrears, recovered: r.recovered,
+    byDay: Object.fromEntries(Object.entries(r.byDay || {}).map(([d, v]) => [d, v.recovered])),
     calls: p.calls.size, dials: p.dials, talk: p.talk, lastCall: p.lastCall,
     comments: p.comments, lastComment: p.lastComment, lastStatus: p.lastStatus }; })
     .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
