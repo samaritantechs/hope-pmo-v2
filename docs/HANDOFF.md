@@ -3502,6 +3502,12 @@ first name matches nobody. Comments are read under every spelling found (the cod
 included, which is how portal comments are signed). The card's note now says the match is
 by the role's number on Teams & Staff or by name, and what to do.
 
+**The "Tuma wiki kwa admin / Email weekly report" button is gone** from the report's bar ("Remove the tuma weekly
+report kwa admin button at expected defaulters"; BUILD 2026-11-09-a): the bar is the three pills, the date and the arrows.
+The server action `emailWeeklyExpdf` (admin only, uses `RESEND_API_KEY`, `ADMIN_EMAIL`, `EMAIL_FROM`) is left in place and
+tested; nothing in the app calls it now, and `api/_lib/mail.js` still shares its provider settings. `test/pages.test.mjs` fails
+if the button or its handler comes back.
+
 ## Part 32 — PAR: the OPM where the Branch was
 
 > "In orodha/list at par, drop branch column replace with opm name"

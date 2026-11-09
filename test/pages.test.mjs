@@ -1813,16 +1813,17 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
    recovery total on the cards" -- and since then "Exp.Def Report should be daily . . put a
    weekly and monthly on buttons in front of calendar date picker there": the Exp.Def Report
    carries its own period bar (three pills, the date, the arrows), asks the server for the
-   chosen period and pick only, keeps the email button on the bar, and shows the period's
+   chosen period and pick only, and shows the period's
    recovered total per recycling category. */
-test('the Exp.Def Report carries the period bar with its arrows, the email button, and the three recovered cards', () => {
+test('the Exp.Def Report carries the period bar with its arrows and the three recovered cards, and no email-the-weekly-report button', () => {
   const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.expdfrep = function'), app.indexOf('VIEWS.defexp = function'));
   assert.ok(/srv\('expdfReport', \{ period: period, weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the chosen period and pick go to the server, nothing else');
-  assert.ok(/HEAD = xdBar_\(d, /.test(view), 'the report\'s own period bar');
+  assert.ok(/HEAD = xdBar_\(d\)/.test(view), 'the report\'s own period bar, with nothing added to it');
   const words = app.slice(app.indexOf('var XD_WORDS = '), app.indexOf('function xdSpan_('));
   assert.ok(/pill: 'Leo \/ Daily'/.test(words) && /pill: 'Wiki \/ Weekly'/.test(words) && /pill: 'Mwezi \/ Monthly'/.test(words), 'the three pills');
-  assert.ok(/id="mailWeekly"/.test(view), 'the email button stays on the bar');
+  // "Remove the Tuma weekly report kwa admin button at expected defaulters": the bar is the period pills, the date and the arrows only.
+  assert.ok(!/mailWeekly|Tuma wiki kwa admin|emailWeeklyExpdf/.test(app), 'the email-the-weekly-report button and its handler are gone from the page');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)
     && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one recovered card per recycling category, the period\'s total');
