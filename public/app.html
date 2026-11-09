@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-09-a';
+var BUILD = '2026-11-09-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4302,18 +4302,30 @@ function chipFor(s){
    THE WEEK'S REPORT, ALWAYS -- "expected def - remove Leo / Daily and Wiki / Weekly; add weekly
    recovered 3 cards (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the
    cards". The daily/weekly pills are gone: the morning meeting's daily list is the Exp.Def
-   screen itself, and this report is what gets emailed. Monday's initial deck against the chosen
-   week's latest current deck -- the server reads a past or upcoming week as it stood on its
-   Friday (asOfWeek) -- so the week arrows move every card here, the three role cards included. */
+   screen itself, and this report is what gets emailed. The chosen week is its days added (each day's own
+   initial deck against its own current one -- expdfWeekCore) -- the server reads a past or upcoming week as it
+   stood on its Friday (asOfWeek) -- so the week arrows move every card here, the three role cards included. */
 /* THE PERIOD BAR -- "Exp.Def Report should be daily . . put a weekly and monthly on buttons in
    front of calendar date picker there". Three pills (Leo / Wiki / Mwezi) before the date, the
    arrows step by a day, a week or a month, and the chip says which day, week or month is on
    screen and whether it is past, current or upcoming. The server resolves the pick for the
    period (a week to its Monday, a month to its first), so the input shows what is read. */
 var XD_WORDS = { day:   { pill: 'Leo / Daily',    cur: 'Leo / today',         of: 'siku ya / day',    base: 'orodha ya awali ya siku / the day’s initial deck',           rec: 'Marejesho ya leo / Daily recovered' },
-                 week:  { pill: 'Wiki / Weekly',  cur: 'Wiki hii / this week', of: 'wiki ya / week of', base: 'orodha ya Jumatatu / Monday’s deck',                        rec: 'Marejesho ya wiki / Weekly recovered' },
+                 week:  { pill: 'Wiki / Weekly',  cur: 'Wiki hii / this week', of: 'wiki ya / week of', base: 'jumla ya siku / the sum of the days',                        rec: 'Marejesho ya wiki / Weekly recovered' },
                  month: { pill: 'Mwezi / Monthly', cur: 'Mwezi huu / this month', of: 'mwezi wa / month', base: 'orodha ya kwanza ya mwezi / the month’s first deck',      rec: 'Marejesho ya mwezi / Monthly recovered' } };
 function xdSpan_(d){ var p = XD_WORDS[d.period] || XD_WORDS.day; return p.of + ' ' + (d.period === 'month' ? String(d.from||'').slice(0,7) : (d.from||'')) + (d.period === 'day' ? '' : ' → ' + (d.to||'')); }
+/* THE WEEK IS THE SUM OF ITS DAYS ("the weekly expected def report ain't summing right by officer for what they
+   added up during the days in the week"): say so under the cards, and say which days were added and which were not
+   filed, so an officer can lay their own daily numbers beside it. */
+function xdDaysNote_(d){
+  if (d.period !== 'week' || !d.days || !d.days.length) return '';
+  var on = [], off = [];
+  d.days.forEach(function(x){ (x.measured ? on : off).push(x.weekday + ' ' + String(x.date).slice(5)); });
+  return '<div class="note">Wiki ni jumla ya siku zake: kila siku orodha yake ya awali dhidi ya ya mwisho wa siku hiyo, kwa wateja wa mzunguko wa siku hiyo — jumla ya kila afisa ni jumla ya ripoti zake za kila siku.'
+    + ' / The week is the sum of its days: each day’s own initial deck against that day’s own current one, for that day’s rotation list — an officer’s week is their daily reports added.'
+    + '<br><b>Siku zilizohesabiwa / Days added:</b> ' + (on.length ? esc(on.join(' · ')) : '—')
+    + (off.length ? '<br><b>Hazikupakiwa / Not filed (nothing added):</b> ' + esc(off.join(' · ')) : '') + '</div>';
+}
 function xdBar_(d, extra){
   var period = d.period || 'day', w = XD_WORDS[period] || XD_WORDS.day;
   var pills = ['day','week','month'].map(function(p){
@@ -4350,7 +4362,7 @@ VIEWS.expdfrep = function(){
     HEAD = xdBar_(d)
       + '<div class="kpis">'
       + kpi('Wateja / Customers', money(t.customers), xdSpan_(d))
-      + kpi('Deni la awali / Initial', money(t.initial), w.base + (d.baseDate ? ' · ' + d.baseDate : ''))
+      + kpi('Deni la awali / Initial', money(t.initial), w.base + (d.baseDate && d.period !== 'week' ? ' · ' + d.baseDate : ''))
       + kpi('Deni sasa / Arrears now', money(t.arrears), null, 'bad')
       + kpi('Marejesho / Recovered', money(t.recovered), xdSpan_(d), 'good')
       + kpi('Rec %', pct(t.pct), 'recovered ÷ initial')
@@ -4367,6 +4379,7 @@ VIEWS.expdfrep = function(){
       + '</div>'
       + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
           + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
+      + xdDaysNote_(d)
       /* THREE BOARDS, one per recycling role (a fourth, "Kwa OPM / By OPM", was tried and dropped
          at the GM's word). Every board sorts on any header like the others. The OPM of the
          teams the leader holds comes FIRST -- "all the three tables should start with opm name

@@ -3,6 +3,7 @@ import { teamAllowed } from './auth.js';
 import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot } from './snapshots.js';
 import { num } from './recovery.js';
+import { cachedAnswer } from './answer-cache.js';
 
 /* Shared by BOTH the portal and the calls app, so it lives in its own module: portal-core
    already imports call-core, and having call-core import portal-core back closed a cycle
@@ -31,9 +32,10 @@ import { assignFor, assignStrategy, ROLE_COLS } from './assign.js';
 
    Recovery here is measured against the SAME baseline the rest of the system uses:
      daily   that day's initial deck vs the current one
-     weekly  Monday's initial deck vs the current one
+     weekly  the sum of the days (expdfWeekCore below) -- as the dashboard adds a week
    so a leader's number on this screen reconciles with the dashboard rather than being a
-   second, differently-computed truth. */
+   second, differently-computed truth. (expdfCore's own `weekly` option, Monday's deck against
+   the latest current one, is kept only for callers that still ask for it.) */
 export const RECYCLE_ROLES = ['GMO', 'MANAGER', 'BIKE'];
 /* The report's boards are the three recycling roles. A fourth, "By OPM" (the whole assigned
    book of each OPM's teams), was built and then dropped at the GM's word -- "Drop - Kwa OPM /
@@ -50,6 +52,42 @@ async function monthFirstInitial_(db, user, from, to) {
     if (error || !data || !data.snapshot_date) return NONE_;
     return await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial' }, { onDate: data.snapshot_date, teams: user.teams });
   } catch (e) { return NONE_; }
+}
+
+/* ONE DAY'S ROWS: the customers on a current deck still in default, each with the arrears the
+   same day's initial deck had for them (`baseBy`, by ref), who the rotation hands them to AT
+   `ms`, and whether it is their cycle day at `ms`. The one definition of a row -- the day's
+   report reads it for the day, the week's for every day it adds up -- so a week can never be
+   built on a rule the days are not. */
+function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
+  const dayIdx = rollSun(isoWeekday(ms));
+  return scoped(user, curRows)
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
+    .map(d => {
+      const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
+      const primary = raw ? rollSun(raw) : 0;
+      const secondary = primary ? rollSun(((primary - 1 + 3) % 7) + 1) : 0;
+      const a = assignFor(d, strat, ms);
+      const team = teamBy[K(d.team)] || {};
+      const arrears = num(d.arrears);
+      const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
+      return { ref: d.ref, full_name: d.full_name, contact: d.contact,
+        guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
+        team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
+        // The WEEKLY installment, which is what "rejesho" means to an officer at the door --
+        // distinct from what has been recovered.
+        rejesho: num(d.other_inst),
+        ds: d.ds, dc: d.dc, disb_date: d.disb_date,
+        status: K(d.status).includes('CHRON') ? 'CHRONIC' : (K(d.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
+        phase: a.phase, role: a.role, cycle: a.label,
+        primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
+        onToday: primary === dayIdx || secondary === dayIdx,
+        leader: (team[ROLE_COLS[a.role]] || '(unassigned)'),
+        // The leader's number as Teams & Staff carries it (gmo_no / manager_no / bike_no), the
+        // surest link to their HOPE Calls account when the two spell the name differently.
+        leaderPhone: team[ROLE_COLS[a.role] + '_no'] || null,
+        opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
+    });
 }
 
 export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false } = {}) {
@@ -74,35 +112,88 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   for (const d of base.rows) baseBy[K(d.ref)] = num(d.arrears);
 
   const dayIdx = rollSun(isoWeekday(nowMs));
-  const rows = scoped(user, curSnap.rows)
-    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
-    .map(d => {
-      const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
-      const primary = raw ? rollSun(raw) : 0;
-      const secondary = primary ? rollSun(((primary - 1 + 3) % 7) + 1) : 0;
-      const a = assignFor(d, strat, nowMs);
-      const team = teamBy[K(d.team)] || {};
-      const arrears = num(d.arrears);
-      const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
-      return { ref: d.ref, full_name: d.full_name, contact: d.contact,
-        guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
-        team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
-        // The WEEKLY installment, which is what "rejesho" means to an officer at the door --
-        // distinct from what has been recovered.
-        rejesho: num(d.other_inst),
-        ds: d.ds, dc: d.dc, disb_date: d.disb_date,
-        status: K(d.status).includes('CHRON') ? 'CHRONIC' : (K(d.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
-        phase: a.phase, role: a.role, cycle: a.label,
-        primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
-        onToday: primary === dayIdx || secondary === dayIdx,
-        leader: (team[ROLE_COLS[a.role]] || '(unassigned)'),
-        // The leader's number as Teams & Staff carries it (gmo_no / manager_no / bike_no), the
-        // surest link to their HOPE Calls account when the two spell the name differently.
-        leaderPhone: team[ROLE_COLS[a.role] + '_no'] || null,
-        opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
-    });
+  const rows = buildRows_(user, curSnap.rows, baseBy, teamBy, strat, nowMs);
   return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day') };
+}
+
+/* =======================================================================================
+   THE WEEK IS THE SUM OF ITS DAYS -- "the weekly expected def report ain't summing right by
+   officer for what they added up during the days in the week".
+
+   It was not. The week was Monday's initial deck against the LATEST current deck, per customer,
+   every customer handed whole to whoever the rotation holds him with TODAY. The rotation moves
+   a defaulter on every two days of his arrears, so a customer worked by the bike officer on
+   Monday and the manager on Wednesday was credited, for the whole week, to the manager; a
+   customer who paid and then fell due again showed no recovery at all; one newly flagged on
+   Thursday was blamed on a baseline that never carried him. An officer adding up their own
+   daily reports could not reach the weekly figure, and was right.
+
+   The owner's rule for every weekly figure in the portal is the one already written in the
+   dashboard (sumRangeStand_ in portal-core.js): "a week total is just a sum from the sums of
+   each day" -- each day's OWN initial deck against that day's OWN current deck, added -- "never
+   a single boundary pair (Monday's deck less Friday's)". This is that rule for the leaders:
+   each day of the week is the DAILY report's own list for that day (the customers whose cycle
+   day it is, handed to the leader the rotation names that day, recovery by the one row rule in
+   buildRows_), and the week is the days added, officer by officer. A leader's week is exactly
+   what they added up.
+
+   A day counts when BOTH its own decks were filed on it (onDate -- never an older deck that
+   shares the weekday; a day nobody filed contributes nothing, and the answer says which days
+   those were). Initial is the days' initials added, so Rec % is what came back on what was on
+   their lists. A customer a leader held on two days is one row in the leader's book, with the
+   recovery of both days; one held by two leaders in the week is a row in each book, so every
+   column adds up to the grand total. The live week runs to today; a past or upcoming week is
+   read as it stood on its Friday, like the dashboard.
+
+   COST: two deck reads per day filed, so five days is ten where the old week read three. The
+   initial deck is read for two columns and the current one for the fifteen it uses, never the
+   whole row. Sequential, as the month ledger's note in portal-core.js insists -- a week-sized
+   read answers on the live instance, concurrent ones are what exhausted the pool. Portal only:
+   nothing on /api/upload or /api/call reads this. The month keeps its first-deck baseline (a
+   month of decks is not a request's worth of reads); say if it should follow. */
+const WD_ = ['', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+const INI_COLS_ = ['ref', 'arrears', 'team'];
+const CUR_COLS_ = ['ref', 'full_name', 'contact', 'guarantor_name', 'guarantor_contact', 'team', 'arrears', 'other_inst', 'ds', 'dc',
+  'disb_date', 'status', 'days_elapsed', 'chronic_date', 'expire_date'];
+/** The week, kept for a minute per set of teams (answer-cache.js): the report pays for the days
+    once, and every leader's card opened from it in the next minute reads them from memory instead
+    of reading ten decks again. Rows are shared between callers and never changed by them. */
+export async function expdfWeekCore(db, user, nowMs, { from, to } = {}) {
+  const isKey = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+  const mon = isKey(from) ? String(from) : weekMondayKey(nowMs);
+  const sun = isKey(to) ? String(to) : addDaysKey(mon, 6);
+  const last = sun < todayKey(nowMs) ? sun : todayKey(nowMs);
+  return cachedAnswer(db, 'expdfweek|' + mon + '|' + last, user, nowMs, () => expdfWeekCompute_(db, user, nowMs, mon, last));
+}
+async function expdfWeekCompute_(db, user, nowMs, mon, last) {
+  const today = todayKey(nowMs);
+  const [teamRows, strat] = await Promise.all([fetchAll(() => db.from('teams').select('*')), assignStrategy(db)]);
+  const teamBy = {};
+  for (const t of teamRows) teamBy[K(t.team)] = t;
+  const cells = new Map(), days = [];
+  for (let d = mon; d <= last; d = addDaysKey(d, 1)) {
+    const at = d === today ? nowMs : Date.parse(d + 'T09:00:00Z');
+    const wd = WD_[isoWeekday(at)];
+    const ini = await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { onDate: d, teams: user.teams, columns: INI_COLS_ });
+    const cur = ini.rows.length
+      ? await latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { onDate: d, teams: user.teams, columns: CUR_COLS_ })
+      : NONE_;
+    if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
+    const baseBy = {};
+    for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
+    const list = periodRows_({ rows: buildRows_(user, cur.rows, baseBy, teamBy, strat, at) }, { daily: true, day: null });
+    for (const r of list) {
+      const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
+      if (!c) cells.set(k, { ...r, days: 1 });
+      else { Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1 }); }
+    }
+    days.push({ date: d, weekday: wd, measured: true, customers: list.length });
+  }
+  const measured = days.filter(x => x.measured), first = measured[0] || null, lastM = measured[measured.length - 1] || null;
+  const lastAt = lastM ? Date.parse(lastM.date + 'T09:00:00Z') : (last === today ? nowMs : Date.parse(last + 'T09:00:00Z'));
+  return { rows: [...cells.values()], dayIdx: rollSun(isoWeekday(lastAt)), weekday: WD_[isoWeekday(lastAt)], date: lastM ? lastM.date : null,
+    hasBaseline: measured.length > 0, baseDate: first ? first.date : null, baseline: 'week', days };
 }
 
 /* =======================================================================================
@@ -148,7 +239,7 @@ function periodRows_(core, { daily, day }) {
 }
 
 const sumExpdf = list => ({
-  customers: list.length,
+  customers: new Set(list.map(r => K(r.ref))).size,
   arrears: list.reduce((s, r) => s + r.arrears, 0),
   initial: list.reduce((s, r) => s + r.initial, 0),
   recovered: list.reduce((s, r) => s + r.recovered, 0),
@@ -372,7 +463,8 @@ const bookWeek_ = (nowMs, weekOf, weekEnd) => {
     talk time and comments beside the customers they hold. This is what says which category,
     and which person, is actually working the rotation and which is not. */
 export async function expdfReport(db, user, { weekly = false, monthly = false, day = null, weekOf = null, weekEnd = null } = {}, nowMs) {
-  const core = await expdfCore(db, user, nowMs, { weekly, monthly });
+  const win = bookWeek_(nowMs, weekOf, weekEnd);
+  const core = weekly ? await expdfWeekCore(db, user, nowMs, { from: win.weekOf, to: win.weekEnd }) : await expdfCore(db, user, nowMs, { weekly, monthly });
   const all = periodRows_(core, { daily: !weekly && !monthly, day });
   const books = [];
   const built = RECYCLE_ROLES.map(role => {
@@ -388,7 +480,6 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
     for (const b of Object.values(by)) books.push({ key: role + '|' + K(b.key), leader: b.key, rows: b.rows });
     return { role, by, mine };
   });
-  const win = bookWeek_(nowMs, weekOf, weekEnd);
   const { work, inCalls } = await weekWork(db, books, win.weekOf, win.weekEnd);
   const sections = built.map(({ role, by, mine }) => {
     const rows = Object.values(by).map(b => { const w = work[role + '|' + K(b.key)] || {}; return { leader: b.key,
@@ -404,6 +495,7 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
   });
   return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
+    days: core.days || null,                                   // a week: which days were added, and which were not filed
     sections, totals: sumExpdf(all) };
 }
 
@@ -426,9 +518,9 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
   if (!RECYCLE_ROLES.includes(R)) bad_('Chagua GMO, MANAGER au BIKE. / Pick GMO, MANAGER or BIKE.');
   if (!L || L === '(unassigned)') bad_('Chagua kiongozi aliyetajwa. / Pick a named leader.');
   const weekly = period === 'week', monthly = period === 'month';
-  const core = await expdfCore(db, user, nowMs, { weekly, monthly });
-  const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && K(r.leader) === K(L));
   const win = bookWeek_(nowMs, weekOf, weekEnd);
+  const core = weekly ? await expdfWeekCore(db, user, nowMs, { from: win.weekOf, to: win.weekEnd }) : await expdfCore(db, user, nowMs, { weekly, monthly });
+  const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && K(r.leader) === K(L));
   const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd);
   const w = work.one;
   const out = rows.map(r => { const p = w.per[K(r.ref)] || per_(); return {
@@ -439,6 +531,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
     .sort((a, b) => (b.recovered - a.recovered) || (b.calls - a.calls) || (b.arrears - a.arrears));
   const t = sumExpdf(rows);
   return { role: R, leader: L, period: core.baseline, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
+    days: core.days || null,
     totals: { ...t, recoveredCustomers: rows.filter(r => r.recovered > 0).length,
       calls: w.calls, dials: w.dials, talk: w.talk, connected: w.connected,
       reached: w.reached, comments: w.comments, commented: w.commented },

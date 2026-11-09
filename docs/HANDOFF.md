@@ -3481,7 +3481,7 @@ period still means a week, for the weekly e-mail and older callers.
 | Period | The book | The baseline recovery is measured from | Calls and comments |
 |---|---|---|---|
 | day | the rotation's own list for that day (the customers whose cycle day it is; the whole assigned book where the deck carries no disbursement dates, as on the phone) | the day's own initial deck | that day |
-| week | the whole assigned book | Monday's initial deck (the day's where Monday's is missing) | Monday to Sunday |
+| week | **each filed day's own rotation list, added** (see "The week is the sum of its days" below) | each day's own initial deck, against that day's own current deck | Monday to Sunday |
 | month | the whole assigned book | the month's **first** initial deck (`monthFirstInitial_`: one ascending date query, then that deck; the day's where the month has none) | the 1st to the last day, or to today in the live month |
 
 `expdfCore` reads only the baseline its period needs — Monday's deck for a week, the first
@@ -3501,6 +3501,31 @@ spelling whose words all appear in the longer one, in any order, two words at le
 first name matches nobody. Comments are read under every spelling found (the code's
 included, which is how portal comments are signed). The card's note now says the match is
 by the role's number on Teams & Staff or by name, and what to do.
+
+**The week is the sum of its days** ("the weekly expected def report ain't summing right by officer for what they added up during the
+days in the week"; BUILD 2026-11-09-b). The week used to be Monday's initial deck against the latest current deck, per customer,
+every customer handed whole to whoever the rotation holds him with *today*. The rotation moves a defaulter on every two days of his
+arrears, so a customer the bike officer worked on Monday and the manager on Wednesday was credited, all week, to the manager; one who
+paid and fell due again showed nothing; one newly flagged on Thursday was blamed on a baseline that never carried him. An officer adding
+up their own daily reports could not reach the weekly figure, and was right. It also broke the rule the dashboard already states
+(`sumRangeStand_` in `portal-core.js`: "a week total is just a sum from the sums of each day ... never a single boundary pair
+(Monday's deck less Friday's)").
+
+`expdfWeekCore` (`api/_lib/expdf.js`) now builds the week as the DAILY report's own list for each day, added officer by officer:
+for each day Monday to today (a past or upcoming week to its Friday), the day's initial deck against the day's current deck, the
+customers whose cycle day it is, handed to the leader the rotation names *that day* -- one row rule (`buildRows_`) for the day and
+for the week, so they cannot drift apart. A day counts only when **both** its decks were filed **on that date** (`onDate`: an older deck
+sharing the weekday never stands in); an unfiled day adds nothing and the answer lists it (`days: [{date, weekday, measured, why}]`),
+and the screen says "Days added / Not filed" under the cards. Initial is the days' initials added, so Rec % is what came back on what
+was on their lists; a customer held by two leaders in the week is a row in each book, so every column adds up to the grand total, and
+`customers` counts distinct customers. The leader's card is the same book (its recovered column adds up to the row it was opened from).
+
+**Cost.** Two deck reads per filed day (ten for five days, where the old week read three): the initial deck read for two columns, the
+current one for the fifteen it uses, sequential, and the whole week kept for a minute per set of teams (`cachedAnswer`), so the report
+pays once and every leader's card opened from it reads no deck. Portal only; nothing on `/api/upload` or `/api/call`. Measured on the
+speed fixture (every day filed): 12 trips, 5,040 rows, then 0 more deck reads on the next open (`test/speed.test.mjs`). **The month keeps
+its first-deck baseline** -- a month of decks is not a request's worth of reads; if the month should be its weeks added, it needs the
+month ledger the dashboard keeps, so say so. `expdfCore`'s own `weekly` option (Monday's deck) stays only for callers that still ask for it.
 
 **The "Tuma wiki kwa admin / Email weekly report" button is gone** from the report's bar ("Remove the tuma weekly
 report kwa admin button at expected defaulters"; BUILD 2026-11-09-a): the bar is the three pills, the date and the arrows.

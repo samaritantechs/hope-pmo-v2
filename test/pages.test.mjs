@@ -1824,6 +1824,12 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
   assert.ok(/pill: 'Leo \/ Daily'/.test(words) && /pill: 'Wiki \/ Weekly'/.test(words) && /pill: 'Mwezi \/ Monthly'/.test(words), 'the three pills');
   // "Remove the Tuma weekly report kwa admin button at expected defaulters": the bar is the period pills, the date and the arrows only.
   assert.ok(!/mailWeekly|Tuma wiki kwa admin|emailWeeklyExpdf/.test(app), 'the email-the-weekly-report button and its handler are gone from the page');
+  // "The weekly expected def report ain't summing right by officer": the week is its days added, and the screen says so and names the days.
+  assert.ok(/week:  \{[^}]*base: 'jumla ya siku \/ the sum of the days'/.test(words), 'the week\'s baseline wording is the sum of the days, not Monday\'s deck');
+  assert.ok(!/Monday’s deck/.test(words), 'no Monday baseline left in the period words');
+  assert.ok(/\+ xdDaysNote_\(d\)/.test(view), 'the note naming the days added sits under the cards');
+  const note = app.slice(app.indexOf('function xdDaysNote_(d){'), app.indexOf('function xdBar_(d, extra){'));
+  assert.ok(/d\.period !== 'week'/.test(note) && /Days added/.test(note) && /Not filed \(nothing added\)/.test(note), 'a week names the days added and the days not filed');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)
     && /money\(s\.recovered \|\| 0\)/.test(view) && /'xdRec_' \+ role/.test(view), 'one recovered card per recycling category, the period\'s total');
