@@ -4663,6 +4663,98 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   assert.equal(pmon.totals.customers, 0, 'June has no decks in this fixture');
 });
 
+/* "The weekly expected def report ain't summing right by officer for what they added up during
+   the days in the week." The week was Monday's initial deck against the latest current deck, every
+   customer handed whole to whoever the rotation holds him with TODAY. The week is now the days
+   added -- the dashboard's own rule (sumRangeStand_): each filed day's initial against that day's
+   current, officer by officer -- so an officer's week is exactly what their daily reports add up to.
+
+   The week below is built so the two rules part company:
+     A  (cycle days Tue and Fri): the rotation holds him with BIKE on Tuesday (days 1-2) and with GMO on
+        Friday (days 5-6). Pays 300 on Tuesday; a new instalment falls due (arrears 700 -> 900 by Friday's
+        initial deck); pays 300 on Friday.
+     B  (cycle day Wed): MANAGER holds him on Wednesday; pays 500 that day; GMO holds him by Friday.
+     C  newly flagged on Thursday, so on no Monday deck; pays 300 on Friday (BIKE).
+   Old week (Monday's deck less Friday's, today's holder): GMO 900, nobody else a shilling.
+   Days added: BIKE 600, MANAGER 500, GMO 300 -- what each of them actually did. */
+function expdfWeekTables() {
+  const t = expdfTables();
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  const R = (ref, ini, cur, dayN, disb, wd, date, only) => {
+    const rows = [];
+    if (only !== 'cur') rows.push({ ref, full_name: 'C' + ref, contact: '07140000' + ref, team: 'KONGOWE', arrears: ini, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: dayN, disb_date: disb, snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' });
+    if (only !== 'ini') rows.push({ ref, full_name: 'C' + ref, contact: '07140000' + ref, team: 'KONGOWE', arrears: cur, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: dayN, disb_date: disb, snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' });
+    return rows;
+  };
+  const A = { MON: [1000, 1000], TUE: [1000, 700], WED: [700, 700], THU: [700, 700], FRI: [900, 600] };
+  const B = { MON: [2000, 2000], TUE: [2000, 2000], WED: [2000, 1500], THU: [1500, 1500], FRI: [1500, 1500] };
+  const C = { THU: [400, 400], FRI: [400, 100] };
+  t.defaulter_snapshots = WK.flatMap(([wd, date], i) => [
+    ...R('A1', A[wd][0], A[wd][1], i + 1, '2026-07-14', wd, date),
+    ...R('B1', B[wd][0], B[wd][1], i + 1, '2026-07-15', wd, date),
+    ...(C[wd] ? R('C1', C[wd][0], C[wd][1], i >= 4 ? 1 : 0, '2026-07-17', wd, date) : []),
+  ]);
+  return t;
+}
+const keyed_ = d => Object.fromEntries(d.sections.flatMap(s => s.rows.map(r => [s.role + '|' + r.leader, r])));
+test('the expdf week is the sum of its days, officer by officer -- what each officer added up on the daily reports', async () => {
+  const db = fakeDb(expdfWeekTables());
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const wk = keyed_(week);
+  // Each officer's week is exactly their own days added...
+  const sum = {};
+  for (const day of ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24']) {
+    const d = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: day }, NOW);
+    for (const [k, r] of Object.entries(keyed_(d))) { const a = sum[k] || (sum[k] = { recovered: 0, initial: 0 }); a.recovered += r.recovered; a.initial += r.initial; }
+  }
+  assert.deepEqual(Object.keys(wk).sort(), Object.keys(sum).sort(), 'the same officers');
+  for (const k of Object.keys(sum)) {
+    assert.equal(wk[k].recovered, sum[k].recovered, k + ': the week recovered is the days added');
+    assert.equal(wk[k].initial, sum[k].initial, k + ': the week initial is the days added');
+  }
+  // ...and those are what each of them did: BIKE 300 (A, Tue) + 300 (C, Fri); MANAGER 500 (B, Wed); GMO 300 (A, Fri).
+  assert.equal(wk['BIKE|BIKE BEE'].recovered, 600); assert.equal(wk['BIKE|BIKE BEE'].initial, 1400); assert.equal(wk['BIKE|BIKE BEE'].customers, 2);
+  assert.equal(wk['MANAGER|BOSS'].recovered, 500); assert.equal(wk['MANAGER|BOSS'].initial, 2000);
+  assert.equal(wk['GMO|GMO GEE'].recovered, 300); assert.equal(wk['GMO|GMO GEE'].initial, 900);
+  assert.equal(wk['BIKE|BIKE BEE'].pct, 42.9);
+  // The grand total is the three added, with A counted once as a customer though two officers held him.
+  assert.equal(week.totals.recovered, 1400); assert.equal(week.totals.initial, 4300); assert.equal(week.totals.customers, 3);
+  assert.equal(week.sections.find(s => s.role === 'BIKE').totals.recovered, 600, 'the role cards read the same days');
+  // Which days were added, said on the answer.
+  assert.deepEqual(week.days.map(x => [x.weekday, x.measured]), [['MON', true], ['TUE', true], ['WED', true], ['THU', true], ['FRI', true]]);
+  assert.equal(week.hasBaseline, true); assert.equal(week.baseDate, '2026-07-20'); assert.equal(week.date, TODAY);
+  // The card behind a name is the same book: its recovered column adds up to the row it was opened from.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
+  assert.equal(card.totals.recovered, 600); assert.equal(card.totals.initial, 1400);
+  assert.deepEqual(card.rows.map(r => [r.ref, r.recovered]).sort(), [['A1', 300], ['C1', 300]]);
+  assert.equal(card.rows.reduce((a, r) => a + r.recovered, 0), card.totals.recovered, 'the column adds up to the total');
+  // The old rule would have said GMO 900 and everyone else 0: Monday's deck less Friday's, whole, to Friday's holder.
+  assert.notEqual(wk['GMO|GMO GEE'].recovered, 900);
+  assert.equal(card.days.length, 5);
+});
+
+test('the expdf week adds only the days that were filed; an older deck on the same weekday never stands in', async () => {
+  const t = expdfWeekTables();
+  // Wednesday's current deck was never uploaded this week; LAST Wednesday's decks are still in the book.
+  const lastWed = t.defaulter_snapshots.filter(r => r.weekday === 'WED').map(r => ({ ...r, snapshot_date: '2026-07-15', upload_batch: r.upload_batch + 'old', created_at: '2026-07-15T04:00:00Z' }));
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => !(r.weekday === 'WED' && r.snapshot_type === 'current')).concat(lastWed);
+  const w = await portalApi(fakeDb(t), ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const wed = w.days.find(x => x.weekday === 'WED');
+  assert.equal(wed.measured, false); assert.equal(wed.why, 'no current deck', 'said, not hidden');
+  const wk = keyed_(w);
+  assert.equal(wk['MANAGER|BOSS'], undefined, 'nothing of the missing day, and nothing borrowed from last week');
+  assert.equal(w.totals.recovered, 900, 'Tuesday 300, Friday 300 + 300');
+  // A week with no deck on any day: nothing invented, and it says so.
+  const none = await portalApi(fakeDb({ ...expdfWeekTables(), defaulter_snapshots: [] }), ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.equal(none.hasBaseline, false); assert.equal(none.totals.customers, 0); assert.equal(none.totals.recovered, 0); assert.equal(none.baseDate, null);
+  assert.ok(none.days.every(x => !x.measured));
+  // A past week is read as it stood on its Friday, by its own days.
+  const past = await portalApi(fakeDb(expdfWeekTables()), ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-15' }, NOW);
+  assert.equal(past.pastWeek, true); assert.equal(past.totals.recovered, 0, 'the week of the 13th has no decks in this book');
+});
+
 test('the weekly email refuses clearly when it is not configured, and never sends daily', async () => {
   const db = fakeDb(expdfTables());
   delete process.env.RESEND_API_KEY;

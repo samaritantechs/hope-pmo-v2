@@ -563,6 +563,33 @@ for (const B of BUDGETS) {
 }
 }
 
+/* THE EXP.DEF WEEK IS ITS DAYS ADDED, so the real shape is two deck reads per day filed.
+   "The weekly expected def report ain't summing right by officer for what they added up during the
+   days in the week": the week used to be Monday's deck against the latest current one (three reads),
+   which could not equal the daily reports it was meant to add up to. The table's row above stamps
+   every deck 'FRI' (as the dashboard's rows need), so it reads two decks and the days with none cost
+   one empty lookup each; THIS is the week as the live book has it, every day filed under its own
+   weekday: ten deck reads, initial decks narrowed to two columns and current ones to fifteen,
+   sequential. Portal only -- nothing on /api/upload or /api/call reads it. The month keeps its
+   first-deck baseline: a month of decks is not a request's worth of reads. */
+test('speed: the Exp.Def week with all five days filed stays within 14 trips and 5,500 rows, and the next open in the minute is nearly free', async () => {
+  const t = bigBook();
+  const wd = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+  for (const r of t.defaulter_snapshots) { r.weekday = wd[new Date(r.snapshot_date + 'T12:00:00Z').getUTCDay()]; r.status = 'Defaulter'; r.days_elapsed = 3; r.disb_date = '2026-07-14'; }
+  const c = counting(t, undefined);
+  const d = await portalApi(c.db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.equal(d.days.filter(x => x.measured).length, 5, 'all five days were read');
+  const { trips, rows } = c.stat();            // measured 12 trips, 5,040 rows: ten deck reads of 500 and the small tables
+  assert.ok(trips <= 14, `the Exp.Def week took ${trips} round trips (budget 14).`);
+  assert.ok(rows <= 5500, `the Exp.Def week read ${rows.toLocaleString()} rows (budget 5,500) in ${trips} trips.`);
+  // The same week again inside the minute -- the card behind a leader's name, say -- reads no deck at all: the roster and the
+  // week's calls and comments, the small ones.
+  await portalApi(c.db, ADMIN, 'expdfReport', { period: 'week' }, NOW + 5000);
+  const again = c.stat();
+  assert.ok(again.trips - trips <= 6, `the second open took ${again.trips - trips} more trips (budget 6): the days must come from memory.`);
+  assert.ok(again.rows - rows <= 200, `the second open read ${(again.rows - rows).toLocaleString()} more rows (budget 200).`);
+});
+
 /* THE ANNUAL REPORT, WARM. The cold budget above is a year nobody has opened: every finished
    month's ledger is filled and STORED on that first open. The second open -- a minute later, the
    answer cache expired -- reads the stamps, the registry, the year's sales, the adjustments, the

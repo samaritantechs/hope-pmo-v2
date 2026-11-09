@@ -8582,7 +8582,7 @@ function expdfEmailHtml(d, sentBy) {
   return `<div style="font:14px system-ui;color:#111;max-width:860px">
     <h2 style="margin:0 0 2px;color:#0B2A6B">HOPE PMO — Expected Defaulters, weekly recovery</h2>
     <div style="color:#6b7280;font-size:13px">Week of ${esc_(d.weekOf)} · as of ${esc_(d.date || '—')} (${esc_(d.weekday)}) · sent by ${esc_(sentBy)}</div>
-    ${d.hasBaseline ? '' : '<p style="color:#B42318"><b>Monday’s initial deck is not uploaded</b>, so recovery below reads 0. Upload it and resend.</p>'}
+    ${d.hasBaseline ? '' : '<p style="color:#B42318"><b>No day of this week has both its initial and its current deck uploaded</b>, so recovery below reads 0. Upload them and resend.</p>'}
     <p style="margin:14px 0 0"><b>Whole book:</b> ${money0(t.customers)} customers ·
       initial ${money0(t.initial)} · now ${money0(t.arrears)} ·
       recovered <b style="color:#067647">${money0(t.recovered)}</b> (${pctTxt(t.pct)})</p>
@@ -10695,9 +10695,9 @@ async function settingNum(db, key, dflt) {
    weekly forward and backward buttons there too" -- and THE WEEK'S REPORT ONLY: "expected def -
    remove Leo / Daily and Wiki / Weekly". The same week bar the dashboard and the weekly screens
    carry, read the same way: the clock is shifted to the chosen week (asOfWeek -- a past or
-   upcoming week is read as it stood on its Friday), and the report measures that week's Monday
-   deck against its latest current deck, so the three role cards and the boards move with the
-   arrows. The weekly email keeps calling expdfReport directly, on this week. */
+   upcoming week is read as it stood on its Friday), and the report is that week's DAYS ADDED (each
+   day's own initial deck against its own current one: expdfWeekCore), so the three role cards and
+   the boards move with the arrows and every officer's week is their daily reports added. The weekly email keeps calling expdfReport directly, on this week. */
 /* The report for a DAY (the default), a WEEK or a MONTH -- "Exp.Def Report should be daily . .
    put a weekly and monthly on buttons in front of calendar date picker there". One resolver
    (expdfPeriod) for the report and the card, so a row and its card never read different
