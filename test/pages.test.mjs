@@ -1532,7 +1532,7 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   assert.ok(/key:'leader', label:sec\.role, kind:'tap', tap:'xdLeader_'/.test(view), 'the leader column is tappable on every role board');
   assert.ok(/r\.leader!=='\(unassigned\)' \? \{ role: sec\.role, leader: r\.leader \} : null/.test(view), 'an unassigned row opens nothing');
   assert.ok(/function xdLeader_\(el\)/.test(view), 'the card function sits with the report');
-  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'one read, the report\'s own period');
+  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: weekOf \|\| '' \}\)/.test(view) && /xdLeaderOpen_\(role, leader, S\.args\.weekOf \|\| '', null\)/.test(view), 'one read, the report\'s own period and week');
   for (const label of ['Portfolio calls', 'Comments', 'Recovered']) assert.ok(view.includes(label), 'the card shows ' + label);
   assert.ok(/Nobody in HOPE Calls matches/.test(view) && /Put the leader’s number on Teams &amp; Staff/.test(view), 'it says when nobody in HOPE Calls matches, and what to do about it');
   // The tappable cell kind exports as text and never carries data for a null row.
@@ -1610,7 +1610,7 @@ test('the Exp.Def Report boards carry Calls, Talk and Comments between Customers
   assert.ok(/onclick="xdStep_\(-1\)"/.test(barFn) && /onclick="xdStep_\(1\)"/.test(barFn), 'the arrows');
   const step = app.slice(app.indexOf('function xdStep_('), app.indexOf('VIEWS.expdfrep = function'));
   assert.ok(/if \(p === 'day'\) dt\.setUTCDate\(dt\.getUTCDate\(\) \+ n\);/.test(step) && /else if \(p === 'week'\) dt\.setUTCDate\(dt\.getUTCDate\(\) \+ 7 \* n\);/.test(step) && /dt\.setUTCMonth\(dt\.getUTCMonth\(\) \+ n\)/.test(step), 'stepping by a day, a week or a month');
-  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: S\.args\.weekOf \|\| '' \}\)/.test(view), 'the card reads the same period');
+  assert.ok(/srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: weekOf \|\| '' \}\)/.test(view) && /xdLeaderOpen_\(role, leader, S\.args\.weekOf \|\| '', null\)/.test(view), 'the card reads the same period and week as the report');
   assert.ok(!/weekBar\(d,/.test(view), 'the week-only bar is gone from this screen');
   const expdfSrc2 = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'expdf.js'), 'utf-8');
   assert.equal(expdfSrc2.split('export function expdfPeriod(').length - 1, 1, 'one resolver of the period, for the report and the card');
@@ -1840,16 +1840,25 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
   const lead = app.slice(app.indexOf('function xdLeader_(el){'), app.indexOf('function xdLeaderList_(rows){'));
   assert.ok(/\.concat\(xdDayCols_\(d\)\)/.test(lead) && /xdDayTotals_\(d, t, \{full_name:/.test(lead), 'the leader\'s card carries them too, and its Excel exports them');
   // "For the weekly tab only ... after opening officer card have day tabs within, as the expected days tabs": Week | Mon 20 | ... inside the card.
-  assert.ok(/XD_CARD_ = \{ d: d, weekBody: html, weekBoard: BOARDS\.xd_leader, tab: 'week' \};/.test(lead) && /xdTabs_\(d, 'week'\) \+ '<div id="xdCardBody">'/.test(lead), 'the card opens on the Week with the day tabs above one body');
+  assert.ok(/XD_CARD_ = \{ d: d, weekBody: html, weekBoard: BOARDS\.xd_leader, tab: 'week', role: role, leader: leader \};/.test(lead) && /xdTabs_\(d, 'week'\) \+ '<div id="xdCardBody">'/.test(lead), 'the card opens on the Week with the day tabs above one body');
   const tabs = app.slice(app.indexOf('function xdTabs_(d, tab){'), app.indexOf('function xdDayBody_(d, x){'));
   assert.ok(/!d\.dayTabs \|\| !d\.dayTabs\.length\) return ''/.test(tabs), 'a day or a month card has no tabs');
-  assert.ok(/data-xdtab="week"/.test(tabs) && /d\.dayTabs\.map\(function\(x\)/.test(tabs) && /haikupakiwa \/ not filed/.test(tabs), 'Week first, then a tab per day, the unfiled ones marked');
+  assert.ok(/data-xdtab="week"/.test(tabs) && /d\.dayTabs\.filter\(xdShowDay_\)\.map\(function\(x\)/.test(tabs) && /haikupakiwa \/ not filed/.test(tabs), 'Week first, then a tab per day, the unfiled ones marked');
   assert.ok(/body\.innerHTML = day\.html; BOARDS\.xd_leader = day\.board;/.test(tabs) && /body\.innerHTML = c\.weekBody; BOARDS\.xd_leader = c\.weekBoard;/.test(tabs), 'a tab swaps the body and the Excel table, and asks the server for nothing');
   assert.ok(!/srv\(/.test(tabs.slice(tabs.indexOf('function xdLeaderTab_'), tabs.indexOf('function xdDayBody_'))) , 'switching tabs makes no request');
   const dayBody = app.slice(app.indexOf('function xdDayBody_(d, x){'), app.indexOf('/* THE PERSON LIST FOLLOWS THE OTHER FILTERS'));
   assert.ok(/if \(!x\.measured\)/.test(dayBody) && /not filed/.test(dayBody), 'a day nobody filed says so');
   assert.ok(/daily card for/.test(dayBody) && /Work done on another day counts in the Week tab/.test(dayBody), 'the tab says it is the daily card and where the rest of the work is');
   assert.ok(/col\('status','Status'\)/.test(dayBody) && /Recovered/.test(dayBody) && /Maoni ya siku \/ Comments of the day/.test(dayBody), 'the day\'s customers, their status, calls, comments and recovery');
+  // "We can swap the forward and backward weeks in the cards": the weekly card steps a week at a time, without closing, keeping the weekday it was on.
+  const stepSrc = app.slice(app.indexOf('function xdLeader_(el){'), app.indexOf('function xdTabs_(d, tab){'));
+  assert.ok(/d\.period === 'week' \? xdWeekStep_\(d\)/.test(stepSrc), 'only a weekly card carries the arrows');
+  assert.ok(/xdLeaderStep_\(-1\)/.test(stepSrc) && /xdLeaderStep_\(1\)/.test(stepSrc) && /xdLeaderStep_\(0\)/.test(stepSrc) && /Back to this week/.test(stepSrc), 'back, forward, and back to this week');
+  assert.ok(/xdLeaderOpen_\(c\.role, c\.leader, key\(mon\), want\)/.test(stepSrc) && /srv\('expdfLeader', \{ role: role, leader: leader, period: S\.args\.period \|\| 'day', weekOf: weekOf \|\| '' \}\)/.test(stepSrc),
+    'a step is the same one read as opening the card, for the week asked by its Monday');
+  assert.ok(/if \(seq !== XD_SEQ_\) return;/.test(stepSrc), 'a slow answer to an older tap never paints over the newest card');
+  assert.ok(/xdLeaderTab_\(wantDay\)/.test(stepSrc), 'the weekday you were on is kept when the week changes');
+  assert.ok(/function xdShowDay_\(x\)\{ return x\.measured \|\| String\(x\.weekday\)\.toUpperCase\(\) !== 'SUN'; \}/.test(app) && /d\.days\.filter\(xdShowDay_\)/.test(app) && /d\.dayTabs\.filter\(xdShowDay_\)/.test(app), 'an unfiled Sunday gets no column and no tab');
   assert.ok(/Marejesho kwa siku \/ Recovered by day/.test(note) && /equals the week/.test(note), 'a by-day line under the cards says the days equal the week');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)
