@@ -4733,6 +4733,33 @@ test('the expdf week is the sum of its days, officer by officer -- what each off
   // The old rule would have said GMO 900 and everyone else 0: Monday's deck less Friday's, whole, to Friday's holder.
   assert.notEqual(wk['GMO|GMO GEE'].recovered, 900);
   assert.equal(card.days.length, 5);
+  /* THE PROOF, DAY BY DAY -- "find how to show recovery by day in the weekly tab. We need proof". Each officer's row carries what each day
+     added, and it is the DAILY report's own figure for that officer on that day: lay the daily reports beside the week and they agree
+     cell by cell, and the days add up to the week. */
+  const days = ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24'];
+  const daily = {};
+  for (const day of days) {
+    const dd = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: day }, NOW);
+    for (const [k, r] of Object.entries(keyed_(dd))) (daily[k] = daily[k] || {})[day] = r.recovered;
+  }
+  for (const k of Object.keys(wk)) {
+    for (const day of days) assert.equal(wk[k].byDay[day] || 0, (daily[k] || {})[day] || 0, k + ' on ' + day + ': the week\'s day is the daily report\'s figure');
+    assert.equal(Object.values(wk[k].byDay).reduce((a, v) => a + v, 0), wk[k].recovered, k + ': the days add up to the week');
+  }
+  assert.deepEqual(wk['BIKE|BIKE BEE'].byDay, { '2026-07-21': 300, '2026-07-24': 300 });
+  assert.deepEqual(wk['MANAGER|BOSS'].byDay, { '2026-07-22': 500 });
+  assert.deepEqual(wk['GMO|GMO GEE'].byDay, { '2026-07-24': 300 });
+  // The role cards' and the whole book's totals carry the same days; every column adds up.
+  assert.deepEqual(week.totals.byDay, { '2026-07-21': 300, '2026-07-22': 500, '2026-07-24': 600 });
+  assert.deepEqual(week.sections.find(s => s.role === 'BIKE').totals.byDay, { '2026-07-21': 300, '2026-07-24': 300 });
+  assert.equal(Object.values(week.totals.byDay).reduce((a, v) => a + v, 0), week.totals.recovered);
+  // The card: each customer's days, adding up to the customer's recovered and to the card's days.
+  const byRef = Object.fromEntries(card.rows.map(r => [r.ref, r.byDay]));
+  assert.deepEqual(byRef.A1, { '2026-07-21': 300 }); assert.deepEqual(byRef.C1, { '2026-07-24': 300 });
+  assert.deepEqual(card.totals.byDay, { '2026-07-21': 300, '2026-07-24': 300 });
+  // A day report and the phone's totals carry no days: only a week does.
+  const dayRep = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  assert.equal(dayRep.totals.byDay, undefined); assert.equal(Object.values(keyed_(dayRep))[0].byDay, undefined);
 });
 
 test('the expdf week adds only the days that were filed; an older deck on the same weekday never stands in', async () => {
