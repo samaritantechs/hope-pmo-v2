@@ -15,7 +15,11 @@
    Staff; a GMO's code is their teams' zones; HR and admins see every zone -- so a shared team
    screen lists only its own zone's names ("to keep privacy") and nothing else about anyone.
    ===================================================================================== */
-function advApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a === 'APPROVED' ? 'good' : a === 'DISAPPROVED' ? 'bad' : ''; }
+function advApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a === 'APPROVED' ? 'good' : a === 'DISAPPROVED' ? 'bad' : a === 'EXPIRED' ? 'mut' : ''; }
+/* EXPIRED: a request nobody decided before its month ended (the server's advStale_ / ADV_EXPIRED). It no longer reads Pending
+   anywhere, it cannot be decided, and it does not stop its owner asking again this month. */
+function advExpired_(r){ return String((r && r.approval) || '').toUpperCase() === 'EXPIRED'; }
+var ADV_EXPIRED_NOTE = 'Muda umeisha: halikuamuliwa kabla ya mwezi wake kuisha, haliwezi kuamuliwa tena. Mhusika anaweza kuomba tena mwezi huu. / Expired: nobody decided it before its month ended, so it can no longer be decided. The staff can ask again this month.';
 
 /* THE ASK. Pick your own name (your zone's list), the date, one of the amounts; the month's
    rule and the amounts come from the server. The history of the role's requests sits below for approvers and report holders only. */
@@ -138,7 +142,7 @@ function advMonthNote_(month, ms){
   if (ms.closed) return '<div class="note bad">🔒 Mwezi ' + esc(month || '') + ' umekamilishwa na ' + esc(ms.by || 'Fedha') + (ms.at ? ' tarehe ' + esc(eatDt_(ms.at)) + ' EAT' : '') + ': maombi mapya na maamuzi yamefungwa hadi ufunguliwe tena. / This month was finalized by ' + esc(ms.by || 'Finance') + ': new requests and decisions are closed until it is reopened.</div>';
   return '';
 }
-function advApprChip_(r){ return String(r.approval||'').toUpperCase() === 'APPROVED' ? 'ok' : String(r.approval||'').toUpperCase() === 'DISAPPROVED' ? 'bad' : 'mut'; }
+function advApprChip_(r){ return String(r.approval||'').toUpperCase() === 'APPROVED' ? 'ok' : String(r.approval||'').toUpperCase() === 'DISAPPROVED' ? 'bad' : advExpired_(r) ? 'warn' : 'mut'; }
 VIEWS.advappr = function(){
   var state = S.args.state === 'decided' ? 'decided' : S.args.state === 'closed' ? 'closed' : 'pending';
   return srv('advQueue', {}).then(function(d){
@@ -148,7 +152,8 @@ VIEWS.advappr = function(){
     pend.forEach(function(r){ r.age = advAgeDays_(r); });
     var closed = d.closed || [];
     closed.forEach(function(r){ r.age = advAgeDays_(r); });
-    var older = closed.length;                      // closed: an earlier month, or this month once Finance finalized it
+    var older = closed.length;                      // read-only: expired (an earlier month), or this month's once Finance finalized it
+    var expired = closed.filter(advExpired_).length, shut = older - expired;
     var mstate = d.monthState || {};
     /* WHAT THIS DESK IS (advRouteOf_ on the server): the roles routed to it and the people it supervises -- or, plainly,
        that nothing is routed to it yet and where that is set. An admin's desk shows every request and names the ones that
@@ -158,7 +163,9 @@ VIEWS.advappr = function(){
     HEAD = '<div class="kpis">'
       + kpi('Yanayosubiri / Pending', money(d.count), 'maombi / requests', d.count ? 'warnc' : 'good')
       + kpi('Kiasi kinachosubiri / Pending TZS', money(d.amount), null, d.amount ? 'warnc' : '')
-      + kpi('Zimefungwa / Closed', money(older), 'miezi iliyopita, au mwezi uliokamilishwa / earlier months, or a finalized month', older ? 'bad' : 'good')
+      /* "must be expired so that they no longer read pending": the earlier months' undecided requests, under their own word. */
+      + kpi('Zimeisha muda / Expired', money(expired), 'hayakuamuliwa kabla ya mwezi kuisha; mhusika anaweza kuomba tena / never decided before the month ended; the staff can ask again'
+          + (shut ? ' · ' + money(shut) + ' zimefungwa na Fedha mwezi huu / closed by Finance this month' : ''), older ? 'bad' : 'good')
       + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money(rec.length), esc(d.month || ''))
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
@@ -178,7 +185,7 @@ VIEWS.advappr = function(){
             + '. / Teams with no zone on Teams & Staff: their officers\' requests cannot reach this desk until the zone is set.</div>' : '')
       + bar('<button class="btn sm' + (state === 'pending' ? '' : ' ghost') + '" data-arg="state" data-val="pending">Yanayosubiri / Pending (' + money(pend.length) + ')</button>'
           + '<button class="btn sm' + (state === 'decided' ? '' : ' ghost') + '" data-arg="state" data-val="decided" style="margin-left:6px">Yaliyoamuliwa / Decided (' + money(rec.length) + ')</button>'
-          + '<button class="btn sm' + (state === 'closed' ? '' : ' ghost') + '" data-arg="state" data-val="closed" style="margin-left:6px">Zimefungwa / Closed (' + money(closed.length) + ')</button>'
+          + '<button class="btn sm' + (state === 'closed' ? '' : ' ghost') + '" data-arg="state" data-val="closed" style="margin-left:6px">Zimeisha muda / Expired (' + money(closed.length) + ')</button>'
           + '<select data-filter="zone" style="margin-left:8px"><option value="">Zone zote / All zones</option>'
             + (d.zones || []).map(function(z){ return '<option' + (S.filters.zone === z ? ' selected' : '') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
           + (state === 'pending' && pend.length
@@ -194,21 +201,25 @@ VIEWS.advappr = function(){
       S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
         {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
         col('zone','Zone'), {key:'amount', label:'Kiasi / Amount', kind:'money'}, col('app_date','Tarehe ya ombi / App date','date'),
-        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age + ' d'; }, chip:function(r){ return r.age > 31 ? 'bad' : r.age > 7 ? 'warn' : 'mut'; }},
+        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(r){ return r.age > 31 ? 'bad' : r.age > 7 ? 'warn' : 'mut'; }},
         {key:'routeTo', label:'Kwa / To', kind:'chip', title:'Nani anaamua / who decides',
          get:function(r){ return r.routeTo || ''; }, chip:function(r){ return r.routeKind === 'none' ? 'bad' : /not recognised/.test(r.route || '') ? 'warn' : 'mut'; }}];
       ONROW = function(r){ advDecideDrawer_(r, true); };
       S.foot = 'Yanayosubiri / Pending: ' + money(pend.length) + ' · TZS ' + money(d.amount) + ' · gusa safu kwa uamuzi mmoja, tiki kwa wengi / tap a row for one decision, tick for many';
     } else if (state === 'closed') {
-      // Read-only: never decided, and no longer decidable -- an earlier month, or this month once Finance finalized it.
+      // Read-only: never decided, and no longer decidable -- EXPIRED when its month is over, closed when it is this month's and Finance finalized it.
       S.pickKey = '';
       S.rows = closed;
       S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
         {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
         col('zone','Zone'), {key:'amount', label:'Kiasi / Amount', kind:'money'}, col('app_date','Tarehe ya ombi / App date','date'),
-        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age + ' d'; }, chip:function(){ return 'mut'; }}];
-      ONROW = function(r){ advDecideDrawer_(r, false, 'Imefungwa: mwezi wake umeisha au umekamilishwa. / Closed: its month is over or finalized -- it can no longer be decided.'); };
-      S.foot = 'Zimefungwa / Closed (hazijaamuliwa / never decided): ' + money(closed.length);
+        {key:'approval', label:'Hali / Status', kind:'chip', get:function(r){ return !r.submitted_at ? '' : advExpired_(r) ? 'Muda umeisha / Expired' : 'Imefungwa na Fedha / Closed by Finance'; },   // '' on the total row
+         chip:function(r){ return advExpired_(r) ? 'warn' : 'mut'; }},
+        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(){ return 'mut'; }}];
+      ONROW = function(r){ advDecideDrawer_(r, false, advExpired_(r) ? ADV_EXPIRED_NOTE
+        : 'Imefungwa: mwezi huu umekamilishwa na Fedha. / Closed: this month is finalized -- it cannot be decided unless Finance reopens the month.'); };
+      S.foot = 'Zimeisha muda / Expired (hazikuamuliwa / never decided): ' + money(expired) + (shut ? ' · zimefungwa na Fedha / closed by Finance: ' + money(shut) : '')
+        + ' · wahusika wanaweza kuomba tena mwezi huu / their owners can ask again this month';
     } else {
       S.pickKey = '';
       S.rows = rec;
@@ -232,7 +243,8 @@ function advDecideDrawer_(r, decidable, closedNote){
       + row('Kiasi / Amount', 'TZS ' + money(r.amount)) + row('Tarehe ya ombi / App date', String(r.app_date || '').slice(0, 10))
       + row('Imetumwa / Submitted', String(r.submitted_at || '').replace('T', ' ').slice(0, 16))
       + row('Anayeamua / Who decides', r.route)
-      + (r.approval && String(r.approval).toUpperCase() !== 'PENDING' ? row('Idhini / Approval', r.approval) + row('Aliyeamua / Decided by', r.decided_by) + row('Maoni / Comment', r.comment) : '')
+      + (advExpired_(r) ? row('Hali / Status', 'Muda umeisha / Expired')      // nobody decided it: no decider, no comment to show
+          : r.approval && String(r.approval).toUpperCase() !== 'PENDING' ? row('Idhini / Approval', r.approval) + row('Aliyeamua / Decided by', r.decided_by) + row('Maoni / Comment', r.comment) : '')
     + '</div>'
     + (closedNote ? '<div class="note bad">' + esc(closedNote) + '</div>' : '')
     + (decidable
@@ -370,7 +382,8 @@ VIEWS.advrep = function(){
       // The last column is the approval date, in East Africa time like Submitted -- "remove kupitia/via ... replace with approval date".
       col('decided_at','Tarehe ya idhini / Approval date','dt')];
     ONROW = null;
-    S.foot = money(d.count) + ' maombi / requests · TZS ' + money(d.amount) + ' · approved TZS ' + money(d.approvedAmount);
+    S.foot = money(d.count) + ' maombi / requests · TZS ' + money(d.amount) + ' · approved TZS ' + money(d.approvedAmount)
+      + (d.expired ? ' · ' + money(d.expired) + ' zimeisha muda / expired (hazikuamuliwa / never decided)' : '');
   });
 };
 

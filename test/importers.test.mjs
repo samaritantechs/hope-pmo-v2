@@ -1662,4 +1662,8 @@ test('the STAFF_FUNDS DATABASE and ADVANCE REQUESTS tabs import as they are', ()
   assert.equal(adv[1].approval, 'Disapproved'); assert.equal(adv[1].comment, 'subiri'); assert.equal(adv[1].account, '10214592156');
   assert.equal(advanceRowId(a), a.id, 'the same request is the same row'); assert.notEqual(a.id, adv[1].id);
   assert.match(a.id, /^[0-9a-f]{8}-/);
+  // A register exported from the portal and uploaded again keeps an expired request expired; anything unrecognised is still Pending.
+  const st = v => importAdvances([['TIMESTAMP', 'STAFF NAME', 'REQUESTED', 'APPROVAL'], ['2026-05-13 08:55:36', 'A B', '50000', v]])[0].approval;
+  assert.equal(st('Expired'), 'Expired'); assert.equal(st('expired'), 'Expired'); assert.equal(st('Muda umeisha / Expired'), 'Expired');
+  assert.equal(st('waiting'), 'Pending'); assert.equal(st(''), 'Pending');
 });

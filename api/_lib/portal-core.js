@@ -1760,6 +1760,36 @@ function advMonthState_(raw, monthNow, nowMs) {
 /** A request is closed when its month is over, or it is this month's and the month is finalized and not reopened. */
 const advClosed_ = (r, ms) => { const m = advMonthEat_(r && r.submitted_at); return !!m && (m < ms.month || (m === ms.month && ms.closed)); };
 const advFinalState_ = (r, ms) => (advMonthEat_(r && r.submitted_at) < ms.month ? 'closed' : (ms.closed ? 'finalized' : 'open'));
+/* EXPIRED -- "All salary advances that were not approved and past current month must be expired so that they no longer read pending
+   and those users can request current month."
+
+   A request nobody decided before its month ended (East Africa time) has EXPIRED. ONE definition (advStale_), used two ways:
+     - it is WRITTEN: the first advance screen that meets such a request marks every one of them Expired, in one statement
+       (advExpireOld_) -- no migration to run, no schedule to keep, and no write at all when there is nothing to expire;
+     - it is READ that way meanwhile: a row still Pending in the database whose month is over is shown as Expired
+       (advExpireView_), so the desk, the history and the report are right even where the write could not be made.
+   Expired is not a decision: decided_by and decided_at stay empty, the request can no longer be decided, and it never counts
+   against the month its owner may ask in -- that is THIS month's requests alone. This month's undecided requests stay Pending,
+   finalized or not, because Finance can still reopen the month; they expire when the month is over. */
+const ADV_EXPIRED = 'Expired';
+/** The first instant of a month in East Africa, as the UTC timestamp the database compares with. */
+const advMonthStartUtc_ = month => new Date(Date.parse(month + '-01T00:00:00+03:00')).toISOString();
+const advStale_ = (r, monthNow) => { const m = K(r && r.approval) === 'PENDING' ? advMonthEat_(r.submitted_at) : ''; return !!m && m < monthNow; };
+function advExpireView_(rows, monthNow) {
+  let stale = 0;
+  const out = (rows || []).map(r => (advStale_(r, monthNow) ? (stale++, { ...r, approval: ADV_EXPIRED }) : r));
+  return { rows: out, stale };
+}
+/** The write: every request still Pending from a month that is over becomes Expired. Called only by a reader that has just met
+    one, so a book with nothing to expire is never written to. A failure is not the reader's: the rows read as Expired anyway and
+    the next reader that meets one tries again. */
+async function advExpireOld_(db, monthNow) {
+  try {
+    const { error } = await db.from('advance_requests').update({ approval: ADV_EXPIRED }).eq('approval', 'Pending').lt('submitted_at', advMonthStartUtc_(monthNow));
+    if (error) throw new Error(error.message);
+    return true;
+  } catch (e) { console.warn('[advance] expiring the past months\' undecided requests failed:', (e && e.message) || e); return false; }
+}
 const ADV_MONTH_CLOSED = 'Mwezi huu umekamilishwa na Meneja wa Fedha: maombi mapya na maamuzi yamefungwa hadi afungue tena. / This month has been finalized by the finance manager: new requests and decisions are closed until it is reopened.';
 function advZoneList_(teamRows, regRows, zones) {
   const all = [...new Set(teamRows.map(t => K(t.zone)).concat((regRows || []).map(r => K(r.zone))).filter(Boolean))].sort();
@@ -2150,9 +2180,11 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
     : (cs && on && !staff.length ? 'Hakuna majina kwenye orodha ya mawakala wa simu (Settings → Call agents). / No names on the call-agents roster yet (Settings → Call agents).' : null);
   // A request with no zone (customer service, a department) is nobody's to hide: it belongs
   // to the role.
-  const history = (history0 || []).concat(deptHist0 || []).filter(r => !r.zone || advZoneOk_(zones, r.zone))
-    .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   const month = todayKey(nowMs).slice(0, 7);
+  // An undecided request of a month that is over reads Expired, and the first reader to meet one writes it (advExpireOld_).
+  const hist = advExpireView_((history0 || []).concat(deptHist0 || []).filter(r => !r.zone || advZoneOk_(zones, r.zone)), month);
+  if (hist.stale) await advExpireOld_(db, month);
+  const history = hist.rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   let chosen = null, monthTaken = null;
   const wantId = K(staffId), wantName = K(staffName);
   if (wantId || wantName) {
@@ -2161,10 +2193,12 @@ async function advRequestPage(db, user, { staffId, staffName } = {}, nowMs = Dat
     // no registry row (a roster name) is matched on the name itself, under this role.
     if (chosen) {
       const taken = (await advRead_(() => {
-        const q = db.from('advance_requests').select('id, submitted_at').gte('submitted_at', month + '-01').neq('approval', 'Disapproved').limit(3);
+        // THIS month's requests alone (the East Africa month, the one the desk and the report go by): an expired or
+        // disapproved request of an earlier month never stands in the way of asking now.
+        const q = db.from('advance_requests').select('id, submitted_at').gte('submitted_at', advMonthStartUtc_(month)).neq('approval', 'Disapproved').limit(3);
         return chosen.id ? q.eq('staff_id', chosen.id) : q.ilike('staff_name', chosen.name).ilike('req_role', String(user.role || '~none~'));
       })) || [];
-      const hit = taken.find(r => advMonth_(r.submitted_at) === month);
+      const hit = taken.find(r => advMonthEat_(r.submitted_at) === month);
       monthTaken = hit ? { submitted_at: hit.submitted_at } : null;
     }
   }
@@ -2217,11 +2251,13 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
   if (!amounts.includes(amount)) throw badRequest('Chagua kiasi kutoka kwenye orodha: ' + amounts.join(', ') + '. / Pick one of the amounts offered.');
   const month = todayKey(nowMs).slice(0, 7);
   const prior = await advRead_(() => {
-    const q = db.from('advance_requests').select('id, submitted_at, approval').gte('submitted_at', month + '-01').neq('approval', 'Disapproved');
+    // One per month, and the month is THIS one (East Africa time): an earlier month's request -- expired, disapproved, or
+    // paid -- is not read at all, so it cannot stop this month's.
+    const q = db.from('advance_requests').select('id, submitted_at, approval').gte('submitted_at', advMonthStartUtc_(month)).neq('approval', 'Disapproved');
     return s.id ? q.eq('staff_id', s.id) : q.ilike('staff_name', s.name).ilike('req_role', String(user.role || '~none~'));
   });
   if (prior === null) throw badRequest(ADV_NOTE);
-  if (prior.some(r => advMonth_(r.submitted_at) === month)) {
+  if (prior.some(r => advMonthEat_(r.submitted_at) === month)) {
     throw badRequest('⚠️ Tayari kuna ombi la advance la mwezi huu kwa jina hili. Ombi moja tu kwa mwezi. '
       + '/ You already have an advance request this month. Only one request per month is allowed.');
   }
@@ -2266,8 +2302,9 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
      no zone -- one shared code, names off the roster -- so the zone read alone would never
      bring it. Then the one routing rule decides each row. */
   const { mine, roleKeys, desk } = advDeskOf_(routing, user);
-  const pendQ = () => db.from('advance_requests').select('*').eq('approval', 'Pending').order('submitted_at', { ascending: false });
-  const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
+  // Pending, and the ones that expired undecided: the same list the desk always carried, the earlier months' now under their own word.
+  const pendQ = () => db.from('advance_requests').select('*').in('approval', ['Pending', ADV_EXPIRED]).order('submitted_at', { ascending: false });
+  const recQ = () => db.from('advance_requests').select('*').neq('approval', 'Pending').neq('approval', ADV_EXPIRED).gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
   const [pending0, recent0, pendS, recS, pendR, recR] = await Promise.all([
     advRead_(() => onZoneLegacy_(pendQ(), zones, routing, isAdminUser(user))),
     advRead_(() => onZoneLegacy_(recQ(), zones, routing, isAdminUser(user))),
@@ -2279,11 +2316,16 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
   const on = Array.isArray(pending0);
   const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
   const withRoute = r => { const rt = advRouteOf_(routing, r); return { ...r, route: advRouteLabel_(rt, r.zone), routeTo: rt.kind === 'role' ? rt.to : rt.kind === 'supervisor' ? rt.name : rt.kind === 'legacy' ? 'zone' : 'admin', routeKind: rt.kind }; };
-  const pendingAll = advMerge_(pending0, pendS, pendR).filter(sees)
+  // An earlier month's undecided request reads Expired; the first desk to meet one still Pending in the database writes it for
+  // the whole book (advExpireOld_), whoever's zone it sits in -- the rule is the calendar's, not a desk's decision.
+  const view = advExpireView_(advMerge_(pending0, pendS, pendR), month);
+  if (view.stale) await advExpireOld_(db, month);
+  const pendingAll = view.rows.filter(sees)
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
-  // Only THIS MONTH's pending is the desk's work; an older one is closed (read-only, below) -- it cannot be decided any more.
-  const pending = pendingAll.filter(r => !advClosed_(r, ms));
-  const closed = pendingAll.filter(r => advClosed_(r, ms));
+  // Only THIS MONTH's pending is the desk's work. The rest is read-only (below): EXPIRED when its month is over, and still
+  // Pending-but-closed when it is this month's and Finance has finalized the month -- neither can be decided.
+  const pending = pendingAll.filter(r => K(r.approval) === 'PENDING' && !advClosed_(r, ms));
+  const closed = pendingAll.filter(r => K(r.approval) !== 'PENDING' || advClosed_(r, ms));
   const recent = advMerge_(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
     .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
   // What this desk IS (advDeskOf_) -- and, for an admin, the pending requests that reach nobody else.
@@ -2293,7 +2335,8 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     .filter(x => x.rt.kind === 'none' || (x.rt.kind === 'role' && !holds(x.rt.to, x.r.zone)))
     .map(x => ({ staff_name: x.r.staff_name, req_role: x.r.req_role || x.r.staff_role, zone: x.r.zone,
       why: x.rt.kind === 'none' ? 'no approver set' : 'no ' + x.rt.to + ' holds zone ' + (K(x.r.zone) || '?') })) : [];
-  return { on, note: on ? null : ADV_NOTE, pending, recent, closed, count: pending.length, closedCount: closed.length, month, monthState: ms,
+  return { on, note: on ? null : ADV_NOTE, pending, recent, closed, count: pending.length, closedCount: closed.length,
+    expiredCount: closed.filter(r => r.approval === ADV_EXPIRED).length, month, monthState: ms,
     amount: pending.reduce((s2, r) => s2 + num(r.amount), 0),
     zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
     noZoneTeams, approvals: ADV_APPROVALS.slice(1),
@@ -2328,6 +2371,7 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
     if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') why = forbidden(`You do not have access to zone ${r.zone}.`);
     else if (!advSees_(routing, user, zones, r)) why = forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
     if (why) { refused = refused || why; skipped.push(`${r.staff_name}: ${why.message}`); continue; }
+    if (K(r.approval) === K(ADV_EXPIRED) || advStale_(r, ms.month)) { skipped.push(`${r.staff_name}: expired -- its month (${advMonthEat_(r.submitted_at)}) ended undecided; they can ask again this month`); continue; }
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval} -- a request is decided once`); continue; }
     if (advClosed_(r, ms)) { skipped.push(`${r.staff_name}: closed -- ${advMonthEat_(r.submitted_at) < ms.month ? 'its month (' + advMonthEat_(r.submitted_at) + ') is over' : 'this month is finalized'}`); continue; }
     const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
@@ -2347,7 +2391,7 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const today = todayKey(nowMs);
   const fromKey = advDate_(from) || today.slice(0, 8) + '01';
   const toKey = advDate_(to) || today;
-  const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (ADV_APPROVALS.find(a => K(a) === K(approval)) || 'Approved'));
+  const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (ADV_APPROVALS.concat(ADV_EXPIRED).find(a => K(a) === K(approval)) || 'Approved'));
   const admin0 = isAdminUser(user);
   /* THE FINANCE MANAGER'S REPORT IS THE WHOLE BOOK, like an admin's: they finalize what payroll pays, whichever desk decided it
      ("a finalized button at report for finance manager") -- the advfinal tab, granted on Roles & access or on their code. */
@@ -2361,7 +2405,9 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const winQ = () => {
     const q = db.from('advance_requests').select('*').gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
       .order('submitted_at', { ascending: false });               // newest first, like the desk
-    return want === 'ALL' ? q : q.eq('approval', want);
+    // Expired also asks for the ones still Pending in the database: an earlier month's is expired whether or not it has been
+    // written yet (advExpireView_ below decides, and the filter is applied again once it has).
+    return want === 'ALL' ? q : want === ADV_EXPIRED ? q.in('approval', [ADV_EXPIRED, 'Pending']) : q.eq('approval', want);
   };
   const [rows0, rowsS, rowsR] = await Promise.all([
     advRead_(() => onZoneLegacy_(winQ(), zones, routing, admin)),
@@ -2371,11 +2417,14 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   const on = Array.isArray(rows0);
   const sees = r => (admin ? advZoneOk_(zones, r.zone) : (advSees_(routing, user, zones, r) || K(r.decided_by) === K(user.name)))
     && (!zone || K(r.zone) === K(zone));
-  let rows = advMerge_(rows0, rowsS, rowsR).filter(sees).sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
+  const monthNow = today.slice(0, 7);
+  const view = advExpireView_(advMerge_(rows0, rowsS, rowsR), monthNow);
+  if (view.stale) await advExpireOld_(db, monthNow);
+  let rows = view.rows.filter(r => sees(r) && (want === 'ALL' || K(r.approval) === K(want)))
+    .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   const ids = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
   const reg = ids.length && ids.length <= 400 ? (await advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', ids))) || [] : [];
   const regBy = new Map(reg.map(r => [K(r.id), r]));
-  const monthNow = today.slice(0, 7);
   const ms = advMonthState_(monthsRaw, monthNow, nowMs);
   rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: r.account || s.account || null, phone: s.phone || null, finalState: advFinalState_(r, ms) }; });
   const byZone = new Map();
@@ -2394,7 +2443,8 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
     month: monthNow, monthState: ms, canFinalize,
     // The decided requests of THIS month that Finalize would close (the report's own rows, so what is on screen is what is closed).
     openDecided: rows.filter(r => r.finalState === 'open' && K(r.approval) !== 'PENDING').length,
-    summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS),
+    expired: rows.filter(r => r.approval === ADV_EXPIRED).length,
+    summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(ADV_APPROVALS, ADV_EXPIRED),
     desk, routingOn: routing ? routing.on : true, routingNote: routing && !routing.on ? ADV_ROUTE_NOTE : null };
 }
 /** THE FINAL DECISION -- the finance manager's, from the report: "[finalized button at report for finance manager to finalize]".
@@ -2415,7 +2465,7 @@ async function advFinalize(db, user, p, nowMs = Date.now()) {
   all[monthNow] = { at: new Date(nowMs).toISOString(), by: user.name || user.code };    // a finalize clears any reopen
   await advWriteMonths_(db, all);
   // What it closed, said back: the decided requests of the month (and the ones still pending, which close undecided).
-  const rows = (await advRead_(() => db.from('advance_requests').select('amount, approval').gte('submitted_at', monthNow + '-01'))) || [];
+  const rows = (await advRead_(() => db.from('advance_requests').select('amount, approval').gte('submitted_at', advMonthStartUtc_(monthNow)))) || [];
   const dec = rows.filter(r => K(r.approval) === 'APPROVED');
   return { month: monthNow, at: all[monthNow].at, by: all[monthNow].by, requests: rows.length,
     approved: dec.length, approvedAmount: dec.reduce((s2, r) => s2 + num(r.amount), 0), pendingClosed: rows.filter(r => K(r.approval) === 'PENDING').length };

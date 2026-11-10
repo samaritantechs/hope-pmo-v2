@@ -831,6 +831,8 @@ export const advApproval = v => {
   const s = String(v == null ? '' : v).trim().toLowerCase();
   if (/^approved?$|^yes$|^ok$|^imeidhinishwa$/.test(s)) return 'Approved';
   if (/^dis|^rejected|^declined|^denied|^no$|^imekataliwa/.test(s)) return 'Disapproved';
+  // A register exported from the portal and uploaded again: an expired request stays expired (portal-core ADV_EXPIRED).
+  if (/^expired$|^muda umeisha/.test(s)) return 'Expired';
   return 'Pending';
 };
 export function importAdvances(csvRows) {

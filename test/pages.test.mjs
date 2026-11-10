@@ -2119,7 +2119,20 @@ test('advance routing: Roles & access takes the approver role, the code form the
      [finalized button at report for finance manager to finalize]) / closed [when its not current month ...]" and "when finalize is
      clicked even requesting is closed for current month unless add a temp-reopen button". */
   const deskV = adv.slice(adv.indexOf('VIEWS.advappr'), adv.indexOf('VIEWS.advrep'));
-  assert.ok(/data-val="closed"[^>]*>Zimefungwa \/ Closed \(/.test(deskV) && /S\.rows = closed;/.test(deskV) && /advDecideDrawer_\(r, false, 'Imefungwa: mwezi wake umeisha au umekamilishwa/.test(deskV), 'the desk has a Closed pill: read-only rows of months that are over or finalized');
+  /* EXPIRED -- "All salary advances that were not approved and past current month must be expired so that they no longer read pending
+     and those users can request current month": the read-only pane is the Expired one. An earlier month's undecided request says
+     Expired on its row and in its drawer, with the word that its owner can ask again; this month's, once Finance finalized it, says
+     closed by Finance. Neither can be decided. */
+  assert.ok(/data-val="closed"[^>]*>Zimeisha muda \/ Expired \(/.test(deskV) && /S\.rows = closed;/.test(deskV), 'the desk has an Expired pill: read-only rows');
+  assert.ok(!/Zimefungwa \/ Closed \(/.test(deskV), 'no pane calls an expired request merely closed');
+  assert.ok(/kpi\('Zimeisha muda \/ Expired', money\(expired\)/.test(deskV) && /var expired = closed\.filter\(advExpired_\)\.length, shut = older - expired;/.test(deskV), 'the card counts the expired, and says how many Finance closed this month');
+  assert.ok(/key:'approval', label:'Hali \/ Status', kind:'chip', get:function\(r\)\{ return !r\.submitted_at \? '' : advExpired_\(r\) \? 'Muda umeisha \/ Expired' : 'Imefungwa na Fedha \/ Closed by Finance'; \}/.test(deskV), 'each read-only row says which it is, and the total row says nothing');
+  assert.ok(!/get:function\(r\)\{ return r\.age \+ ' d'; \}/.test(deskV), 'the total row no longer reads "undefined d" under Age');
+  assert.ok(/advDecideDrawer_\(r, false, advExpired_\(r\) \? ADV_EXPIRED_NOTE/.test(deskV) && /The staff can ask again this month/.test(adv), 'the drawer says it expired and that the staff can ask again');
+  assert.ok(/function advExpired_\(r\)\{ return String\(\(r && r\.approval\) \|\| ''\)\.toUpperCase\(\) === 'EXPIRED'; \}/.test(adv), 'one test for an expired row on the screen');
+  assert.ok(/a === 'EXPIRED' \? 'mut'/.test(adv) && /advExpired_\(r\) \? 'warn' : 'mut'/.test(adv), 'Expired has its own look in the history, the report and the chips');
+  assert.ok(/advExpired_\(r\) \? row\('Hali \/ Status', 'Muda umeisha \/ Expired'\)/.test(adv), 'an expired request shows no decider: nobody decided it');
+  assert.ok(/d\.expired \? ' · ' \+ money\(d\.expired\) \+ ' zimeisha muda \/ expired/.test(repView), 'the report\'s foot counts the expired on screen');
   assert.ok(/advMonthNote_\(d\.month, mstate\)/.test(deskV) && /advMonthNote_\(d\.month, ms\)/.test(repView) && /function advMonthNote_\(month, ms\)/.test(adv), 'one note for the month\'s state on the desk and the report');
   assert.ok(/id="advFinalizeBtn"/.test(repView) && /id="advReopenBtn"/.test(repView) && /d\.canFinalize\s*\?/.test(repView), 'Finalize and Reopen buttons on the report, for the advfinal holder only');
   assert.ok(/ms\.closed\s*\?\s*'<button class="btn sm" id="advReopenBtn"/.test(repView) && /ms\.finalized \? 'Kamilisha tena \/ Finalize again'/.test(repView), 'Reopen while closed; Finalize (again) while open or reopened');
