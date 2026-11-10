@@ -3954,6 +3954,40 @@ lines up); a column opts in with `dec:1` (`cellText` honours it, and `pctRound_`
 shows). The PAR tab uses it for the "PAR all-time" KPI, the team table's "PAR all-time %" column (its "~" average row too) and the footer; the ordinary PAR stays a
 whole number. The server already sent one decimal (`pctOf`), so nothing changed there; the Annual deck already shows it to one decimal.
 
+## Part 39 — Salary advance: an undecided request of a month that is over has expired
+
+> "All salary advances that were not approved and past current month must be expired so that they no longer read pending and
+> those users can request current month"
+
+A request nobody decided before its month ended used to stay **Pending** in the book for ever and was only *shown* as "closed" on the
+desk. It is now **Expired** (BUILD 2026-11-10-a; `ADV_EXPIRED`, `advStale_` in `api/_lib/portal-core.js`):
+
+- **One definition.** Pending, and filed in a month that is over, by the East Africa month (`advMonthEat_`). Approved and Disapproved
+  are decisions and are left alone. THIS month's undecided requests stay Pending, finalized or not, because Finance can still reopen
+  the month; they expire when the month is over.
+- **It is written, with no migration and no schedule.** The first advance screen that *meets* such a request (the approvals desk, the
+  report, the history on the request tab) marks every one of them Expired in ONE statement (`advExpireOld_`:
+  `approval = 'Expired' where approval = 'Pending' and submitted_at < the first instant of this month, EAT`). A book with nothing to
+  expire is never written to, so the screens cost what they cost before; the write is one extra trip on the one open that finds them,
+  once a month. Nothing on `/api/upload` or `/api/call`.
+- **It is read that way meanwhile** (`advExpireView_`): a row still Pending in the database whose month is over is shown as Expired,
+  so the desk, the history and the report are right even where the write failed (it is logged, and the next reader that meets one
+  tries again). The report's **Expired** filter asks for both spellings and applies the rule; **Pending** no longer brings them.
+- **Expired is not a decision**: `decided_by` and `decided_at` stay empty, and `advDecide` refuses it ("expired -- its month ended
+  undecided; they can ask again this month"), for the desk and an admin alike.
+- **On the screen** (`public/mod/advance.js`): the desk's third pill and card are *Zimeisha muda / Expired*; each read-only row says
+  *Expired* or, for this month's once Finance finalized it, *Closed by Finance*; the drawer says the staff can ask again; the history
+  and the report show Expired, and the report can be filtered to it.
+
+**Asking again.** One request per person per month was already this month's requests alone, so an earlier month's request -- expired,
+disapproved or paid -- never stood in the way; that is now pinned by a test. What changed is WHICH month a request belongs to on the
+ask: it was read off the UTC date (`advMonth_`) while the desk and the report went by East Africa time, so a request filed between
+midnight and 03:00 on the 1st was the new month's on the desk and the old month's on the ask, and a second one that month went through.
+Both go by the East Africa month now (`advMonthStartUtc_`), on the request tab, the ask and Finalize's count.
+
+**Uploading the register again** keeps a cell that says Expired as Expired (`advApproval` in `importers.js`); a cell that says Pending
+for a month that is over is expired again by the next screen that meets it.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

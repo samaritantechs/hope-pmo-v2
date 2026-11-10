@@ -11975,12 +11975,14 @@ test('advance months: a decision is made once, past months are closed, Finalize 
   const finance = { code: 'FIN', name: 'THE FINANCE MANAGER', role: 'MANAGEMENT', teams: null, tabs: ['advrep', 'advfinal'] };
   const FO = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
 
-  // JUNE IS OVER: closed by itself -- off the pending list, shown as closed, and nobody decides it.
+  // JUNE IS OVER: its undecided request has EXPIRED -- off the pending list, read-only, written as Expired, and nobody decides it.
   const q0 = await portalApi(db, gmo, 'advQueue', {}, NOW);
-  assert.deepEqual(q0.pending.map(r => r.staff_name), ['BEN']); assert.deepEqual(q0.closed.map(r => r.staff_name), ['CHIKU']); assert.equal(q0.closedCount, 1);
+  assert.deepEqual(q0.pending.map(r => r.staff_name), ['BEN']); assert.deepEqual(q0.closed.map(r => [r.staff_name, r.approval]), [['CHIKU', 'Expired']]);
+  assert.equal(q0.closedCount, 1); assert.equal(q0.expiredCount, 1);
   const old = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-june', approval: 'Approved' }] }, NOW);
-  assert.equal(old.updated, 0); assert.match(old.skipped[0], /CHIKU: closed -- its month \(2026-06\) is over/);
-  assert.equal(db._dump('advance_requests').find(r => r.id === 'r-june').approval, 'Pending', 'nothing was written');
+  assert.equal(old.updated, 0); assert.match(old.skipped[0], /CHIKU: expired -- its month \(2026-06\) ended undecided/);
+  const june = db._dump('advance_requests').find(r => r.id === 'r-june');
+  assert.equal(june.approval, 'Expired', 'expired, not approved'); assert.equal(june.decided_by, undefined, 'and nobody decided it');
 
   // A DECISION IS MADE ONCE: the desk cannot decide the same request twice.
   assert.equal((await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-july', approval: 'Approved', comment: 'sawa' }] }, NOW)).approved, 1);
@@ -12024,6 +12026,167 @@ test('advance months: a decision is made once, past months are closed, Finalize 
   // An admin may do both; the month's state lives in ONE setting.
   assert.ok(JSON.parse(db._dump('settings').find(r => r.key === 'ADV_FINALIZED').value)['2026-07'].at);
   assert.equal((await portalApi(db, ADMIN, 'advReopen', {}, later)).hours, 24);
+});
+
+/* EXPIRED -- "All salary advances that were not approved and past current month must be expired so that they no longer read pending and
+   those users can request current month."
+
+   A request nobody decided before its month ended (East Africa time) is Expired: written so by the first advance screen that meets one,
+   read so meanwhile, never decidable, and never in the way of asking again. NOW is 24 July 2026.
+     CHIKU   May, undecided                      -> expired
+     ASHA    June, undecided                     -> expired, and ASHA asks again in July
+     FARAJA  30 June 23:30 EAT, undecided        -> June's: expired
+     EVA     1 July 00:30 EAT (still June in UTC) -> JULY's: pending, and July is taken for EVA
+     BEN     June, approved; DAUDI June, disapproved -> decisions, left alone
+     BEN     July, undecided                     -> pending */
+function advExpiryTables() {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+  t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' }, { role: 'GMO', tabs: ['advreq', 'advappr'], approver_role: 'GMO' });
+  t.access_codes.push({ code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  const staff = (id, name) => ({ id, name, role: 'Field Officer', zone: 'DAR EAST', status: 'Active' });
+  t.staff_registry = [staff('AAA/001/2026', 'ASHA'), staff('BBB/002/2026', 'BEN'), staff('CCC/003/2026', 'CHIKU'), staff('DDD/004/2026', 'DAUDI'),
+    staff('EEE/005/2026', 'EVA'), staff('FFF/006/2026', 'FARAJA')];
+  const req = (id, at, sid, name, approval, more) => ({ id, submitted_at: at, staff_id: sid, staff_name: name, staff_role: 'Field Officer', zone: 'DAR EAST',
+    amount: 50000, approval, app_date: at.slice(0, 10), req_role: 'FIELD OFFICER', req_code: 'KON 123', ...(more || {}) });
+  t.advance_requests = [
+    req('r-may', '2026-05-05T08:00:00Z', 'CCC/003/2026', 'CHIKU', 'Pending'),
+    req('r-june', '2026-06-20T08:00:00Z', 'AAA/001/2026', 'ASHA', 'Pending'),
+    req('r-june-late', '2026-06-30T20:30:00Z', 'FFF/006/2026', 'FARAJA', 'Pending'),
+    req('r-july-early', '2026-06-30T21:30:00Z', 'EEE/005/2026', 'EVA', 'Pending'),
+    req('r-june-ok', '2026-06-21T08:00:00Z', 'BBB/002/2026', 'BEN', 'Approved', { decided_by: 'GMO D', decided_at: '2026-06-22T08:00:00Z' }),
+    req('r-june-no', '2026-06-22T08:00:00Z', 'DDD/004/2026', 'DAUDI', 'Disapproved', { decided_by: 'GMO D', decided_at: '2026-06-23T08:00:00Z', comment: 'hapana' }),
+    req('r-july', '2026-07-10T08:00:00Z', 'BBB/002/2026', 'BEN', 'Pending'),
+  ];
+  return t;
+}
+const ADV_GMO = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] };
+const ADV_FIN = { code: 'FIN', name: 'THE FINANCE MANAGER', role: 'MANAGEMENT', teams: null, tabs: ['advrep', 'advfinal'] };
+const ADV_FO = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
+/** How many times the book was WRITTEN to expire requests, and a switch to make that write fail. */
+function advWatch(db) {
+  const w = { writes: 0, fail: false }, from = db.from.bind(db);
+  db.from = name => {
+    const q = from(name);
+    if (name !== 'advance_requests') return q;
+    const update = q.update.bind(q);
+    q.update = patch => { if (patch && patch.approval === 'Expired') { w.writes++; if (w.fail) throw new Error('the database said no'); } return update(patch); };
+    return q;
+  };
+  return w;
+}
+const advState = db => Object.fromEntries(db._dump('advance_requests').map(r => [r.id, r.approval]));
+
+test('advance expiry: an undecided request of a month that is over is Expired -- written once, off the pending list, and never decidable', async () => {
+  const db = fakeDb(advExpiryTables()), w = advWatch(db);
+  const q = await portalApi(db, ADV_GMO, 'advQueue', {}, NOW);
+  // The desk's work is THIS month's: BEN's July request and EVA's, filed at 00:30 on 1 July East Africa time.
+  assert.deepEqual(q.pending.map(r => r.staff_name).sort(), ['BEN', 'EVA']); assert.equal(q.count, 2);
+  // The earlier months' undecided ones read Expired, not Pending -- June's last half-hour included.
+  assert.deepEqual(q.closed.map(r => [r.staff_name, r.approval]).sort(), [['ASHA', 'Expired'], ['CHIKU', 'Expired'], ['FARAJA', 'Expired']]);
+  assert.equal(q.expiredCount, 3); assert.equal(q.closedCount, 3);
+  assert.ok(!q.pending.concat(q.recent).some(r => r.approval === 'Expired'), 'an expired request is neither pending nor a decision');
+  // ...and they ARE expired, in the book: one write for all of them, decisions and this month's left as they were.
+  assert.deepEqual(advState(db), { 'r-may': 'Expired', 'r-june': 'Expired', 'r-june-late': 'Expired', 'r-july-early': 'Pending',
+    'r-june-ok': 'Approved', 'r-june-no': 'Disapproved', 'r-july': 'Pending' });
+  assert.equal(w.writes, 1);
+  const june = db._dump('advance_requests').find(r => r.id === 'r-june');
+  assert.equal(june.decided_by, undefined); assert.equal(june.decided_at, undefined, 'expired is not a decision: nobody decided it');
+  assert.equal(db._dump('advance_requests').find(r => r.id === 'r-june-no').comment, 'hapana');
+  // Nothing left to expire: the next opens write nothing.
+  const again = await portalApi(db, ADV_GMO, 'advQueue', {}, NOW);
+  assert.deepEqual(again.closed.map(r => r.approval), ['Expired', 'Expired', 'Expired']); assert.equal(w.writes, 1, 'no write when there is nothing to expire');
+  await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'ALL' }, NOW);
+  await portalApi(db, ADMIN, 'advRequestPage', {}, NOW);
+  assert.equal(w.writes, 1);
+  // It cannot be decided -- by the desk it was routed to, or an admin.
+  for (const who of [ADV_GMO, ADMIN]) {
+    const d = await portalApi(db, who, 'advDecide', { updates: [{ id: 'r-june', approval: 'Approved' }] }, NOW);
+    assert.equal(d.updated, 0); assert.match(d.skipped[0], /ASHA: expired -- its month \(2026-06\) ended undecided; they can ask again this month/);
+  }
+  assert.equal(advState(db)['r-june'], 'Expired');
+  // The history (an admin's is every role's) and the report say Expired too; the report can be asked for them, and Pending no longer brings them.
+  const page = await portalApi(db, ADMIN, 'advRequestPage', {}, NOW);
+  assert.deepEqual(page.history.filter(r => r.approval === 'Expired').map(r => r.staff_name).sort(), ['ASHA', 'CHIKU', 'FARAJA']);
+  assert.ok(!page.history.some(r => r.approval === 'Pending' && r.submitted_at < '2026-06-30T21:00:00Z'), 'no earlier month reads Pending');
+  const exp = await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'Expired' }, NOW);
+  assert.deepEqual(exp.rows.map(r => [r.staff_name, r.approval, r.finalState]).sort(), [['ASHA', 'Expired', 'closed'], ['CHIKU', 'Expired', 'closed'], ['FARAJA', 'Expired', 'closed']]);
+  assert.equal(exp.expired, 3); assert.deepEqual(exp.approvals, ['ALL', 'Pending', 'Approved', 'Disapproved', 'Expired']);
+  const pend = await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'Pending' }, NOW);
+  assert.deepEqual(pend.rows.map(r => r.staff_name).sort(), ['BEN', 'EVA']);
+  const all = await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'ALL' }, NOW);
+  assert.equal(all.rows.length, 7); assert.equal(all.expired, 3); assert.equal(all.approved, 1);
+});
+
+test('advance expiry: whoever had an expired request can ask again this month; this month is still one request each, by the East Africa month', async () => {
+  const db = fakeDb(advExpiryTables()), w = advWatch(db);
+  // ASHA's June request was never decided. Before any desk has opened (the book still says Pending), July is free for ASHA...
+  const page = await portalApi(db, ADV_FO, 'advRequestPage', { staffId: 'AAA/001/2026' }, NOW);
+  assert.equal(page.monthTaken, null, 'an earlier month\'s request does not take this month');
+  const filed = await portalApi(db, ADV_FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 100000 }, NOW);
+  assert.equal(filed.amount, 100000); assert.equal(filed.month, '2026-07');
+  // ...and once: the July request just filed takes July.
+  await assert.rejects(() => portalApi(db, ADV_FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /Only one request per month/.test(e.message));
+  // FARAJA's was filed at 23:30 on 30 June: June's, expired, so July is free. CHIKU's is May's: free too.
+  for (const id of ['FFF/006/2026', 'CCC/003/2026']) assert.equal((await portalApi(db, ADV_FO, 'advRequest', { staffId: id, amount: 50000 }, NOW)).month, '2026-07');
+  // EVA's was filed at 00:30 on 1 July: it is JULY's request (the desk lists it as this month's), so July is taken -- the month is
+  // East Africa's on the ask as it is on the desk. Reading it off the UTC date used to call this one June's and let a second through.
+  const eva = await portalApi(db, ADV_FO, 'advRequestPage', { staffId: 'EEE/005/2026' }, NOW);
+  assert.equal(eva.monthTaken.submitted_at, '2026-06-30T21:30:00Z');
+  await assert.rejects(() => portalApi(db, ADV_FO, 'advRequest', { staffId: 'EEE/005/2026', amount: 50000 }, NOW), e => e.status === 400 && /Only one request per month/.test(e.message));
+  // DAUDI was disapproved in June, BEN approved in June and pending in July: free, and taken.
+  assert.equal((await portalApi(db, ADV_FO, 'advRequest', { staffId: 'DDD/004/2026', amount: 50000 }, NOW)).month, '2026-07');
+  await assert.rejects(() => portalApi(db, ADV_FO, 'advRequest', { staffId: 'BBB/002/2026', amount: 50000 }, NOW), e => e.status === 400);
+  // A requester's screens do not write the book (they read no requests of others); the desk does, and the new July requests stay Pending.
+  assert.equal(w.writes, 0);
+  const q = await portalApi(db, ADV_GMO, 'advQueue', {}, NOW);
+  assert.equal(w.writes, 1); assert.equal(q.expiredCount, 3);
+  assert.deepEqual(q.pending.map(r => r.staff_name).sort(), ['ASHA', 'BEN', 'CHIKU', 'DAUDI', 'EVA', 'FARAJA']);
+});
+
+test('advance expiry: read as Expired even where it could not be written, written by the report too, and a month expires only when it is over', async () => {
+  // THE WRITE FAILS: the desk, the history and the report still say Expired, nothing is thrown, and the next reader tries again.
+  const db = fakeDb(advExpiryTables()), w = advWatch(db);
+  w.fail = true;
+  const q = await portalApi(db, ADV_GMO, 'advQueue', {}, NOW);
+  assert.deepEqual(q.closed.map(r => [r.staff_name, r.approval]).sort(), [['ASHA', 'Expired'], ['CHIKU', 'Expired'], ['FARAJA', 'Expired']]);
+  assert.deepEqual(q.pending.map(r => r.staff_name).sort(), ['BEN', 'EVA']);
+  assert.equal(advState(db)['r-june'], 'Pending', 'the write did not land');
+  const rep = await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'Expired' }, NOW);
+  assert.deepEqual(rep.rows.map(r => r.staff_name).sort(), ['ASHA', 'CHIKU', 'FARAJA'], 'asked for by the word, found by the rule');
+  assert.deepEqual((await portalApi(db, ADV_FIN, 'advReport', { from: '2026-05-01', approval: 'Pending' }, NOW)).rows.map(r => r.staff_name).sort(), ['BEN', 'EVA']);
+  assert.equal(w.writes, 3, 'each reader that met one tried');
+  const dec = await portalApi(db, ADV_GMO, 'advDecide', { updates: [{ id: 'r-june', approval: 'Approved' }] }, NOW);
+  assert.equal(dec.updated, 0); assert.match(dec.skipped[0], /expired/, 'not decidable either way');
+  w.fail = false;
+  await portalApi(db, ADV_GMO, 'advQueue', {}, NOW);
+  assert.equal(advState(db)['r-june'], 'Expired', 'the next reader wrote it');
+
+  // THE REPORT IS A READER TOO: on a book no desk has opened, it is the one that writes.
+  const db2 = fakeDb(advExpiryTables()), w2 = advWatch(db2);
+  const all = await portalApi(db2, ADV_FIN, 'advReport', { from: '2026-06-01', approval: 'ALL' }, NOW);
+  assert.equal(all.rows.find(r => r.id === 'r-june').approval, 'Expired'); assert.equal(w2.writes, 1);
+  assert.equal(advState(db2)['r-may'], 'Expired', 'every one of them, not only the window\'s');
+
+  // SO IS THE HISTORY on the request tab (an admin's is every role's).
+  const db4 = fakeDb(advExpiryTables()), w4 = advWatch(db4);
+  const hist = (await portalApi(db4, ADMIN, 'advRequestPage', {}, NOW)).history;
+  assert.deepEqual(hist.filter(r => r.approval === 'Expired').map(r => r.staff_name).sort(), ['ASHA', 'CHIKU', 'FARAJA']);
+  assert.equal(w4.writes, 1); assert.equal(advState(db4)['r-june-late'], 'Expired');
+
+  // THIS MONTH, FINALIZED, IS NOT EXPIRED: Finance can still reopen July, so its undecided requests stay Pending (closed) --
+  const db3 = fakeDb(advExpiryTables());
+  await portalApi(db3, ADV_FIN, 'advFinalize', {}, NOW);
+  const fin = await portalApi(db3, ADV_GMO, 'advQueue', {}, NOW);
+  assert.deepEqual(fin.pending, []);
+  assert.deepEqual(fin.closed.filter(r => r.approval === 'Pending').map(r => r.staff_name).sort(), ['BEN', 'EVA']); assert.equal(fin.expiredCount, 3);
+  assert.equal(advState(db3)['r-july'], 'Pending');
+  // -- and they expire when July is over: on 3 August they are Expired, and BEN can ask in August.
+  const AUG = Date.parse('2026-08-03T09:00:00Z');
+  const aug = await portalApi(db3, ADV_GMO, 'advQueue', {}, AUG);
+  assert.deepEqual(aug.pending, []); assert.equal(aug.expiredCount, 5);
+  assert.equal(advState(db3)['r-july'], 'Expired'); assert.equal(advState(db3)['r-july-early'], 'Expired');
+  assert.equal((await portalApi(db3, ADV_FO, 'advRequest', { staffId: 'BBB/002/2026', amount: 50000 }, AUG)).month, '2026-08');
 });
 
 test('customer service on the advance request: one shared code, the names off the call-agents roster, a zone-less request reaching the approver role', async () => {
