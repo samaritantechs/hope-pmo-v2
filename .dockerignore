@@ -1,0 +1,16 @@
+.git
+.github
+node_modules
+.env
+.env.*
+.vercel
+android
+brand
+db
+docs
+migrate
+scripts
+test
+tools
+handoff-build
+*.md

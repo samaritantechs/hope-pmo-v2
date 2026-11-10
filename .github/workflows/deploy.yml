@@ -1,0 +1,333 @@
+# TEST, THEN DEPLOY: Vercel, AWS and our own server, from one push to main.
+#
+#   push to main ──▶ test ──┬──▶ Vercel  (Deploy Hook  → the same Git deployment as today)
+#                           ├──▶ AWS     (image → ECR → App Runner)
+#                           └──▶ Server  (SSH in → git pull this exact commit → restart)
+#
+# Nothing deploys unless `npm test` passed. Both deploy jobs run in the `production` GitHub
+# Environment, so if that environment has required reviewers, each deploy waits for an
+# Approve click -- which is where "heavy work in the evening, never during the morning
+# collection round" (CLAUDE.md) is kept.
+#
+# A TARGET THAT IS NOT SET UP IS SKIPPED, AND SAYS SO. Until the secrets and variables below
+# exist, its job is skipped and the run summary names what is missing. Merging this file
+# therefore changes nothing on its own: Vercel's Git integration keeps deploying main exactly
+# as it does now, and AWS is simply not deployed yet. Setup: docs/DEPLOY.md.
+#
+#   Vercel  secret    VERCEL_DEPLOY_HOOK      (Vercel → Settings → Git → Deploy Hooks, branch main)
+#           variable  VERCEL_URL              e.g. https://hope-pmo-v2-git-main-samaritantechs.vercel.app
+#   AWS     variable  AWS_REGION              same region as the Supabase project
+#           variable  AWS_ROLE_ARN            IAM role GitHub assumes through OIDC (no stored keys)
+#           variable  ECR_REPOSITORY          e.g. hope-pmo
+#           variable  APPRUNNER_SERVICE_ARN   the App Runner service running the :production tag
+#           variable  AWS_URL                 e.g. https://pmo.example.co.tz
+#   Server  secret    SERVER_SSH_KEY          private key GitHub logs in with (its .pub is in the
+#                                             deploy user's ~/.ssh/authorized_keys on the server)
+#           variable  SERVER_HOST             e.g. 203.0.113.10 or pmo.example.co.tz
+#           variable  SERVER_USER             e.g. deploy
+#           variable  SERVER_APP_DIR          e.g. /srv/hope-pmo  (a git clone of this repository)
+#           variable  SERVER_KNOWN_HOSTS      output of `ssh-keyscan <host>`, so GitHub only ever
+#                                             talks to THIS server (optional, but set it)
+#           variable  SERVER_PORT             SSH port, default 22 (optional)
+#           variable  SERVER_RESTART_CMD      default: sudo systemctl restart hope-pmo (optional)
+#           variable  SERVER_URL              e.g. https://pmo.example.co.tz  (optional, for the check)
+#
+# The database keys are NOT here. Vercel keeps its own; App Runner keeps its own; the server
+# keeps its own in /etc/hope-pmo.env.
+
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Where to deploy'
+        type: choice
+        options: [all, vercel, aws, server]
+        default: all
+
+# One deploy of production at a time, in order. A second push waits for the first to finish
+# rather than cancelling it half way through a rollout.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  # Decides which targets run, from what is configured -- and writes down what is not.
+  plan:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      vercel: ${{ steps.p.outputs.vercel }}
+      aws: ${{ steps.p.outputs.aws }}
+      server: ${{ steps.p.outputs.server }}
+      build: ${{ steps.p.outputs.build }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        env:
+          TARGET: ${{ github.event.inputs.target || 'all' }}
+          HAS_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK != '' }}
+          AWS_REGION: ${{ vars.AWS_REGION }}
+          AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+          ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          APPRUNNER_SERVICE_ARN: ${{ vars.APPRUNNER_SERVICE_ARN }}
+          HAS_SERVER_KEY: ${{ secrets.SERVER_SSH_KEY != '' }}
+          SERVER_HOST: ${{ vars.SERVER_HOST }}
+          SERVER_USER: ${{ vars.SERVER_USER }}
+          SERVER_APP_DIR: ${{ vars.SERVER_APP_DIR }}
+        run: |
+          # "both" was this input's old default; a re-run of an old run still means everything.
+          [ "$TARGET" = both ] && TARGET=all
+          wants() { [ "$TARGET" = all ] || [ "$TARGET" = "$1" ]; }
+
+          build=$(sed -n "s/^var BUILD = '\([^']*\)'.*/\1/p" public/app.html | head -1)
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Deploy plan for \`${GITHUB_SHA::7}\` (BUILD \`$build\`)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          vercel=false
+          if ! wants vercel; then
+            echo "- **Vercel:** not requested in this run." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$HAS_HOOK" != true ]; then
+            echo "- **Vercel:** skipped -- secret \`VERCEL_DEPLOY_HOOK\` is not set. Vercel's own Git integration still deploys main if it is switched on." >> "$GITHUB_STEP_SUMMARY"
+          else
+            vercel=true; echo "- **Vercel:** will deploy." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          aws=false; missing=""
+          for v in AWS_REGION AWS_ROLE_ARN ECR_REPOSITORY APPRUNNER_SERVICE_ARN; do
+            [ -n "${!v}" ] || missing="$missing \`$v\`"
+          done
+          if ! wants aws; then
+            echo "- **AWS:** not requested in this run." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$missing" ]; then
+            echo "- **AWS:** skipped -- repository variable(s)$missing not set. See docs/DEPLOY.md." >> "$GITHUB_STEP_SUMMARY"
+          else
+            aws=true; echo "- **AWS:** will deploy." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          server=false; missing=""
+          [ "$HAS_SERVER_KEY" = true ] || missing="$missing secret \`SERVER_SSH_KEY\`"
+          for v in SERVER_HOST SERVER_USER SERVER_APP_DIR; do
+            [ -n "${!v}" ] || missing="$missing \`$v\`"
+          done
+          if ! wants server; then
+            echo "- **Server:** not requested in this run." >> "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$missing" ]; then
+            echo "- **Server:** skipped --$missing not set. See docs/DEPLOY.md section 3S." >> "$GITHUB_STEP_SUMMARY"
+          else
+            server=true; echo "- **Server:** will pull and restart on \`$SERVER_HOST\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          echo "vercel=$vercel" >> "$GITHUB_OUTPUT"
+          echo "aws=$aws" >> "$GITHUB_OUTPUT"
+          echo "server=$server" >> "$GITHUB_OUTPUT"
+
+  vercel:
+    needs: plan
+    if: needs.plan.outputs.vercel == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      # A Deploy Hook builds main through Vercel's Git integration -- the SAME kind of
+      # deployment a push makes today, so the ...-git-main-... address every phone opens keeps
+      # following it. (A CLI deploy would not move that address.)
+      - name: Trigger the Vercel deployment
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          out=$(curl -fsS -X POST "$HOOK")
+          echo "Vercel accepted the deployment: $out"
+
+      - name: Wait for this BUILD to be served
+        if: vars.VERCEL_URL != ''
+        env:
+          URL: ${{ vars.VERCEL_URL }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          for i in $(seq 1 40); do
+            live=$(curl -fsS "${URL%/}/app.html" | sed -n "s/^var BUILD = '\([^']*\)'.*/\1/p" | head -1 || true)
+            if [ "$live" = "$BUILD" ]; then
+              curl -fsS -o /dev/null "${URL%/}/api/app-version"
+              echo "- **Vercel:** serving BUILD \`$live\` at $URL" >> "$GITHUB_STEP_SUMMARY"; exit 0
+            fi
+            echo "serving '$live', waiting for '$BUILD' ($i/40)"; sleep 15
+          done
+          echo "- **Vercel:** still serving \`$live\` after 10 minutes, expected \`$BUILD\`. Check the Vercel dashboard." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+  aws:
+    needs: plan
+    if: needs.plan.outputs.aws == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write          # OIDC: GitHub proves who it is to AWS; no AWS keys are stored
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      SERVICE_ARN: ${{ vars.APPRUNNER_SERVICE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tagged twice: by commit (to roll back to) and :production (what App Runner runs).
+      - name: Build and push the image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE:$GITHUB_SHA" -t "$IMAGE:production" .
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:production"
+
+      # App Runner swaps instances only once the new ones pass /healthz, and the old ones drain
+      # their in-flight requests first (server.js waits on SIGTERM), so an upload slice or a call
+      # sync that is half way through finishes on the old instance.
+      - name: Roll out on App Runner
+        run: |
+          op=$(aws apprunner start-deployment --service-arn "$SERVICE_ARN" --query OperationId --output text)
+          echo "Operation $op"
+          for i in $(seq 1 60); do
+            st=$(aws apprunner list-operations --service-arn "$SERVICE_ARN" \
+                   --query "OperationSummaryList[?Id=='$op'].Status | [0]" --output text)
+            case "$st" in
+              SUCCEEDED) echo "Rolled out."; exit 0 ;;
+              FAILED|ROLLBACK_SUCCEEDED|ROLLBACK_FAILED|ROLLBACK_IN_PROGRESS)
+                echo "- **AWS:** App Runner reported \`$st\`. The previous version is still serving." >> "$GITHUB_STEP_SUMMARY"
+                exit 1 ;;
+            esac
+            echo "status: $st ($i/60)"; sleep 20
+          done
+          echo "- **AWS:** rollout did not finish within 20 minutes." >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
+      - name: Check the live site
+        if: vars.AWS_URL != ''
+        env:
+          URL: ${{ vars.AWS_URL }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          curl -fsS "${URL%/}/healthz" > /dev/null
+          curl -fsS -o /dev/null "${URL%/}/api/app-version"
+          live=$(curl -fsS "${URL%/}/app.html" | sed -n "s/^var BUILD = '\([^']*\)'.*/\1/p" | head -1)
+          if [ "$live" != "$BUILD" ]; then
+            echo "- **AWS:** serving BUILD \`$live\`, expected \`$BUILD\`." >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+          echo "- **AWS:** serving BUILD \`$live\` at $URL (image \`${GITHUB_SHA::7}\`)" >> "$GITHUB_STEP_SUMMARY"
+
+  # OUR OWN SERVER: log in over SSH, move the clone to EXACTLY the commit that just passed the
+  # tests (not whatever main is by now), reinstall packages only if they changed, restart.
+  #
+  # `git merge --ff-only` refuses rather than guesses: if someone committed on the server by
+  # hand, or edited a file this commit also changes, the deploy stops, says so, and the running
+  # site is left as it was. (A hand edit to a file the commit does not touch is kept as it is.)
+  #
+  # A restart of a single process is a second or two in which the server answers nothing --
+  # the call app included (CLAUDE.md rule 1). server.js finishes requests in flight before it
+  # exits, so nothing half-written is lost, but new requests in that gap fail and the phones
+  # retry. That is why this job sits in the `production` environment: with a required
+  # reviewer, it restarts only when someone approves it, in the evening.
+  server:
+    needs: plan
+    if: needs.plan.outputs.server == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      HOST: ${{ vars.SERVER_HOST }}
+      SSH_USER: ${{ vars.SERVER_USER }}
+      PORT: ${{ vars.SERVER_PORT || '22' }}
+    steps:
+      - name: Set up SSH
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.SERVER_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            # Trust-on-first-use: whatever answers at HOST is believed. Set SERVER_KNOWN_HOSTS.
+            ssh-keyscan -p "$PORT" "$HOST" > ~/.ssh/known_hosts 2>/dev/null
+            echo "- **Server:** \`SERVER_KNOWN_HOSTS\` is not set, so the server's identity was not checked. Set it (see docs/DEPLOY.md)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Pull this commit and restart
+        env:
+          APP_DIR: ${{ vars.SERVER_APP_DIR }}
+          RESTART: ${{ vars.SERVER_RESTART_CMD || 'sudo systemctl restart hope-pmo' }}
+        run: |
+          remote_cmd=$(printf 'APP_DIR=%q SHA=%q RESTART=%q bash -s' "$APP_DIR" "$GITHUB_SHA" "$RESTART")
+          if ! ssh -i ~/.ssh/deploy_key -p "$PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+                 -o ConnectTimeout=20 "$SSH_USER@$HOST" "$remote_cmd" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          git fetch --quiet origin main
+          before=$(git rev-parse HEAD)
+          if [ "$before" = "$SHA" ]; then
+            echo "Already at ${SHA:0:7}."
+          else
+            git merge --ff-only --quiet "$SHA"
+            # Packages are reinstalled only when they changed: npm ci empties node_modules first,
+            # so running it every time would widen the window in which the site cannot start.
+            if ! git diff --quiet "$before" HEAD -- package.json package-lock.json; then
+              npm ci --omit=dev --no-audit --no-fund
+            fi
+          fi
+          eval "$RESTART"
+          echo "Running ${SHA:0:7} (was ${before:0:7})."
+          REMOTE
+          then
+            echo "- **Server:** deploy FAILED on \`$HOST\` -- see the log of this step. If it says \"Not possible to fast-forward\", the clone on the server has local changes or commits; nothing was restarted." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Check the live site
+        if: vars.SERVER_URL != ''
+        env:
+          URL: ${{ vars.SERVER_URL }}
+          BUILD: ${{ needs.plan.outputs.build }}
+        run: |
+          for i in $(seq 1 12); do
+            curl -fsS -o /dev/null "${URL%/}/healthz" && break
+            [ "$i" = 12 ] && { echo "- **Server:** \`/healthz\` did not answer within a minute of the restart." >> "$GITHUB_STEP_SUMMARY"; exit 1; }
+            sleep 5
+          done
+          curl -fsS -o /dev/null "${URL%/}/api/app-version"
+          live=$(curl -fsS "${URL%/}/app.html" | sed -n "s/^var BUILD = '\([^']*\)'.*/\1/p" | head -1)
+          if [ "$live" != "$BUILD" ]; then
+            echo "- **Server:** serving BUILD \`$live\`, expected \`$BUILD\`." >> "$GITHUB_STEP_SUMMARY"; exit 1
+          fi
+          echo "- **Server:** serving BUILD \`$live\` at $URL (commit \`${GITHUB_SHA::7}\`)" >> "$GITHUB_STEP_SUMMARY"
