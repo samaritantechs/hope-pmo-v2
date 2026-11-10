@@ -110,6 +110,16 @@ feature it adds says which file to run rather than breaking.
 
 ---
 
+## Deploying — Vercel, AWS and our own server
+
+| File | What it is |
+|---|---|
+| `.github/workflows/deploy.yml` | On a push to `main`: `npm test`, then deploy to Vercel (Deploy Hook), AWS (App Runner) and our own server (SSH → `git pull` of the tested commit → restart) side by side. A target not set up is skipped and named in the run summary. Setup: `docs/DEPLOY.md`. |
+| `server.js` | Runs the site off Vercel. Serves `public/`, routes `/api/<name>`, and takes its rewrites and headers from `vercel.json` so the two hosts cannot disagree. No database reads of its own. |
+| `Dockerfile`, `.dockerignore` | The AWS image. |
+
+---
+
 ## The Android app — `android/`
 
 A WebView wrapper, built by GitHub Actions, always downloadable at the fixed release tag
