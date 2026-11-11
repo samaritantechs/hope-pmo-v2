@@ -8,6 +8,11 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
 const { createServer, sourceToRegExp, parseBody, parseQuery } = await import('../server.js');
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import zlib from 'node:zlib';
+import http from 'node:http';
 
 let server, base;
 before(async () => {
@@ -96,4 +101,127 @@ test('body and query parse as on Vercel', () => {
   assert.equal(parseBody(Buffer.from('hi'), 'text/plain'), 'hi');
   assert.equal(parseBody(Buffer.alloc(0), 'application/json'), undefined);
   assert.deepEqual(parseQuery(new URLSearchParams('t=A&t=B&c=1')), { t: ['A', 'B'], c: '1' });
+});
+
+/* =====================================================================================
+   WHAT VERCEL DID WITHOUT BEING ASKED: "not changed" answers and compression.
+
+   The call app's page is thrown away and reloaded after almost every call, on mobile data. On
+   Vercel that reload is a few hundred bytes of 304; off Vercel it was the whole 187 KB page,
+   uncompressed, every time -- and every list after it several times its compressed size. These
+   pin that the server now does both itself, whatever proxy stands in front of it.
+   ===================================================================================== */
+/** A raw request, so nothing is added to or taken off the headers and the body is as sent. */
+function raw(pathname, headers = {}, method = 'GET') {
+  return new Promise((resolve, reject) => {
+    const req = http.request(base + pathname, { method, headers }, res => {
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+test('a page the phone already holds is answered "not changed", not sent again', async () => {
+  const first = await raw('/call.html');
+  assert.equal(first.status, 200);
+  assert.match(first.headers.etag, /^W\/"[0-9a-f]+-[0-9a-f]+"$/, 'every file carries a validator');
+  assert.ok(Date.parse(first.headers['last-modified']) > 0, 'and when it was last written');
+  // The phone asks with what it was given: the answer is 304 and has no body.
+  const again = await raw('/call.html', { 'If-None-Match': first.headers.etag });
+  assert.equal(again.status, 304); assert.equal(again.body.length, 0);
+  assert.equal(again.headers.etag, first.headers.etag);
+  assert.equal(again.headers['cache-control'], 'no-cache, must-revalidate', 'the same caching rule rides on the 304');
+  // The rewritten address is the same file, so the same answer.
+  const viaRewrite = await raw('/call', { 'If-None-Match': first.headers.etag });
+  assert.equal(viaRewrite.status, 304);
+  // By date, for a client that only keeps the date.
+  assert.equal((await raw('/call.html', { 'If-Modified-Since': first.headers['last-modified'] })).status, 304);
+  assert.equal((await raw('/call.html', { 'If-Modified-Since': 'Mon, 01 Jan 2001 00:00:00 GMT' })).status, 200);
+  // A copy of another version is sent the page.
+  const stale = await raw('/call.html', { 'If-None-Match': 'W/"1-1"' });
+  assert.equal(stale.status, 200); assert.ok(stale.body.length > 1000);
+  // A module and an image too: everything under public/ can be revalidated.
+  for (const p of ['/mod/admin.js', '/lock-logo.png']) {
+    const f = await raw(p);
+    assert.equal((await raw(p, { 'If-None-Match': f.headers.etag })).status, 304, p);
+  }
+});
+
+test('pages and scripts are sent compressed to a client that accepts it, and whole to one that does not', async () => {
+  const onDisk = fs.readFileSync(new URL('../public/call.html', import.meta.url));
+  const gz = await raw('/call.html', { 'Accept-Encoding': 'gzip, deflate, br' });
+  assert.equal(gz.status, 200);
+  assert.equal(gz.headers['content-encoding'], 'gzip');
+  assert.equal(gz.headers.vary, 'Accept-Encoding');
+  assert.equal(Number(gz.headers['content-length']), gz.body.length);
+  assert.ok(gz.body.length < onDisk.length / 2, 'less than half the page crosses the network (' + gz.body.length + ' of ' + onDisk.length + ' bytes)');
+  assert.ok(zlib.gunzipSync(gz.body).equals(onDisk), 'and it opens to exactly the file');
+  // The second ask is served from the kept copy and is the same bytes.
+  assert.ok((await raw('/call.html', { 'Accept-Encoding': 'gzip' })).body.equals(gz.body));
+  // No Accept-Encoding: the file as it is.
+  const plain = await raw('/call.html');
+  assert.equal(plain.headers['content-encoding'], undefined);
+  assert.ok(plain.body.equals(onDisk));
+  // A module is compressed; an image is already compressed and is left alone.
+  assert.equal((await raw('/mod/admin.js', { 'Accept-Encoding': 'gzip' })).headers['content-encoding'], 'gzip');
+  const img = await raw('/lock-logo.png', { 'Accept-Encoding': 'gzip' });
+  assert.equal(img.headers['content-encoding'], undefined); assert.equal(img.headers.vary, undefined);
+  // HEAD says what GET would, without the body.
+  const head = await raw('/call.html', { 'Accept-Encoding': 'gzip' }, 'HEAD');
+  assert.equal(head.status, 200); assert.equal(head.body.length, 0);
+  assert.equal(Number(head.headers['content-length']), gz.body.length);
+});
+
+test('an API answer is compressed off the main thread when it is big enough to be worth it', async () => {
+  // A site of its own: one route that answers with a list, as /api/call does.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hope-server-'));
+  fs.mkdirSync(path.join(root, 'api')); fs.mkdirSync(path.join(root, 'public'));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
+  fs.writeFileSync(path.join(root, 'vercel.json'), '{}');
+  fs.writeFileSync(path.join(root, 'api', 'list.js'),
+    "export default (req, res) => { const n = Number(req.query.n) || 0; res.status(200).json({ ok: true, rows: Array.from({ length: n }, (_, i) => ({ ref: 'R' + i, name: 'CUSTOMER NUMBER ' + i, amt: i * 100 })) }); };");
+  fs.writeFileSync(path.join(root, 'api', 'none.js'), 'export default (req, res) => { res.status(204).end(); };');
+  const srv = createServer({ root });
+  await new Promise(r => srv.listen(0, '127.0.0.1', r));
+  const at = 'http://127.0.0.1:' + srv.address().port;
+  const ask = (p, headers = {}) => new Promise((resolve, reject) => {
+    http.get(at + p, { headers }, res => { const c = []; res.on('data', x => c.push(x)); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(c) })); }).on('error', reject);
+  });
+  try {
+    const big = await ask('/api/list?n=3000', { 'Accept-Encoding': 'gzip' });
+    assert.equal(big.status, 200);
+    assert.equal(big.headers['content-encoding'], 'gzip');
+    assert.match(big.headers['content-type'], /application\/json/);
+    const rows = JSON.parse(zlib.gunzipSync(big.body).toString('utf8')).rows;
+    assert.equal(rows.length, 3000); assert.equal(rows[2999].name, 'CUSTOMER NUMBER 2999');
+    const whole = await ask('/api/list?n=3000');
+    assert.equal(whole.headers['content-encoding'], undefined);
+    assert.equal(JSON.parse(whole.body.toString('utf8')).rows.length, 3000);
+    assert.ok(big.body.length < whole.body.length / 4, 'a list crosses the network at under a quarter of its size (' + big.body.length + ' of ' + whole.body.length + ')');
+    assert.equal(big.headers.vary, 'Accept-Encoding'); assert.equal(whole.headers.vary, 'Accept-Encoding');
+    // A small answer is not worth the header.
+    const small = await ask('/api/list?n=2', { 'Accept-Encoding': 'gzip' });
+    assert.equal(small.headers['content-encoding'], undefined);
+    assert.equal(JSON.parse(small.body.toString('utf8')).rows.length, 2);
+    // Many at once: each gets its own whole answer.
+    const many = await Promise.all(Array.from({ length: 12 }, (_, i) => ask('/api/list?n=' + (1500 + i), { 'Accept-Encoding': 'gzip' })));
+    many.forEach((r, i) => assert.equal(JSON.parse(zlib.gunzipSync(r.body).toString('utf8')).rows.length, 1500 + i));
+    // A route that answers with no body still ends.
+    assert.equal((await ask('/api/none', { 'Accept-Encoding': 'gzip' })).status, 204);
+  } finally {
+    await new Promise(r => srv.close(r));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the real API still answers through the compressing path', async () => {
+  // fetch asks for gzip and opens it itself, as a browser does.
+  const r = await fetch(base + '/api/app-version');
+  assert.equal(r.status, 200);
+  assert.equal((await r.json()).ok, true);
+  const bad = await fetch(base + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(typeof (await bad.json()).ok, 'boolean', 'an error answer is still JSON');
 });

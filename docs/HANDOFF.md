@@ -4030,6 +4030,21 @@ the evening, and never during the morning collection round" was not the owner's 
 `docs/HOPE-BRIEF.md` and `docs/HOPE-OWNER-HANDOFF.md`. `docs/DEPLOY.md` and the deploy workflow still describe an optional Approve
 step on the `production` environment for anyone who wants one.
 
+## Part 41 — Our own server answers a phone the way Vercel did
+
+> "Demit did his auto sync work at https://recovery-app.sync-book.net/dashboard so we should make sure if it does not conflict
+> anything before we merge and move into it"
+
+`server.js` runs this site off Vercel. Read against what Vercel does unasked, it was missing two things that land on the phones:
+it never said "not changed" (no `ETag`, so a page sent `no-cache` was downloaded whole on every reopen -- `/call` is 187 KB and a
+handset reloads it after almost every call), and it compressed nothing. It now does both itself (`etagOf`, `notModified`, a gzip
+copy of each page kept per version, JSON answers gzipped on the thread pool), and a stray rejected promise is logged instead of
+ending the one process that serves everybody. `/call` is 63 KB compressed and 0 bytes on a reopen; `test/server.test.mjs` pins it.
+
+What could not be checked from the code -- which database the server points at, one process serving phones and portal together,
+the gap while a deploy restarts it, and what a change of address means for browser users -- is written as a list for whoever runs
+the server in `docs/DEPLOY.md` section 6.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
