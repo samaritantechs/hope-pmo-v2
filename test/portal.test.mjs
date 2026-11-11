@@ -11873,6 +11873,52 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
    approval tab except the approver I chose". Naming a person (the one supervisor of a role, or a
    code's own supervisor) puts the tab on THEIR code; a role that approves itself holds nothing
    by it; and the clean slate takes the grants back, and Undo returns them exactly. */
+/* A TEAM'S ZONE IS ITS GMO'S -- "If an officer has team - zone is automatic of the GMO's" ... "to the respective team's gmo".
+   Before: a team whose ZONE cell on Teams & Staff was empty held no zone, so its code listed nobody on the request tab and
+   was named as a team without a zone until somebody filled the cell. Now the team sits in the zone its GMO's other teams
+   carry (teamsZoned in zone.js, read by advZones_), with nothing to fill; a team with no GMO either is still named. */
+test('salary advance: a team with an empty ZONE cell is in its GMO\'s zone, and its officers find their names', async () => {
+  const { teamCodeUser } = await import('../api/_lib/auth.js');
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', gmo: 'GMO D', team_code: 'KON 123' };
+  t.teams[1] = { ...t.teams[1], zone: 'MARA', gmo: 'GMO M', team_code: 'MBA456' };
+  t.teams.push({ team: 'KIBAHA', zone: '', gmo: ' gmo  d ', team_code: 'KIB 789' });   // no ZONE of its own; its GMO's other team is DAR EAST
+  t.teams.push({ team: 'NOZONE', team_code: 'NZ1' });                                  // no ZONE and no GMO
+  // A DASH IS NOT A PERSON: two teams with a dash in the GMO cell are not one GMO's teams, so DASHED does not sit in LAKE
+  t.teams.push({ team: 'DASHLAKE', zone: 'LAKE', gmo: '-', team_code: 'DL1' }, { team: 'DASHED', zone: '', gmo: '-', team_code: 'DS1' });
+  t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' });
+  t.staff_registry = [
+    { id: 'AAA/001/2026', name: 'ASHA ALI AMANI', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+    { id: 'CCC/003/2026', name: 'CHIKU C', role: 'Field Officer', zone: 'MARA', status: 'Active' },
+    { id: 'LLL/004/2026', name: 'LEILA L', role: 'Field Officer', zone: 'LAKE', status: 'Active' },
+  ];
+  t.advance_requests = [];
+  const db = fakeDb(t);
+  // the team's own code: its officers are listed with the staff of their GMO's zone, and of no other
+  const fo = { ...(await teamCodeUser('kib-789', db)), tabs: ['advreq'] };
+  assert.deepEqual(fo.teams, ['KIBAHA']);
+  const page = await portalApi(db, fo, 'advRequestPage', {}, NOW);
+  assert.deepEqual(page.zones, ['DAR EAST'], 'the team takes the zone its GMO\'s other team carries');
+  assert.deepEqual(page.noZoneTeams, [], 'and is no longer named as a team without a zone');
+  assert.deepEqual(page.staff.map(s => s.id), ['AAA/001/2026'], 'DAR EAST\'s names, and nobody of MARA');
+  // a code over that team and one with no GMO: the first is in DAR EAST, the second is still named
+  const scoped = { code: 'S', name: 'SCOPED', role: 'GMO', teams: ['KIBAHA', 'NOZONE'], tabs: ['advstaff'] };
+  const reg = await portalApi(db, scoped, 'advStaff', {}, NOW);
+  assert.deepEqual(reg.noZoneTeams, ['NOZONE'], 'no ZONE and no GMO: still a team without a zone, and still said');
+  assert.deepEqual(reg.rows.map(r => r.id), ['AAA/001/2026']);
+  // a team that has its own ZONE is where it was: MBAGALA's code sees MARA alone
+  const mb = { ...(await teamCodeUser('mba456', db)), tabs: ['advreq'] };
+  assert.deepEqual((await portalApi(db, mb, 'advRequestPage', {}, NOW)).zones, ['MARA']);
+  // nothing was written to Teams & Staff: the cell is still empty for whoever edits that tab
+  assert.equal(db._dump('teams').find(r => r.team === 'KIBAHA').zone, '');
+  // the team whose GMO cell is a dash holds no zone, lists nobody of LAKE, and is named as a team without one
+  const dashed = { ...(await teamCodeUser('ds1', db)), tabs: ['advreq'] };
+  const dPage = await portalApi(db, dashed, 'advRequestPage', {}, NOW);
+  assert.deepEqual(dPage.zones, [], 'a dash in two GMO cells made two teams one GMO\'s');
+  assert.deepEqual(dPage.noZoneTeams, ['DASHED']); assert.deepEqual(dPage.staff, []);
+  assert.deepEqual((await portalApi(db, { ...(await teamCodeUser('dl1', db)), tabs: ['advreq'] }, 'advRequestPage', {}, NOW)).staff.map(x => x.id), ['LLL/004/2026']);
+});
+
 test('advance approval tab: the person chosen holds it on their own code, the rest of the department does not', async () => {
   const { resolveTabs } = await import('../api/_lib/auth.js');
   const t = tables();

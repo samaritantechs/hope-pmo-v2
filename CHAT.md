@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 11 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 49**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 50**.
 
 ---
 
@@ -53,6 +53,7 @@ Given since, and written nowhere else:
 | 11 Nov 2026 | "am always afraid whenever i move into a new chat, any change made must not distruct efficiency of itself and other activities that depend on it or not" | Before a change ships, say what it costs the thing it changes and everything around it. Nothing that works is slowed or disturbed, in a new chat least of all. |
 
 | 11 Nov 2026 | "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group" · "dont correct names using the gmo data i bring unless its new staff" · "so provide sql to add staff as we always did" | Staff changes come pasted from the WhatsApp group: who left, who was transferred where and as what, who is new (with phone, account, NIDA, TIN, NSSF), who a GMO cannot see. Answer with a filled copy of `db/TEMPLATE-staff-changes-from-gmo.sql` (one row a person: OFF, MOVE, PLACE, NEW, ASK); a name already in the staff registry is never re-spelt; a GMO's spelling is taken for a new staff only; the ones that come back NOT FOUND are settled by staff ID (`db/TEMPLATE-staff-changes-by-id.sql`). No staff name is committed. Handbook Parts 48 and 49. |
+| 11 Nov 2026 | "If an officer has team - zone is automatic of the GMO's" · "to the respective team's gmo" · "So even manager - must have gmo of one of his team and auto match gmo and zone" | **A team's zone is its GMO's.** A team whose ZONE cell on Teams & Staff is empty sits in the zone its GMO's other teams carry; what is typed on the team stands. The name line, the advance desk and the staff scripts read that one rule (`teamsZoned` in `api/_lib/zone.js`; `tz` in the template). Never ask the owner to fill a ZONE cell so that a staff can be filed: read the team's GMO, and ask only when the team has neither a ZONE nor a GMO whose teams carry one. Handbook Part 50. |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -75,17 +76,46 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#671** — a team's zone is its GMO's (the owner's order in section 2, handbook Part 50). A team
+  whose ZONE cell is empty sits in the zone most of its GMO's other teams carry; what is typed on
+  the team stands. One rule, `teamsZoned` in `api/_lib/zone.js`: the name line and the advance
+  desk read the teams through it (an officer of such a team reads the zone beside the name and
+  finds their own name on the advance request list), and the staff template files a moved or new
+  staff by the same rule in SQL, saying on the row where a zone came from.
+  `tools/db-checks/gmo-zone-parity.mjs` reads random team tables both ways on a PostgreSQL. No
+  read added anywhere; no page changed, so `BUILD` stays `2026-11-11-b`. The template starts with
+  `set local jit = off`, and answers a person it cannot find name by name: who in the whole
+  registry carries each of their names. A cell that holds a dash, N/A or "NO GMO" names nobody.
+  Three reviewers read it before the merge, each finding put to a second reader: nine findings,
+  none refuted, eight fixed in the change (the list is in Part 50). **Not done:** the annual
+  deck's zone map still counts a team with an empty ZONE cell under "no zone set" (following
+  the rule there changes each zone's teams and General % on a slide: offered, section 8); the
+  staff form in the portal still asks for the zone to be picked. Optional tips:
+  `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql`.
+- **Staff registry, 11 Nov night** — the owner ran three more scripts. The five left by the second
+  round: the transfer nobody could find was found (one letter apart in more than one word); of
+  the three filed under the zone they had left, one was filed by his team's GMO's zone and one by
+  the one zone of the teams whose names begin with his team's. A ninth list (one zone, five
+  people) was answered the same way: one switched off (found by the shorter form of his name),
+  one already where the list wanted him, one added. **Still open, in a script of four rows handed
+  over, answer not back:** (1) an officer who left and is under no name like his in the registry;
+  (2) a transfer whose first name the list and the registry spell differently: asked for in the
+  registry's own spelling; (3) an officer of another zone who left, found by no name, account or
+  phone; (4) a manager moved to a team that has neither a ZONE nor a GMO on Teams & Staff: the
+  owner names the GMO there (or types the ZONE) and the same row files him. Also open: the two
+  questions for the owner from the second round (a man a GMO does not know; a new employee sent
+  with no team, role or zone), and the staff of five southern teams the GMOs are to send. **Told
+  to the owner:** one officer was filed under the zone of the GMO Teams & Staff names on his new
+  team, which is not the zone of the teams around it; if that team has changed GMO, the GMO cell
+  is what to change. The names are in no file of the repository.
 - **#670** — the staff template is now the script that answered the second round (handbook Part
   49): transfers, new staff with their details, people a GMO cannot see, and somebody whose name
   the GMO spelt differently (found by account, by one letter, by a shorter form; never re-spelt).
 - **Staff registry, 11 Nov evening** — the second round, forty people from eight lists: thirty-six
-  done at the first run (sixteen off, nine moved, eleven added). **Still open:** (1) a script of
-  five rows was handed over for the two not found and for three people moved to teams with no
-  zone on Teams & Staff, who are still filed under the zone they left: its answer has not come
-  back, and it is to be run again once the owner fills the ZONE of those teams; (2) two questions
-  for the owner: a man a GMO does not know, and a new employee sent with no team, role or zone;
-  (3) the owner asked the GMOs for the staff of five southern teams that have none listed: that
-  data is still to come. The names are in no file of the repository.
+  done at the first run (sixteen off, nine moved, eleven added). Two were not found, two were
+  questions for the owner, and three of the moved went to teams with no ZONE on Teams & Staff.
+  What that left open is in "Staff registry, 11 Nov night" above. The names are in no file of the
+  repository.
 - **Outside the repository, 11 Nov evening** — two letters in Swahili asking a police station for
   bail for officers, one Word file of two pages on the company's letterhead, drafted for the
   company's lawyer to sign. Nothing of it is in the repository.
@@ -252,8 +282,30 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A document for the owner's management goes out whole.** On 11 Nov a report was sent with two
   lines still waiting on figures, and the answer was: "You cant provide report before including
   negligances bro". Say what is missing and what it waits on; send the document when nothing is.
-- **A team with an empty ZONE on Teams & Staff cannot receive anybody.** A staff moved to it stays
-  filed under the zone they left, and its people read NO ZONE SET. Ask the owner to fill it.
+- **A team's zone is its GMO's** (section 2, handbook Part 50). A staff moved to a team with an
+  empty ZONE cell is filed under the zone of that team's GMO, and its people read that zone. Only
+  a team with no GMO, or whose GMO has no team with a zone, cannot receive anybody: ask the owner
+  to name the GMO on it.
+- **A long script for the SQL editor starts with `set local jit = off`.** The staff script took
+  eight seconds on the test machine, all of it the database compiling the query; it ran in a
+  fifth of a second. Time a script with the compiler on and off before believing either number.
+- **A check is checked by breaking what it guards.** The first check that the portal and the
+  script read a team alike passed, and went on passing with the rule broken: its random numbers
+  were nearly always even, so half its cases were never drawn. Break the rule, see the check fail.
+- **A name a list spells differently is asked for in the registry's own spelling.** When an
+  answer shows the person (two names the same, the third a variant), the next script asks for
+  them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
+  which.
+- **A `\uXXXX` typed into a command reaches the file as the character itself.** A no-break
+  space, a line separator and a byte-order mark went into a script's pattern that way, invisible
+  and waiting to be mangled by a paste. Write such a character with a doubled backslash, or build
+  it in the script (`chr(92) + 'u00A0'`), and scan every file for characters outside plain text
+  before it is committed or handed over.
+- **Two copies that agree can both be wrong.** The portal's rule and the script's read a dash in
+  the GMO cell as a GMO, alike, so the check that compares them passed. A review by readers who
+  had not written the change found it. Have a change read before it is merged, findings put to
+  a second reader, when the allowance is there (three reviewers and nine skeptics on #671 cost
+  about a quarter of an hour); when it is not, say that it was not read.
 - **A zone has the name Teams & Staff files it under.** A GMO's word for a zone and the filed
   one can differ. Scripts and screens read the teams table; never type a zone from a message.
 - **Ask for the exports before writing a dig.** The loan system exports Approved (Processed) and
@@ -270,10 +322,15 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
   sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
   The older list in `docs/HANDOFF.md` Part 15 ("Waiting on you") has not been checked again.
-  Optional, once: `db/RUN-ME-2026-11-11-hint-zone-beside-name.sql` (the tip that says where a
-  zone beside a name comes from; the zone shows without it).
-- **Offered, never asked for — do not start without a yes**: a Zone box on an access code, to set
-  a person's zone directly whatever Teams & Staff says; a one-tap download of every approved
+  On Teams & Staff: the GMO (or the ZONE) of the one team that has neither, so that the manager
+  moved to it can be filed; then the script of four rows of 11 Nov is run and its answer pasted.
+  Optional, once: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say
+  where a zone beside a name comes from; it adds both, and rewords the first where the earlier
+  file was already run; the zone shows without them).
+- **Offered, never asked for — do not start without a yes**: the annual deck's zone map following
+  the rule that a team's zone is its GMO's (it moves teams between the zones of that slide and
+  changes each zone's General %); the staff form filling the zone from the team in the role; a
+  Zone box on an access code, to set a person's zone directly whatever Teams & Staff says; a one-tap download of every approved
   loan; the month view of the Exp.Def Report as the sum of its weeks; removing the server action
   `emailWeeklyExpdf`, whose button went in #655.
 

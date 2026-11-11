@@ -1,7 +1,8 @@
-/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Part 48).
+/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Parts 48 to 50).
  *
  *   "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group"
  *   "dont correct names using the gmo data i bring unless its new staff"
+ *   "If an officer has team - zone is automatic of the GMO's" ... "to the respective team's gmo"
  *
  * A GMO's list is answered with a FILLED COPY of db/TEMPLATE-staff-changes-from-gmo.sql, handed
  * to the owner. The repository is public: the day a filled copy is committed, the names of the
@@ -10,7 +11,9 @@
  * delete nothing, they never re-spell a name, and their time limits end with the script.
  *
  * It reads two files and no database. The scripts themselves were run on a PostgreSQL holding
- * this repository's schema; node cannot do that here, and this test does not pretend to. */
+ * this repository's schema; node cannot do that here, and this test does not pretend to. The one
+ * rule the script shares with the portal (a team's zone is its GMO's) is held here by its text,
+ * and checked for real, on a PostgreSQL, by tools/db-checks/gmo-zone-parity.mjs. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -93,4 +96,69 @@ test('the time limits end with the script, and both say what was done for every 
   }
   assert.ok(/from a2 a\s*\njoin tgt t\s+on t\.n = a\.n\s*\njoin z\s+on z\.n = a\.n/.test(code(LIST)) && /order by a\.n;\s*$/.test(code(LIST)),
     'the answer is no longer one row for each person asked, in the order of the list');
+  // The list script is one long statement. A PostgreSQL that compiles long queries (JIT) spent eight seconds compiling
+  // it and a fifth of a second running it; the SQL editor has an upstream time limit of its own. `set local` ends with
+  // the script, like the two limits above.
+  assert.ok(/^set local jit = off;/m.test(code(LIST)), LIST + ' no longer switches the query compiler off for itself: seconds of compiling before it runs');
+});
+
+/* A TEAM'S ZONE IS ITS GMO'S (docs/HANDOFF.md Part 50) -- the same rule the portal reads a team by (teamsZoned in
+   api/_lib/zone.js), written here in SQL. Two spellings of one rule can drift, and this one drifting files a staff under
+   one zone while their team's code lists another. The text is held here; that the two READ ALIKE is checked on a real
+   PostgreSQL by tools/db-checks/gmo-zone-parity.mjs, which cuts these steps out of the template by name. */
+test('a team\'s zone is its GMO\'s, in the script as in the portal, and the row says where a zone came from', () => {
+  const s = code(LIST), whole = read(LIST);
+  for (const step of ['tm as (', 'gz as (', 'tz as (', 'z as (']) {
+    assert.ok(s.includes('\n' + step), LIST + ' no longer has the step "' + step + '": the parity check reads the rule by these names');
+  }
+  assert.ok(s.includes('coalesce(m.own, gz.zone) as zone'), 'the order is gone: the team\'s own ZONE cell, else the zone its GMO\'s teams carry');
+  // Teams & Staff is the ONLY place a GMO's zone is read from. The script once went on to the zone on the GMO's own row in
+  // the registry: a GMO moved by the same list (or by an earlier one) then took with him every officer sent to the teams
+  // that still named him, and the second run of the script did not agree with the first. Found by review; the step is gone.
+  assert.ok(!/\bgr\b|gmorow/.test(s), LIST + ' reads a GMO\'s zone off the registry again: "the second run changes nothing" no longer holds');
+  const rule = whole.slice(whole.indexOf('\ntm as ('), whole.indexOf('\nz as (   -- the zone for a row'));
+  assert.ok(rule.length > 500 && !/staff_registry|\breg\b/.test(rule.split('\n').map(l => l.replace(/--.*$/, '')).join('\n')),
+    'the steps tm / gz / tz read the staff registry: the portal does not, and the two would part');
+  assert.ok(s.includes('(array_agg(g.zone order by g.teams desc, g.zone collate "C"))[1] as zone'),
+    'a GMO\'s zone is no longer the one MOST of their teams carry, a tie going A to Z whatever the database\'s own ordering');
+  assert.ok(s.includes("case when c.g_named then upper(regexp_replace(c.g, sp.blank || '+', ' ', 'g')) end as gkey"),
+    'a GMO is no longer one person however the name was typed (capitals, runs of blanks)');
+  // A DASH IS NOT A PERSON, AND NOT A ZONE: the cells are read by the repository's one definition of "nobody named". The
+  // list is parse.js's, with the two ways a sheet says it in words: if parse.js changes its list, this says where the copy is.
+  assert.ok(s.includes(String.raw`'^([-\u2010-\u2015_.\u00B7]+|n/?a|none|nil|null|hakuna|0|no[ -].*|\(unassigned\).*)$'::text as nobody`),
+    LIST + ' no longer reads a dash, N/A, NONE or "NO GMO" as nobody: teams with the same placeholder in the GMO cell become one GMO\'s teams');
+  assert.ok(read('api/_lib/parse.js').includes(String.raw`const NOBODY = /^(?:[-\u2010-\u2015_.\u00B7]+|n\/?a|none|nil|null|hakuna|0)$/i;`),
+    'nameOrNull\'s list of what names nobody has changed: carry the change into the `nobody` pattern of ' + LIST + ' and into this test');
+  assert.ok(s.includes("c0.g <> '' and c0.g !~* sp.nobody as g_named, c0.z <> '' and c0.z !~* sp.nobody as z_named"));
+  // a cell pasted from Excel or WhatsApp: the blanks JavaScript's trim() drops, spelt out, because btrim() drops spaces only
+  assert.ok(s.includes(String.raw`'[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]'::text as blank`),
+    LIST + ' no longer drops a no-break space or a tab the way the portal does: the same table would give a team two zones');
+  // a manager over several teams: the first of them that has a zone ("must have gmo of one of his team"). Two teams whose
+  // names differ only by a mark or by capitals: the one written, then the one with its ZONE typed, then A to Z -- never
+  // whichever the database happened to meet first.
+  assert.ok(s.includes('order by (t.zone is null), zt.pos, (upper(btrim(t.team)) <> upper(btrim(zt.name))), (t.how is distinct from \'team\'), t.team collate "C"'),
+    'the team a row means is no longer settled the same way every time');
+  // a cell with no letter or digit in it is not a zone's name: it once answered for every row that gave no word for its zone
+  assert.ok(s.includes("where regexp_replace(upper(coalesce(q.zone, '')), '[^A-Z0-9]', '', 'g') <> ''")
+    && s.includes("where zz.key = nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '')) as z_else"),
+    'a zone cell holding only a dash or a tab is handed to every row of the list that names no zone');
+  // said, never silent: a zone that is not the team's own cell is explained on the row, and so is a zone that could not be
+  // found; somebody who is not found is answered name by name
+  for (const said of ["zone is its GMO''s", "that GMO''s teams carry more than one zone", 'no GMO is named on it', 'has no team with a zone',
+    'no team of that name on Teams & Staff', 'no team was given', 'who carries a name like each of these', "'nobody')"]) {
+    assert.ok(s.includes(said), LIST + ' no longer says "' + said + '" on the row');
+  }
+  // the portal's side of the rule is where the template says it is, with the same tie-break and the same nobody
+  const zone = read('api/_lib/zone.js');
+  assert.ok(/export function teamsZoned\(teamRows\)/.test(zone) && zone.includes('if (c > n || (c === n && z < zone))'),
+    'teamsZoned in api/_lib/zone.js is gone or breaks a tie differently: the template names it as the same rule');
+  assert.ok(zone.includes(String.raw`const NO_ONE = /^(?:NO[ -]|\(UNASSIGNED\))/i;`) && zone.includes('const s = nameOrNull(v);'),
+    'zone.js no longer reads a cell through nameOrNull and the two words: the script\'s `nobody` pattern is the same list');
+  assert.ok(whole.includes('teamsZoned in api/_lib/zone.js'), LIST + ' no longer points at the portal\'s side of the rule');
+  assert.ok(fs.existsSync(new URL('../tools/db-checks/gmo-zone-parity.mjs', import.meta.url)), 'the check that reads a table both ways is gone');
+  const parity = read('tools/db-checks/gmo-zone-parity.mjs');
+  assert.ok(parity.includes("cut('tm as (', 'z as (   -- the zone for a row')"), 'the parity check no longer cuts the rule out of the template itself');
+  assert.ok(whole.includes('z as (   -- the zone for a row'), LIST + ' renamed the step the parity check cuts up to: it would stop with an error rather than check');
+  assert.ok(/const NOBODY = \[/.test(parity) && /const BLANKS = \[/.test(parity) && parity.includes('THE DRAW IS LOPSIDED'),
+    'the parity check no longer draws the cells that name nobody and the pasted blanks, or no longer refuses a lopsided draw');
 });
