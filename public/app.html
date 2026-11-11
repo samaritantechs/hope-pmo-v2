@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-10-a';
+var BUILD = '2026-11-11-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -942,7 +942,7 @@ function signIn(){
   var code = $('#code').value.trim();
   if (!code){ $('#inErr').textContent='Weka msimbo. / Enter your code.'; return; }
   $('#inBtn').disabled = true; $('#inBtn').textContent = 'Inaingia…';
-  fetch('/api/me?code='+encodeURIComponent(code))
+  fetch('/api/me?code='+encodeURIComponent(code)+'&zone=1')
     .then(readJson_)
     .then(function(x){
       $('#inBtn').disabled=false; $('#inBtn').textContent='Ingia / Sign in';
@@ -1879,7 +1879,13 @@ function start(me){
   applyCadences(me.ui);
   $('#signin').classList.add('hide');
   $('#shell').classList.remove('hide');
-  $('#meName').textContent = me.name;
+  /* THE ZONE, BESIDE THE NAME -- "after switching in system everyone must see their zone":
+       MARK II - "LAKE ZONE"
+     The server says whose zone (api/_lib/zone.js: the teams that name the person on Teams &
+     Staff, else the teams the code holds) and only the sign-in asks for it (&zone=1): the
+     version checks below ask /api/me for the build alone. No zone, or an older server, and
+     the name stands as it always did. */
+  $('#meName').textContent = me.name + (me.zone ? ' - "' + me.zone + '"' : '');
   /* THE VERSION, WHERE IT CAN BE READ RATHER THAN HOVERED. It lived only in the reload
      button's tooltip, and a phone has no tooltips -- so "is the fix on my screen yet", the
      question that has now cost several rounds, could not be answered by the person holding
@@ -7135,7 +7141,7 @@ function wireForms(){
   S.code = saved;
   // A stored code is a signed-in device: the sign-in box is not painted while the server is asked (see #signin.booting).
   $('#signin').classList.add('booting');
-  fetch('/api/me?code='+encodeURIComponent(saved))
+  fetch('/api/me?code='+encodeURIComponent(saved)+'&zone=1')
     .then(readJson_)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) { pushOfficerCode_(saved); start(x.body); }

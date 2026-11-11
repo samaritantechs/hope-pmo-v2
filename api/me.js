@@ -4,6 +4,7 @@ import { authCodeResolvedPortal, withApi } from './_lib/auth.js';
 import { isSystemOpen, isAdminUser } from './_lib/system-gate.js';
 import { canSwitchWorkspace } from './_lib/workspace.js';
 import { withoutIdleApprovalTab } from './_lib/adv-approver.js';
+import { zoneOfSignIn } from './_lib/zone.js';
 
 // GET /api/me?code=XXX
 // Who is this code, and what may they open? The launcher (public/home.html) calls this to
@@ -19,6 +20,11 @@ export default withApi(async (req, res) => {
   // The portal's door: an access code, or a team code signed in as the FIELD OFFICER role.
   const user = await authCodeResolvedPortal(req.query.code);
   const admin = isAdminUser(user);
+  /* WHOSE ZONE, beside the name ("MARK II - \"LAKE ZONE\"") -- see _lib/zone.js for the rule.
+     Asked for by the sign-in alone (?zone=1): the page's version checks call this route every
+     few minutes and must go on reading exactly what they read. Started here and awaited at the
+     end, so it runs beside the reads below and the sign-in is not a round trip slower for it. */
+  const zoneAsked = String(req.query.zone || '') === '1' ? zoneOfSignIn(supabase, user) : null;
   /* The approval tab is for the people the routing makes approvers, whatever a role is ticked for
      (adv-approver.js): a department that has its own approver does not draw it for the rest. */
   const tabs = admin ? user.tabs : await withoutIdleApprovalTab(supabase, user, user.tabs);
@@ -28,6 +34,7 @@ export default withApi(async (req, res) => {
     role: user.role,
     teams: user.teams,                       // null = every team
     teamCount: user.teams ? user.teams.length : null,
+    ...(zoneAsked ? await zoneAsked : {}),   // zone: 'LAKE ZONE' or '', zones: [...] -- only when asked
     tabs,
     /* The version of public/app.html this deployment is serving. The page compares it against
        its own stamp and reloads past the cache when it is behind -- see appBuild() above for

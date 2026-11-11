@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 11 November 2026** — portal `BUILD 2026-11-10-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 45**.
+**As of 11 November 2026** — portal `BUILD 2026-11-11-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 46**.
 
 ---
 
@@ -73,6 +73,16 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#668** — everyone sees their zone beside their name in the portal (`MARK II - "LAKE ZONE"`;
+  a team code sees its team with the zone). The rule is in `api/_lib/zone.js`: the teams that name
+  the person on Teams & Staff, else the teams the code holds. One read of the teams table, at
+  sign-in only (`/api/me?zone=1`); the version checks and `/api/upload` and `/api/call` read what
+  they read before. Handbook Part 46; `test/zone.test.mjs`;
+  `tools/browser-checks/portal-zone-name.mjs`. HOPE Calls is unchanged.
+- **Outside the repository, 11 Nov** — an audit report for the owner (two pages, a Word file the
+  owner holds), built from two exports of the loan system that the owner sent: Approved
+  (Processed) and Defaulters, for one team and chosen dates. Nothing of it is in the repository,
+  and the chat's own builder for it went with the chat's machine.
 - **#667** — what the analysis of the move found, written into section 5, `docs/DEPLOY.md`
   section 7 and handbook Part 45. Words only. The full report, with the questions for Demit, is a
   private document the owner holds; it is not in the repository.
@@ -209,6 +219,14 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   eight of them did, and the chat could not answer the owner for over two hours. Keep a team
   small, give each member a narrow question, and deliver what is ready first.
 - **`grep` calls `public/app.html` a binary file** and prints nothing useful: use `grep -a`.
+- **A document for the owner's management goes out whole.** On 11 Nov a report was sent with two
+  lines still waiting on figures, and the answer was: "You cant provide report before including
+  negligances bro". Say what is missing and what it waits on; send the document when nothing is.
+- **Ask for the exports before writing a dig.** The loan system exports Approved (Processed) and
+  Defaulters for one team and any dates, with balances. On 11 Nov an SQL dig that took 70 ms on a
+  test book of the live book's size ended in "upstream timeout" in the SQL editor; the owner's
+  two exports answered the same question in minutes ("Check from here no need of sql"). A dig is
+  not proven until it has run on the live book, and a chat cannot run it there.
 
 ## 8. Waiting on someone
 
@@ -218,6 +236,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
   sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
   The older list in `docs/HANDOFF.md` Part 15 ("Waiting on you") has not been checked again.
+  Optional, once: `db/RUN-ME-2026-11-11-hint-zone-beside-name.sql` (the tip that says where a
+  zone beside a name comes from; the zone shows without it).
 - **Offered, never asked for — do not start without a yes**: a one-tap download of every approved
   loan; the month view of the Exp.Def Report as the sum of its weeks; removing the server action
   `emailWeeklyExpdf`, whose button went in #655.

@@ -69,6 +69,7 @@ tested without a browser or a network.
 | `passcode.js` | ~55 | Field officer passcodes. |
 | `recovery.js` | ~42 | **The Recovery % rule, in one place.** PAID/OVERPAID, UNDERPAID and everything else. Every screen calls this rather than re-deriving it. |
 | `time.js` | ~41 | Every "what day is it" decision, on the EAT clock (UTC+3). Weekday keys, week Mondays, date arithmetic. |
+| `zone.js` | ~80 | **Whose zone**: the zone written beside a signed-in name. The teams that name the person on Teams & Staff, else the teams the code holds. One read, at sign-in only; the advance desk reads the same helper. |
 
 ---
 
