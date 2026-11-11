@@ -74,11 +74,12 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
 - **#668** — everyone sees their zone beside their name in the portal (`MARK II - "LAKE ZONE"`;
-  a team code sees its team with the zone). The rule is in `api/_lib/zone.js`: the teams that name
-  the person on Teams & Staff, else the teams the code holds. One read of the teams table, at
-  sign-in only (`/api/me?zone=1`); the version checks and `/api/upload` and `/api/call` read what
-  they read before. Handbook Part 46; `test/zone.test.mjs`;
-  `tools/browser-checks/portal-zone-name.mjs`. HOPE Calls is unchanged.
+  a team code sees its team with the zone). The rule is in `api/_lib/zone.js`: among the teams
+  the code may see, the teams that name the person on Teams & Staff, else the teams the code
+  holds. One read of the teams table, at sign-in only (`/api/me?zone=1`), given a second and a
+  half and no more; the version checks and `/api/upload` and `/api/call` read what they read
+  before. Handbook Part 46; `test/zone.test.mjs`; `tools/browser-checks/portal-zone-name.mjs`.
+  Not done: HOPE Calls, and the launcher's menu (`/?menu=1`), still show the bare name.
 - **Outside the repository, 11 Nov** — an audit report for the owner (two pages, a Word file the
   owner holds), built from two exports of the loan system that the owner sent: Approved
   (Processed) and Defaulters, for one team and chosen dates. Nothing of it is in the repository,

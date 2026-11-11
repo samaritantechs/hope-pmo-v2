@@ -16,7 +16,7 @@ import fs from 'node:fs';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { zonesOfTeams, zonesOfUser, zoneLabel, zoneOfSignIn, ZONE_ROLE_COLS, ZONE_SHOWN } = await import('../api/_lib/zone.js');
+const { zonesOfTeams, zonesOfUser, zoneLabel, zoneOfSignIn, ZONE_ROLE_COLS, ZONE_SHOWN, ZONE_BUDGET_MS } = await import('../api/_lib/zone.js');
 const { fakeDb } = await import('./fake-db.mjs');
 const read = f => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 
@@ -69,6 +69,20 @@ test('named nowhere: the zones of the teams the code holds, exactly as the advan
     'advZones_ no longer reads zonesOfTeams: the advance desk and the name line are two definitions of a zone again');
 });
 
+test('a code with a team list is looked for among its own teams and nowhere else', () => {
+  // CAROL is the credit analyst of TUNDURU (South) and KIGOMA (West) on Teams & Staff.
+  assert.equal(label({ name: 'CAROL', role: 'CREDIT', teams: null }), 'SOUTH, WEST', 'holding every team: wherever she is named');
+  assert.equal(label({ name: 'CAROL', role: 'CREDIT', teams: ['TUNDURU', 'MWANZA'] }), 'SOUTH',
+    'named on one of her two teams: that team\'s zone, not both');
+  assert.equal(label({ name: 'CAROL', role: 'CREDIT', teams: ['MWANZA'] }), 'LAKE ZONE',
+    'a namesake on a team outside the code\'s own must not lend its zone: every screen she opens is MWANZA\'s');
+  // never a zone the advance desk would not give the same code
+  for (const u of [{ name: 'CAROL', teams: ['MWANZA'] }, { name: 'ANNA', teams: ['GEITA', 'KIGOMA'] }, { name: 'MARK II', teams: ['VWAWA'] }]) {
+    const held = zonesOfTeams(TEAMS.filter(t => u.teams.includes(t.team)));
+    for (const z of zonesOfUser(u, TEAMS)) assert.ok(held.includes(z), u.name + ' is shown ' + z + ', which is not a zone of the teams the code holds');
+  }
+});
+
 test('named on teams that have no zone: the code\'s own teams answer instead', () => {
   assert.equal(label({ name: 'HQ ONLY', role: 'MANAGER', teams: ['KIGOMA'] }), 'WEST');
   assert.equal(label({ name: 'HQ ONLY', role: 'MANAGER', teams: null }), '');
@@ -99,8 +113,13 @@ test('the sign-in\'s answer costs ONE read of the teams table', async () => {
 
 test('a database without the zone column, or a read that fails, is "no zone" and never a failed sign-in', async () => {
   const none = { zone: '', zones: [] };
-  const noColumn = fakeDb({ teams: TEAMS.map(({ zone, ...t }) => t) }, { missingColumns: { teams: ['zone', 'legal', 'collection'] } });
+  // The rows still carry a zone: only a refused read, honoured, can make this "no zone".
+  const noColumn = fakeDb({ teams: TEAMS }, { missingColumns: { teams: ['zone', 'legal', 'collection'] } });
   assert.deepEqual(await zoneOfSignIn(noColumn, { name: 'MARK II', teams: null }), none, 'the migration has not been run');
+  const errorWithRows = { from() { return { select: async () => ({ data: TEAMS, error: { code: '42703', message: 'column teams.zone does not exist' } }) }; } };
+  assert.deepEqual(await zoneOfSignIn(errorWithRows, { name: 'MARK II', teams: null }), none, 'an error is an error, whatever came with it');
+  const rejects = { from() { return { select: () => Promise.reject(new Error('socket hang up')) }; } };
+  assert.deepEqual(await zoneOfSignIn(rejects, { name: 'MARK II', teams: null }), none);
   const throws = { from() { throw new Error('the database is not answering'); } };
   assert.deepEqual(await zoneOfSignIn(throws, { name: 'MARK II', teams: null }), none);
   const errors = { from() { return { select: async () => ({ data: null, error: { message: 'timeout' } }) }; } };
@@ -108,13 +127,31 @@ test('a database without the zone column, or a read that fails, is "no zone" and
   assert.deepEqual(await zoneOfSignIn(fakeDb({ teams: [] }), { name: 'MARK II', teams: null }), none, 'an empty teams table');
 });
 
+test('a slow teams table does not hold the sign-in: past the budget the answer is "no zone"', async () => {
+  const none = { zone: '', zones: [] };
+  assert.ok(ZONE_BUDGET_MS > 0 && ZONE_BUDGET_MS <= 2000, 'the budget is a ceiling on a decoration, not a wait: ' + ZONE_BUDGET_MS);
+  const after = ms => ({ from() { return { select: () => new Promise(r => setTimeout(() => r({ data: TEAMS, error: null }), ms)) }; } });
+  let t0 = Date.now();
+  assert.deepEqual(await zoneOfSignIn(after(400), { name: 'MARK II', teams: null }, 25), none, 'the read was still out when the budget ended');
+  assert.ok(Date.now() - t0 < 300, 'and the sign-in was not kept for the read: ' + (Date.now() - t0) + ' ms');
+  const never = { from() { return { select: () => new Promise(() => {}) }; } };
+  t0 = Date.now();
+  assert.deepEqual(await zoneOfSignIn(never, { name: 'MARK II', teams: null }, 25), none, 'a read that never answers');
+  assert.ok(Date.now() - t0 < 300);
+  assert.deepEqual(await zoneOfSignIn(after(5), { name: 'MARK II', teams: null }, 500), { zone: 'LAKE ZONE', zones: ['LAKE ZONE'] }, 'inside the budget it is read');
+});
+
 test('/api/me reads the zone only when the sign-in asks, and beside its other reads', () => {
   const me = read('api/me.js');
-  assert.ok(/String\(req\.query\.zone \|\| ''\) === '1' \? zoneOfSignIn\(supabase, user\) : null/.test(me),
-    'the zone is no longer asked for by ?zone=1 alone: every version check would pay a read for it');
+  // Declared WITHOUT an await: the read is started here and collected at the end, beside the others.
+  const decl = "const zoneAsked = String(req.query.zone || '') === '1' ? zoneOfSignIn(supabase, user) : null;";
+  assert.ok(me.includes(decl),
+    'the zone is no longer started by ?zone=1 alone and left running: either every version check pays a read for it, or the sign-in waits on it');
   assert.ok(/\.\.\.\(zoneAsked \? await zoneAsked : \{\}\)/.test(me), 'the answer is not on the reply');
-  assert.ok(me.indexOf('const zoneAsked') < me.indexOf('withoutIdleApprovalTab(supabase, user, user.tabs)'),
+  const at = me.indexOf(decl), firstOther = me.indexOf('withoutIdleApprovalTab(supabase, user, user.tabs)');
+  assert.ok(at >= 0 && firstOther >= 0 && at < firstOther,
     'the zone read is started after the other reads: the sign-in is a round trip slower for it');
+  assert.ok(me.indexOf('await zoneAsked') > me.indexOf('await isSystemOpen(supabase)'), 'and collected after them');
 });
 
 test('the page asks for the zone at sign-in only, and writes it beside the name as text', () => {
@@ -129,6 +166,9 @@ test('the page asks for the zone at sign-in only, and writes it beside the name 
   assert.ok(app.includes(`$('#meName').textContent = me.name + (me.zone ? ' - "' + me.zone + '"' : '');`),
     'the name line is not  NAME - "ZONE"  any more, or it stopped being written as text');
   assert.ok(!/#meName'\)\.innerHTML/.test(app), 'a name or a zone typed on Teams & Staff must never be drawn as markup');
+  // the HOPE LOAN switch asks /api/me again without the zone and replaces S.me: the zone already held is kept
+  assert.ok(/if \(S\.me && x\.body\.zone === undefined\) \{ x\.body\.zone = S\.me\.zone; x\.body\.zones = S\.me\.zones; \}\s*\n\s*S\.me = x\.body;/.test(app),
+    'replacing S.me drops the zone the sign-in paid for');
 });
 
 test('neither the upload nor the call app reads a zone for anybody\'s name', () => {
