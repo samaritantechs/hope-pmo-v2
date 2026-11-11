@@ -30,8 +30,9 @@ The pieces:
 ## 1. GitHub (do this first)
 
 **Settings → Environments → New environment → `production`**
-- Add **required reviewers** (you). Every deploy then waits for an Approve click, which is
-  where the "heavy work in the evening" rule is kept. Leave it empty for no approval step.
+- Add **required reviewers** only if every deploy should wait for an Approve click. Left empty
+  there is no approval step, which is how it is set today: the owner merges at any hour ("I never
+  said that rule", `docs/HANDOFF.md` Part 40).
 
 **Settings → Branches → Add rule for `main`**
 - Require a pull request, and require the status check **`test`** to pass.
@@ -240,9 +241,9 @@ Then delete `gh-deploy` from your machine; GitHub holds the only copy.
 
 **One server means a short gap on every deploy.** The restart takes a second or two, and in
 that time the server answers nothing — the call app included. Nothing in flight is lost
-(`server.js` finishes it first), but requests in the gap fail and the phones retry. Keep
-required reviewers on the `production` environment and approve server deploys in the
-evening, never during the morning collection round.
+(`server.js` finishes it first), but requests in the gap fail and the phones retry. Merges
+land at any hour, so the cure is at the proxy and not on the clock: section 6, item 3 is the
+one line that makes Caddy wait for the service to come back instead of answering 502.
 
 **Never edit files in `/srv/hope-pmo` by hand.** If a hand edit touches a file that a new commit
 also changes, or if you commit on the server, the next deploy stops with "Not possible to
@@ -282,7 +283,7 @@ want as `production` and start a deployment in App Runner.
 
 Today Vercel and AWS both point at the production database, which is correct while both are
 production. The phones still open the Vercel address. Moving them, and making Vercel a
-development site with its own database, is a separate step -- in this order, in the evening:
+development site with its own database, is a separate step -- in this order:
 
 1. AWS is live and tested on its own domain.
 2. Settings → `APP_BASE_URL` = the AWS domain. Tell HOOP (their `DEVICE_SHIFT_PARTNER`).
@@ -329,6 +330,9 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
    both sites are one book and nothing can diverge. If it is the Supabase on this server, it is a
    COPY: whatever is uploaded, called or commented on the Vercel site after the copy was taken is
    not in it, and the reverse. Two sites on two books must never both be worked on.
+   **This can now be read from outside:** each site's `/api/app-version` carries `book`, a
+   fingerprint of the database it reads (`docs/HANDOFF.md` Part 43). The same `book` at both
+   addresses is one database; a different one is two.
 2. **One process serves everybody.** On Vercel a heavy portal report runs apart from the phones.
    In one Node process it holds the single serving thread while it computes, and every handset's
    request waits behind it. Run two copies of the service -- one for `/call`, `/api/call` and

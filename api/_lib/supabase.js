@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 // Server-side client for API routes -- uses the service role key so it can enforce your
 // OWN access-code permission logic (below) rather than relying on Postgres RLS policies.
@@ -11,6 +12,36 @@ export const supabase = createClient(
 );
 
 export const PAGE_SIZE = 1000;   // kept for the callers that still name it
+
+/* =====================================================================================
+   WHICH BOOK THIS SITE READS -- in a form that is safe to say out loud.
+
+     "reserve our own deployment for now - lets use https://recovery-app.sync-book.net in both
+      web and app so that we are sure everything is okay there"
+
+   The same code now runs on two hosts (Vercel, and a server of our own). Whether they are ONE
+   system or TWO depends on a single line nobody can see from outside: the database address in
+   each host's own settings. Same address, and the two sites are one book -- an officer can use
+   either and nothing can diverge. Different addresses, and they are two books that look
+   identical on the day one was copied from the other and drift apart from then on, with every
+   screen on both of them individually correct and nothing anywhere to say so.
+
+   So each site says which book it reads, as a fingerprint: the first twelve characters of a
+   one-way hash of the database HOST. Two sites with the same fingerprint read the same
+   database. It is not the address and cannot be turned back into it, it is not a key and opens
+   nothing, and it costs no read: it is worked out once from a setting the process already holds.
+
+   /api/app-version carries it (the installed app asks that on every launch already), which is
+   what lets the app use its reserve site by itself ONLY while the reserve reads the same book.
+
+   Only the host is hashed, so "https://x.supabase.co" and "https://x.supabase.co/" are one
+   book, as they are. Empty when no address is set: a site with no book has no fingerprint. */
+export function bookId(url = process.env.SUPABASE_URL) {
+  let host = '';
+  try { host = new URL(String(url == null ? '' : url).trim()).host.toLowerCase(); } catch { host = ''; }
+  if (!host) return '';
+  return createHash('sha256').update('hope-pmo book:' + host).digest('hex').slice(0, 12);
+}
 
 /** A hosted database is not always there. When Supabase is overloaded, restarting, or its
     edge cannot reach it, the answer is not data and not a normal error -- it is a gateway

@@ -4045,6 +4045,70 @@ What could not be checked from the code -- which database the server points at, 
 the gap while a deploy restarts it, and what a change of address means for browser users -- is written as a list for whoever runs
 the server in `docs/DEPLOY.md` section 6.
 
+## Part 42 — A new chat starts where the last one stopped
+
+> "Chat is refusing to rewind and even providing any handoff thats why i wish there is something like merge, so that you continue
+> automatic" ... "you must have that chat.md to understand all my flow"
+
+The chat that built Parts 16 to 41 ran from 4 August to 11 November 2026 and then stopped taking messages: it had grown past its
+size limit, and the summary it would have written of itself failed for the same reason. Nothing it had shipped was lost -- every
+change was already merged -- but everything it knew that was not in this handbook went with it: what the owner had ordered that
+week, what was half way, which scheduled tasks it was running, and how the work is done here.
+
+A handoff written at the end is a handoff that is not written on the day it is needed. So it is no longer written at the end:
+
+- **`CHAT.md`, at the top of the repository, is the chat.** The owner's standing orders in their own words (it points at
+  `docs/HOPE-OWNER-HANDOFF.md` for the ones already on record and lists the ones given since), what a chat can and cannot reach,
+  where the work stands, what is in flight, the scheduled tasks, how the work is done here, and what is waiting on whom.
+- **Every new chat is handed it with the rules.** `CLAUDE.md` section 3 imports it, so it arrives in the same breath as rule 1,
+  and says to read it first if it did not.
+- **It is kept true by a test, not by a promise.** `test/chat.test.mjs` fails when `CHAT.md` names an older `BUILD`,
+  `CALL_BUILD`, app version or handbook Part than the repository is at -- so a change cannot be merged without bringing it up to
+  date. It also fails if a key, a connection string or an e-mail address is ever written into it: the repository is public.
+- **The scheduled tasks follow the chat.** The 8-hourly change check fired into the chat that had ended, so its reports would
+  have stopped with nothing to say so. It now fires into the chat that took over, and `CHAT.md` section 6 says how the next one
+  takes it over in turn.
+
+Nothing in the product changed, and nothing reads the database: three documents and a test.
+
+**What could not be carried over.** The earlier chat's own transcript could not be opened from outside it -- it is too large to
+read back. What was recovered is its last summary of itself and this handbook. Anything the owner said there that reached neither
+is not in `CHAT.md`, and the owner has been told so.
+
+## Part 43 — Two sites, and which book each one reads
+
+> "reserve our own deployment for now - lets use https://recovery-app.sync-book.net in both web and app so that we are sure
+> everything is okay there: it where the auto sync updates will be done by demit"
+
+The same code now runs in two places: on Vercel, where every installed app points today, and on a server of our own that the
+deploy workflow keeps in step with GitHub (Part 41). The order is to use our own server for both the web and the app, and to keep
+Vercel as the reserve.
+
+Whether two sites are ONE system or TWO depends on a single line that cannot be seen from outside: the database address in each
+host's own settings. The same address, and an officer can use either site and nothing can diverge. Different addresses, and they
+are two books -- identical on the day one was copied from the other, drifting apart from then on, every screen on both of them
+individually correct. That is the failure this system fears most: nothing crashes, and a number is quietly wrong.
+
+**Checked from outside on 11 November, before anything was changed:** our own server is up; it serves the same `BUILD` and
+`CALL_BUILD` as Vercel; it compresses and answers "not changed" (Part 41 is live there); and it answers the sign-in screen's
+questions exactly as Vercel does -- the same brand, logo and open/closed switch -- so its database is not empty. None of that
+tells a shared database from a copy of it.
+
+**So each site now says which book it reads** (`bookId` in `api/_lib/supabase.js`). `/api/app-version` -- the question the
+installed app already asks at every launch, with no sign-in -- carries a `book`: the first twelve characters of a one-way hash of
+the database host. It is not the address, cannot be turned back into it, is not a key and opens nothing. Two sites that answer the
+same `book` read the same database. **No read was added anywhere**: it is worked out from a setting the process already holds,
+and neither `/api/upload` nor `/api/call` is touched.
+
+It is there for two readers. A person can compare the two addresses in a browser and know in ten seconds whether the sites are one
+book. And the app can know it by itself -- which is what will let it fall back to the reserve only while the reserve is the same
+book (the next change).
+
+**Found on the way, and it matters for the move.** Our own server's certificate comes from Let's Encrypt; Vercel's comes from
+Google. Let's Encrypt's authority joined Android's list of trusted ones in 7.1.1, so Android 6 and 7.0 do not trust it: a handset that old opens
+Vercel today and **cannot open our own server at all** -- it would see a certificate error, not the app. That is the first job of
+the reserve.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

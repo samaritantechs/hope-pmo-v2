@@ -142,6 +142,8 @@ built-in fallback screen.
 
 | File | For |
 |---|---|
+| `CLAUDE.md` | **The rules this repository is worked to.** Every AI chat that opens the repository is handed this file first; section 3 loads `CHAT.md` with it. |
+| `CHAT.md` | **The chat, kept in the repository** — the owner's standing orders, where the work stands, what is in flight, the scheduled tasks, what is waiting on whom. What a new chat starts from. Updated with every change; `test/chat.test.mjs` fails when it falls behind. |
 | `HANDOFF-AIO.md` | **Everything in one file** — what it is, the daily runbook, the rules that took longest to get right, the faults that hurt and what they taught, the measured load, and what is still open. Start here if you read only one. |
 | `START-HERE.md` | The map. Begin here. |
 | `OPERATIONS.md` | The daily runbook — mornings, uploads, the switch, what to do when it breaks. |
