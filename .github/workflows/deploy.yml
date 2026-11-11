@@ -4,10 +4,10 @@
 #                           ├──▶ AWS     (image → ECR → App Runner)
 #                           └──▶ Server  (SSH in → git pull this exact commit → restart)
 #
-# Nothing deploys unless `npm test` passed. Both deploy jobs run in the `production` GitHub
-# Environment, so if that environment has required reviewers, each deploy waits for an
-# Approve click -- which is where "heavy work in the evening, never during the morning
-# collection round" (CLAUDE.md) is kept.
+# Nothing deploys unless `npm test` passed. The deploy jobs run in the `production` GitHub
+# Environment, so if that environment is ever given required reviewers, each deploy waits for
+# an Approve click. It has none today and no rule asks for one: the owner merges at any hour
+# (docs/HANDOFF.md Part 40).
 #
 # A TARGET THAT IS NOT SET UP IS SKIPPED, AND SAYS SO. Until the secrets and variables below
 # exist, its job is skipped and the run summary names what is missing. Merging this file
@@ -256,8 +256,8 @@ jobs:
   # A restart of a single process is a second or two in which the server answers nothing --
   # the call app included (CLAUDE.md rule 1). server.js finishes requests in flight before it
   # exits, so nothing half-written is lost, but new requests in that gap fail and the phones
-  # retry. That is why this job sits in the `production` environment: with a required
-  # reviewer, it restarts only when someone approves it, in the evening.
+  # retry. The cure is at the proxy, not on the clock: Caddy told to wait for the service to
+  # come back (docs/DEPLOY.md section 6, item 3). Merges land at any hour.
   server:
     needs: plan
     if: needs.plan.outputs.server == 'true'

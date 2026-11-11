@@ -79,6 +79,28 @@ test('an API route answers through withApi, with CORS', async () => {
   assert.equal(pre.status, 204);
 });
 
+test('each site says which book it reads, without saying where the book is', async () => {
+  const { bookId } = await import('../api/_lib/supabase.js');
+  const b = await (await fetch(base + '/api/app-version')).json();
+  assert.match(b.book, /^[0-9a-f]{12}$/, 'a fingerprint, on the question the app already asks at every launch');
+  assert.equal(b.book, bookId(process.env.SUPABASE_URL), 'of the database address this process was started with');
+  assert.ok(!JSON.stringify(b).includes(new URL(process.env.SUPABASE_URL).host), 'never the address itself');
+  // One book is one fingerprint, however the address was typed into a host's settings.
+  const one = bookId('https://abcdefghijklmnopqrst.supabase.co');
+  for (const same of ['https://abcdefghijklmnopqrst.supabase.co/', '  https://ABCDEFGHIJKLMNOPQRST.supabase.co\n',
+                      'https://abcdefghijklmnopqrst.supabase.co/rest/v1']) {
+    assert.equal(bookId(same), one, JSON.stringify(same));
+  }
+  // Another database is another book -- a copy kept on our own machine included.
+  for (const other of ['https://zzzzefghijklmnopqrst.supabase.co', 'http://localhost:8000', 'http://127.0.0.1:8000',
+                       'https://abcdefghijklmnopqrst.supabase.co:6543']) {
+    assert.notEqual(bookId(other), one, other);
+    assert.match(bookId(other), /^[0-9a-f]{12}$/, other);
+  }
+  // No address, no fingerprint -- and an empty one must never be taken to match anything.
+  for (const none of ['', '   ', null, 'not an address', 'localhost:8000']) assert.equal(bookId(none), '', JSON.stringify(none));
+});
+
 test('a broken JSON body is a 400, not a crash', async () => {
   const r = await fetch(base + '/api/portal', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{nope' });
   assert.equal(r.status, 400);

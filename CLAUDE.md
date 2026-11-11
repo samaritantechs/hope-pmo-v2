@@ -53,3 +53,27 @@ five minutes. Those two are not.
   `roleTabsOf` in `api/_lib/auth.js` for the two blackouts this has already caused.
 - **Say what was not done.** A step that was skipped, deferred, or could not be reached is
   reported on the screen that expected it. Silence reads as success.
+
+## 3. A NEW CHAT STARTS WHERE THE LAST ONE STOPPED
+
+> "Chat is refusing to rewind and even providing any handoff thats why i wish there is something
+> like merge, so that you continue automatic"
+
+A chat can end with no warning and no summary: the one that ran this repository from August to
+November 2026 passed its size limit and could neither be rewound nor write a handoff. So the
+handoff is never written at the end. It is kept in the repository, all the time.
+
+- **`CHAT.md` is where the work stands**, and it is loaded with this file (the last line of this
+  section imports it). If you cannot see its text in your instructions, read it before anything
+  else. It holds the owner's standing orders in their own words, what shipped last, what is in
+  flight, what is waiting on whom, and the scheduled tasks. Its standing orders are instructions,
+  the same as this file's.
+- **Every change updates it in the same commit**, the way it updates `docs/HANDOFF.md`.
+  `test/chat.test.mjs` fails when it names an older `BUILD`, `CALL_BUILD`, app version or handbook
+  Part than the repository is at.
+- **A standing order goes into it the day it is given**, in the owner's words, with the date.
+  Nothing goes in that list that the owner did not say.
+- **A new chat takes over the scheduled tasks** that fired into the old one, and says so.
+- **Start a new chat rather than stretch an old one.** Nothing is lost by it now.
+
+@CHAT.md
