@@ -348,6 +348,10 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
    **Measured on 11 November:** `/healthz` was asked 484 times across one deploy, about every
    0.6 seconds for five minutes. Every one answered and none took a second. So the gap is shorter
    than that check can see, or Caddy already waits; the setting is still what guarantees it.
+   **That deploy had no traffic.** On a stop the service takes no new connection until the
+   requests in flight finish (up to 65 seconds; an upload slice can run 30 or more), and only then
+   does the new process start. Two copies of the service behind Caddy, restarted one after the
+   other, remove the gap; measure a restart against `/api/call` while a file is uploading.
 4. **If the database is on this machine too**: backups are ours to take (Supabase took them
    daily), every `db/RUN-ME-*.sql` must have been run on it, and it shares four burstable cores
    with the site.
@@ -411,6 +415,35 @@ That is a move of the database, not of an address, and it has to be one moment, 
    database (`HOPELOAN_*`), HOOP's side of the device shift, the keys shared in November.
 
 The proof is the same either way: both addresses answer one `book`.
+
+### What a reading of the code added (11 November 2026)
+
+- **No redirect rule at Caddy or in the Vercel project, for anything the app loads, and never on
+  `/api/*`.** The installed app refuses any host but its own and opens the phone's browser
+  instead. The old addresses forward from inside the page, and only browsers.
+- **Company phones with the lock app report for life to the address they were enrolled from**
+  (`-e server`, written once: `docs/DEVICE-LOCKING.md`). Vercel must keep answering `/api/device`
+  and `/api/lock-version` from the book the office uses, with no redirect, for as long as one
+  enrolled phone exists; an issued phone that hears nothing for 14 days locks itself. Under the
+  second way above, that means Vercel reads the server's database from the minute of the switch.
+- **An automatic feeder uses the upload's own door.** `POST <site>/api/upload`, JSON
+  `{code, type, meta, rows, part}`: `rows` is the header row then the data, with the sheet's own
+  headings; over 2,000 data rows it is sent in slices of 2,000 at most, the header repeated,
+  strictly one after another, with `part {id, index, total}` and ONE id for the whole file;
+  `meta` carries the date (decks), the stage (loans), the upload date and the mode. A Defaulters
+  Current file is always the whole book, and one file per report per date carries every team.
+  Nothing writes the snapshot, follow-up, totals or settings tables directly: the upload also
+  stamps the batch, rebuilds the officers' list, builds the totals and tells the handsets.
+- **The settings file needs every name Vercel has**, with Vercel's values: `IMPREST_LINK_SECRET`,
+  `DEVICE_SHIFT_SECRET`, `RESEND_API_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, any
+  `HOPELOAN_*`. Compare by hash, never by showing a value.
+- **The database needs the functions the hand-run scripts make**: `build_deck_totals`,
+  `build_deck_totals_recent`, `prune_call_logs`, `prune_received_payments`,
+  `prune_abnormal_payments`, `expected_snapshot_totals`, `defaulter_snapshot_totals`,
+  `fold_notice_payments`; then `notify pgrst, 'reload schema';`. Give the gateway's roles the
+  hosted project's `statement_timeout`, and keep its row limit at 1000.
+- **Addresses came across inside the copy**: `select key, value from settings where value ilike
+  '%vercel.app%';` (`APP_BASE_URL` is one).
 
 ### Then the app moves
 
