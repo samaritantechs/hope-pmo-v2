@@ -333,6 +333,9 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
    **This can now be read from outside:** each site's `/api/app-version` carries `book`, a
    fingerprint of the database it reads (`docs/HANDOFF.md` Part 43). The same `book` at both
    addresses is one database; a different one is two.
+   **Answered on 11 November: it is the copy.** Vercel answers `79e363955e75`. This server
+   answers `9372d032c6ca`, which is the fingerprint of `127.0.0.1:8000` -- the Supabase on this
+   machine. Nobody was moved; section 7 is what has to be decided.
 2. **One process serves everybody.** On Vercel a heavy portal report runs apart from the phones.
    In one Node process it holds the single serving thread while it computes, and every handset's
    request waits behind it. Run two copies of the service -- one for `/call`, `/api/call` and
@@ -342,9 +345,17 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
    takes to come back are refused, and the proxy answers 502. In Caddy,
    `reverse_proxy 127.0.0.1:8080 { lb_try_duration 15s  lb_try_interval 250ms }` makes it wait
    and retry instead. Vercel swaps versions with no gap, and merges land at any hour.
+   **Measured on 11 November:** `/healthz` was asked 484 times across one deploy, about every
+   0.6 seconds for five minutes. Every one answered and none took a second. So the gap is shorter
+   than that check can see, or Caddy already waits; the setting is still what guarantees it.
 4. **If the database is on this machine too**: backups are ours to take (Supabase took them
    daily), every `db/RUN-ME-*.sql` must have been run on it, and it shares four burstable cores
    with the site.
+5. **The certificate.** It is issued by Let's Encrypt, whose authority Android has carried only
+   since 7.1.1. A handset on Android 6 or 7.0 can open the Vercel site (its certificate is
+   Google's) and **cannot open this one**: it sees a certificate error, not the app. Caddy can
+   take its certificate from ZeroSSL instead, whose authority those versions do carry. Read off
+   the certificates on 11 November; not tried on such a phone.
 
 ### What moving the address changes for people
 
@@ -355,3 +366,56 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
   the new one. Alerts inside the Android app are not affected.
 - Section 5's order still stands: `APP_BASE_URL`, HOOP's `DEVICE_SHIFT_PARTNER`, a new APK with the
   new `startUrl`, wait for every handset, and only then repoint Vercel.
+
+---
+
+## 7. Which database is the book (to be decided: 11 November 2026)
+
+> "reserve our own deployment for now - lets use https://recovery-app.sync-book.net in both web
+> and app so that we are sure everything is okay there"
+
+The order was to use this server for the web and the app and to keep Vercel in reserve. It was
+not carried out, because the two sites read two databases (section 6, item 1): Vercel reads the
+Supabase project, and this server reads a copy on its own machine. An officer moved here would
+work a list as old as the copy, and every follow-up, promise, call and upload made here would be
+on no report, on no other phone and in no commission -- with nothing on either site to say so.
+
+**Until one of the two below is done, no real work belongs at the new address.**
+
+### Either: Supabase stays the book (two lines; recommended)
+
+In `/etc/hope-pmo.env`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` take the same values
+Vercel has (Vercel → Settings → Environment Variables), then `sudo systemctl restart hope-pmo`.
+Both addresses then answer the same `book`, the two sites are one system, and the move goes
+ahead at once -- with Vercel a real reserve, because an officer who falls back to it finds the
+same book. It tests the one thing that is new (the server) without changing a second thing (the
+database) underneath it on the same day.
+
+### Or: the database on this machine becomes the book
+
+That is a move of the database, not of an address, and it has to be one moment, not a period:
+
+1. **Both sites must read it.** Either Vercel's two variables are pointed at this database (it
+   must then answer over HTTPS from the internet, under keys of its own), or Vercel stops being a
+   reserve and says so.
+2. **One last copy, with writing stopped.** Uploads wait, and the copy is taken after the last
+   one. The call app cannot be closed (CLAUDE.md rule 1), so whatever officers record between
+   the copy and the switch is lost unless both sites change in the same minute.
+3. **What Supabase did unasked becomes ours:** a backup every day and a restore that has been
+   tried; every file in `db/migrations/` and every `db/RUN-ME-*.sql` (the code works without
+   them, slowly); the row limit and the statement timeout the reads were tuned against; disk and
+   upgrades.
+4. **It shares this machine with the site**: four burstable cores for Postgres, its gateway and
+   the one process that serves three hundred phones.
+5. **Everything else that holds the old address or the old keys** moves too: HOPE Loan's second
+   database (`HOPELOAN_*`), HOOP's side of the device shift, the keys shared in November.
+
+The proof is the same either way: both addresses answer one `book`.
+
+### Then the app moves
+
+Android app 20 opens this server, and opens Vercel by itself when this one cannot be opened --
+the server is down, or the handset is too old for its certificate (section 6, item 5) -- and only
+while Vercel answers the same `book`. The update check asks the reserve too, so a handset can
+always be reached with a newer app. It is not built yet: which way the reserve points depends on
+the choice above.

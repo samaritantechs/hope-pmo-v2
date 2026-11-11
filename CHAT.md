@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 11 November 2026** — portal `BUILD 2026-11-10-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 43**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 44**.
 
 ---
 
@@ -70,9 +70,11 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
-- **This file, and the book fingerprint** — `CHAT.md`, `CLAUDE.md` section 3, `test/chat.test.mjs`;
-  `/api/app-version` now answers `book` (which database the site reads, as a fingerprint).
-  Handbook Parts 42 and 43.
+- **#666** — the two sites turned out to be two books, so the move was stopped (section 5).
+  Handbook Part 44; `docs/DEPLOY.md` sections 6 and 7. Words only.
+- **#665** — this file, and the book fingerprint: `CHAT.md`, `CLAUDE.md` section 3,
+  `test/chat.test.mjs`; `/api/app-version` answers `book` (which database the site reads, as a
+  fingerprint). Handbook Parts 42 and 43.
 - **#664** — our own server answers a phone the way Vercel did: "not changed" (304), compression.
 - **#662, #663** — HOPE Calls: a bike officer sees four lists, and their own summary in the top bar.
 - **#661** — Salary advance: an undecided request of a month that is over is Expired.
@@ -82,51 +84,64 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 **What a merge to `main` does today** (`.github/workflows/deploy.yml`, `docs/DEPLOY.md`): the tests
 run; our own server pulls that exact commit and restarts (nobody has to approve); the Vercel and
 AWS steps are skipped because their settings were never filled in. Vercel still deploys `main` by
-itself, through its own link to GitHub, with no gap. Our own server answers nothing for a second
-or two while it restarts.
+itself, through its own link to GitHub, with no gap. Our own server restarts; measured once
+(section 5), nothing was refused.
 
 **People with access to the repository:** `samaritantechs` (the owner, admin) and `monkyaro`
 (Demit, write).
 
-## 5. In flight: moving to our own server
+## 5. In flight: moving to our own server — STOPPED, the two sites are two books
 
 The order is in section 2 (11 Nov). Our own server is `https://recovery-app.sync-book.net`: one
 machine, one Node process (`server.js`) behind Caddy, kept in step with `main` by the deploy
 workflow. Vercel is `https://hope-pmo-v2-git-main-samaritantechs.vercel.app`, the address every
 installed app opens today.
 
-**Checked from outside on 11 Nov, before anything was changed:**
+**Nobody has been moved, and nobody may be until the two sites read one database.** Each site
+says which book it reads (`book` in `/api/app-version`, handbook Part 43). On 11 Nov they
+answered:
 
-- It is up, serves the same `BUILD` and `CALL_BUILD` as Vercel, compresses, and answers "not
-  changed" — so a phone downloads no more there than it does on Vercel.
-- It answers the sign-in screen's questions exactly as Vercel does (same brand, same logo, same
-  open/closed switch), so its database is not empty. **That does not say it is the same
-  database**: a copy answers identically on the day it is taken.
-- Its certificate is from Let's Encrypt. **Android 6 and 7.0 do not trust it** (that authority joined
-  Android's trusted list in 7.1.1); Vercel's certificate they do trust. A handset that old opens Vercel and cannot open
-  our own server.
+| Site | `book` | Which database |
+|---|---|---|
+| Vercel | `79e363955e75` | the Supabase project: the book every installed app has worked on since August |
+| Our own server | `9372d032c6ca` | `127.0.0.1:8000`: a database on the server's own machine, holding a **copy** |
 
-**Step 1, done in this change:** each site now says which book it reads. Compare the `book` in
+Work done on our own server stays in the copy: it is on no report, on no other phone and in no
+commission, and neither site says so. **Do no real work at the new address** until this is settled.
+
+**What has to be decided — by the owner, with Demit — is which database is the book:**
+
+1. **Supabase stays the book** (the small step, and the one recommended). In `/etc/hope-pmo.env`
+   on the server, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` take the values Vercel has, and
+   the service is restarted. The two sites are then one system and the move can go ahead at once.
+2. **The database on our own machine becomes the book.** That moves the database, not an
+   address: `docs/DEPLOY.md` section 7 lists what it takes.
+
+**How a chat knows it is settled:** open the two addresses below. The same `book` on both is one
+system. Check it first, every time, before touching the app's address.
 
     https://recovery-app.sync-book.net/api/app-version
     https://hope-pmo-v2-git-main-samaritantechs.vercel.app/api/app-version
 
-The same `book` means one system: either site can be used and nothing diverges. A different
-`book` means two databases — **stop, move nobody, and tell the owner**: whatever is uploaded,
-called or commented on one site would be missing from the other.
+**Then, and only then — Android app 20.** It opens our own server. If that cannot be opened (the
+server is down, or the handset is too old to trust its certificate) the app opens Vercel by
+itself, and only while Vercel answers the same `book`. The update check asks the reserve too, so
+a handset can always be reached with a newer app. Nothing of this is built yet: which way the
+reserve points depends on the decision above.
 
-**Step 2, next (only if the two match):** Android app 20. It opens our own server. If that cannot
-be opened — the server is down or restarting, or the handset is too old to trust its certificate —
-the app opens Vercel by itself, and only while Vercel answers the same `book`. The update check
-asks the reserve too, so a handset can always be reached with a newer app.
+**Also found on 11 Nov:**
 
-**For the web there is nothing to build.** People open the new address. Each browser signs in once
-there (a browser keeps its access code per address) and allows notifications again. The owner
-sets Settings → `APP_BASE_URL` to the new address, so the links in e-mails lead to it.
+- Our own server is up, serves the same `BUILD` and `CALL_BUILD` as Vercel, compresses, and
+  answers "not changed". A deploy restarted it while it was asked for its health 484 times in five
+  minutes: every one answered, none slower than a second.
+- Its certificate is from Let's Encrypt. **Android 6 and 7.0 do not trust it** (that authority
+  joined Android's trusted list in 7.1.1); Vercel's they do trust. A handset that old cannot open
+  our own server at all. Not tried on such a phone: it is read off the certificate.
 
-**Still to be confirmed by whoever runs the server** — `docs/DEPLOY.md` section 6: one process
-serves the phones and the portal together; a deploy leaves a short gap unless Caddy is told to
-wait; and the server needs every setting Vercel has.
+**For the web there is nothing to build**, once the books are one. People open the new address.
+Each browser signs in once there (a browser keeps its access code per address) and allows
+notifications again. The owner sets Settings → `APP_BASE_URL` to the new address, so the links in
+e-mails lead to it.
 
 ## 6. Scheduled tasks
 
@@ -160,6 +175,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner, with Demit — first of all**: which database is the book (section 5). The move
+  waits on it.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
   sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
