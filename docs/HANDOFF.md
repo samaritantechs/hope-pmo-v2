@@ -4148,6 +4148,53 @@ smaller than feared. And the certificate (Part 43) is written up for whoever run
 
 No code changed in this Part: `CHAT.md`, `docs/DEPLOY.md` and this page.
 
+## Part 45 — What has to be true before anyone is moved
+
+> "We should now access our work from the new website url only so that people can report any irregularities" ... "i expect
+> https://hope-pmo-v2-ten.vercel.app/dashboard to redirect to the new one too" ... "changes i make here must be through to the new
+> one in both app and web, so that me and demit both deliver into app and web - so you must ammend apk url update too i think, am not
+> sure though on how it receives datga" ... "Then make a full analysis and give me any setbacks so that i tell demit"
+
+The owner asked for the old addresses to lead to the new one, for the app to open it, and for an analysis to pass to Demit. The
+analysis was made and handed over the same day as a private report (its questions for Demit are in order, each with a check he can
+run). Nothing was redirected: the two sites still read two databases (Part 44), and the reading below changed how the move has to
+be done.
+
+**How it was read.** Eight readings of the code were started side by side. Three finished: the Android app, browsers and the
+systems that hold the old address, uploads and feeders. Five did not (the single process and its capacity, database parity, data
+continuity table by table, deploy failures, security): the account's usage limit cut the run, and the chat could not answer for
+over two hours. The second reviewer who should have tried to refute each finding did not run either; the lock-app finding and the
+upload-sweep finding were re-read by hand.
+
+**What it found that changes the plan:**
+
+- **A redirect is the wrong tool for the app.** A handset on app 19 loads only the host it has saved. Sent anywhere else, by the
+  server or by the page, it opens the phone's browser: no call-log sync, no background alerts, and a device the server does not
+  know. So the old addresses will forward from inside the page, and only when the page is in a browser.
+- **A moved handset has no way back.** `setStartUrl` saves the new address before it loads it, the saved address outlives app
+  updates, and the update check asks only that address. If the new server cannot be opened, the officer is left typing the old
+  address by hand. So app 20 (which falls back by itself and asks both addresses for updates) goes out before any handset is
+  moved, and handsets then move a team at a time.
+- **Company phones with the lock app never change address.** The enrol command writes `-e server` once, from the page it was
+  copied on, which has always been Vercel. If Vercel stops answering `/api/device`, or reads another database than the office,
+  lock and unlock orders never arrive, and an issued phone that hears nothing for fourteen days locks itself. This is the
+  strongest reason for the first way of Part 44: Supabase stays the book, and both sites read it.
+- **A feeder that writes the tables directly breaks what an upload does besides inserting rows**: the batch stamp (which upload
+  wins), the rebuilt officers' list, the totals, the data stamp that tells the handsets. Today's dashboard would read zero and the
+  phones would keep yesterday's list, with every upload "done". Anything automatic goes through `POST /api/upload`; the request
+  is written out in `docs/DEPLOY.md` section 7.
+- **The restart gap was measured with no traffic** (Part 44). Under load the service takes no new connection until the requests in
+  flight finish, up to 65 seconds during an upload slice, and only then does the new process start.
+- **A database on the server needs what the hand-run scripts made** (eight functions, the totals tables), the hosted project's
+  statement timeout, and every name in Vercel's settings.
+
+**Ours to build next, in this order:** the in-page forwarding, armed only when both sites answer one `book`; app 20; the upload
+page naming the address and book it writes to and resending a slice after a 502 or 503; `server.js` refusing to forward a request
+to itself; the deploy check asking the running process, not a file, for its version. **To confirm, then fix:** the sweep after an
+upload ranks a day's uploads across all teams and keeps two, so a day sent as three files may lose the first.
+
+No code changed in this Part.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

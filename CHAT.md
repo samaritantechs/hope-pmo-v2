@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 11 November 2026** — portal `BUILD 2026-11-10-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 44**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 45**.
 
 ---
 
@@ -48,6 +48,9 @@ Given since, and written nowhere else:
 | 10 Nov 2026 | "please always update me changes made" · "Check for any changes made every 8 hours from now on. Even changes that are not from this chat" · "Yes email the reports to my Gmail too" · "Email all three checks every day" | The 8-hourly check in section 6. Every change is reported, whoever made it. |
 | 11 Nov 2026 | "Merge now ... I never said that rule" · "I said I need report of changes not when to make changes. I already announced the change man and you misinterpreted me" | **There is no time-of-day rule.** A change that is built and passes `npm test` is merged at once and then reported. Never hold a merge for an hour of the day. |
 | 11 Nov 2026 | "reserve our own deployment for now - lets use https://recovery-app.sync-book.net in both web and app so that we are sure everything is okay there: it where the auto sync updates will be done by demit" | Section 5. Vercel stays up as the reserve; the server Demit keeps in step with GitHub becomes the one people use. |
+| 11 Nov 2026 | "remember the 8hrs/evening is only for reporting: not mergings, always ,merge what prompted" | The 8-hourly schedule is for reports only. Whatever the owner prompts is built, tested and merged at once. |
+| 11 Nov 2026 | "We should now access our work from the new website url only so that people can report any irregularities" · "i expect https://hope-pmo-v2-ten.vercel.app/dashboard to redirect to the new one too" · "changes i make here must be through to the new one in both app and web, so that me and demit both deliver into app and web - so you must ammend apk url update too i think, am not sure though on how it receives datga" · "Then make a full analysis and give me any setbacks so that i tell demit" | Section 5: the old addresses are to lead to the new one, the app is to open it, and one pipeline delivers the owner's and Demit's changes to both. The analysis was delivered on 11 Nov. |
+| 11 Nov 2026 | "am always afraid whenever i move into a new chat, any change made must not distruct efficiency of itself and other activities that depend on it or not" | Before a change ships, say what it costs the thing it changes and everything around it. Nothing that works is slowed or disturbed, in a new chat least of all. |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -70,6 +73,9 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#667** — what the analysis of the move found, written into section 5, `docs/DEPLOY.md`
+  section 7 and handbook Part 45. Words only. The full report, with the questions for Demit, is a
+  private document the owner holds; it is not in the repository.
 - **#666** — the two sites turned out to be two books, so the move was stopped (section 5).
   Handbook Part 44; `docs/DEPLOY.md` sections 6 and 7. Words only.
 - **#665** — this file, and the book fingerprint: `CHAT.md`, `CLAUDE.md` section 3,
@@ -129,11 +135,38 @@ itself, and only while Vercel answers the same `book`. The update check asks the
 a handset can always be reached with a newer app. Nothing of this is built yet: which way the
 reserve points depends on the decision above.
 
+**What the analysis of 11 Nov added (handbook Part 45).** Three readings of the code finished
+(the Android app; browsers and the systems that hold the old address; uploads and feeders). Five
+did not: the account's usage limit cut the run. What they changed in the plan:
+
+- **Never a redirect at Vercel or Caddy.** The installed app refuses any host but its own and
+  hands the new address to the phone's browser: no call-log sync, an unregistered device. The
+  forwarding is done inside the page: a browser is sent on (path, query and hash kept); a handset
+  is never redirected.
+- **App 20 goes out before any handset is moved.** A version-19 handset that has saved the new
+  address has no way back if that server cannot be opened; its update check asks only the saved
+  address. Handsets then move a team at a time, never all on one deploy.
+- **Company phones with the lock app keep the Vercel address for life** (it is written once, at
+  enrolment). Vercel must go on answering `/api/device` from the book the office uses, or issued
+  phones lock themselves after 14 days. This is why "Supabase stays the book" is the way
+  recommended: the other way needs Vercel pointed at the server's database in the same minute.
+- **Anything that feeds data in automatically goes through `POST /api/upload`**, never straight
+  into the tables: the upload also stamps the batch, rebuilds the officers' list, builds the
+  totals and tells the handsets. `docs/DEPLOY.md` section 7 has the request.
+- **Ours to build next, in this order:** the in-page forwarding (armed only when both sites read
+  one book); app 20; the upload page naming the address and book it writes to and resending a
+  slice after a 502 or 503; `server.js` refusing to forward a request to itself; the deploy check
+  asking the running process for its version.
+- **To confirm, then fix:** the sweep after an upload keeps the two newest uploads of a day across
+  all teams, so a day sent as three files may lose the first.
+
 **Also found on 11 Nov:**
 
 - Our own server is up, serves the same `BUILD` and `CALL_BUILD` as Vercel, compresses, and
   answers "not changed". A deploy restarted it while it was asked for its health 484 times in five
-  minutes: every one answered, none slower than a second.
+  minutes: every one answered, none slower than a second. That was with no traffic. Under load
+  the service takes no new connection until the requests in flight finish, which during an upload
+  slice can be most of a minute.
 - Its certificate is from Let's Encrypt. **Android 6 and 7.0 do not trust it** (that authority
   joined Android's trusted list in 7.1.1); Vercel's they do trust. A handset that old cannot open
   our own server at all. Not tried on such a phone: it is read off the certificate.
@@ -172,11 +205,15 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **Long output ends chats.** Send it to a scratch file and read the part that is needed. Never
   print the whole of `public/app.html` (half a megabyte), a whole diff of it, or an image as text.
 - **Start a new chat rather than stretch an old one.** Nothing is lost by it now.
+- **A team of analysts can spend the account's five-hour allowance in ten minutes.** On 11 Nov
+  eight of them did, and the chat could not answer the owner for over two hours. Keep a team
+  small, give each member a narrow question, and deliver what is ready first.
+- **`grep` calls `public/app.html` a binary file** and prints nothing useful: use `grep -a`.
 
 ## 8. Waiting on someone
 
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
-  waits on it.
+  waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
   sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
