@@ -26,7 +26,6 @@ five minutes. Those two are not.
   budget, and they are a ceiling, not a target. Raising one is allowed only in the same commit
   as the change that needs it, with the reason in the diff. Ask "can the database do this
   instead of me?" before touching a number.
-- **Deploy heavy work in the evening**, and never during the morning collection round.
 
 ## 2. Everything else, briefly
 

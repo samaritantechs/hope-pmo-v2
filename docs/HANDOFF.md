@@ -4015,6 +4015,21 @@ CALL_BUILD 2026-11-11-a.
 One helper decides each thing (`homeView_`, `xdRole_`, `xdScope_`, `searchSources_`), and `test/pages.test.mjs` fails if any path walks
 the three sources or assumes Leo on its own again.
 
+**The top bar is their own summary** ("for bike on the top bar report just show them their summary, they have how many customers,
+amount, recovered amt and recovery%"; CALL_BUILD 2026-11-11-b). For a bike officer the bar under the tabs reads
+**Wateja · Deni · Marejesho · Rec %** of their own list of today, on every tab, in place of the team's Col leo / Kesho / Wiki / Sales /
+Exp.Def / Rec / T.Def. The figures are added up on the phone from the very rows the Exp.Def tab shows (`drawBikeStrip_`: `xdSum_` over
+`filterForView_`), so the bar and the list cannot disagree, and **a bike handset no longer makes the daily-summary request at all** --
+the bar needs only the Exp.Def list, which it asks for once (`bikeStripLoad_`, never while one is already on the wire). The tag says
+when the list was fetched, or the deck's date in red when the deck is not today's. The Muhtasari card would print the same four
+figures right above the bar, so for a bike officer it shows only a warning the bar cannot carry (no initial deck, no DISB DATE) and is
+otherwise gone.
+
+**When a change goes out.** The owner decides, and says when: "Merge now ... I never said that rule". The line "Deploy heavy work in
+the evening, and never during the morning collection round" was not the owner's and has been taken out of `CLAUDE.md`,
+`docs/HOPE-BRIEF.md` and `docs/HOPE-OWNER-HANDOFF.md`. `docs/DEPLOY.md` and the deploy workflow still describe an optional Approve
+step on the `production` environment for anyone who wants one.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
