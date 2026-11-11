@@ -29,7 +29,9 @@ const UI = { presentSeconds: 30, refreshSeconds: 600, hintIntervalSeconds: 3600,
 const PEOPLE = {
   GMO1: { name: 'MARK II', role: 'GMO', teams: null, teamCount: null, zone: 'LAKE ZONE' },
   TEAM1: { name: 'VWAWA · F.O', role: 'FIELD OFFICER', teams: ['VWAWA'], teamCount: 1, zone: 'SOUTHERN HIGHLANDS' },
-  ADMIN1: { name: 'ADMIN', role: 'ADMIN', teams: null, teamCount: null, zone: '' },
+  ADMIN1: { name: 'ADMIN', role: 'ADMIN', teams: null, teamCount: null, zone: '', zoneAll: true },          // over every team, named on none
+  NOZONE1: { name: 'KIBAHA · F.O', role: 'FIELD OFFICER', teams: ['KIBAHA'], teamCount: 1, zone: '', zoneUnset: true },   // the team's ZONE cell is empty
+  UNREAD1: { name: 'ZONE NOT READ', role: 'GMO', teams: null, teamCount: null, zone: '' },                   // the read failed: neither flag
   LONG1: { name: 'CHRISTOPHER BONAVENTURA MWAKALINGA', role: 'MANAGER', teams: null, teamCount: null, zone: 'SOUTHERN HIGHLANDS, WESTERN LAKE ZONE +3' },
   MARKUP1: { name: 'ANNA', role: 'GMO', teams: null, teamCount: null, zone: '<img src=x onerror="window.__pwned=1"> ZONE' },
   OLD1: { name: 'ON AN OLDER SERVER', role: 'GMO', teams: null, teamCount: null },          // a server that does not know the zone
@@ -45,10 +47,14 @@ const srv = http.createServer((req, res) => {
     const p = PEOPLE[u.searchParams.get('code')];
     res.writeHead(p ? 200 : 401, { 'Content-Type': 'application/json' });
     if (!p) { res.end(JSON.stringify({ ok: false, error: 'Invalid access code' })); return; }
-    const { zone, ...rest } = p;
+    const { zone, zoneAll, zoneUnset, ...rest } = p;
     // the real route answers the zone only when asked for it
     const body = { ...rest, tabs: ['dashboard'], build: BUILD, systemOpen: true, hopeLoanAvailable: false, can: {}, ui: UI };
-    if (u.searchParams.get('zone') === '1' && zone !== undefined) { body.zone = zone; body.zones = zone ? [zone] : []; }
+    if (u.searchParams.get('zone') === '1' && zone !== undefined) {
+      body.zone = zone; body.zones = zone ? [zone] : [];
+      if (zoneAll) body.zoneAll = true;
+      if (zoneUnset) body.zoneUnset = true;
+    }
     res.end(JSON.stringify(body)); return;
   }
   if (u.pathname === '/api/portal' || u.pathname === '/api/call') {
@@ -108,9 +114,15 @@ check('a team code sees its team with the zone', await nameLine(s.page) === 'VWA
 check('its second line still counts its team', await roleLine(s.page) === 'FIELD OFFICER · 1 team(s) · ' + BUILD, await roleLine(s.page));
 await s.ctx.close();
 
-// --- 5. nobody's zone: the name alone, no dash and no quotes
+// --- 5. no zone is said, not left blank: every zone, or none set; only an unread zone leaves the name bare
 s = await signedIn('ADMIN1');
-check('no zone, and the name stands alone', await nameLine(s.page) === 'ADMIN', await nameLine(s.page));
+check('a code over every team, named on none, reads ALL ZONES', await nameLine(s.page) === 'ADMIN - "ALL ZONES"', await nameLine(s.page));
+await s.ctx.close();
+s = await signedIn('NOZONE1');
+check('a team whose ZONE cell is empty reads NO ZONE SET', await nameLine(s.page) === 'KIBAHA · F.O - "NO ZONE SET"', await nameLine(s.page));
+await s.ctx.close();
+s = await signedIn('UNREAD1');
+check('a zone that could not be read leaves the name alone', await nameLine(s.page) === 'ZONE NOT READ', await nameLine(s.page));
 await s.ctx.close();
 s = await signedIn('OLD1');
 check('a server that does not answer a zone draws the name as before', await nameLine(s.page) === 'ON AN OLDER SERVER', await nameLine(s.page));
@@ -131,7 +143,7 @@ const measure = page => page.evaluate(() => {
     pageWidth: document.documentElement.scrollWidth, sideWidth: Math.round(rs.width), height: Math.round(rb.height) };
 });
 for (const [label, viewport] of [['desk', { width: 1280, height: 800 }], ['phone', { width: 360, height: 740 }]]) {
-  s = await signedIn('ADMIN1', { viewport });
+  s = await signedIn('UNREAD1', { viewport });
   const short = await measure(s.page);
   await s.ctx.close();
   s = await signedIn('LONG1', { viewport });

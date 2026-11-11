@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-11-a';
+var BUILD = '2026-11-11-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1883,9 +1883,13 @@ function start(me){
        MARK II - "LAKE ZONE"
      The server says whose zone (api/_lib/zone.js: the teams that name the person on Teams &
      Staff, else the teams the code holds) and only the sign-in asks for it (&zone=1): the
-     version checks below ask /api/me for the build alone. No zone, or an older server, and
-     the name stands as it always did. */
-  $('#meName').textContent = me.name + (me.zone ? ' - "' + me.zone + '"' : '');
+     version checks below ask /api/me for the build alone.
+     NEVER LEFT BLANK WITHOUT A REASON -- "am not seeing my zone yet": a code that holds every
+     team and is named on none reads ALL ZONES; a person whose teams have an empty ZONE cell on
+     Teams & Staff reads NO ZONE SET. Only a zone that could not be read (or an older server)
+     leaves the name as it always was. */
+  var zoneText = me.zone || (me.zoneAll ? 'ALL ZONES' : (me.zoneUnset ? 'NO ZONE SET' : ''));
+  $('#meName').textContent = me.name + (zoneText ? ' - "' + zoneText + '"' : '');
   /* THE VERSION, WHERE IT CAN BE READ RATHER THAN HOVERED. It lived only in the reload
      button's tooltip, and a phone has no tooltips -- so "is the fix on my screen yet", the
      question that has now cost several rounds, could not be answered by the person holding
@@ -6860,7 +6864,7 @@ function wireForms(){
       .then(function(x){
         if (x && x.status >= 200 && x.status < 300 && x.body && x.body.ok !== false) {
           // This asks /api/me without the zone (only a sign-in pays for that read): keep the one already held.
-          if (S.me && x.body.zone === undefined) { x.body.zone = S.me.zone; x.body.zones = S.me.zones; }
+          if (S.me && x.body.zone === undefined) { x.body.zone = S.me.zone; x.body.zones = S.me.zones; x.body.zoneAll = S.me.zoneAll; x.body.zoneUnset = S.me.zoneUnset; }
           S.me = x.body;
           buildNav();
           // Fresh buttons carry no highlight -- put it back on the tab being looked at.

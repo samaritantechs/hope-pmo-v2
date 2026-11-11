@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 11 November 2026** — portal `BUILD 2026-11-11-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 46**.
+**As of 11 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 48**.
 
 ---
 
@@ -52,6 +52,8 @@ Given since, and written nowhere else:
 | 11 Nov 2026 | "We should now access our work from the new website url only so that people can report any irregularities" · "i expect https://hope-pmo-v2-ten.vercel.app/dashboard to redirect to the new one too" · "changes i make here must be through to the new one in both app and web, so that me and demit both deliver into app and web - so you must ammend apk url update too i think, am not sure though on how it receives datga" · "Then make a full analysis and give me any setbacks so that i tell demit" | Section 5: the old addresses are to lead to the new one, the app is to open it, and one pipeline delivers the owner's and Demit's changes to both. The analysis was delivered on 11 Nov. |
 | 11 Nov 2026 | "am always afraid whenever i move into a new chat, any change made must not distruct efficiency of itself and other activities that depend on it or not" | Before a change ships, say what it costs the thing it changes and everything around it. Nothing that works is slowed or disturbed, in a new chat least of all. |
 
+| 11 Nov 2026 | "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group" · "dont correct names using the gmo data i bring unless its new staff" · "so provide sql to add staff as we always did" | Staff changes come as a GMO's list, team by team (remove, add). Answer with a filled copy of `db/TEMPLATE-staff-changes-from-gmo.sql`; a name already in the staff registry is never re-spelt; a GMO's spelling is taken for a new staff only; the ones that come back NOT FOUND are settled by staff ID (`db/TEMPLATE-staff-changes-by-id.sql`). No staff name is committed. Handbook Part 48. |
+
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
 
@@ -73,6 +75,14 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#669** — no zone is said, not left blank ("am not seeing my zone yet"): a code over every
+  team that is named on none reads `ALL ZONES`; a person whose teams have an empty ZONE cell
+  reads `NO ZONE SET`; the name is bare only when the zone could not be read. BUILD
+  2026-11-11-b, handbook Part 47. The same change put the two staff scripts in `db/` as
+  templates with no name in them, and the owner's order on staff names in section 2 (Part 48).
+- **Staff registry, 11 Nov** — the first GMO list (one zone, eleven names) is in the live book:
+  five switched to Inactive, six added. The owner ran two scripts; nothing of it is in the
+  repository but the templates.
 - **#668** — everyone sees their zone beside their name in the portal (`MARK II - "LAKE ZONE"`;
   a team code sees its team with the zone). The rule is in `api/_lib/zone.js`: among the teams
   the code may see, the teams that name the person on Teams & Staff, else the teams the code
@@ -223,6 +233,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A document for the owner's management goes out whole.** On 11 Nov a report was sent with two
   lines still waiting on figures, and the answer was: "You cant provide report before including
   negligances bro". Say what is missing and what it waits on; send the document when nothing is.
+- **A zone has the name Teams & Staff files it under.** A GMO's word for a zone and the filed
+  one can differ. Scripts and screens read the teams table; never type a zone from a message.
 - **Ask for the exports before writing a dig.** The loan system exports Approved (Processed) and
   Defaulters for one team and any dates, with balances. On 11 Nov an SQL dig that took 70 ms on a
   test book of the live book's size ended in "upstream timeout" in the SQL editor; the owner's
@@ -239,7 +251,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   The older list in `docs/HANDOFF.md` Part 15 ("Waiting on you") has not been checked again.
   Optional, once: `db/RUN-ME-2026-11-11-hint-zone-beside-name.sql` (the tip that says where a
   zone beside a name comes from; the zone shows without it).
-- **Offered, never asked for — do not start without a yes**: a one-tap download of every approved
+- **Offered, never asked for — do not start without a yes**: a Zone box on an access code, to set
+  a person's zone directly whatever Teams & Staff says; a one-tap download of every approved
   loan; the month view of the Exp.Def Report as the sum of its weeks; removing the server action
   `emailWeeklyExpdf`, whose button went in #655.
 

@@ -28,8 +28,13 @@
         So the name line never shows a zone the advance desk would not give the same code; it
         shows fewer only when the person is named on some of their teams and not the others.
         A team code holds its one team, so it shows that team's zone.
-     3. ELSE NOTHING. A code that holds every team and is named nowhere (an admin, the head
-        office) has no zone, and none is invented for it.
+     3. ELSE IT IS SAID, NOT LEFT BLANK -- "am not seeing my zone yet" (an ADMIN over all teams,
+        named on no team, looking at a name with nothing beside it and no way to tell a rule
+        from a fault). A code that holds every team and is named nowhere holds every zone, which
+        is how the advance desk has always read it: ALL ZONES. A person whose teams are known
+        and carry no zone on Teams & Staff reads NO ZONE SET, which is the admin's cue to fill
+        the ZONE column. The page writes the words; this module says which case it is
+        (zoneAll, zoneUnset). Only a read that failed or ran out of time leaves the name bare.
 
    A zone is compared and shown in capitals, as the advance desk has always read it. Several
    zones are listed in alphabetical order; past ZONE_SHOWN of them the rest are counted.
@@ -70,6 +75,17 @@ export function zonesOfUser(user, teamRows) {
   return user.teams ? zonesOfTeams(rows) : [];
 }
 
+/** The sign-in's answer over rows already read: the zones and their label, or which kind of
+    "no zone" this is. zoneAll: holds every team and is named nowhere, so every zone. zoneUnset:
+    the person's teams are known and none of them carries a zone on Teams & Staff. */
+export function zoneAnswer(user, teamRows) {
+  const zones = zonesOfUser(user, teamRows);
+  if (zones.length || !user) return { zone: zoneLabel(zones), zones };
+  const me = user.teamCode ? '' : K(user.name);
+  const named = !!me && (teamRows || []).some(t => t && teamAllowed(user, t.team) && ZONE_ROLE_COLS.some(c => K(t[c]) === me));
+  return !user.teams && !named ? { zone: '', zones, zoneAll: true } : { zone: '', zones, zoneUnset: true };
+}
+
 /** What is written beside the name: '' for no zone, the zones while they are few, a count past that. */
 export function zoneLabel(zones) {
   const z = zones || [];
@@ -87,8 +103,7 @@ export async function zoneOfSignIn(db, user, budgetMs = ZONE_BUDGET_MS) {
     const read = Promise.resolve(db.from('teams').select(ZONE_READ)).catch(() => null);
     const res = await Promise.race([read, late]);
     if (!res || res.error || !res.data) return none;
-    const zones = zonesOfUser(user, res.data);
-    return { zone: zoneLabel(zones), zones };
+    return zoneAnswer(user, res.data);
   } catch (e) {
     return none;
   } finally {

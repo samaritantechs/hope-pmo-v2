@@ -81,6 +81,7 @@ tested without a browser or a network.
 | `seed.sql` | The first access code. Change `CHANGE-ME-1234` before running. |
 | `migrations/` | One file per change since 2026-07-25, oldest first. Existing databases run these. **All are safe to re-run.** |
 | `migrations/RUN-ME-*.sql` | Convenience files bundling several migrations for pasting into the SQL editor. |
+| `TEMPLATE-staff-changes-*.sql` | The two scripts a GMO's list of staff changes is answered with (docs/HANDOFF.md Part 48). Templates: no staff name is ever committed. |
 
 > `migrations/2026-08-05b-snapshot-totals-indexes.sql` is **not** in the bundled RUN-ME file:
 > it creates indexes `CONCURRENTLY`, which cannot run inside a transaction block. Run it on
