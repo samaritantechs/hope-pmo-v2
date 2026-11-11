@@ -16,7 +16,7 @@ import fs from 'node:fs';
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 
-const { zonesOfTeams, zonesOfUser, zoneLabel, zoneOfSignIn, ZONE_ROLE_COLS, ZONE_SHOWN, ZONE_BUDGET_MS } = await import('../api/_lib/zone.js');
+const { zonesOfTeams, zonesOfUser, zoneLabel, zoneAnswer, zoneOfSignIn, ZONE_ROLE_COLS, ZONE_SHOWN, ZONE_BUDGET_MS } = await import('../api/_lib/zone.js');
 const { fakeDb } = await import('./fake-db.mjs');
 const read = f => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
 
@@ -95,6 +95,31 @@ test('an admin, or anybody holding every team and named nowhere, has no zone and
   assert.deepEqual(zonesOfUser({ name: 'MARK II', teams: null }, null), []);
 });
 
+test('no zone is said, not left blank: ALL ZONES for a code over every team, NO ZONE SET for teams without one', () => {
+  // "am not seeing my zone yet" -- an ADMIN over all teams, named on no team
+  assert.deepEqual(zoneAnswer({ name: 'MARK II', role: 'ADMIN', teams: null }, TEAMS.map(t => ({ ...t, gmo: 'SOMEBODY ELSE' }))),
+    { zone: '', zones: [], zoneAll: true }, 'holds every team and is named nowhere: every zone, as the advance desk reads it');
+  assert.deepEqual(zoneAnswer({ name: 'ADMIN', role: 'ADMIN', teams: null }, []), { zone: '', zones: [], zoneAll: true }, 'an empty Teams & Staff');
+  // named, and the teams that name them have an empty ZONE cell: that is a gap on Teams & Staff, not "every zone"
+  assert.deepEqual(zoneAnswer({ name: 'HQ ONLY', role: 'MANAGER', teams: null }, TEAMS), { zone: '', zones: [], zoneUnset: true });
+  assert.deepEqual(zoneAnswer({ name: 'NOBODY', role: 'OPM', teams: ['HQ'] }, TEAMS), { zone: '', zones: [], zoneUnset: true }, 'a team list whose teams have no zone');
+  assert.deepEqual(zoneAnswer({ name: 'HQ · F.O', role: 'FIELD OFFICER', teams: ['HQ'], teamCode: true }, TEAMS), { zone: '', zones: [], zoneUnset: true }, 'a team code on such a team');
+  assert.deepEqual(zoneAnswer({ name: 'NOBODY', role: 'OPM', teams: ['NOT A TEAM'] }, TEAMS), { zone: '', zones: [], zoneUnset: true }, 'a team list naming no team of Teams & Staff');
+  // a zone that IS known is never dressed as one of the two
+  assert.deepEqual(zoneAnswer({ name: 'MARK II', role: 'GMO', teams: null }, TEAMS), { zone: 'LAKE ZONE', zones: ['LAKE ZONE'] });
+  assert.deepEqual(zoneAnswer({ name: 'VWAWA · F.O', role: 'FIELD OFFICER', teams: ['VWAWA'], teamCode: true }, TEAMS), { zone: 'SOUTHERN HIGHLANDS', zones: ['SOUTHERN HIGHLANDS'] });
+  assert.deepEqual(zoneAnswer(null, TEAMS), { zone: '', zones: [] }, 'nobody signed in: neither');
+});
+
+test('a zone that could not be read is neither: the name stays bare rather than say ALL ZONES of a book that did not answer', async () => {
+  const errors = { from() { return { select: async () => ({ data: null, error: { message: 'timeout' } }) }; } };
+  const got = await zoneOfSignIn(errors, { name: 'ADMIN', role: 'ADMIN', teams: null });
+  assert.deepEqual(got, { zone: '', zones: [] });
+  assert.ok(!('zoneAll' in got) && !('zoneUnset' in got));
+  const ok = await zoneOfSignIn(fakeDb({ teams: TEAMS }), { name: 'ADMIN', role: 'ADMIN', teams: null });
+  assert.deepEqual(ok, { zone: '', zones: [], zoneAll: true }, 'read, and it is every zone');
+});
+
 test('the sign-in\'s answer costs ONE read of the teams table', async () => {
   const db0 = fakeDb({ teams: TEAMS });
   let trips = 0; const tables = [];
@@ -124,7 +149,8 @@ test('a database without the zone column, or a read that fails, is "no zone" and
   assert.deepEqual(await zoneOfSignIn(throws, { name: 'MARK II', teams: null }), none);
   const errors = { from() { return { select: async () => ({ data: null, error: { message: 'timeout' } }) }; } };
   assert.deepEqual(await zoneOfSignIn(errors, { name: 'MARK II', teams: null }), none);
-  assert.deepEqual(await zoneOfSignIn(fakeDb({ teams: [] }), { name: 'MARK II', teams: null }), none, 'an empty teams table');
+  assert.deepEqual(await zoneOfSignIn(fakeDb({ teams: [] }), { name: 'MARK II', teams: null }), { zone: '', zones: [], zoneAll: true },
+    'an empty teams table was READ: a code over every team holds every zone of it');
 });
 
 test('a slow teams table does not hold the sign-in: past the budget the answer is "no zone"', async () => {
@@ -163,11 +189,13 @@ test('the page asks for the zone at sign-in only, and writes it beside the name 
   // the version checks (every fifteen minutes; every deck refetch) and the HOPE LOAN switch ask for the build alone
   const plain = asks.filter(a => a.includes('encodeURIComponent(S.code)'));
   assert.ok(plain.length >= 3 && plain.every(a => !a.includes('zone')), 'a version check now pays for the zone read: ' + JSON.stringify(plain));
-  assert.ok(app.includes(`$('#meName').textContent = me.name + (me.zone ? ' - "' + me.zone + '"' : '');`),
+  assert.ok(app.includes(`var zoneText = me.zone || (me.zoneAll ? 'ALL ZONES' : (me.zoneUnset ? 'NO ZONE SET' : ''));`),
+    'no zone is no longer said: a name with nothing beside it cannot be told from a fault');
+  assert.ok(app.includes(`$('#meName').textContent = me.name + (zoneText ? ' - "' + zoneText + '"' : '');`),
     'the name line is not  NAME - "ZONE"  any more, or it stopped being written as text');
   assert.ok(!/#meName'\)\.innerHTML/.test(app), 'a name or a zone typed on Teams & Staff must never be drawn as markup');
   // the HOPE LOAN switch asks /api/me again without the zone and replaces S.me: the zone already held is kept
-  assert.ok(/if \(S\.me && x\.body\.zone === undefined\) \{ x\.body\.zone = S\.me\.zone; x\.body\.zones = S\.me\.zones; \}\s*\n\s*S\.me = x\.body;/.test(app),
+  assert.ok(/if \(S\.me && x\.body\.zone === undefined\) \{ x\.body\.zone = S\.me\.zone; x\.body\.zones = S\.me\.zones; x\.body\.zoneAll = S\.me\.zoneAll; x\.body\.zoneUnset = S\.me\.zoneUnset; \}\s*\n\s*S\.me = x\.body;/.test(app),
     'replacing S.me drops the zone the sign-in paid for');
 });
 

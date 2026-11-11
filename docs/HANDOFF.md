@@ -4244,6 +4244,74 @@ spellings agree. A zone that could not be read at one sign-in (a slow or failing
 reload; nothing on the screen says it was skipped. The tip for the Teams & Staff tab is in
 `db/RUN-ME-2026-11-11-hint-zone-beside-name.sql`, to be run once by hand.
 
+## Part 47 — No zone is said, not left blank
+
+> "am not seeing my zone yet"
+
+Said by the owner an hour after Part 46 went out, looking at their own name: an ADMIN code over all teams, named on no team of
+Teams & Staff. By the rule there was no zone to show, so the name stood alone -- and a name with nothing beside it could not be
+told from a feature that had not arrived, or from a fault. Silence read as failure.
+
+So the third step of the rule is now said (BUILD 2026-11-11-b; `zoneAnswer` in `api/_lib/zone.js`, the words are the page's):
+
+- **`ALL ZONES`** -- a code that holds every team and is named on none. It is how the advance desk has always read such a code:
+  all teams, every zone.
+- **`NO ZONE SET`** -- the person's teams are known and none of them carries a zone on Teams & Staff (a team code on such a team,
+  a code whose team list has empty ZONE cells, somebody named only on such teams). It is the admin's cue to fill the ZONE column.
+- **The bare name** only when the zone could not be read: a read that failed or ran out of its second and a half, a database
+  without the zone column, a server older than the page. Never "ALL ZONES" of a book that did not answer.
+
+A zone that is known is shown exactly as in Part 46. It costs nothing more: the same one read, at sign-in only.
+
+**To see one zone beside a name that holds every team**, that name has to stand on that zone's teams on Teams & Staff, in any
+role column, spelt as the access code spells it. The live book files its zones under their own names (the staff changes of Part 48
+came from a GMO as "LAKE ZONE" and the teams turned out to be filed under another name), so what is written beside a name is
+Teams & Staff's word for the zone, not the one used in conversation.
+
+**Offered, not built:** a Zone box on an access code, to set a person's zone directly whatever Teams & Staff says.
+
+## Part 48 — Staff changes confirmed by a GMO are answered with SQL
+
+> "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group"
+>
+> "dont correct names using the gmo data i bring unless its new staff"
+>
+> "so provide sql to add staff as we always did"
+
+GMOs confirm their team changes in the owner's WhatsApp group: team by team, who is to be removed and who is to be added. The owner
+brings each list to the chat and gets back a script for the SQL editor. Two templates hold it, with no name in them (the repository
+is public; the filled copy goes to the owner and nowhere else):
+
+- **`db/TEMPLATE-staff-changes-from-gmo.sql`** -- the list. One row comes back for each name, saying what was done.
+  - A name is matched **exactly** (capitals, single spaces) and is **never re-spelt**. That is the owner's order: a GMO's spelling
+    is taken for a new staff only.
+  - **REMOVE** switches the staff to Inactive, as the HR staff data tab does: off every request list, history kept, nothing
+    deleted. Only when exactly one staff who is not already Inactive carries that name; none, or two, and nothing is changed and
+    the row shows the nearest names.
+  - **ADD**, nobody of that name: a new row as the GMO wrote it, Active, the next staff ID in the usual form (initials / number /
+    year, past every number in use), role `FIELD OFFICER - <team>`, and the zone **of that team on Teams & Staff**. If the zone
+    already holds a name like it, the row says "look".
+  - **ADD**, exactly one of that name already: a move between teams or a return. Switched on; the team part of their
+    `ROLE - TEAM` and their zone follow the new team; the role word is kept. A role with no team part is left alone.
+  - A name listed to remove and to add is a move: only the ADD acts. A name listed twice acts once. Running it again changes
+    nothing.
+- **`db/TEMPLATE-staff-changes-by-id.sql`** -- the ones that came back NOT FOUND, once the right person is clear: switched to
+  Inactive by staff ID, and only if the ID still carries the name written beside it. The registry's spelling stays.
+
+**The first list (11 November 2026, eleven names, one zone):** eight were done at the first run. Three removals came back NOT
+FOUND, each one letter away from the registry's spelling, and were settled by ID in a second script. The zone the new staff got
+was the one their teams are filed under on Teams & Staff, which was not the name the GMO used. One of the people removed was a
+team's manager, not a field officer: the script says the role of whoever it switches off, and that is where it showed.
+
+**What it costs:** the staff registry (read and written) and the teams table (read). Two small tables. Nothing on `/api/upload`,
+nothing on `/api/call`, nothing a screen waits on.
+
+**Not done by the scripts.** The role columns of Teams & Staff: a manager who left is still named there until it is changed on
+that tab. A new staff who is not a field officer: the role is set on the HR staff data tab. HOPE Calls accounts are not touched.
+The form of the list script in the repository (moves, returns, names listed twice) was run on a test database with the
+repository's schema; the simpler form of it is the one that ran on the live book. `test/staff-template.test.mjs` fails if a filled
+copy is ever committed.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

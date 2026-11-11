@@ -15,6 +15,6 @@
 -- =====================================================================================
 insert into hints (tab, message, sw_message)
 select 'teams',
-       '📍 The zone beside a name (MARK II - "LAKE ZONE") is the ZONE of the teams that name that person here, in any role column. Named nowhere: the zone of the teams their code holds. Missing or wrong? Fix the ZONE column, or the spelling of the name.',
-       '📍 Zone inayoonekana kando ya jina (MARK II - "LAKE ZONE") ni ZONE ya timu zinazomtaja mtu huyo hapa, kwenye safu yoyote ya wadhifa. Asipotajwa popote: zone ya timu ambazo msimbo wake unashika. Haipo au si sahihi? Rekebisha safu ya ZONE, au herufi za jina.'
+       '📍 The zone beside a name (MARK II - "LAKE ZONE") is the ZONE of the teams that name that person here, in any role column. Named nowhere: the zone of the teams their code holds, or ALL ZONES for a code over every team. NO ZONE SET means the ZONE cell of their teams is empty. Wrong? Fix the ZONE column, or the spelling of the name.',
+       '📍 Zone inayoonekana kando ya jina (MARK II - "LAKE ZONE") ni ZONE ya timu zinazomtaja mtu huyo hapa, kwenye safu yoyote ya wadhifa. Asipotajwa popote: zone ya timu ambazo msimbo wake unashika, au ALL ZONES kwa msimbo wa timu zote. NO ZONE SET maana yake safu ya ZONE ya timu zake iko tupu. Si sahihi? Rekebisha safu ya ZONE, au herufi za jina.'
 where not exists (select 1 from hints where tab = 'teams' and message like '%The zone beside a name%');
