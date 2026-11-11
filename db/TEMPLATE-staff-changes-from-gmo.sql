@@ -9,14 +9,14 @@
 -- transferred where, who is new (often with phone, account, NIDA, TIN, NSSF), who they cannot
 -- see on their list. Copy this file, fill the list, and hand the owner the copy: new query,
 -- paste, Run. ONE ROW COMES BACK FOR EACH PERSON, saying what was done. (docs/HANDOFF.md
--- Parts 48 and 49.)
+-- Parts 48 to 50.)
 -- NO STAFF NAME IS EVER COMMITTED: this repository is public. The filled copy goes to the owner.
 --
 -- ONE ROW OF THE LIST FOR EACH PERSON:
 --   n, list (whose message), what is asked, the name as written, then, where they apply:
 --   role_word   'Manager', 'Field Officer', 'Bike Recovery' ...  (MOVE: null keeps the role they have)
 --   team_text   the team as it should read after "ROLE - "
---   zone_teams  array of team names whose zone on Teams & Staff the person takes (first one found)
+--   zone_teams  array of team names whose zone the person takes: the first one that has a zone, its own or its GMO's
 --   zone_else   the sender's word for the zone: used only if a zone of that name is already filed
 --   zone_like   array of names of colleagues already in the registry: their zone, as a last resort
 --   account, phone, bank, nida, tin, nssf    (an account also FINDS a person whose name is spelt differently)
@@ -25,7 +25,8 @@
 -- OFF    left, terminated or deactivated: switched to Inactive (off every request list, history
 --        kept, nothing deleted).
 -- MOVE   transferred: the role and team follow the transfer, and the zone becomes the zone of
---        the new team on Teams & Staff. The person stays, or becomes, Active.
+--        the new team (its own ZONE on Teams & Staff, else its GMO's). The person stays, or
+--        becomes, Active.
 -- PLACE  an officer a GMO cannot see on their list: if the registry holds them they are moved to
 --        the team and their EMPTY details are filled in; if it does not, they are added.
 -- NEW    a new officer: added with the details sent, Active, with the next staff ID (initials /
@@ -39,24 +40,47 @@
 -- the same name but for one letter in more than one word. Only when exactly ONE staff fits
 -- (the only live one, else the only one). The row says how they were found and shows the
 -- registry's own spelling, which is NEVER changed. Nobody fits, or several do: nothing is
--- changed, and the row shows the nearest names. Those are then settled by staff ID
+-- changed. A person nobody could be is then answered NAME BY NAME: for each of their names,
+-- who in the whole registry carries it (the same word, or one letter apart), the names nobody
+-- carries first, the sender's own zone first among the carriers, three shown and the rest
+-- counted. A surname on nobody says the person was never registered. When the answer shows
+-- the person (two names the same, the third spelt another way), ask for them in the next
+-- script in the REGISTRY'S OWN SPELLING, or settle them by staff ID
 -- (TEMPLATE-staff-changes-by-id.sql). For a NEW staff only the name, the account and the phone
 -- are compared.
 --
--- THE ZONE of a moved or new staff: the zone of their team on Teams & Staff; else the sender's
--- word, only if a zone of that name is already filed; else the zone of the staff already on
--- that team; else (new staff) the zone of the colleagues named in zone_like. A moved staff
--- whose new team has no zone anywhere keeps the old zone, and the row says so: fill the team's
--- ZONE on Teams & Staff and run the script again.
+-- THE ZONE of a moved or new staff IS THE ZONE OF THEIR TEAM'S GMO (docs/HANDOFF.md Part 50):
+--   "If an officer has team - zone is automatic of the GMO's" ... "to the respective team's gmo"
+--   "So even manager - must have gmo of one of his team and auto match gmo and zone"
+-- The team's own ZONE cell on Teams & Staff; where that is empty, the zone most of its GMO's
+-- other teams carry (a tie goes to the first in A-to-Z order). A cell that holds a dash, N/A,
+-- NONE or "NO GMO" names nobody: two teams whose GMO cell says "-" are not one GMO's teams.
+-- The portal reads a team the same way: teamsZoned in api/_lib/zone.js is this rule in
+-- JavaScript, and tm / gz / tz below are it in SQL. KEEP THE TWO ALIKE
+-- (tools/db-checks/gmo-zone-parity.mjs reads random team tables both ways). A manager over
+-- several teams takes the first of his teams that has a zone. Teams & Staff is the only place
+-- a GMO's zone is read from: the zone on a GMO's own row in the registry is NOT used (a GMO
+-- who was moved would take with him every officer later sent to the teams that still name
+-- him, and a second run would not agree with the first). Only where Teams & Staff cannot say
+-- does the script look further, in this order: the one zone of the teams whose names begin
+-- with the team's name; the sender's word, only if a zone of that name is already filed; the
+-- zone of the staff already on that team; (new staff) the zone of the colleagues named in
+-- zone_like. A moved staff for whom none of these says keeps the old zone, and the row says
+-- which is missing: name the GMO on the team, or type the ZONE on one of that GMO's teams, on
+-- Teams & Staff and run the script again. Whenever a zone is not the team's own cell the row
+-- says where it came from, and when a GMO's teams carry more than one zone it lists them.
 --
 -- SAFE TO RUN AGAIN: the second run changes nothing and says so.
 -- It reads and writes the staff registry and reads the teams table. Nothing on uploads,
--- nothing on HOPE Calls. On a registry of 5,000 staff a list of forty takes about a second.
+-- nothing on HOPE Calls. On a registry of 5,000 staff a list of forty takes under two seconds,
+-- even one on which nobody is found, WITH `set local jit = off` below: without it, a PostgreSQL
+-- that compiles long queries spent eight seconds compiling this one before it ran it.
 -- NOT DONE BY IT: the role columns of Teams & Staff (a manager who left or moved is still named
 -- there until that tab is changed).
 -- =====================================================================================
 set local lock_timeout = '5s';
 set local statement_timeout = '60s';
+set local jit = off;   -- a long query: without this the database can spend seconds compiling it before it runs it
 
 with cfg as (
   select 'GMO ZONE NAME (SQL)'::text as done_by                    -- CHANGE: written beside every row this touches
@@ -89,10 +113,16 @@ reg as (   -- the registry as it stands
          regexp_replace(upper(btrim(s.name)), '\s+', ' ', 'g') as nkey,
          ltrim(regexp_replace(upper(coalesce(s.account, '')), '[^A-Z0-9]', '', 'g'), '0') as akey,
          upper(btrim(s.status)) <> 'INACTIVE' as live,
+         regexp_replace(upper(coalesce(s.zone, '')), '[^A-Z0-9]', '', 'g') as zkey,
          (select case when length(d.x) = 9 then d.x end
             from (select right(regexp_replace(regexp_replace(regexp_replace(coalesce(s.phone, ''), '\D', '', 'g'), '^255', ''), '^0+', ''), 9) as x) d) as phone9,
          string_to_array(regexp_replace(upper(btrim(s.name)), '\s+', ' ', 'g'), ' ') as w
   from staff_registry s
+),
+regw as (   -- every word (of four letters or more) of every name in the registry. Read only for somebody who was not found.
+  select distinct r.id, y.w
+  from reg r cross join lateral unnest(r.w) as y(w)
+  where length(y.w) >= 4
 ),
 exact as (   -- the rows whose name is in the registry as written: the looser ways of finding are not tried for them
   select distinct a.n from a2 a join reg r on r.nkey = a.nkey
@@ -171,33 +201,82 @@ tgt as (
   select t.*, case when t.id is not null then row_number() over (partition by t.id order by t.n) end as use_nth
   from tgt0 t
 ),
-zones as (   -- every zone name already filed, on Teams & Staff first, then in the registry
+zones as (   -- every zone name already filed, on Teams & Staff first, then in the registry. A cell with no letter or digit
+             -- in it (a dash, a dot, a stray tab) is not a zone's name: it would otherwise answer for every row of the
+             -- list that gives no word for its zone.
   select distinct on (regexp_replace(upper(q.zone), '[^A-Z0-9]', '', 'g'))
          upper(btrim(q.zone)) as zone, regexp_replace(upper(q.zone), '[^A-Z0-9]', '', 'g') as key
   from (select zone, 1 as src from teams union all select zone, 2 from staff_registry) q
-  where btrim(coalesce(q.zone, '')) <> ''
+  where regexp_replace(upper(coalesce(q.zone, '')), '[^A-Z0-9]', '', 'g') <> ''
   order by regexp_replace(upper(q.zone), '[^A-Z0-9]', '', 'g'), q.src
 ),
-z as (   -- the zone for a row: its team's on Teams & Staff; else the sender's word if such a zone is filed; else the zone of
-         -- the staff already on that team; else its colleagues' on the same list
-  select a.n, tf.team as team_filed, tf.zone as z_team,
-         (select zz.zone from zones zz where zz.key = regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g')) as z_else,
+tm as (   -- Teams & Staff as it stands: each team, its own ZONE cell, its GMO. A cell is read as the portal reads it
+          -- (teamsZoned in api/_lib/zone.js): blanks at its ends dropped, a no-break space or a tab counting as a blank
+          -- (cells pasted from Excel or WhatsApp carry them); in capitals; a GMO's name with runs of blanks as one.
+          -- A DASH IS NOT A PERSON, AND NOT A ZONE: a cell holding only dashes, N/A, NONE, NIL, HAKUNA, 0, "NO ..." or
+          -- "(unassigned)" names nobody (nameOrNull in api/_lib/parse.js), so two teams whose GMO cell says "-" are not
+          -- one GMO's teams.
+  select t.team, regexp_replace(upper(t.team), '[^A-Z0-9]', '', 'g') as tkey,
+         case when c.g_named then c.g end as gmo,
+         case when c.g_named then upper(regexp_replace(c.g, sp.blank || '+', ' ', 'g')) end as gkey,
+         case when c.z_named then upper(c.z) end as own
+  from teams t
+  cross join (select '[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]'::text as blank,
+                     '^([-\u2010-\u2015_.\u00B7]+|n/?a|none|nil|null|hakuna|0|no[ -].*|\(unassigned\).*)$'::text as nobody) sp
+  cross join lateral (select regexp_replace(coalesce(t.gmo, ''), '^' || sp.blank || '+|' || sp.blank || '+$', '', 'g') as g,
+                             regexp_replace(coalesce(t.zone, ''), '^' || sp.blank || '+|' || sp.blank || '+$', '', 'g') as z) c0
+  cross join lateral (select c0.g, c0.z, c0.g <> '' and c0.g !~* sp.nobody as g_named, c0.z <> '' and c0.z !~* sp.nobody as z_named) c
+),
+gz as (   -- A GMO'S ZONE: the one most of their teams carry on Teams & Staff (a tie goes to the first in A-to-Z order).
+          -- The same reading the portal makes (teamsZoned in api/_lib/zone.js): one rule, written twice, kept alike.
+  select g.gkey, (array_agg(g.zone order by g.teams desc, g.zone collate "C"))[1] as zone, count(*) as zones_n,
+         string_agg(g.zone || ' on ' || g.teams, ', ' order by g.teams desc, g.zone collate "C") as spread
+  from (select m.gkey, m.own as zone, count(*) as teams from tm m where m.gkey is not null and m.own is not null group by m.gkey, m.own) g
+  group by g.gkey
+),
+tz as (   -- A TEAM'S ZONE IS ITS GMO'S -- "If an officer has team - zone is automatic of the GMO's" / "to the respective
+          -- team's gmo" / "So even manager - must have gmo of one of his team and auto match gmo and zone".
+          -- The team's own ZONE cell on Teams & Staff; where that is empty, its GMO's zone (gz). Teams & Staff is the only
+          -- source: the zone on a GMO's own row in the registry is NOT read (a GMO who was moved would take with him every
+          -- officer later sent to the teams that still name him, and a second run would not agree with the first).
+  select m.team, m.tkey, m.gmo, coalesce(m.own, gz.zone) as zone,
+         case when m.own is not null then 'team' when gz.zone is not null then 'gmo' end as how,
+         case when m.own is null and gz.zones_n > 1 then gz.spread end as spread
+  from tm m
+  left join gz on gz.gkey = m.gkey
+),
+z as (   -- the zone for a row: its team's GMO's (tz); else the one zone of the teams whose names begin with it; else the
+         -- sender's word if such a zone is filed; else the zone of the staff already on that team; else its colleagues'
+  select a.n, tf.team as team_filed, tf.gmo as team_gmo, tf.spread as gmo_spread, coalesce(tf.zone, tl.zone) as z_team,
+         case when tf.zone is not null then tf.how when tl.zone is not null then 'like' end as z_how,
+         (select zz.zone from zones zz
+           where zz.key = nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '')) as z_else,
          (select mode() within group (order by upper(btrim(r.zone))) from reg r
            where r.nkey = any (select regexp_replace(upper(btrim(x)), '\s+', ' ', 'g') from unnest(a.zone_like) x)
-             and btrim(coalesce(r.zone, '')) <> '') as z_like,
+             and r.zkey <> '') as z_like,
          (select mode() within group (order by upper(btrim(r.zone))) from reg r
-           where a.team_text is not null and r.live and btrim(coalesce(r.zone, '')) <> '' and r.role ~ '\S\s+-\s+\S'
+           where a.team_text is not null and r.live and r.zkey <> '' and r.role ~ '\S\s+-\s+\S'
              and regexp_replace(upper(regexp_replace(r.role, '^.*?\s+-\s+', '')), '[^A-Z0-9]', '', 'g')
                  like regexp_replace(upper(a.team_text), '[^A-Z0-9]', '', 'g') || '%'
              and r.nkey not in (select x.nkey from a2 x)) as z_peers
   from a2 a
-  left join lateral (
-    select t.team, nullif(upper(btrim(t.zone)), '') as zone
+  left join lateral (   -- the team as Teams & Staff names it: the first of zone_teams found, one with a zone first. Two
+                        -- teams can differ only by a mark or by capitals ("TEAM-1", "Team 1"): then the one written as the
+                        -- list wrote it, then the one whose ZONE is typed on it, then A to Z: never whichever came first.
+    select t.team, t.gmo, t.zone, t.how, t.spread
     from unnest(a.zone_teams) with ordinality as zt(name, pos)
-    join teams t on regexp_replace(upper(t.team), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(zt.name), '[^A-Z0-9]', '', 'g')
-    order by (nullif(btrim(t.zone), '') is null), zt.pos
+    join tz t on t.tkey = regexp_replace(upper(zt.name), '[^A-Z0-9]', '', 'g')
+    order by (t.zone is null), zt.pos, (upper(btrim(t.team)) <> upper(btrim(zt.name))), (t.how is distinct from 'team'), t.team collate "C"
     limit 1
   ) tf on true
+  left join lateral (   -- no team of that very name: the teams whose names begin with it, if they all sit in one zone
+    select min(t.zone) as zone
+    from unnest(a.zone_teams) as zt(name)
+    join tz t on length(regexp_replace(upper(zt.name), '[^A-Z0-9]', '', 'g')) >= 4
+             and t.tkey like regexp_replace(upper(zt.name), '[^A-Z0-9]', '', 'g') || '%'
+    where t.zone is not null
+    having count(distinct t.zone) = 1
+  ) tl on true
 ),
 plan as (   -- what a row asks of the staff it means
   select t.n, t.id, a.act, a.phone9, a.bank, a.account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
@@ -301,23 +380,52 @@ select a.n as "#", a.grp as list, a.act as asked, a.nkey as name,
               when t.id is not null and t.rk = 7 then 'found one letter apart in more than one word' end,
          case when u.id is not null and a.act in ('MOVE', 'PLACE') and (r.role is distinct from p.new_role or r.zone is distinct from p.new_zone or not r.live)
               then 'was: ' || coalesce(r.role, 'no role') || ', ' || coalesce(r.zone, 'no zone') || ', ' || r.status end,
+         case when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_how = 'gmo'
+              then 'the team has no ZONE on Teams & Staff: zone is its GMO''s' || coalesce(' (' || z.team_gmo || ')', '')
+                   || coalesce('; that GMO''s teams carry more than one zone (' || z.gmo_spread || '): the one most of them carry was taken', '')
+              when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_how = 'like'
+              then case when z.team_filed is null then 'no team of that very name on Teams & Staff'
+                        when z.team_gmo is null then 'the team has no ZONE on Teams & Staff and no GMO is named on it'
+                        else 'the team has no ZONE on Teams & Staff, and its GMO (' || z.team_gmo || ') has no team with a zone' end
+                   || ': zone is the one zone of the teams whose names begin with it' end,
          case when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_team is null
-              then case when z.z_else is not null then 'the team has no zone on Teams & Staff: zone taken from the sender''s word'
-                        when z.z_peers is not null then 'the team has no zone on Teams & Staff: zone taken from the staff already on that team'
-                        when a.act = 'MOVE' then 'the team has no zone on Teams & Staff: zone left as it was'
-                        else 'the team has no zone on Teams & Staff: zone taken from colleagues on the same list' end end,
+              then case when coalesce(cardinality(a.zone_teams), 0) = 0 then 'no team was given'
+                        when z.team_filed is null then 'no team of that name on Teams & Staff'
+                        when z.team_gmo is null then 'the team has no ZONE on Teams & Staff and no GMO is named on it'
+                        else 'the team has no ZONE on Teams & Staff, and its GMO (' || z.team_gmo || ') has no team with a zone' end
+                   || case when z.z_else is not null then ': zone taken from the sender''s word'
+                           when z.z_peers is not null then ': zone taken from the staff already on that team'
+                           when a.act = 'MOVE' then ': zone left as it was'
+                           else ': zone taken from colleagues on the same list' end end,
          case when a.nth = 1 and a.act <> 'ASK' and t.id is null and t.all_n is not null then 'they are: ' || t.ids end,
          case when a.nth = 1 and a.act in ('OFF', 'MOVE') and t.all_n is null then 'nearest names: ' || coalesce((
                 select string_agg(q.name_as_filed || ' [' || q.id || ', ' || coalesce(q.zone, 'no zone') || ', ' || q.status || ']', '; ')
                   from (select r2.* from reg r2
                          where r2.w && a.w
                            and (select count(distinct x) from unnest(a.w) x where length(x) > 1 and x = any (r2.w)) >= 2
-                         order by r2.nkey limit 4) q),
-                (select 'none with two of these words; sharing one: ' || string_agg(q.name_as_filed || ' [' || q.id || ', ' || coalesce(q.zone, 'no zone') || ', ' || q.status || ']', '; ')
-                  from (select r2.* from reg r2
-                         where exists (select 1 from unnest(a.w) x where length(x) >= 5 and x = any (r2.w))
-                         order by r2.nkey limit 8) q),
-                'none with any of these words') end,
+                         order by (r2.zkey = regexp_replace(upper(coalesce(a.grp, '')), '[^A-Z0-9]', '', 'g')) desc, r2.nkey limit 4) q),
+                -- nobody shares two words: each of the person's names in turn, and who in the whole registry carries it (the
+                -- same word, or one letter apart). The names nobody carries come first: a surname on nobody says the person
+                -- is not in the registry, whatever a first name hundreds carry may show. The sender's own zone first.
+                (select 'none with two of these words; who carries a name like each of these: '
+                        || string_agg(x.x || ': ' || coalesce(m.shown || case when m.n > 3 then ' (and ' || (m.n - 3) || ' more)' else '' end, 'nobody'),
+                                      ' · ' order by m.n, x.pos)
+                  from (select u.x, min(u.pos) as pos from unnest(a.w) with ordinality as u(x, pos) where length(u.x) >= 4 group by u.x) x
+                  cross join lateral (
+                    select count(*) as n, string_agg(c.label, '; ' order by c.rn) filter (where c.rn <= 3) as shown
+                    from (select r2.name_as_filed || ' [' || r2.id || ', ' || coalesce(r2.zone, 'no zone') || ', ' || r2.status || ']' as label,
+                                 row_number() over (order by (r2.zkey is distinct from regexp_replace(upper(coalesce(a.grp, '')), '[^A-Z0-9]', '', 'g'))::int,
+                                                             r2.nkey, r2.id) as rn
+                            from reg r2
+                           where r2.id in (select g.id from regw g
+                                            where abs(length(x.x) - length(g.w)) <= 1
+                                              and (left(x.x, 1) = left(g.w, 1) or right(x.x, 1) = right(g.w, 1))
+                                              and (x.x = g.w
+                                                or (select max(i) from generate_series(0, least(length(x.x), length(g.w))) i where left(x.x, i) = left(g.w, i))
+                                                 + (select max(i) from generate_series(0, least(length(x.x), length(g.w))) i where right(x.x, i) = right(g.w, i))
+                                                 >= greatest(length(x.x), length(g.w)) - 1))) c
+                  ) m),
+                'none with a word like any of these') end,
          case when i.id is not null then (
                 select 'look: a name like it is already in this zone: ' || string_agg(q.name_as_filed || ' [' || q.id || ', ' || q.status || ']', '; ')
                   from (select r2.* from reg r2

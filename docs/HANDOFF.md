@@ -4356,6 +4356,113 @@ day). It now compares whole words before it compares letters: a list of forty ta
 second round's script was run on a test database with the repository's schema and a made-up registry before it was handed over;
 its answer from the live book is in no file of the repository.
 
+## Part 50 — A team's zone is its GMO's
+
+> "If an officer has team - zone is automatic of the GMO's"
+> "to the respective team's gmo"
+> "So even manager - must have gmo of one of his team and auto match gmo and zone" — the owner, 11 November 2026
+
+Part 49 ended on a cue: *a team with an empty ZONE on Teams & Staff cannot receive anybody*, and the owner was asked to fill the
+ZONE of three teams so that three people who had been moved to them could be filed there. The owner's answer was not three cells.
+It was the rule those cells were standing in for. A zone is the teams under one GMO; the staff form has always labelled the box
+"ZONE (under GMO)". So a team with a GMO is in a zone whether or not anybody typed it.
+
+**The rule, in one place** (`teamsZoned` in `api/_lib/zone.js`). A team's zone is what is typed in its own ZONE cell. Where that
+cell is empty, it is the zone **most of its GMO's other teams carry**; a tie goes to the first in A-to-Z order, so the answer never
+depends on the order of the rows. The GMO is matched from one team to the next trimmed, in capitals, with runs of blanks as one.
+What is typed in a team's own cell always stands, even against its GMO's other teams. A team with no GMO named, or whose GMO has
+no team that carries a zone, still has none, and is still said to have none. Nothing is written back: the ZONE cell stays empty
+for whoever edits Teams & Staff, and the rule is read every time.
+
+**A dash is not a person, and not a zone.** The two cells are read through the repository's one definition of "nobody named"
+(`nameOrNull` in `parse.js`: blank, dashes, N/A, NONE, NIL, HAKUNA, a bare 0), with the two ways a sheet says it in words ("NO
+GMO", "(unassigned)"). Without that, every team whose GMO cell holds a dash is "one GMO's teams", and a team with no zone takes
+a stranger's: its code would then list that zone's staff on the advance desk. A ZONE cell that holds only a dash is an empty
+cell: the team takes its GMO's zone, or reads NO ZONE SET, and never sits in a zone called "-". A blank is whatever JavaScript
+calls one, so a no-break space or a tab pasted in from Excel or WhatsApp does not make two GMOs of one.
+
+**Everything that reads a team's zone reads it through that rule.**
+
+- *The name line* (Part 46). An officer on such a team, signed in with the team's code, reads the team with its GMO's zone beside
+  it and no longer NO ZONE SET (Part 47). A manager named on several teams is in the zone of the GMO of each; one is enough.
+- *The advance desk* (`advZones_`). The team's code lists the staff of its GMO's zone on the request tab, so its officers find
+  their own names; its requests reach the desk of that zone; and the team is no longer named on every advance screen as a team
+  without a zone. A team with neither a ZONE nor a GMO's zone is named as before.
+- *The staff-change scripts* (`db/TEMPLATE-staff-changes-from-gmo.sql`, steps `tm`, `gz`, `tz`). A moved or new staff takes the
+  zone of their team by the same rule, read off Teams & Staff and nowhere else. The script then has last resorts of its own, used
+  only where Teams & Staff cannot say and each one said on the row: the one zone of the teams whose names begin with the team's
+  name; the sender's word, if a zone of that name is already filed; the zone of the staff already on that team; for a new staff,
+  their colleagues'. A manager over several teams takes the first of them that has a zone; of two teams whose names differ only
+  by a mark or by capitals, the one written as the list wrote it.
+
+**The answer says where a zone came from.** A row whose zone is not the team's own cell names the GMO it was read from. When that
+GMO's teams carry more than one zone the row lists them with their counts, because "most of them" is then a judgement somebody
+may want to overrule by typing the ZONE on the team. When no zone could be found the row says which thing is missing: no team of
+that name, no GMO named on the team, or a GMO none of whose teams has a zone.
+
+**Somebody who is not found is answered name by name.** For each of the person's names, the row says who in the whole registry
+carries it (the same word, or one letter apart): the names nobody carries first, and among the carriers the sender's own zone
+first, three shown and the rest counted. A surname on nobody says the person was never registered, whatever a first name that
+hundreds carry may show. Before, the eight nearest names came in A-to-Z order from the whole registry, and for one officer all
+eight shared nothing with him but a first name. When the answer does show the person (two names the same, the third spelt
+another way) the next script asks for them in the registry's own spelling, which is how a transfer was settled without
+re-spelling anybody.
+
+**One rule, written twice, checked against itself.** The portal's rule is JavaScript and the script's is SQL, and node cannot run
+SQL in `npm test`. `tools/db-checks/gmo-zone-parity.mjs` is the check that can: it draws random Teams & Staff tables (GMO names
+in mixed case and with stray spaces, empty cells, GMOs over two zones, ties, cells that name nobody, blanks pasted from Excel),
+reads each one both ways on a PostgreSQL and fails on the first difference. It was itself checked by breaking the rule six ways
+(the tie, the spaces, the dash, the words, the own cell, "most"): each was caught. Its first form caught only one, because its
+random numbers were nearly always even and half of its cases were never drawn: it now refuses to pass when too few of the hard
+cases come up. `test/staff-template.test.mjs` holds the text of the rule in the template; `test/zone.test.mjs` and
+`test/portal.test.mjs` hold the portal's side.
+
+**What the review found, and what was done about it.** Three reviewers read the change before it was merged, each finding then
+put to a second reader whose job was to refute it. Nine findings, none refuted, eight fixed in the same change:
+
+- *A dash in the GMO cell was a GMO called "-"* (above). The check that the two writings agree had passed, because both were
+  wrong alike: agreement between two copies is not correctness.
+- *The script read a GMO's zone off the GMO's own row in the registry when none of their teams had one.* A GMO moved by the same
+  list, or by an earlier one, took with him every officer later sent to the teams that still named him, and a second run did not
+  agree with the first. The step is gone: Teams & Staff is the only place a GMO's zone is read from, and when it has none the
+  row says whose teams need a ZONE typed on one of them.
+- *The script's blank was a space; the portal's is also a no-break space, a tab, a line break.* The same table gave a team one
+  zone in the portal and another in the script. The script now spells the blanks out.
+- *Two teams whose names differ only by a mark* were settled by whichever row the database met first. Now by the name as
+  written, then the typed ZONE, then A to Z.
+- *A zone cell holding only a dash or a tab answered for every row of a list that gave no word for its zone* (found while
+  testing the above, older than this change). A cell with no letter or digit in it is not a zone's name.
+- *The test that the rows given are not changed could not fail*: it took its picture of a shared fixture after an earlier test
+  had already passed it through the rule. The fixture is frozen now, so a write into a row throws whichever test runs first.
+- *This Part described the name-by-name answer before the template had it.* The template has it.
+- *The reworded tip did not reach a book where the first tip script had been run.* The second tip script rewords it there.
+
+The ninth is under "Not done": the annual deck.
+
+**What the live book answered.** The five rows left by Part 49 were run with the rule. One of the three was filed under his team's
+GMO's zone with nothing typed anywhere. One had already been filed by the one zone of the teams whose names begin with his
+team's. The transfer nobody could find had been found one letter apart in more than one word. Two stayed open: a manager whose
+new team has neither a ZONE nor a GMO whose teams carry one (the owner names the GMO on that team, or types its ZONE, and the
+same row files him), and an officer who left and is in the registry under no name, account or phone the list gave. The next
+list (one zone, five people) was answered by the same script the same evening: three were done at the first run, one was
+under a first name the list spelt differently, and one is under no name like his.
+
+**What it costs.** No read was added anywhere. The sign-in's one read of the teams table already carried the GMO column, and the
+advance desk already had the teams (the memoised read every screen shares; the rule copies the rows it changes and never writes
+into that read). Nothing on `/api/upload`, nothing on `/api/call`. For the script: it is one long statement, and a PostgreSQL
+that compiles long queries (JIT) spent **eight seconds compiling it and a fifth of a second running it** on the test machine. The
+script now starts with `set local jit = off`, which ends with the script like its two time limits. Whether the live database
+compiles is not known, since a chat cannot see it; the line makes it not matter.
+
+**Not done.** *The annual deck's zone map* still colours a team by the ZONE typed on it, counts a team with an empty cell under
+"no zone set in Teams & Staff", and names its GMO on the "No zone set" row, although the name line and the advance desk now put
+that team in its GMO's zone. Following the rule there moves teams between the zones of a slide and changes each zone's General
+%: figures on a deck are the owner's to change, so it is offered, not done. The staff form in the portal still asks for the zone
+to be picked from its list; it does not fill it from the team in the role. A staff already filed under a zone is not re-filed by
+the portal when Teams & Staff changes: a person moves when a list asks and a script is run. HOPE Calls shows no zone. No page
+changed, so `BUILD` stays where it was. The scripts were run on a test PostgreSQL holding a made-up registry of live size; their
+answers from the live book are in no file of the repository.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

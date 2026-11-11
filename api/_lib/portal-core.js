@@ -7,7 +7,7 @@ import { ADV_APPROVALS } from './importers.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
-import { zonesOfTeams } from './zone.js';
+import { zonesOfTeams, teamsZoned } from './zone.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
@@ -1674,7 +1674,9 @@ async function hrDeduction(db, user, p, nowMs = Date.now()) {
    names of the officers under GMO teams to keep privacy". A GMO's code holds their teams, so
    their zones; an admin or HR holds every team, so every zone. ONE definition (advZones_) for
    the request, the approval and the registry alike, and the zone filter is applied at the
-   database. A team with no zone contributes nothing, and the screen names it.
+   database. A team's zone is its own ZONE cell, else its GMO's ("If an officer has team - zone is
+   automatic of the GMO's": teamsZoned in zone.js). A team with neither contributes nothing, and
+   the screen names it.
 
    Four tabs, granted like every other: advreq (ask), advappr (decide), advrep (the report),
    advstaff (HR's registry). Admins hold all four from the start.
@@ -1693,10 +1695,13 @@ async function advRead_(q) {
 const advDate_ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
 const advUpper_ = v => { const s = textOrNull(v); return s ? s.toUpperCase().replace(/\s+/g, ' ') : null; };
 /** The zones a signed-in person may see: null for every zone (ALL teams), else the distinct
-    zones of the teams they hold, as Teams & Staff spells them (upper-cased). */
+    zones of the teams they hold, as Teams & Staff spells them (upper-cased): a team's own ZONE
+    cell, else the zone its GMO's other teams carry. */
 function advZones_(user, teamRows) {
   if (!user.teams) return { zones: null, noZoneTeams: [] };
-  const mine = teamRows.filter(t => teamAllowed(user, t.team));
+  // A TEAM'S ZONE IS ITS GMO'S (teamsZoned in zone.js): a team with an empty ZONE cell is in the zone its GMO's other teams
+  // carry, so its officers are listed with that zone's staff and it is no longer named as a team without one.
+  const mine = teamsZoned(teamRows).filter(t => teamAllowed(user, t.team));
   const zones = zonesOfTeams(mine);                 // the same reading the name line uses (zone.js)
   return { zones, noZoneTeams: mine.filter(t => !K(t.zone)).map(t => t.team).sort() };
 }
