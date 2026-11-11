@@ -3988,6 +3988,33 @@ Both go by the East Africa month now (`advMonthStartUtc_`), on the request tab, 
 **Uploading the register again** keeps a cell that says Expired as Expired (`advApproval` in `importers.js`); a cell that says Pending
 for a month that is over is expired again by the next screen that meets it.
 
+## Part 40 — HOPE Calls: a bike officer's four lists
+
+> "Our bike users are the most illiterate sorry to say that, for that only specific role - they should find only 4 default lists in
+> call app view. 1 - the bike expected defaulters list of today (gmo and manager excluded) 2 - the second is from defaulters to expired
+> but let them find their customers at visit"
+
+Asked which four, the owner chose **Exp.Def, Def, Exp, Chr**, with the status lists holding **all customers of their teams**.
+CALL_BUILD 2026-11-11-a.
+
+- **Who is a bike officer** (`bikeView` on `api_callBoot`, `api/_lib/call-core.js`): named in a team's **Bike** column on Teams & Staff
+  and in no GMO or Manager column, or registered under a role that says BIKE. Somebody who is also a GMO or a manager somewhere keeps
+  the full app. It comes off the teams rows the boot already reads: **no new read on `/api/call`**, pinned by a test that a bike
+  officer's boot reads exactly what anybody's does.
+- **What their phone shows** (`public/call.html`, `bikeMode_`): four tabs, **Exp.Def first and opened by default**, then Def, Exp, Chr.
+  Leo and Kesho are hidden and never fetched, so a bike handset asks the server for two lists where it asked for four. Exp.Def is
+  locked to the BIKE customers of today (`xdRole_`), always their own list (`xdScope_`), with no GMO / Manager pills and no "Timu
+  yote" switch to press by mistake. Ripoti still follows its own rule (leaders only).
+- **Finding a customer on a visit**: Def, Exp and Chr are the whole defaulter book of their teams, and the search box looks through it
+  (`searchSources_`) and, as for everyone, asks the server for the whole book after a pause (`api_callFind`).
+- **A simpler view, not a narrower permission**: `api_callList` answers a bike officer exactly as before; only the screen changed. To
+  give a bike officer the full app again, take their name out of the Bike column or change the role on their registration.
+- **Also fixed here**: the Exp.Def summary is a white card inside the navy header and had no text colour of its own, so Wateja, Deni
+  and Rec % were white on white for everybody; `.expdfstrip` now sets its colour.
+
+One helper decides each thing (`homeView_`, `xdRole_`, `xdScope_`, `searchSources_`), and `test/pages.test.mjs` fails if any path walks
+the three sources or assumes Leo on its own again.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

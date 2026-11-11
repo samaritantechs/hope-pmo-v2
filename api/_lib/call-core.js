@@ -286,6 +286,24 @@ async function boot(db, [dev], nowMs) {
   // The rotation check, off the teams read above rather than a second one of the same table.
   const me = K(cu.name);
   const expdfOwner = !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me);
+  /* THE BIKE OFFICER'S FOUR LISTS.
+
+       "Our bike users are the most illiterate sorry to say that, for that only specific role - they should find only 4
+        default lists in call app view. 1 - the bike expected defaulters list of today (gmo and manager excluded)
+        2 - the second is from defaulters to expired but let them find their customers at visit"
+
+     So a bike officer's phone opens on Exp.Def -- their own list of today, the GMO's and the manager's customers left out --
+     and carries Def, Exp and Chr beside it: the whole defaulter book of their teams, to find whoever they meet on a visit.
+     Leo and Kesho are not their work and are not shown.
+
+     WHO IS ONE: named in a team's Bike column and in no GMO or Manager column (the rotation's own rule for who holds what),
+     or registered under a role that says BIKE. Somebody who is also a GMO or a manager somewhere keeps the full app: they
+     work more than the bike list.
+
+     NO NEW READ: it comes off the teams read this boot already makes. And it is a simpler VIEW, not a narrower permission --
+     list() answers exactly as before, so nothing here can leave a handset with less than it is entitled to. */
+  const holds_ = col => !!me && teamRows.some(t => K(t[col]) === me);
+  const bikeView = !holds_('gmo') && !holds_('manager') && (holds_('bike') || hasWord(normRole(cu.role), ['BIKE']));
   // Asked the portal's way -- see callSystemAdmin_. Free for an ordinary officer. The leader's
   // live scope comes off the same read, in the same breath (leaderTeamsLive_).
   const [systemAdmin, lt] = await Promise.all([callSystemAdmin_(db, cu, nowMs), leaderTeamsLive_(db, cu, nowMs)]);
@@ -317,6 +335,8 @@ async function boot(db, [dev], nowMs) {
     // whether this person ALSO has a list of their own to switch to.
     expdfLeader: true,
     expdfOwner,
+    // A bike officer: the phone shows four lists and no more (see above).
+    bikeView,
     leaderTeams: cu.is_leader ? (!lt || !lt.length ? 'ALL' : lt.join(',')) : '',
     /* THE TEAM LIST, NARROWED TO WHAT THIS HANDSET MAY SEE.
        The unauthenticated branch above stopped publishing every team name years ago, and says

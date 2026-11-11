@@ -96,6 +96,8 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
   border:1px solid rgba(255,255,255,.16);color:#fff;font-size:15px;line-height:1;
   display:flex;align-items:center;justify-content:center;padding:0}
 .tabs{display:flex;gap:4px;margin-top:12px;overflow-x:auto}
+/* A bike officer's first list is their own Exp.Def of today -- see bikeMode_ */
+.tabs.bike #tabExpdf{order:-1}
 .tabs button{flex:1;background:rgba(255,255,255,.08);color:#cfe0ff;border:0;padding:9px 4px;border-radius:9px;
   font-size:12.5px;font-weight:700;white-space:nowrap}
 .tabs button.on{background:#fff;color:var(--b800)}
@@ -208,7 +210,9 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
 .banner{background:var(--warnbg);border:1px solid var(--warnline);color:var(--warn);border-radius:11px;padding:10px 12px;
   font-size:12px;margin-bottom:10px;line-height:1.5}
 
-  .expdfstrip{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 12px;background:var(--card);
+  /* color: the strip is a white card INSIDE the navy header, whose text is white -- without its own colour the Wateja, Deni
+     and Rec % figures were white on white, and only Marejesho (green) could be read. */
+  .expdfstrip{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:9px 12px;background:var(--card);color:var(--ink);
     border-bottom:1px solid var(--line)}
   .expdfstrip .xstat{display:flex;flex-direction:column;min-width:62px}
   .expdfstrip .xstat span{font-size:10px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em}
@@ -610,6 +614,28 @@ var S = { boot:null, view:'today', cache:{}, cacheAt:{}, fetching:{}, reqId:0, i
      bike officers' book works it every day. */
   expdfRole: (function(){ try { return localStorage.getItem('hcXdRole') || ''; } catch(e){ return ''; } })() };
 var LIST_SOURCE = { today:'today', tomorrow:'tomorrow', def:'defaulters', exp:'defaulters', chr:'defaulters', expdf:'expdf' };
+/* THE BIKE OFFICER'S FOUR LISTS -- "for that only specific role - they should find only 4 default lists in call app view.
+   1 - the bike expected defaulters list of today (gmo and manager excluded) 2 - the second is from defaulters to expired but
+   let them find their customers at visit".
+
+   The server says who is a bike officer (bikeView on api_callBoot). For them the phone carries Exp.Def -- their own list of
+   today, first and opened by default -- then Def, Exp and Chr: the whole defaulter book of their teams, which is also what the
+   search box looks through, so a customer met on a visit is found whatever list they are on. Leo and Kesho are hidden and
+   never fetched; the GMO / Manager pills and the "Timu yote" switch are gone, so the list cannot be turned into somebody
+   else's by a stray tap. ONE place decides each of these, so no path is left drawing the old screen. */
+function homeView_(){ return S.bike ? 'expdf' : 'today'; }
+function xdRole_(){ return S.bike ? 'BIKE' : (S.expdfRole || ''); }            // which role's customers Exp.Def shows
+function xdScope_(){ return S.bike ? 'auto' : (S.expdfScope || 'auto'); }      // a bike officer's list is always their own
+function searchSources_(){ return S.bike ? ['defaulters'] : ['today','tomorrow','defaulters']; }
+function bikeMode_(on){
+  S.bike = on === true;
+  ['today','tomorrow'].forEach(function(v){
+    var b = document.querySelector('#tabs button[data-v="' + v + '"]');
+    if (b) b.classList.toggle('hide', S.bike);
+  });
+  var t = document.getElementById('tabs');
+  if (t) t.classList.toggle('bike', S.bike);
+}
 // Exp.Def is the recycling rotation's own list and is already scoped to the signed-in leader
 // by the server, so it must NOT be re-filtered here by customer status the way def/exp/chr are.
 
@@ -771,7 +797,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-10-19-c';
+var CALL_BUILD = '2026-11-11-a';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1110,10 +1136,11 @@ function crisisSave_(){
   var b = $('#crisisBtn'); b.disabled = true; b.textContent = 'Inahifadhi… / Saving…';
   // Every list this officer holds, fetched fresh and pinned to the device store the app
   // already reads first. The Exp.Def strip travels with its rows, as always.
-  var jobs = ['today', 'tomorrow', 'defaulters'].map(function(s){
+  // A bike officer holds Exp.Def and the defaulter book; Leo and Kesho are not on their phone (searchSources_).
+  var jobs = searchSources_().map(function(s){
     return srv('api_callList', DEV, s).then(function(x){ S.cache[s] = x.rows || []; S.cacheAt[s] = Date.now(); });
   });
-  jobs.push(srv('api_callList', DEV, 'expdf', S.expdfScope || 'auto').then(function(x){
+  jobs.push(srv('api_callList', DEV, 'expdf', xdScope_()).then(function(x){
     S.cache.expdf = x.rows || []; S.cacheAt.expdf = Date.now(); if (x.expdf) S.expdf = x.expdf;
   }).catch(function(){ /* not every account has a rotation list */ }));
   Promise.all(jobs).then(function(){
@@ -1245,6 +1272,8 @@ function enterApp(d){
   // The rotation list belongs to whoever the teams table names as a GMO, MANAGER or BIKE
   // officer. Showing the tab to everyone would just hand most officers an empty screen.
   $('#tabExpdf').classList.toggle('hide', !d.expdfLeader);
+  // A bike officer's four lists: Leo and Kesho hidden, Exp.Def first (bikeMode_). Set both ways round, like the tabs above.
+  bikeMode_(d.bikeView === true);
   $('#logoutBtn').classList.toggle('hide', d.logoutEnabled === false);
   /* The way across to the system. Hidden by default in the markup and revealed here, so a
      phone that cannot reach the server, or one running an older app than the server, shows no
@@ -1307,8 +1336,10 @@ function enterApp(d){
   crisisSync_(d);
   if (S.entered) {
     // Tabs can appear or disappear here, and the one they are standing on may have just gone.
-    if (S.view === 'reports' && !d.leader) setView('today');
+    if (S.view === 'reports' && !d.leader) setView(homeView_());
     else if (S.view === 'expdf' && !d.expdfLeader) setView('today');
+    // Made a bike officer while the app was open: Leo and Kesho have just gone from under them.
+    else if (S.bike && (S.view === 'today' || S.view === 'tomorrow')) setView('expdf');
     return;
   }
   S.entered = true;
@@ -1326,7 +1357,7 @@ function enterApp(d){
      that was up when the page went away. */
   var ui = null;
   try { ui = JSON.parse(localStorage.getItem(UI_LS_KEY) || 'null'); } catch(e){}
-  var v0 = 'today';
+  var v0 = homeView_();
   if (ui && ui.at && (Date.now() - ui.at) < 6 * 3600 * 1000 && ui.view){
     var tb = document.querySelector('#tabs button[data-v="' + ui.view + '"]');
     if (tb && !tb.classList.contains('hide')) v0 = ui.view;
@@ -1577,9 +1608,9 @@ function filterForView_(rows, v){
      The rows already carry the role the rotation put each customer in, so this is a narrowing
      of what is on the phone rather than another question for the server -- which matters on a
      handset on a mobile connection. */
-  if (v === 'expdf') return S.expdfRole
-    ? rows.filter(function(r){ return String(r.role||'').toUpperCase() === S.expdfRole; })
-    : rows;
+  if (v === 'expdf') { var role = xdRole_(); return role
+    ? rows.filter(function(r){ return String(r.role||'').toUpperCase() === role; })
+    : rows; }
   if (v === 'today' || v === 'tomorrow') return rows;
   return rows.filter(function(r){ return classifyStatus_(r.custStatus) === v; });
 }
@@ -1596,7 +1627,7 @@ function cloneRow_(r){ var o = {}; for (var k in r) { if (r.hasOwnProperty(k)) o
 /** Loads whichever of today/tomorrow/defaulters aren't cached yet -- used so a search can look
     across every segment the officer has, not just whichever tab happens to be open. */
 function ensureAllSources_(){
-  var need = ['today','tomorrow','defaulters'].filter(function(s){ return !sourceFresh_(s); });
+  var need = searchSources_().filter(function(s){ return !sourceFresh_(s); });
   if (!need.length) return Promise.resolve();
   return Promise.all(need.map(function(s){
     // A fetch for this source is already on the wire -- ride it instead of starting another.
@@ -1612,7 +1643,7 @@ function ensureAllSources_(){
 function globalSearchRows_(q){
   q = q.trim().toUpperCase();
   var out = [];
-  ['today','tomorrow','defaulters'].forEach(function(src){
+  searchSources_().forEach(function(src){
     (S.cache[src] || []).forEach(function(r){
       var hay = (String(r.name)+' '+r.contact+' '+r.gName+' '+r.gContact+' '+r.ref).toUpperCase();
       if (hay.indexOf(q) < 0) return;
@@ -1661,7 +1692,7 @@ function drawExpdfStrip_(){
      bigger type would be the wrong one. So when a role is selected every figure here is
      re-added from the rows actually showing. With no role selected the server's own totals
      are used untouched, so nothing moves for anyone who does not press a pill. */
-  var rShown = S.expdfRole ? filterForView_(S.cache.expdf || [], 'expdf') : null;
+  var rShown = xdRole_() ? filterForView_(S.cache.expdf || [], 'expdf') : null;
   var t = rShown ? xdSum_(rShown) : (S.expdf.totals || {});
   var byCycle = rShown ? xdGroup_(rShown, function(r){ return r.fuStatus || '—'; }, 'cycle')
     : (S.expdf.byCycle || []);
@@ -1676,17 +1707,18 @@ function drawExpdfStrip_(){
     '<button class="xtoggle" data-xtog="1">' + (S.expdfOpen ? '\u25B4' : '\u25BE') + ' Muhtasari'
       + (S.expdfOpen ? '' : ' \u00B7 ' + (t.customers||0) + ' \u00B7 ' + m(t.arrears)) + '</button>'
     + (!S.expdfOpen ? '' :
-    (S.expdf.canSwitch
+    ((S.expdf.canSwitch && !S.bike)
       ? '<div class="xscope">'
         + '<button data-xs="mine"' + (S.expdf.scope==='mine'?' class="on"':'') + '>Zangu</button>'
         + '<button data-xs="team"' + (S.expdf.scope==='team'?' class="on"':'') + '>Timu yote</button>'
         + '</div>'
       : '')
-    + '<div class="xrole">'
+    // A bike officer has no pills: the list is the bike customers of today and nothing else.
+    + (S.bike ? '' : '<div class="xrole">'
       + [['', 'Wote'], ['GMO', 'GMO'], ['MANAGER', 'Manager'], ['BIKE', 'Bike']].map(function(o){
           return '<button data-xr="' + o[0] + '"' + ((S.expdfRole||'') === o[0] ? ' class="on"' : '')
             + '>' + o[1] + '</button>'; }).join('')
-      + '</div>'
+      + '</div>')
     + '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
@@ -1698,7 +1730,7 @@ function drawExpdfStrip_(){
             return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
         : '')
     // Who is carrying what, so anyone on the list can see the split without leaving it.
-    + ((S.expdf.scope==='team' && byLeader.length)
+    + ((S.expdf.scope==='team' && byLeader.length && !S.bike)
         ? '<div class="xcyc">' + byLeader.map(function(x){
             return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
               + (x.pct==null?'':' \u00B7 '+Math.round(x.pct)+'%') + '</span>'; }).join('') + '</div>'
@@ -1803,6 +1835,9 @@ function emptyWhy_(v){
       + 'Mwambie afisa wa PMO apakie "Defaulters — Current" akichagua siku ya LEO.';
     if (!g.assigned) return 'Wadaiwa wapo (' + g.deck + '), lakini hakuna aliyepangwa kwa GMO / MANAGER / BIKE. '
       + 'Angalia mgawanyo (ASSIGN_ACTIVE / EXPIRED / CHRONIC) kwenye Settings.';
+    // A bike officer has no "Timu yote" to press: the book to look in is Def, Exp and Chr.
+    if (S.bike) return 'Hakuna mteja wako wa leo. Wateja wote wa timu zako wapo kwenye Def, Exp na Chr — '
+      + 'au andika jina au namba hapo juu kumtafuta.';
     if (!g.mine) return 'Hakuna aliyepangwa kwako. Bonyeza "Timu yote" kuona wa timu nzima (' + g.assigned + ').';
     return 'Hakuna anayeangukia leo — wateja wako ' + g.mine + ' wapo kwenye siku nyingine za mzunguko. '
       + 'Bonyeza "Timu yote" au subiri siku yao.';
@@ -1846,7 +1881,7 @@ function fetchSource_(src, showSpinner){
   if (showSpinner) {
     $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
   }
-  srv('api_callList', DEV, src, src === 'expdf' ? (S.expdfScope || 'auto') : '').then(function(d){
+  srv('api_callList', DEV, src, src === 'expdf' ? xdScope_() : '').then(function(d){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
     S.asOf[src] = { date: d.asOf || null, stale: !!d.stale };

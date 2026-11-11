@@ -2612,6 +2612,39 @@ test('the imprest form: every closed state says why under the button, the confir
   assert.ok(!/var BUILD = '2026-10-19-b'/.test(src), 'BUILD moved');
 });
 
+/* THE BIKE OFFICER'S FOUR LISTS -- "Our bike users are the most illiterate sorry to say that, for that only specific role - they
+   should find only 4 default lists in call app view. 1 - the bike expected defaulters list of today (gmo and manager excluded)
+   2 - the second is from defaulters to expired but let them find their customers at visit". Asked which four: Exp.Def, Def, Exp, Chr;
+   and whose book: all customers of their teams. The server says who is a bike officer; the phone hides the rest. */
+test('the call app gives a bike officer four lists: their own Exp.Def of today first, then Def, Exp and Chr -- no Leo, no Kesho, no pills', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  const core = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'call-core.js'), 'utf-8');
+  // The server decides, off the teams rows the boot already reads.
+  assert.ok(/const bikeView = !holds_\('gmo'\) && !holds_\('manager'\) && \(holds_\('bike'\) \|\| hasWord\(normRole\(cu\.role\), \['BIKE'\]\)\);/.test(core), 'a bike officer and no GMO or manager; or a role that says BIKE');
+  assert.ok(/const holds_ = col => !!me && teamRows\.some\(t => K\(t\[col\]\) === me\);/.test(core) && /\n    bikeView,\n/.test(core), 'off the boot\'s own teams read, and sent with the boot');
+  // The phone: one place for each decision.
+  assert.ok(/function homeView_\(\)\{ return S\.bike \? 'expdf' : 'today'; \}/.test(call), 'a bike officer\'s phone opens on Exp.Def');
+  assert.ok(/function xdRole_\(\)\{ return S\.bike \? 'BIKE' : \(S\.expdfRole \|\| ''\); \}/.test(call), 'Exp.Def is the bike customers only: the GMO\'s and the manager\'s are left out');
+  assert.ok(/function xdScope_\(\)\{ return S\.bike \? 'auto' : \(S\.expdfScope \|\| 'auto'\); \}/.test(call), 'and always their own list');
+  assert.ok(/function searchSources_\(\)\{ return S\.bike \? \['defaulters'\] : \['today','tomorrow','defaulters'\]; \}/.test(call), 'the search looks through the defaulter book; Leo and Kesho are never fetched for them');
+  const mode = call.slice(call.indexOf('function bikeMode_(on){'), call.indexOf('/** Monday 00:00 of the current week'));
+  assert.ok(/S\.bike = on === true;/.test(mode) && /\['today','tomorrow'\]\.forEach/.test(mode) && /b\.classList\.toggle\('hide', S\.bike\)/.test(mode) && /t\.classList\.toggle\('bike', S\.bike\)/.test(mode),
+    'Leo and Kesho are hidden and shown again both ways round, like the other tabs');
+  assert.ok(/\.tabs\.bike #tabExpdf\{order:-1\}/.test(call), 'Exp.Def is the first tab for them');
+  assert.ok(/bikeMode_\(d\.bikeView === true\);/.test(call), 'set from the boot');
+  // Every path that used to assume Leo, the pills or the three sources goes through those helpers.
+  assert.ok(/var v0 = homeView_\(\);/.test(call) && /setView\(homeView_\(\)\)/.test(call) && /else if \(S\.bike && \(S\.view === 'today' \|\| S\.view === 'tomorrow'\)\) setView\('expdf'\);/.test(call), 'no path lands a bike officer on a hidden list');
+  assert.ok(/if \(v === 'expdf'\) \{ var role = xdRole_\(\); return role/.test(call) && /var rShown = xdRole_\(\) \? filterForView_/.test(call), 'the list and the summary above it are narrowed by the same role');
+  assert.ok(/\(S\.expdf\.canSwitch && !S\.bike\)/.test(call) && /\+ \(S\.bike \? '' : '<div class="xrole">'/.test(call), 'no "Timu yote" switch and no GMO / Manager pills to press by mistake');
+  assert.ok(/src === 'expdf' \? xdScope_\(\) : ''/.test(call) && /srv\('api_callList', DEV, 'expdf', xdScope_\(\)\)/.test(call), 'every Exp.Def fetch asks for the same scope');
+  assert.ok(/var need = searchSources_\(\)\.filter/.test(call) && /searchSources_\(\)\.forEach\(function\(src\)\{/.test(call) && /var jobs = searchSources_\(\)\.map/.test(call), 'the search, its loading and the offline pack use one list of sources');
+  assert.ok(!/\['today',\s*'tomorrow',\s*'defaulters'\]\.(map|filter|forEach)/.test(call), 'no path still walks the three sources on its own');
+  assert.ok(/if \(S\.bike\) return 'Hakuna mteja wako wa leo\. Wateja wote wa timu zako wapo kwenye Def, Exp na Chr/.test(call), 'an empty list tells a bike officer where to look, not to press a switch they do not have');
+  // The summary a bike officer opens on can be read: it is a white card inside the navy header.
+  assert.ok(/\.expdfstrip\{[^}]*background:var\(--card\);color:var\(--ink\);/.test(call), 'the Exp.Def summary has its own text colour (it was white on white)');
+  assert.ok(!/var CALL_BUILD = '2026-10-19-c'/.test(call), 'CALL_BUILD moved, so handsets pick the change up');
+});
+
 /* THE CALL APP KEEPS UP -- "some people can't do things due updates; remember we force updates and permissions at every
    app start / launch for those who haven't". The page never reloaded itself; now it does, past every cache, at a quiet
    moment, once per build. The APK's Later now holds until the next launch, not a day. */
