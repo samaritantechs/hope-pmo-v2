@@ -4445,7 +4445,11 @@ team's. The transfer nobody could find had been found one letter apart in more t
 new team has neither a ZONE nor a GMO whose teams carry one (the owner names the GMO on that team, or types its ZONE, and the
 same row files him), and an officer who left and is in the registry under no name, account or phone the list gave. The next
 list (one zone, five people) was answered by the same script the same evening: three were done at the first run, one was
-under a first name the list spelt differently, and one is under no name like his.
+under a first name the list spelt differently, and one is under no name like his. The name-by-name answer then settled both
+kinds at its first run on the live book. The transfer was moved once he was asked for in the registry's own spelling. And the
+two who had left turned out not to be in the registry at all: for each, the row read *surname: nobody*, across every zone,
+while their first names were on a dozen people. There was nothing to switch off, which no list of nearest names had been able
+to say.
 
 **What it costs.** No read was added anywhere. The sign-in's one read of the teams table already carried the GMO column, and the
 advance desk already had the teams (the memoised read every screen shares; the rule copies the rows it changes and never writes
