@@ -126,6 +126,59 @@ test('a registered officer boots with their own team only, not the company list'
   assert.ok(!JSON.stringify(d).includes('KON123'), 'not even their own');
 });
 
+/* THE BIKE OFFICER'S FOUR LISTS -- "Our bike users are the most illiterate sorry to say that, for that only specific role - they
+   should find only 4 default lists in call app view. 1 - the bike expected defaulters list of today (gmo and manager excluded)
+   2 - the second is from defaulters to expired but let them find their customers at visit".
+
+   The phone draws the four lists; the server says who gets them, off the teams read boot already makes: somebody named in a
+   team's Bike column and in no GMO or Manager column, or registered under a role that says BIKE. */
+test('boot marks a bike officer for the four-list view, and nobody else', async () => {
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'GEE G', manager: 'BOB M', bike: 'BAKARI B' };
+  t.teams[1] = { ...t.teams[1], gmo: 'GEE G', manager: 'MOSES M', bike: 'Bakari B' };          // the same bike officer, typed in another case
+  t.teams.push({ team: 'TEMEKE', team_code: 'TEM789', gmo: 'DOUBLE D', manager: null, bike: 'ZUBERI Z' },
+    { team: 'KIGAMBONI', team_code: 'KIG321', gmo: null, manager: null, bike: 'DOUBLE D' });   // DOUBLE D is a GMO here and a bike officer there
+  const db = fakeDb(t);
+  const reg = async (dev, name, phone) => { const r = await callApi(db, 'api_callRegister', [dev, name, '', '', phone, 'KON123'], NOW); assert.equal(r.ok, true, name); };
+  await reg('b1', 'BAKARI B', '0712990001');     // bike on two teams
+  await reg('g1', 'GEE G', '0712990002');        // a GMO
+  await reg('m1', 'BOB M', '0712990003');        // a manager
+  await reg('o1', 'JUMA ISSA', '0712990004');    // a plain officer
+  await reg('x1', 'DOUBLE D', '0712990005');     // GMO on one team, bike on another
+  await reg('r1', 'RAMA R', '0712990006');       // on no column, but registered as a bike officer
+  db._dump('call_users').find(u => u.name === 'RAMA R').role = 'Bike Officer';
+  const boot = async dev => callApi(db, 'api_callBoot', [dev], NOW);
+  assert.equal((await boot('b1')).bikeView, true, 'named in the Bike column, whatever the case it was typed in');
+  assert.equal((await boot('g1')).bikeView, false, 'a GMO keeps the whole app');
+  assert.equal((await boot('m1')).bikeView, false, 'so does a manager');
+  assert.equal((await boot('o1')).bikeView, false, 'and the plain officer, who is most of the 300 handsets');
+  assert.equal((await boot('x1')).bikeView, false, 'a GMO who also rides a bike list elsewhere works more than the bike list');
+  assert.equal((await boot('r1')).bikeView, true, 'a role that says BIKE is enough');
+  // A simpler view, not a narrower permission: every list still answers for a bike officer, so the phone decides what to draw.
+  for (const which of ['today', 'tomorrow', 'defaulters', 'expdf']) assert.equal((await callApi(db, 'api_callList', ['b1', which], NOW)).ok, true, which);
+  // The rotation tab and the owner flag are as they were.
+  const b = await boot('b1');
+  assert.equal(b.expdfLeader, true); assert.equal(b.expdfOwner, true);
+});
+
+/* NO NEW READ ON THE BOOT -- rule 1. The flag comes off the teams rows the boot already holds; the tables it touches are the ones
+   it touched before. */
+test('the bike flag costs the boot nothing: the same reads with it as without', async () => {
+  const count = async bike => {
+    const t = makeTables();
+    t.teams[0] = { ...t.teams[0], bike: bike ? 'JUMA ISSA' : 'SOMEBODY ELSE' };
+    const db = fakeDb(t);
+    await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+    const seen = []; const from = db.from.bind(db);
+    db.from = name => { seen.push(name); return from(name); };
+    const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
+    return { bikeView: d.bikeView, reads: seen.slice().sort().join(',') };
+  };
+  const yes = await count(true), no = await count(false);
+  assert.equal(yes.bikeView, true); assert.equal(no.bikeView, false);
+  assert.equal(yes.reads, no.reads, 'a bike officer\'s boot reads exactly what anybody\'s does');
+});
+
 test('officer registration: boot resolves the device to the user', async () => {
   const db = await registeredDb();
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
