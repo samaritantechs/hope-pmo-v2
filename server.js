@@ -27,6 +27,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +40,45 @@ export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 /** How long a shutdown waits for in-flight requests. Longer than an upload slice is allowed
     to run (UPLOAD_BUDGET_MS is 45s, the Vercel ceiling 60s). */
 const DRAIN_MS = 65000;
+
+/* =====================================================================================
+   WHAT VERCEL DID WITHOUT BEING ASKED, AND A PLAIN NODE SERVER DOES NOT.
+
+   Two things, and both land on the phones -- three hundred handsets on mobile data, whose
+   WebView is thrown away and reloaded after almost every call:
+
+   1. "NOT CHANGED" (304). Every page here is sent `no-cache, must-revalidate`, which means
+      "ask before you use your copy". Vercel answers that question with an ETag: the phone
+      asks, the answer is a few hundred bytes of "you already have it". Without an ETag there
+      is nothing to ask WITH, so the phone downloads the whole page again -- call.html is
+      187 KB -- on every reopen.
+   2. COMPRESSION. Vercel compresses every page and every API answer. Sent as written,
+      call.html is 187 KB where it was 63 KB, and a defaulter list is several times its
+      compressed size.
+
+   Either one alone makes the call app slower off Vercel than on it, which is the one thing
+   this repository does not trade (CLAUDE.md rule 1). So this server does both itself, and
+   does not depend on the proxy in front of it being configured to. A proxy that compresses
+   (Caddy `encode`, nginx `gzip`) leaves an already-compressed answer alone, so having both
+   costs nothing.
+
+   Pages are compressed ONCE per version of the file and kept; an API answer is compressed
+   on libuv's thread pool (zlib.gzip), never on the thread that serves the next request.
+   ===================================================================================== */
+const GZIP_MIN_BYTES = 1024;                 // below this the header costs more than it saves
+const GZIP_MAX_FILE_BYTES = 8 * 1024 * 1024; // pages and scripts, never an APK
+const COMPRESSIBLE = /^(text\/|application\/(json|manifest\+json)|image\/svg\+xml)/;
+const acceptsGzip = req => /\bgzip\b/i.test(String(req.headers['accept-encoding'] || ''));
+/** A validator that changes when the file does: its size and the instant it was last written. */
+export const etagOf = st => 'W/"' + st.size.toString(16) + '-' + Math.floor(st.mtimeMs).toString(16) + '"';
+/** Whether the copy the client says it holds is still the file on disk. If-None-Match wins
+    over If-Modified-Since when both are sent, as HTTP says. */
+export function notModified(req, st) {
+  const inm = req.headers['if-none-match'];
+  if (inm) return String(inm).split(',').map(x => x.trim()).some(x => x === '*' || x === etagOf(st) || 'W/' + x === etagOf(st));
+  const ims = Date.parse(req.headers['if-modified-since'] || '');
+  return Number.isFinite(ims) && Math.floor(st.mtimeMs / 1000) * 1000 <= ims;
+}
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -132,11 +172,29 @@ export function parseBody(buf, contentType) {
   return buf;
 }
 
-function decorate(res) {
+function decorate(req, res) {
   res.status = code => { res.statusCode = code; return res; };
   res.json = obj => {
     if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    res.end(JSON.stringify(obj));
+    const text = JSON.stringify(obj);
+    if (text === undefined) { res.end(); return res; }
+    const body = Buffer.from(text, 'utf8');
+    res.setHeader('Vary', 'Accept-Encoding');
+    if (body.length < GZIP_MIN_BYTES || !acceptsGzip(req) || req.method === 'HEAD' || res.getHeader('Content-Encoding')) {
+      res.end(body);
+      return res;
+    }
+    /* Compressed on the thread pool, so a two-megabyte list being squeezed never holds up the
+       next handset's request. `res.pending` is what the route below waits on before it
+       considers the answer finished. If compression fails the answer goes as it is: a slow
+       answer is a nuisance, a missing one is a broken phone. */
+    res.pending = new Promise(done => zlib.gzip(body, { level: 6 }, (err, gz) => {
+      if (!res.writableEnded && !res.destroyed) {
+        if (err || !gz) res.end(body);
+        else { res.setHeader('Content-Encoding', 'gzip'); res.end(gz); }
+      }
+      done();
+    }));
     return res;
   };
   res.send = body => {
@@ -192,6 +250,17 @@ export function createServer({ root = ROOT, config = loadVercelConfig(path.join(
     res.end(Buffer.from(await r.arrayBuffer()));
   }
 
+  /* One compressed copy per version of a file, made the first time it is asked for. A deploy
+     rewrites the file, its size or its time changes, and the copy is made again. */
+  const gzCache = new Map();
+  function gzipped(file, st) {
+    const hit = gzCache.get(file);
+    if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) return hit.gz;
+    const gz = zlib.gzipSync(fs.readFileSync(file), { level: 9 });
+    gzCache.set(file, { size: st.size, mtimeMs: st.mtimeMs, gz });
+    return gz;
+  }
+
   function serveFile(req, res, urlPath) {
     let rel;
     try { rel = decodeURIComponent(urlPath); } catch { return false; }
@@ -202,8 +271,23 @@ export function createServer({ root = ROOT, config = loadVercelConfig(path.join(
     let st;
     try { st = fs.statSync(file); } catch { return false; }
     if (!st.isFile()) return false;
+    const type = TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream';
+    const squeeze = COMPRESSIBLE.test(type) && st.size >= GZIP_MIN_BYTES && st.size <= GZIP_MAX_FILE_BYTES;
+    res.setHeader('Content-Type', type);
+    // What a phone asks WITH the next time: "is my copy still the one?" (see the note at the top).
+    res.setHeader('ETag', etagOf(st));
+    res.setHeader('Last-Modified', new Date(Math.floor(st.mtimeMs / 1000) * 1000).toUTCString());
+    if (squeeze) res.setHeader('Vary', 'Accept-Encoding');
+    if (notModified(req, st)) { res.statusCode = 304; res.end(); return true; }
     res.statusCode = 200;
-    res.setHeader('Content-Type', TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream');
+    if (squeeze && acceptsGzip(req)) {
+      const gz = gzipped(file, st);
+      res.setHeader('Content-Encoding', 'gzip');
+      res.setHeader('Content-Length', gz.length);
+      if (req.method === 'HEAD') { res.end(); return true; }
+      res.end(gz);
+      return true;
+    }
     res.setHeader('Content-Length', st.size);
     if (req.method === 'HEAD') { res.end(); return true; }
     fs.createReadStream(file).pipe(res);
@@ -241,7 +325,8 @@ export function createServer({ root = ROOT, config = loadVercelConfig(path.join(
         req.query = parseQuery(url.searchParams);
         req.body = (req.method === 'GET' || req.method === 'HEAD') ? undefined
           : parseBody(await readBody(req), req.headers['content-type']);
-        await fn(req, decorate(res));
+        await fn(req, decorate(req, res));
+        if (res.pending) await res.pending;        // a JSON answer still being compressed (see decorate)
         if (!res.writableEnded) res.end();
         return;
       }
@@ -266,6 +351,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     console.warn('SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set: pages and /healthz will work, /api/* will not.');
   }
+  /* ONE PROCESS SERVES EVERYBODY HERE. On Vercel a promise that rejects with nobody listening
+     ends one invocation; in a plain Node process it ends the process -- every handset's request
+     in flight, and every upload slice, for the sake of one stray error. It is written down
+     where it can be found and the server keeps serving. (An uncaught EXCEPTION still stops the
+     process, as it should: the state after one cannot be trusted, and systemd starts it again.) */
+  process.on('unhandledRejection', reason => {
+    console.error('Unhandled rejection (still serving):', reason);
+  });
   const port = Number(process.env.PORT) || 8080;
   const server = createServer();
   server.listen(port, () => console.log(`HOPE PMO listening on :${port}`));

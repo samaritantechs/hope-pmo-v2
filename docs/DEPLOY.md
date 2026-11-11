@@ -290,3 +290,64 @@ development site with its own database, is a separate step -- in this order, in 
    the AWS domain, `versionCode` raised in `app-version.json`. Phones update themselves.
 4. Wait until every handset has updated.
 5. Only then point Vercel at a separate development Supabase project.
+
+---
+
+## 6. Checked before the phones move (11 November 2026)
+
+The code was read against what Vercel does for it, to find anything that would behave differently on
+a server of our own. `recovery-app.sync-book.net` itself could not be reached from the session that
+did this, so the items under "to confirm on the server" are questions, not findings.
+
+### Fixed in `server.js`
+
+| What Vercel did unasked | What a phone saw off Vercel | Now |
+|---|---|---|
+| Answered "not changed" (304) to a page the phone already holds | The whole page again on every reopen: `/call` is 187 KB, and a handset reloads it after almost every call | Every file carries an `ETag` and `Last-Modified`; a reopen is a 304 with no body |
+| Compressed every page | `/call` 187 KB where it was 63 KB; `/dashboard` 488 KB where it was 162 KB | Pages and scripts are gzipped once per version and kept |
+| Compressed every API answer | A defaulter list at several times its compressed size, on mobile data | JSON answers over 1 KB are gzipped on the thread pool, never on the serving thread |
+| Ended one invocation on a stray rejected promise | The one process serving everybody would exit | Logged, and the server keeps serving |
+
+A proxy that also compresses (Caddy `encode`) leaves an already-compressed answer alone.
+
+### Nothing to change
+
+- **Routes and headers** come from `vercel.json` on both hosts. There are no Vercel cron jobs.
+- **No handler** reads a raw body, redirects, streams, or looks at a Vercel-only header or variable.
+- **Clocks**: server code works East Africa time out from UTC arithmetic, never from the machine's
+  own time zone.
+- **The handset's identity** on the Android app is the app's own (`HopeCalls.getDeviceId()`), not the
+  browser's storage, so a registered phone stays registered when the address changes.
+- **Variables the code reads**: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HOPELOAN_ENABLED`,
+  `HOPELOAN_SUPABASE_URL`, `HOPELOAN_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `DEVICE_SHIFT_SECRET`,
+  `IMPREST_LINK_SECRET`, and the optional budgets `UPLOAD_BUDGET_MS`, `DASH_PREV_BUDGET_MS`,
+  `DASH_MONTH_BUDGET_MS`, `DASH_FLOORS_BUDGET_MS`, `CALL_SUMMARY_MAX_INFLIGHT`. Nothing else.
+
+### To confirm on the server before anyone works on it
+
+1. **Which database `/etc/hope-pmo.env` points at.** If `SUPABASE_URL` is the production project,
+   both sites are one book and nothing can diverge. If it is the Supabase on this server, it is a
+   COPY: whatever is uploaded, called or commented on the Vercel site after the copy was taken is
+   not in it, and the reverse. Two sites on two books must never both be worked on.
+2. **One process serves everybody.** On Vercel a heavy portal report runs apart from the phones.
+   In one Node process it holds the single serving thread while it computes, and every handset's
+   request waits behind it. Run two copies of the service -- one for `/call`, `/api/call` and
+   `/api/upload`, one for everything else -- and have the proxy send each path to its own port
+   (`PORT` is already a variable). No code change.
+3. **A deploy restarts the service.** Requests in flight finish; new ones in the second or two it
+   takes to come back are refused, and the proxy answers 502. In Caddy,
+   `reverse_proxy 127.0.0.1:8080 { lb_try_duration 15s  lb_try_interval 250ms }` makes it wait
+   and retry instead. Vercel swaps versions with no gap, and merges land at any hour.
+4. **If the database is on this machine too**: backups are ours to take (Supabase took them
+   daily), every `db/RUN-ME-*.sql` must have been run on it, and it shares four burstable cores
+   with the site.
+
+### What moving the address changes for people
+
+- **Browser users** (not the Android app) hold their device identity and access code in the
+  browser, per address: they sign in again once, and a call-app user in a browser registers again
+  with the same phone number.
+- **Imprest alerts in a browser** are tied to the address: approvers allow notifications again on
+  the new one. Alerts inside the Android app are not affected.
+- Section 5's order still stands: `APP_BASE_URL`, HOOP's `DEVICE_SHIFT_PARTNER`, a new APK with the
+  new `startUrl`, wait for every handset, and only then repoint Vercel.
