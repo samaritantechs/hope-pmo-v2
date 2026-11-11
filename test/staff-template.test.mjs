@@ -29,15 +29,15 @@ function listed(f, opener) {
 const HOW = '. The repository is public: hand the filled copy to the owner and commit the template as it was (docs/HANDOFF.md Part 48).';
 
 test('the list template names nobody: placeholders only', () => {
-  const values = listed(LIST, 'ask(n, team, act, name) as (values');
-  assert.ok(values.length >= 6, 'the example list is gone');
-  for (const v of values) {
-    assert.ok(/^(REMOVE|ADD|TEAM (ONE|TWO)|(FIRST|ANOTHER|THIRD) MIDDLE LAST)$/.test(v),
-      LIST + ' carries "' + v + '" in its list' + HOW);
-  }
-  const cfg = code(LIST).slice(code(LIST).indexOf('with cfg as ('), code(LIST).indexOf('ask(n, team, act, name)'));
-  assert.deepEqual([...cfg.matchAll(/'([^']*)'/g)].map(m => m[1]), ['ZONE NAME', 'GMO ZONE NAME (SQL)'],
-    LIST + ' was committed with a real zone on its CHANGE lines' + HOW);
+  const values = listed(LIST, 'ask(n, grp, act, name, role_word, team_text, zone_teams, zone_else, zone_like, account, phone, bank, nida, tin, nssf, why) as (values');
+  assert.ok(values.length >= 10, 'the example list is gone');
+  // one example row of each thing that can be asked, and nothing that could be a person, a team, a zone or an account
+  const PLACEHOLDER = /^(OFF|MOVE|NEW|PLACE|ASK|ZONE NAME|TEAM (ONE|TWO)|Team (One|Two)|Manager|Field Officer|(FIRST|ANOTHER|THIRD|FOURTH|FIFTH) MIDDLE LAST|0000000000|0700000000|BANK|what is missing)$/;
+  for (const v of values) assert.ok(PLACEHOLDER.test(v), LIST + ' carries "' + v + '" in its list' + HOW);
+  for (const act of ['OFF', 'MOVE', 'NEW', 'PLACE', 'ASK']) assert.ok(values.includes(act), 'the example list no longer shows ' + act);
+  const cfg = code(LIST).slice(code(LIST).indexOf('with cfg as ('), code(LIST).indexOf('ask(n, grp, act, name'));
+  assert.deepEqual([...cfg.matchAll(/'([^']*)'/g)].map(m => m[1]), ['GMO ZONE NAME (SQL)'],
+    LIST + ' was committed with a real zone on its CHANGE line' + HOW);
 });
 
 test('the by-ID template names nobody: placeholders only', () => {
@@ -64,12 +64,21 @@ test('neither script deletes anything, and neither ever writes a name onto a sta
   assert.equal([...code(BY_ID).toLowerCase().matchAll(/insert\s+into/g)].length, 0, 'the by-ID script adds nobody');
 });
 
-test('a staff is switched off or moved only when exactly one carries the name; the by-ID script checks the name on the ID', () => {
+test('a staff is switched off or moved only when exactly ONE fits; nobody is added whom the registry could already hold', () => {
   const s = code(LIST);
-  assert.ok(/a\.act = 'REMOVE' and a\.add_n is null and a\.nth = 1 and h\.live_n = 1 and s\.id = h\.live_id/.test(s),
-    'REMOVE no longer needs exactly one live staff of that name');
-  assert.ok(/a\.act = 'ADD' and a\.nth = 1 and h\.all_n = 1 and s\.id = h\.any_id/.test(s), 'a move no longer needs exactly one staff of that name');
-  assert.ok(/where a\.act = 'ADD' and a\.nth = 1 and h\.all_n = 0/.test(s), 'a new staff is added although the registry holds that name');
+  assert.ok(/case when p\.live_n = 1 then p\.live_id when p\.live_n = 0 and p\.all_n = 1 then p\.any_id end as id/.test(s),
+    'a row no longer needs exactly one staff to fit (the only live one, else the only one)');
+  assert.ok(/where t\.use_nth = 1 and a\.nth = 1 and a\.act in \('OFF', 'MOVE', 'PLACE'\)/.test(s),
+    'one staff can now be changed by two rows of the list, or a name listed twice acts twice');
+  assert.ok(/where a\.nth = 1 and a\.act in \('NEW', 'PLACE'\) and t\.all_n is null/.test(s),
+    'a new staff is added although somebody in the registry could be them');
+  assert.ok(/and coalesce\(z\.z_team, z\.z_else, z\.z_peers, z\.z_like\) is not null/.test(s), 'a new staff is added with no zone: they would be on nobody\'s list');
+  // the looser ways of finding somebody are for people the registry already holds, never for a NEW one
+  assert.equal([...s.matchAll(/where a\.act in \('OFF', 'MOVE', 'PLACE'\) and a\.n not in \(select n from exact\)/g)].length, 3,
+    'finding by one letter apart or by a shorter name is no longer kept to OFF, MOVE and PLACE, and to names the registry does not have as written');
+  // a phone finds somebody only together with a word of their name: a line can pass to another person
+  assert.ok(/r\.phone9 = a\.phone9 and r\.nkey <> a\.nkey\s*\n\s*-- [^\n]*\n\s*and exists \(select 1 from unnest\(a\.w\) x, unnest\(r\.w\) y/.test(read(LIST)),
+    'a phone number alone now decides who is meant');
   assert.ok(/where s\.id = was\.id and was\.same_name and upper\(btrim\(was\.status\)\) <> 'INACTIVE'/.test(code(BY_ID)),
     'the by-ID script no longer checks that the ID still carries the name: a mistyped ID would switch off somebody else');
 });
@@ -77,10 +86,11 @@ test('a staff is switched off or moved only when exactly one carries the name; t
 test('the time limits end with the script, and both say what was done for every row', () => {
   for (const f of [LIST, BY_ID]) {
     const s = code(f);
-    assert.ok(/set local lock_timeout = '5s';/.test(s) && /set local statement_timeout = '30s';/.test(s), f + ' no longer limits itself');
+    assert.ok(/set local lock_timeout = '5s';/.test(s) && /set local statement_timeout = '(30|60)s';/.test(s), f + ' no longer limits itself');
     // a statement of its own (at the margin), not the SET list of an UPDATE (indented)
     assert.ok(!/^set\s+(?!local)/im.test(s), f + ' leaves a setting behind on the editor\'s session');
     assert.ok(/\) as done\b|end as done\b/.test(s), f + ' no longer answers with what was done: silence reads as success');
   }
-  assert.ok(/from a\s*\njoin hit h on h\.n = a\.n/.test(code(LIST)), 'the answer is no longer one row for each name asked');
+  assert.ok(/from a2 a\s*\njoin tgt t\s+on t\.n = a\.n\s*\njoin z\s+on z\.n = a\.n/.test(code(LIST)) && /order by a\.n;\s*$/.test(code(LIST)),
+    'the answer is no longer one row for each person asked, in the order of the list');
 });
