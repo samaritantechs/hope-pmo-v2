@@ -93,7 +93,6 @@ A percentage that could not be computed shows a dash and says why. Null is never
   on every front-end change.
 - **Migrations are run by hand** in the Supabase SQL editor. Every code path that depends on one
   must work without it.
-- **Deploy heavy work in the evening**, never during the morning collection round.
 
 ---
 

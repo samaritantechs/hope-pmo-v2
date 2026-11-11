@@ -261,7 +261,6 @@ does. An AI advising on this system should treat them as constraints, not prefer
    different strings; a name may also carry a trailing space. Every scope is resolved to the
    spelling the team registry stores before any query is built. This has caused real blackouts
    where officers signed in and saw nothing at all.
-9. **Deploy heavy work in the evening**, never during the morning collection round.
 
 ---
 

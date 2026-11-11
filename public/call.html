@@ -105,6 +105,9 @@ header.top .who span{display:block;font-size:11px;color:var(--b300)}
 .daystrip{display:flex;align-items:center;justify-content:center;gap:4px 7px;margin-top:10px;
   font-size:11.5px;font-weight:600;color:var(--b300);flex-wrap:wrap}
 .daystrip span{white-space:nowrap}
+/* A BIKE OFFICER'S BAR IS THEIR OWN SUMMARY: the .bk figures and nothing else; everybody else never sees them. */
+.daystrip.bike > :not(.bk){display:none}
+.daystrip:not(.bike) > .bk{display:none}
 .daystrip b{color:#fff;font-weight:800;margin-left:3px}
 .daystrip .ds-tag{background:rgba(255,255,255,.14);color:#fff;border-radius:999px;padding:1.5px 7px;font-size:10.5px;font-weight:800;letter-spacing:.02em}
 .daystrip .ds-dot{color:rgba(255,255,255,.35)}
@@ -359,6 +362,15 @@ main.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 1
     </div>
     <div class="expdfstrip hide" id="expdfStrip"></div>
     <div class="daystrip hide" id="dayStrip">
+      <!-- A bike officer's own summary (drawBikeStrip_): shown INSTEAD of the team figures below, never beside them. -->
+      <span class="ds-tag bk" id="bkTag">Leo</span>
+      <span class="bk">Wateja <b id="bkCust">&mdash;</b></span>
+      <span class="ds-dot bk">&middot;</span>
+      <span class="bk">Deni <b id="bkDeni">&mdash;</b></span>
+      <span class="ds-dot bk">&middot;</span>
+      <span class="bk">Marejesho <b id="bkRec">&mdash;</b></span>
+      <span class="ds-dot bk">&middot;</span>
+      <span class="bk">Rec <b id="bkPct">&mdash;</b></span>
       <span class="ds-tag" id="dsTag">Leo</span>
       <span>Col leo <b id="dsCol">&mdash;</b></span>
       <span>Kesho <b id="dsKesho">&mdash;</b></span>
@@ -635,6 +647,50 @@ function bikeMode_(on){
   });
   var t = document.getElementById('tabs');
   if (t) t.classList.toggle('bike', S.bike);
+  var ds = document.getElementById('dayStrip');
+  if (ds) ds.classList.toggle('bike', S.bike);
+  if (S.bike) drawBikeStrip_();
+}
+/* THE BIKE OFFICER'S TOP BAR -- "for bike on the top bar report just show them their summary, they have how many customers,
+   amount, recovered amt and recovery%".
+
+   Four figures and no more: Wateja, Deni, Marejesho, Rec % -- of THEIR list of today, added up from the very rows the Exp.Def
+   tab shows (xdSum_ over filterForView_), so the bar and the list can never be two answers. Col leo, Kesho, Wiki, Sales and
+   the rest are the team's figures and are not shown to them.
+
+   IT ASKS THE SERVER FOR NOTHING OF ITS OWN: the figures come off the list already on the phone, so a bike handset no longer
+   makes the daily-summary request at all. The tag says when the list was fetched; if the deck behind it is not today's it
+   says which day, in red, like every other strip. Dashes until the list has arrived -- never a guess. */
+function drawBikeStrip_(){
+  var el = document.getElementById('dayStrip');
+  if (!el || !S.bike) return;
+  var rows = S.cache.expdf ? filterForView_(S.cache.expdf, 'expdf') : null;
+  var t = rows ? xdSum_(rows) : null;
+  $('#bkCust').textContent = t ? String(t.customers) : '\u2014';
+  $('#bkDeni').textContent = t ? mc_(t.arrears) : '\u2014';
+  $('#bkRec').textContent = t ? mc_(t.recovered) : '\u2014';
+  $('#bkPct').textContent = (t && t.pct != null) ? Math.round(t.pct) + '%' : '\u2014';
+  var at = S.cacheAt.expdf, deck = S.expdf && S.expdf.date ? String(S.expdf.date) : '';
+  var old = !!(deck && deck !== todayKeyLocal_());
+  $('#bkTag').textContent = old ? deck.slice(8, 10) + '/' + deck.slice(5, 7) : 'Leo' + (at ? ' ' + hhmm_(at) : '');
+  el.classList.toggle('stale', old);
+  el.classList.remove('warn');
+  el.classList.remove('hide');
+}
+/** The bar's figures need the Exp.Def list. On the Exp.Def tab the list's own fetch brings it; on Def, Exp or Chr this asks for it
+    quietly, without touching the list on screen. One request at a time. */
+function bikeStripLoad_(force){
+  drawBikeStrip_();
+  if (!force && sourceFresh_('expdf')) return;
+  if (S.xdBusy || S.fetching.expdf) return;        // already on its way
+  if (LIST_SOURCE[S.view] === 'expdf'){ fetchSource_('expdf', false); return; }
+  var done = function(){ delete S.fetching.expdf; };
+  S.fetching.expdf = srv('api_callList', DEV, 'expdf', xdScope_()).then(function(d){
+    S.cache.expdf = d.rows || []; S.cacheAt.expdf = Date.now(); S.expdf = d.expdf || null;
+    saveCacheToDevice_();
+    drawBikeStrip_();
+    var el = $('#dayStrip'); el.classList.remove('lit'); void el.offsetWidth; el.classList.add('lit');
+  }).then(done, done);
 }
 // Exp.Def is the recycling rotation's own list and is already scoped to the signed-in leader
 // by the server, so it must NOT be re-filtered here by customer status the way def/exp/chr are.
@@ -797,7 +853,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-11-a';
+var CALL_BUILD = '2026-11-11-b';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -890,6 +946,7 @@ function listVersionCheck_(version){
   if (!S.entered) return;
   var src = LIST_SOURCE[S.view];
   if (src) fetchSource_(src, false);
+  if (S.bike) bikeStripLoad_(false);        // their top bar is the Exp.Def list: bring it back even while they stand on Def, Exp or Chr
 }
 function dropCacheIfStale_(version){
   var v = String(version == null ? '' : version);
@@ -996,6 +1053,8 @@ function doLogout(){
   _sumAt = 0; _sumVer = null;
   var _ds = $('#dayStrip'); if (_ds) { _ds.classList.add('hide'); _ds.classList.remove('stale'); }
   ['#dsCol','#dsKesho','#dsWeek','#dsSales','#dsExpdf','#dsRec','#dsRecToday','#dsDef'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });
+  ['#bkCust','#bkDeni','#bkRec','#bkPct'].forEach(function(id){ var el = $(id); if (el) el.textContent = '\u2014'; });   // a bike officer's own figures, the same way
+  bikeMode_(false);                                  // the next person to sign in on this handset may not be a bike officer
   // Rec leo is weekend-only, so signing out must put it back to hidden and not merely blank --
   // otherwise the next sign-in on a weekday inherits an empty label sitting on the strip.
   var _rt = $('#dsRecTodayWrap'); if (_rt) _rt.classList.add('hide');
@@ -1142,6 +1201,7 @@ function crisisSave_(){
   });
   jobs.push(srv('api_callList', DEV, 'expdf', xdScope_()).then(function(x){
     S.cache.expdf = x.rows || []; S.cacheAt.expdf = Date.now(); if (x.expdf) S.expdf = x.expdf;
+    drawBikeStrip_();
   }).catch(function(){ /* not every account has a rotation list */ }));
   Promise.all(jobs).then(function(){
     saveCacheToDevice_();
@@ -1376,14 +1436,14 @@ function enterApp(d){
   /* Draw the strip from the handset BEFORE anything is asked of the network, so it is on screen
      the instant the app is -- including on the cheap handsets Android throws away after every
      call. Then ask for fresh figures over the top. */
-  restoreSummary_();
+  if (S.bike) drawBikeStrip_(); else restoreSummary_();
   /* Ask for background permission the way the app asks for everything else -- on its own, when
      it opens. Behind the first draw so the officer sees their customers underneath it and knows
      what the app is, rather than being met by a dialog on a blank screen. */
   setTimeout(function(){ if (S.entered) askBackground_(); }, 900);
   startSyncLoop();
   locInit_();                                               // the officer's position, its own slow request (see LOC_EVERY_MS)
-  loadDaySummary(true);                                     // team % strip -- load once on entry
+  loadDaySummary(!S.bike);                                  // team % strip -- load once on entry (a bike officer's bar is their list: asked for only if it is not fresh)
   $('#syncPill').onclick = function(){ doSync(); loadDaySummary(true); };   // manual sync refreshes the strip too
   /* AND TAPPING THE FIGURES REFRESHES THEM. The one thing an officer can do when they doubt a
      number is ask for it again, and there was no way to. */
@@ -1437,6 +1497,7 @@ var _sumErr = null;                      // why the last attempt failed, in the 
     number -- and put a warning where the clock goes, so "it shows dashes" and "it cannot reach
     the server" stop looking identical. */
 function summaryFailed_(why){
+  if (S.bike) return;                                // a bike officer's bar never asked
   _sumErr = why || 'Imeshindikana / failed';
   var el = $('#dayStrip');
   el.classList.remove('hide');
@@ -1546,6 +1607,7 @@ function mc_(n, fine){ n = Number(n)||0;
   return String(Math.round(n)); }
 function loadDaySummary(force){
   if (!S.boot) return;
+  if (S.bike){ bikeStripLoad_(force); return; }     // their bar is their own list: no daily-summary request
   if (!force && _sumAt && (Date.now() - _sumAt < 15*60*1000)) return;   // light cooldown, mirrors the list-cache feel
   srv('api_callDailySummary', DEV).then(function(d){
     if (!d || !d.ok) { summaryFailed_(d && d.error ? d.error : 'Jibu tupu / empty answer'); return; }
@@ -1581,6 +1643,7 @@ function loadDaySummary(force){
 /** Called by the sync loop. The strip is far too expensive to recompute on a timer, so it is
     recomputed on the only event that can actually change it: somebody uploading a report. */
 function summaryVersionCheck_(ver){
+  if (S.bike) return;                       // no daily summary on a bike officer's phone -- listVersionCheck_ refreshes their bar
   if (!ver || ver === _sumVer) return;
   _sumVer = ver;
   loadDaySummary(true);
@@ -1700,6 +1763,12 @@ function drawExpdfStrip_(){
       return (r.leader || '(unassigned)') + ' · ' + (r.role || ''); }, 'leader')
     : (S.expdf.byLeader || []);
   var m = mc_;
+  var notes = (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
+    + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '');
+  /* A BIKE OFFICER'S FOUR FIGURES ARE IN THE TOP BAR (drawBikeStrip_), on every tab. Printing them again in a card right
+     above it would be the same numbers twice on a small screen, so for them the card carries only what the bar cannot say --
+     a warning that the figures cannot be trusted yet -- and is not there at all when there is none. */
+  if (S.bike){ el.classList.remove('shut'); el.classList.toggle('hide', !notes); el.innerHTML = notes; return; }
   el.classList.remove('hide');
   if (S.expdfOpen == null) { try { S.expdfOpen = localStorage.getItem('hcXdOpen') !== '0'; } catch(e){ S.expdfOpen = true; } }
   el.classList.toggle('shut', !S.expdfOpen);
@@ -1723,8 +1792,7 @@ function drawExpdfStrip_(){
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
     + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
     + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : Math.round(t.pct) + '%') + '</b></div>'
-    + (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
-    + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
+    + notes
     + (byCycle.length
         ? '<div class="xcyc">' + byCycle.map(function(c){
             return '<span>' + esc(c.cycle) + ' \u00B7 ' + c.customers + ' \u00B7 ' + m(c.arrears) + '</span>'; }).join('') + '</div>'
@@ -1881,7 +1949,10 @@ function fetchSource_(src, showSpinner){
   if (showSpinner) {
     $('#body').innerHTML = '<div class="center" style="padding:60px 0"><div class="sk"></div></div>';
   }
-  srv('api_callList', DEV, src, src === 'expdf' ? xdScope_() : '').then(function(d){
+  var asked = srv('api_callList', DEV, src, src === 'expdf' ? xdScope_() : '');
+  // The bike officer's bar reads this same list (bikeStripLoad_): while it is on the wire the bar does not ask for it again.
+  if (src === 'expdf'){ S.xdBusy = true; var free = function(){ S.xdBusy = false; }; asked.then(free, free); }
+  asked.then(function(d){
     if (myId !== S.reqId) return;
     S.cache[src] = d.rows || [];
     S.asOf[src] = { date: d.asOf || null, stale: !!d.stale };
@@ -1892,6 +1963,7 @@ function fetchSource_(src, showSpinner){
     if (src === 'expdf') S.expdf = d.expdf || null;
     S.cacheAt[src] = Date.now();
     saveCacheToDevice_();
+    if (src === 'expdf') drawBikeStrip_();          // a bike officer's top bar is this list, added up
     if (S.q.trim()) { S.rows = globalSearchRows_(S.q); drawList(); return; }
     if (LIST_SOURCE[S.view] !== src) return;   // user moved to a tab backed by a different source while this was loading
     S.rows = filterForView_(S.cache[src], S.view);

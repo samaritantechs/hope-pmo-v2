@@ -2645,6 +2645,34 @@ test('the call app gives a bike officer four lists: their own Exp.Def of today f
   assert.ok(!/var CALL_BUILD = '2026-10-19-c'/.test(call), 'CALL_BUILD moved, so handsets pick the change up');
 });
 
+/* THE BIKE OFFICER'S TOP BAR -- "for bike on the top bar report just show them their summary, they have how many customers, amount,
+   recovered amt and recovery%". Four figures of their own list of today, added up from the rows the Exp.Def tab shows, in place of
+   the team's Col leo / Kesho / Wiki / Sales; and no daily-summary request from a bike handset at all. */
+test('the call app\'s top bar shows a bike officer their own summary -- customers, debt, recovered, recovery % -- and asks the server for nothing more', () => {
+  const call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8');
+  // One bar, two sets of figures, never both.
+  assert.ok(/\.daystrip\.bike > :not\(\.bk\)\{display:none\}/.test(call) && /\.daystrip:not\(\.bike\) > \.bk\{display:none\}/.test(call), 'a bike officer sees only their figures; everybody else never sees them');
+  for (const id of ['bkTag', 'bkCust', 'bkDeni', 'bkRec', 'bkPct']) assert.ok(new RegExp('class="[^"]*\\bbk\\b[^"]*" id="' + id + '"|class="bk">[A-Za-z ]+<b id="' + id + '"').test(call), id + ' is on the bar');
+  assert.ok(/<span class="bk">Wateja <b id="bkCust">/.test(call) && /<span class="bk">Deni <b id="bkDeni">/.test(call) && /<span class="bk">Marejesho <b id="bkRec">/.test(call) && /<span class="bk">Rec <b id="bkPct">/.test(call),
+    'customers, debt, recovered and recovery %, in the summary\'s own words');
+  const draw = call.slice(call.indexOf('function drawBikeStrip_(){'), call.indexOf('function bikeStripLoad_(force){'));
+  assert.ok(/var rows = S\.cache\.expdf \? filterForView_\(S\.cache\.expdf, 'expdf'\) : null;/.test(draw) && /var t = rows \? xdSum_\(rows\) : null;/.test(draw), 'added up from the very rows the Exp.Def tab shows, by the summary\'s own sum');
+  assert.ok(/\$\('#bkCust'\)\.textContent = t \? String\(t\.customers\) : '\\u2014';/.test(draw) && /\$\('#bkPct'\)\.textContent = \(t && t\.pct != null\) \? Math\.round\(t\.pct\) \+ '%' : '\\u2014';/.test(draw), 'dashes until the list has arrived, never a guess');
+  assert.ok(/var old = !!\(deck && deck !== todayKeyLocal_\(\)\);/.test(draw) && /el\.classList\.toggle\('stale', old\);/.test(draw), 'a deck that is not today\'s says which day, in red');
+  // Nothing is asked of the server for it beyond the list the phone holds anyway.
+  assert.ok(/if \(S\.bike\)\{ bikeStripLoad_\(force\); return; \}/.test(call), 'no daily-summary request from a bike handset');
+  assert.ok(/loadDaySummary\(!S\.bike\);/.test(call) && /if \(S\.bike\) drawBikeStrip_\(\); else restoreSummary_\(\);/.test(call), 'on entry the bar is drawn from the list on the phone');
+  const load = call.slice(call.indexOf('function bikeStripLoad_(force){'), call.indexOf('/** Monday 00:00 of the current week'));
+  assert.ok(/if \(!force && sourceFresh_\('expdf'\)\) return;/.test(load) && /if \(S\.xdBusy \|\| S\.fetching\.expdf\) return;/.test(load), 'a fresh list is not asked for again, and never twice at once');
+  assert.ok(/if \(src === 'expdf'\)\{ S\.xdBusy = true; var free = function\(\)\{ S\.xdBusy = false; \}; asked\.then\(free, free\); \}/.test(call), 'the list\'s own fetch marks itself on the wire');
+  assert.ok(/if \(src === 'expdf'\) drawBikeStrip_\(\);/.test(call), 'every arrival of the list redraws the bar');
+  assert.ok(/if \(S\.bike\) bikeStripLoad_\(false\);/.test(call) && /function summaryVersionCheck_\(ver\)\{\n  if \(S\.bike\) return;/.test(call), 'an upload brings the bar back through the list, not through the summary');
+  // The same four figures are not printed twice: the card keeps only a warning the bar cannot carry.
+  assert.ok(/if \(S\.bike\)\{ el\.classList\.remove\('shut'\); el\.classList\.toggle\('hide', !notes\); el\.innerHTML = notes; return; \}/.test(call), 'the Muhtasari card is gone for a bike officer unless it has a warning to give');
+  assert.ok(/bikeMode_\(false\);/.test(call) && /\['#bkCust','#bkDeni','#bkRec','#bkPct'\]\.forEach/.test(call), 'signing out puts the bar back for whoever signs in next');
+  assert.ok(!/var CALL_BUILD = '2026-11-11-a'/.test(call), 'CALL_BUILD moved again');
+});
+
 /* THE CALL APP KEEPS UP -- "some people can't do things due updates; remember we force updates and permissions at every
    app start / launch for those who haven't". The page never reloaded itself; now it does, past every cache, at a quiet
    moment, once per build. The APK's Later now holds until the next launch, not a day. */
