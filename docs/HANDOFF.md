@@ -4109,6 +4109,45 @@ Google. Let's Encrypt's authority joined Android's list of trusted ones in 7.1.1
 Vercel today and **cannot open our own server at all** -- it would see a certificate error, not the app. That is the first job of
 the reserve.
 
+## Part 44 — The two sites are two books, so nobody was moved
+
+> "lets use https://recovery-app.sync-book.net in both web and app so that we are sure everything is okay there"
+
+It is not okay there yet, and Part 43 is what found it. Minutes after the fingerprint deployed, the two sites answered:
+
+| Site | `book` | Which database |
+|---|---|---|
+| Vercel | `79e363955e75` | the Supabase project -- the book every installed app has worked on since August |
+| Our own server | `9372d032c6ca` | `127.0.0.1:8000` -- a database on the server's own machine |
+
+The second was named by fingerprinting the usual address of a Supabase installed on one's own machine: it matches exactly. So our
+own server runs the right code against **a copy of the book**. The copy is good enough to carry the same brand, logo and
+open/closed switch, which is why every check from outside looked right and why nobody signing in there would see anything wrong.
+
+**The app and the web were not moved.** Had they been:
+
+- an officer would work a list as old as the copy -- whatever was uploaded through Vercel after it was taken is not in it;
+- every follow-up, promise, call and upload made there would stay there: on no report, on no other phone, in no commission;
+- and nothing on either site would say so. Each would be individually correct.
+
+That is the fault this system is built against -- nothing crashes, a number is quietly wrong, and somebody acts on it -- arriving
+through the address instead of through the arithmetic.
+
+**What has to be decided is which database is the book** (`docs/DEPLOY.md` section 7). Either Supabase stays the book: two lines
+in the server's own settings, after which the two sites are one system and the move goes ahead at once. Or the database on our
+own machine becomes the book, which moves the database and not an address: both sites must read it, in one moment, and the
+backups, the migrations and the capacity become ours to keep. The first is recommended, because it tests the one new thing (the
+server) without changing a second (the database) under it on the same day. The proof is the same either way: both addresses
+answer one `book`.
+
+**Until then, no real work belongs at the new address.**
+
+Two more things from the same morning. The deploy that carried Part 43 restarted our own server while it was being asked for its
+health about every 0.6 seconds: 484 answers in five minutes, none refused, none slower than a second -- the restart gap is
+smaller than feared. And the certificate (Part 43) is written up for whoever runs the server in `docs/DEPLOY.md` section 6.
+
+No code changed in this Part: `CHAT.md`, `docs/DEPLOY.md` and this page.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
