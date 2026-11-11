@@ -4312,6 +4312,50 @@ The form of the list script in the repository (moves, returns, names listed twic
 repository's schema; the simpler form of it is the one that ran on the live book. `test/staff-template.test.mjs` fails if a filled
 copy is ever committed.
 
+## Part 49 — The second round of staff changes: transfers, new staff with their details, and a name spelt differently
+
+The same evening the lists came from eight directions at once, pasted from the owner's WhatsApp group: forty people. They were not
+"remove" and "add" any more. A GMO wrote who was *transferred, and to which team as what*; managers sent *new officers with their
+phone, account, NIDA, TIN and NSSF*; one GMO listed officers he *could not see* on his list; one wrote of a man "I do not know him".
+And the first round (Part 48) had already shown the other thing: three of five names differed from the registry by one letter.
+
+`db/TEMPLATE-staff-changes-from-gmo.sql` is now the script that answered that round. One row of its list for each person:
+
+- **OFF** -- left, terminated, deactivated: Inactive, nothing deleted.
+- **MOVE** -- transferred: the role word (kept if the message gives none) and the team follow the transfer; the zone becomes the
+  zone of the new team on Teams & Staff, and is left as it was when that team has none.
+- **PLACE** -- "I cannot see them": if the registry holds them they are moved to the team and only their *empty* details are filled
+  in; if it does not, they are added.
+- **NEW** -- added with the details sent, with the next staff ID. Not added when the registry already holds the name or the
+  account, or when no zone can be found: a staff with no zone is on nobody's list.
+- **ASK** -- nothing changed; the row says what is missing (the man nobody knows; a new employee sent with no team, role or zone).
+
+**Who is meant** is decided in this order, and only when exactly ONE staff fits (the only live one, else the only one): the same
+name; the same bank account; the same phone, together with a word of the name that is the same or one letter apart (a line can
+pass to somebody else); the same name but for one letter of one word; the same words where the registry has one name more; the
+same name but for one letter in more than one word. The answer says how the person was found and shows the registry's own
+spelling, **which is never changed** -- that is the owner's order, and it is why a looser match is safe to act on: it only ever
+finds, it never rewrites. For a NEW staff only the name, the account and the phone are compared.
+
+**The zone** is the zone of the person's team on Teams & Staff; else the sender's own word for it, used only when a zone of that
+name is already filed (a typed zone is never invented); else the zone of the staff already on that team; else the zone their
+colleagues on the same list carry. A moved staff whose new team has no zone anywhere keeps the old zone and the row says so.
+
+**What the live book answered.** Of the forty, thirty-six were done at the first run: sixteen switched off (one already was),
+nine moved, eleven added. Five were found although the sender had spelt them differently, each one letter apart. Two were not
+found at all, and two were questions for the owner. Three of the nine moved went to teams that have no zone on Teams & Staff, so
+they stayed filed under the zone they had left: a second script of five rows was handed over for those and for the two not found,
+to be run again once the zones of those teams are filled in. That is the cue the round left behind: **a team with an empty ZONE
+on Teams & Staff cannot receive anybody.**
+
+**What it costs.** The staff registry and the teams table. The first form of the matching took five seconds on a registry of five
+thousand; a script that slow is not handed to the owner (Part 47's neighbour, the dig that timed out, was the lesson of the same
+day). It now compares whole words before it compares letters: a list of forty takes about a second on such a registry.
+
+**Not done.** The role columns of Teams & Staff are not touched: a manager who moved is still named on the old team there. The
+second round's script was run on a test database with the repository's schema and a made-up registry before it was handed over;
+its answer from the live book is in no file of the repository.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
