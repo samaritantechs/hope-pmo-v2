@@ -4195,6 +4195,55 @@ upload ranks a day's uploads across all teams and keeps two, so a day sent as th
 
 No code changed in this Part.
 
+## Part 46 — Everyone sees their zone beside their name
+
+> "GMOs must see ther zone names infront of their name in login e.g
+> MARK II - "LAKE ZONE"
+> GMO · All teams · 2026-11-10-a"
+>
+> "in short after switching in system everyone must see their zone"
+>
+> "so team name with zone infront of it, manager gmo opm etc as such too"
+
+The name at the foot of the portal's sidebar now carries the person's zone: `MARK II - "LAKE ZONE"`, and for a team code
+`VWAWA · F.O - "SOUTHERN HIGHLANDS"`. The line under it (role · teams · version) is as it was. BUILD 2026-11-11-a.
+
+**Whose zone it is** (`api/_lib/zone.js`, one definition):
+
+0. **Only the teams the code may see are looked at.** A code with a team list is looked for among its own teams and nowhere else:
+   every screen it opens is scoped to them, and a namesake on another team must not lend it a stranger's zone. A code that holds
+   every team is looked for on every team.
+1. **The teams that name the person on Teams & Staff.** A zone is a column of Teams & Staff; nothing stores a zone against a
+   person. The owner's own example is why the code's team list cannot answer alone: that GMO holds ALL teams and still has one
+   zone. So the zones are those of the teams that carry the person's name in a role column (OPM, Recovery, GMO, Manager, Credit,
+   Expected, Bike, Legal, Collection), matched the way the portal already matches a leader to the teams table: trimmed, in
+   capitals.
+2. **Else the teams the code holds.** A code with a team list shows the zones of those teams. This is the advance desk's rule,
+   and `advZones_` now reads the same helper (`zonesOfTeams`): the name line never shows a zone the advance desk would not give
+   the same code. A team code holds its one team and is never matched as a name.
+3. **Else nothing.** A code that holds every team and is named nowhere (an admin, the head office) has no zone, and none is
+   invented.
+
+Two zones are written out, in alphabetical order; past two the rest are counted (`LAKE ZONE, WEST +2`).
+
+**What it costs.** One read of the teams table (one row a team, eleven columns), started beside the sign-in's other reads so the
+sign-in is not a round trip slower, and **only when the sign-in asks** (`/api/me?zone=1`: the typed sign-in and the stored code).
+The version checks that call `/api/me` every fifteen minutes, and every three on a playing deck, ask for the build alone and read
+what they read before. Nothing on `/api/upload` or `/api/call`. A database without the zone column, a read that fails, or one that
+has not answered in a second and a half (`ZONE_BUDGET_MS`) answers "no zone" and the name is drawn as it always was; so does a
+server older than the page. The sign-in is never kept waiting on the zone.
+
+**Checked** in a real browser (`tools/browser-checks/portal-zone-name.mjs`): both sign-ins ask for the zone, the version check
+does not, a zone typed on Teams & Staff is drawn as text, and a long name with several zones wraps inside the sidebar on a desk
+and on a phone without widening the page. `test/zone.test.mjs` holds the rule, the one read, and the fall-backs.
+
+**Not done.** HOPE Calls (the phone) is unchanged: the words were "after switching in system". The launcher's menu (`/?menu=1`,
+the office television and an admin's door to the upload) also prints the signed-in name, and still prints it bare. A person whose
+name on their access code is spelt differently from Teams & Staff, and whose code holds every team, sees no zone until the two
+spellings agree. A zone that could not be read at one sign-in (a slow or failing read) is read again at the next sign-in or
+reload; nothing on the screen says it was skipped. The tip for the Teams & Staff tab is in
+`db/RUN-ME-2026-11-11-hint-zone-beside-name.sql`, to be run once by hand.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

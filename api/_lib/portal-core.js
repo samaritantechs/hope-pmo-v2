@@ -7,6 +7,7 @@ import { ADV_APPROVALS } from './importers.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
+import { zonesOfTeams } from './zone.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
@@ -1696,7 +1697,7 @@ const advUpper_ = v => { const s = textOrNull(v); return s ? s.toUpperCase().rep
 function advZones_(user, teamRows) {
   if (!user.teams) return { zones: null, noZoneTeams: [] };
   const mine = teamRows.filter(t => teamAllowed(user, t.team));
-  const zones = [...new Set(mine.map(t => K(t.zone)).filter(Boolean))].sort();
+  const zones = zonesOfTeams(mine);                 // the same reading the name line uses (zone.js)
   return { zones, noZoneTeams: mine.filter(t => !K(t.zone)).map(t => t.team).sort() };
 }
 const advZoneOk_ = (zones, zone) => zones === null || zones.some(z => z === K(zone));
