@@ -76,6 +76,19 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 12 Nov** — a new list, answered with one script of twenty-seven rows; **its
+  answer is not back yet.** It brought: the staff of three teams of one zone as their GMO has
+  them (fourteen people, names only); the staff of two of the southern teams that had waited
+  for a GMO (six with their details, and a seventh whose line was cut off in the paste); and
+  corrections for four more southern teams (four to add, two to remove). **How it was read:**
+  the fourteen are asked as MOVE and nobody of them is added (section 7: a list with names only
+  cannot tell a new person from a name the registry spells another way); the ones sent with a
+  phone or an account are NEW (not added when the registry already holds the name, the account
+  or the phone); "remove" is taken as left, so switched to Inactive; the cut-off line is an ASK
+  row that changes nothing. Run twice on a made-up registry of 5,000 on the real team list,
+  three ways (some of the people in it, none, all): under a second, and the second run changes
+  nothing. **Said to the owner as not done:** nobody is switched off for being absent from the
+  list of the three teams; the seventh person. The names are in no file of the repository.
 - **#673** — the rule does not guess (handbook Part 52). #671 took a team with no ZONE into the
   zone MOST of its GMO's teams carried, a tie going A to Z. The owner's own Teams & Staff list
   showed one GMO named on teams of four zones (two, two, one, one): the tie had filed an officer
@@ -99,10 +112,15 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   taken, a team code among them. Handed over, to be run in the SQL editor of the real book:
   (1) a script that fills the 11 cells, only where the real book's cell is empty, each name
   copied from a team of the real book that already carries it; (2) a staff script of two rows,
-  to run after it. **Its answers are not back.** The owner was told: work only at the old
+  to run after it. **Both were run on 12 Nov and their answers are back:** six teams were filled
+  (on two more the number was already right in the real book), and the manager whose team had
+  no GMO was filed under that GMO's zone, with nothing typed in a ZONE cell. **Still open:** the
+  officer filed by the tie. His team's ZONE has not been typed, so he is still under the zone
+  the tie picked, and since #673 that team reads NO ZONE SET (its code lists nobody on the
+  advance desk) until it is. The owner was told: work only at the old
   address until the server reads the real database; anything else done at the new address is in
   the copy too; a team code changed on the copy locks nobody out. And asked: whether any of the
-  15 was a change made that evening at the new address.
+  15 was a change made that evening at the new address (not answered yet).
 - **#671** — a team's zone is its GMO's (the owner's order in section 2, handbook Part 50). A team
   whose ZONE cell is empty sits in the zone most of its GMO's other teams carry (changed by #673:
   only when they all carry the same one); what is typed on
@@ -130,14 +148,16 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   **Two officers who left are not in the registry at all:** the name-by-name answer showed that
   nobody, in any zone, carries either surname, and no account or phone fits. There is nothing to
   switch off, and the owner was told; if a GMO says otherwise, the name as at the bank or a staff
-  ID settles it. **Still open:** (1) a manager moved to a team that has neither a ZONE nor a GMO
-  in the real book: the owner named the GMO on it, but at the new address (see "The two books"
-  above); the teams script carries that into the real book and the two-row staff script then
-  files him; (2) an officer filed by a tie (#673): his team's GMO is named on teams of four
-  zones, so the owner types the ZONE on that team at the old address and the same two-row
-  script files him under it; (3) the two questions for the owner from the second round (a man a
-  GMO does not know; a new employee sent with no team, role or zone); (4) the staff of five
-  southern teams the GMOs are to send. The names are in no file of the repository.
+  ID settles it. The manager moved to a team that had neither a ZONE nor a GMO is filed (12 Nov:
+  the GMO was carried into the real book and the rule gave the zone). **Still open:** (1) an
+  officer filed by a tie (#673): his team's GMO is named on teams of four zones, so the owner
+  types the ZONE on that team at the old address; if it is the zone he is already under,
+  nothing more is needed, and if it is another the two-row script is run again and files him
+  under it; (2) the two questions for the owner from the second round (a man a GMO does not
+  know; a new employee sent with no team, role or zone); (3) the staff of five southern teams
+  the GMOs are to send (those teams now carry a GMO, so their staff are filed by the rule): two
+  of the teams came on 12 Nov (the entry at the top), the others have not.
+  The names are in no file of the repository.
 - **#670** — the staff template is now the script that answered the second round (handbook Part
   49): transfers, new staff with their details, people a GMO cannot see, and somebody whose name
   the GMO spelt differently (found by account, by one letter, by a shorter form; never re-spelt).
@@ -212,10 +232,10 @@ commission, and neither site says so. **Do no real work at the new address** unt
 
 **It happened on the night of 11 Nov** (handbook Part 51). The owner edited Teams & Staff at the
 new address and nothing showed at the old one. A script was handed over that carries the edits
-into the real book, and a staff script of two rows to run after it; **neither answer is back**
-(sections 4 and 8), so until then the edits are only in the copy. A chat that sees an address in
-the owner's message reads WHICH site it is before anything else, and says so in its first line if
-it is the new one.
+into the real book, and a staff script of two rows to run after it; **both were run on 12 Nov**
+(section 4), so those edits are in the real book now. Anything else done at the new address is
+still only in the copy. A chat that sees an address in the owner's message reads WHICH site it
+is before anything else, and says so in its first line if it is the new one.
 
 **What has to be decided — by the owner, with Demit — is which database is the book:**
 
@@ -345,6 +365,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A check is checked by breaking what it guards.** The first check that the portal and the
   script read a team alike passed, and went on passing with the rule broken: its random numbers
   were nearly always even, so half its cases were never drawn. Break the rule, see the check fail.
+- **A list with names only is asked as MOVE.** A GMO who sends the whole staff of a team sends
+  no phone and no account. Asked as PLACE or NEW, a name the registry spells another way (two
+  letters in one word is enough) becomes a second person, and a second person cannot be taken
+  back; asked as MOVE it comes back NOT FOUND with who carries each of the names, and the next
+  script settles it. New staff are added from rows that carry a phone or an account.
 - **A name a list spells differently is asked for in the registry's own spelling.** When an
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
@@ -375,12 +400,16 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
   sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
   The older list in `docs/HANDOFF.md` Part 15 ("Waiting on you") has not been checked again.
-  In the SQL editor of the real book, in this order: the teams script of 11 Nov (it carries the
-  edits made at the new address); then, at the OLD address, the ZONE typed on the one team whose
-  GMO is named on teams of four zones; then the staff script of two rows. Each answer pasted.
+  At the OLD address: the ZONE typed on the one team whose GMO is named on teams of four zones.
+  Until then that team reads NO ZONE SET, its code lists nobody on the advance desk, and its
+  officer stays under the zone the tie picked; if another zone is typed, the staff script of two
+  rows of 11 Nov is run again. (The teams script and that staff script were both run on 12 Nov.)
   Also: whether any of the fifteen cells where the real book is ahead was a change made on 11
   Nov at the new address (a team code is among them: changed on the copy, it locked nobody
   out); and the two questions of the second round.
+  Of the staff list of 12 Nov: the answer of its script (twenty-seven rows); the rest of the
+  message that was cut off; and whether the list of the three teams is their whole staff (if it
+  is, the people the registry files on those teams who are not on it are to be asked about).
   Optional: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say where
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
