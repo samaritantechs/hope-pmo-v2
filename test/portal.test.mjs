@@ -11722,11 +11722,14 @@ test('a band is read at the whole percentage the screen shows: half and above ro
 test('the audit report answers the questionnaire for a month: cohort, aging, PAR > 30, list', async () => {
   const t = tables();
   // Two July disbursements in the loans table: the cohort's denominator for PAR > 30.
-  t.loans = (t.loans || []).concat([
+  // Replaces tables()'s own l1-l4 outright (not concat) -- this test's hand-checked arithmetic
+  // below is about exactly these three, and SALES_STAGES now reads every approved-or-later
+  // loan, so leaving l1-l4 (all of them July- or June-approved) mixed in would count them too.
+  t.loans = [
     { team: 'KONGOWE', stage: 'disbursed', disb_date: '2026-07-10', principal_amt: 1000000, loan_amt: 1360000 },
     { team: 'MBAGALA', stage: 'disbursed', disb_date: '2026-07-15', principal_amt: 500000, loan_amt: 680000 },
     { team: 'KONGOWE', stage: 'disbursed', disb_date: '2026-06-20', principal_amt: 2000000, loan_amt: 2720000 },
-  ]);
+  ];
   const d = await run('auditReport', { month: '2026-07' }, ADMIN, dbWithRpc(t));
   assert.equal(d.month, '2026-07'); assert.equal(d.monthEnd, '2026-07-31'); assert.equal(d.prevMonth, '2026-06');
   assert.equal(d.asAt, TODAY, 'the live month is read to today, a finished one to its last day');
@@ -11768,6 +11771,41 @@ test('the audit report answers the questionnaire for a month: cohort, aging, PAR
   // Granted like audit: a code without the tab is refused.
   const nobody = { code: 'N', name: 'N', role: 'GMO', teams: null, tabs: ['dashboard'] };
   await assert.rejects(() => run('auditReport', { month: '2026-07' }, nobody, dbWithRpc(t)), e => e.status === 403);
+});
+
+/* "i do not upload disbursment sheet, remove it in uploads. i only upload approved/proceseessed,
+   use it everywhere necesary for loan approvals and disb dates". The loans table's own
+   disb_date column is only ever written by the "Disbursed Loans" upload, which this owner never
+   runs -- a book like that has disb_date null on every row, forever, and the cohort's PAR > 30
+   denominator (disbursedLoans / disbursedTotal above) used to be null on every row too, since
+   it filtered on disb_date alone. This pins the fallback: a loan at any SALES_STAGES stage
+   (approved and later), with only approved_date, counts and dates itself by that. */
+test('the audit report\'s disbursed cohort still counts a loan that only ever carries an approved_date', async () => {
+  const t = tables();
+  t.loans = [
+    { team: 'KONGOWE', stage: 'approved', approved_date: '2026-07-10', principal_amt: 1000000, loan_amt: 1360000 },
+    { team: 'MBAGALA', stage: 'approved', approved_date: '2026-07-15', principal_amt: 500000, loan_amt: 680000 },
+    { team: 'KONGOWE', stage: 'approved', approved_date: '2026-06-20', principal_amt: 2000000, loan_amt: 2720000 },
+    // 'rejected' is never a sale, approved_date or not -- it must not count.
+    { team: 'KONGOWE', stage: 'rejected', approved_date: '2026-07-12', principal_amt: 900000, loan_amt: 1224000 },
+    // a real disb_date, where there is one, is read in preference to approved_date -- it is
+    // this one's July approved_date that must NOT also count it a second time.
+    { team: 'KONGOWE', stage: 'disbursed', approved_date: '2026-07-11', disb_date: '2026-08-02', principal_amt: 400000, loan_amt: 544000 },
+    // read before this shipped: the cohort fetch's first cut had no date floor at all, so it
+    // re-pulled every sale this book had ever made on every month viewed. A loan a year and a
+    // half outside the window, on neither date, proves the floor is there and still finds it
+    // nowhere -- not a regression into reading the whole history again.
+    { team: 'KONGOWE', stage: 'approved', approved_date: '2025-01-05', principal_amt: 700000, loan_amt: 952000 },
+  ];
+  const d = await run('auditReport', { month: '2026-07' }, ADMIN, dbWithRpc(t));
+  const c = d.cohorts[0];
+  assert.equal(c.disbursedLoans, 2, 'the two approved-only July loans, not the rejected one, not the one really disbursed in August, not the 2025 one');
+  assert.equal(c.disbursedTotal, 2040000, 'their principal + interest only');
+  assert.equal(c.par30, 73.5, 'the same PAR > 30 as the fixture above, reached through approved_date instead of disb_date');
+  const aug = await run('auditReport', { month: '2026-08' }, ADMIN, dbWithRpc(t));
+  assert.equal(aug.cohorts[0].disbursedLoans, 1, 'the one loan with a real disb_date is dated by IT, in August, not by its July approval');
+  const p = d.cohorts[1];
+  assert.equal(p.disbursedLoans, 1, 'June\'s one approved-only loan, not the 2025 one a year and a half outside the floor');
 });
 
 /* SALARY ADVANCE -- "I found the this file looks suspicious warning on the google sheet for

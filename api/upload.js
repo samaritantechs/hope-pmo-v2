@@ -324,6 +324,13 @@ export function dataDateColumn(table, stage) {
   if (d.col) return d.col;
   return (d.byStage && d.byStage[String(stage || '')]) || null;
 }
+/* "i do not upload disbursment sheet, remove it in uploads. i only upload approved/
+   proceseessed, use it everywhere necesary for loan approvals and disb dates" -- dropped from
+   the Upload page's stage picker (public/upload.html); refused here too, in case an old saved
+   link still names one. The IN-APP Disburse button (managerDisburse, loan-core.js -- a
+   different code path entirely) still writes these same stages when it is used: this blocks
+   only the upload sheet. */
+export const LOAN_UPLOAD_STAGES_REMOVED = new Set(['pending_disb', 'disbursed']);
 /** The distinct dates this file is actually about. Blank and unreadable dates are dropped:
     a row with no date of its own belongs to no day, so it can neither be replaced by date nor
     take a day down with it -- it is simply added. */
@@ -817,6 +824,11 @@ export default withApi(async (req, res) => {
       break;
     case 'loans':
       if (!meta.stage) { const e = new Error('stage is required for a loan-pipeline upload.'); e.status = 400; throw e; }
+      if (LOAN_UPLOAD_STAGES_REMOVED.has(meta.stage)) {   // see the constant's own note
+        const e = new Error('Sheet hii haikubaliwi tena kwa upload: idhinishwa/iliyoshughulikiwa (Approved/Processed) ndiyo inayotumika kila mahali. '
+          + '/ This sheet is no longer accepted by upload: Approved/Processed is used everywhere now.');
+        e.status = 400; throw e;
+      }
       table = 'loans';
       /* The whole APPROVED DATE column decides its own order, once, and the answer is reported
          below -- reading a date column the wrong way round moves a report by months and looks

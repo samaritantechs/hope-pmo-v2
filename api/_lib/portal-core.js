@@ -4099,8 +4099,22 @@ async function auditReportCompute_(db, user, month, nowMs) {
     cachedAnswer(db, 'monthReport|' + asOf.weekOf, user, nowMs, () => monthReportCompute_(db, user, asOf, nowMs))
       .catch(() => null),
     defaulterBook(db, user, { type: 'current', notAfter: asAt, columns: AUDIT_DECK_COLS }),
-    fetchAll(() => onTeams(db.from('loans').select('team, stage, disb_date, principal_amt, loan_amt, interest_amt')
-      .gte('disb_date', prevStart).lte('disb_date', monthEnd), user.teams)).catch(() => []),
+    /* "i only upload approved/processed, use it everywhere necessary for loan approvals and
+       disb dates" -- filtering on disb_date alone found nothing for a book that never carries
+       one. Fetched by STAGE (SALES_STAGES: dashboard-core.js's own rule for "this is a sale"),
+       not by either date column alone: a row the approval upload stamped carries approved_date
+       and may carry no disb_date at all, and a stray historic row could be the other way
+       around. The floor below is on EITHER column, so it drops nothing that can belong to
+       either cohort month -- whichever of the two a row is actually dated by (decided once,
+       below, the same way loanTotalsByTeam already decides it a few lines above) is at or
+       after prevStart precisely because that is what makes it this month's or last month's.
+       READ BEFORE THIS SHIPPED: the first cut of this had no date bound at all, "not by
+       either date" taken too far -- a floorless read of every sale this book has ever made,
+       re-pulled in full on every distinct month viewed since the cache above is keyed by
+       month while the query was not. This is the fix: bounded like every other reader of
+       this table, so paging between months costs what paging between months should. */
+    fetchAll(() => onTeams(db.from('loans').select('team, stage, disb_date, approved_date, principal_amt, loan_amt, interest_amt')
+      .in('stage', SALES_STAGES).or(`disb_date.gte.${prevStart},approved_date.gte.${prevStart}`), user.teams)).catch(() => []),
     settingsMany(db, ['BONUS_SALES_PCT', 'BONUS_COL_PCT', 'BONUS_REC_PCT', 'RECOVERY_TARGET_MONTHLY']),
   ]);
   const thr = { sales: cfg.num('BONUS_SALES_PCT', 80), col: cfg.num('BONUS_COL_PCT', 92), rec: cfg.num('BONUS_REC_PCT', 120) };
@@ -4110,14 +4124,19 @@ async function auditReportCompute_(db, user, month, nowMs) {
   const daysOf = r => num(r.days_elapsed) || num(r.dc);
   const ymOf = r => String(r.disb_date || '').slice(0, 7);
 
-  /* ---- THE COHORTS: the month's disbursements and the previous month's, as the auditor asks. */
-  const disbursed = scoped(user, loansRaw).filter(l => l.stage === 'disbursed' || String(l.disb_status || '').toUpperCase() === 'DISBURSED' || l.disb_date);
+  /* ---- THE COHORTS: the month's disbursements and the previous month's, as the auditor asks.
+     A sale counts here the same way it counts everywhere else (SALES_STAGES): 'approved' and
+     every stage after it, since a sale that was approved and never formally marked disbursed
+     is still a sale. Each one's own date is its disb_date where it has a real one, else its
+     approved_date -- the pair loanTotalsByTeam already reads, read the same way here. */
+  const disbursed = scoped(user, loansRaw).filter(l => SALES_STAGES.includes(l.stage));
+  const effectiveDisbDate = l => l.disb_date || l.approved_date;
   const loanAmt = l => num(l.loan_amt) || (num(l.principal_amt) + num(l.interest_amt)) || num(l.principal_amt);
   const cohort = ym => {
     const mine = rows.filter(r => ymOf(r) === ym);
     const over30 = mine.filter(r => daysOf(r) > 30);
     const sum = (list, f) => list.reduce((s, r) => s + f(r), 0);
-    const dl = disbursed.filter(l => String(l.disb_date || '').slice(0, 7) === ym);
+    const dl = disbursed.filter(l => String(effectiveDisbDate(l) || '').slice(0, 7) === ym);
     const disbTotal = dl.length ? sum(dl, loanAmt) : null;
     const byTeam = {};
     for (const r of mine) {
