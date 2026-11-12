@@ -172,6 +172,12 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const cells = new Map(), days = [];
+  // A customer whose cycle day cannot be read is counted on NO day by the loop below (their
+  // `primary` is 0, which equals no real weekday), so they are tracked here instead and added
+  // to the week ONCE, after the loop -- the most recent day their book still carried them,
+  // never summed day over day the way a dated customer's cycle days are. See periodRows_'s own
+  // note for why `keepUndated: false` is passed into it below.
+  const undatedSeen = new Map();
   for (let d = mon; d <= last; d = addDaysKey(d, 1)) {
     const at = d === today ? nowMs : Date.parse(d + 'T09:00:00Z');
     const wd = WD_[isoWeekday(at)];
@@ -182,7 +188,8 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
     const baseBy = {};
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
-    const list = periodRows_({ rows: buildRows_(user, cur.rows, baseBy, teamBy, strat, at) }, { daily: true, day: null });
+    const built = buildRows_(user, cur.rows, baseBy, teamBy, strat, at);
+    const list = periodRows_({ rows: built }, { daily: true, day: null, keepUndated: false });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
       /* byDay: what THIS day added to this leader's book on this customer -- the daily report's own figure for the day, kept so the
@@ -192,7 +199,16 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
       else { c.byDay[d] = dayCell;
         Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1, byDay: c.byDay }); }
     }
+    for (const r of built) if (RECYCLE_ROLES.includes(r.role) && r.primary === 0) undatedSeen.set(r.role + '|' + K(r.leader) + '|' + K(r.ref), { r, date: d });
     days.push({ date: d, weekday: wd, measured: true, customers: list.length });
+  }
+  // The once-per-week rescue: a customer never added by the loop above (their cycle day could
+  // never be read, on any day they were seen) goes in now, with the figures of the LAST day
+  // they were still in the book -- counted, exactly once, rather than dropped from the week.
+  for (const [k, { r, date }] of undatedSeen) {
+    if (cells.has(k)) continue;
+    const dayCell = { initial: r.initial, arrears: r.arrears, recovered: r.recovered, status: r.status };
+    cells.set(k, { ...r, days: 1, byDay: { [date]: dayCell } });
   }
   const measured = days.filter(x => x.measured), first = measured[0] || null, lastM = measured[measured.length - 1] || null;
   const lastAt = lastM ? Date.parse(lastM.date + 'T09:00:00Z') : (last === today ? nowMs : Date.parse(last + 'T09:00:00Z'));
@@ -234,12 +250,26 @@ export function expdfPeriod(nowMs, args = {}) {
 }
 
 /* THE DAY'S LIST IS THE ROTATION'S OWN: on a daily reading, the customers whose cycle day it is
-   (as on the phone). Where the deck carries no disbursement dates every row's day is unknown and
-   the whole assigned book shows rather than nobody. A week or a month takes the whole book. */
-function periodRows_(core, { daily, day }) {
+   (as on the phone), PLUS every assigned customer whose cycle day could not be read at all --
+   "some staff ... somedays not getting expected defaulters, something not reality". A missing
+   or unreadable disbursement date (an exported column renamed, a date spelt a way Date.parse
+   cannot read) left that customer's `primary` at 0, which no real weekday ever equals, so they
+   were onToday on NO day: real arrears, on nobody's screen, on any day, for as long as the
+   date stayed unreadable -- unless EVERY customer in the read shared the same fault, when the
+   old rule rescued the whole book. A customer sharing a book with dated colleagues got no such
+   rescue: expectedDefaulters (portal-core.js) already promises to bucket such a one into day 0
+   and never drop them; this is that same promise, kept here too. A week or a month still takes
+   the whole book, undated customers included either way.
+
+   `keepUndated` is for expdfWeekCompute_'s own per-day pass below ONLY: a week counts a
+   customer on the days their cycle actually names (`buildRows_`'s primary/secondary), and an
+   undated customer has no such day to be counted on twice, so the week picks them up ONCE,
+   itself, after its own loop -- never through this per-day filter, or their arrears would be
+   added once for every day of the week instead of once for the week. */
+function periodRows_(core, { daily, day, keepUndated = true }) {
   const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
-  if (!daily || day === 'all' || !assigned.some(r => r.primary > 0)) return assigned;
-  return assigned.filter(r => r.onToday);
+  if (!daily || day === 'all') return assigned;
+  return assigned.filter(r => r.onToday || (keepUndated && r.primary === 0));
 }
 
 /** What each day of a week recovered over a list of week rows: { 'YYYY-MM-DD': recovered }. Empty for a day or a month. */
@@ -278,18 +308,26 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
      the export, a sheet that never had it -- every row's cycle day is unknown, `onToday` is
      false for all of them, and the leader gets an empty screen with a full book behind it.
      A list nobody can see is worse than a list on the wrong day, so in that case the whole
-     assigned book shows and the strip says why. */
-  const dated = mine.filter(r => r.primary > 0);
+     assigned book shows and the strip says why.
+
+     SOME of a leader's book undated is the ordinary case, not the rare one -- one customer
+     whose date a sheet never carried, the rest of the team dated as usual. Filtering to
+     onToday alone then drops exactly that customer, every day, with no "why" to point at: real
+     arrears, on no leader's screen, on any day, for as long as their date stays unreadable. An
+     undated customer is kept on every daily reading regardless (never rotated -- there is no
+     day to rotate them to), so a real defaulter is never simply absent. */
+  const dated = mine.filter(r => r.primary > 0), undated = mine.filter(r => r.primary === 0);
   const noCycleDates = mine.length > 0 && dated.length === 0;
-  const scopeRows = (all || noCycleDates) ? mine : mine.filter(r => r.onToday);
+  const scopeRows = (all || noCycleDates) ? mine : mine.filter(r => r.onToday).concat(undated);
   scopeRows.sort((a, b) => b.arrears - a.arrears);
   return { rows: scopeRows, weekday: core.weekday, date: core.date,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     scope: useOwn ? 'mine' : 'team', canSwitch: isLeaderOfSome,
     /* Exactly where the list got to zero. An empty screen that cannot say WHY it is empty
-       costs a phone call and a day; these five numbers answer it on the spot. */
+       costs a phone call and a day; these numbers answer it on the spot -- `undated` says how
+       many of today's rows carry no cycle day and are shown on every day until one is read. */
     diag: { deck: core.rows.length, assigned: assigned.length, mine: mine.length,
-      dated: dated.length, onToday: mine.filter(r => r.onToday).length,
+      dated: dated.length, onToday: mine.filter(r => r.onToday).length, undated: undated.length,
       deckWeekday: core.weekday, deckDate: core.date, noCycleDates },
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
     // Who is carrying what, so anyone looking at the list can see the split without leaving it.
