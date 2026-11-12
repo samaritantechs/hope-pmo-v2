@@ -76,6 +76,19 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 12 Nov** — a new list, answered with one script of twenty-seven rows; **its
+  answer is not back yet.** It brought: the staff of three teams of one zone as their GMO has
+  them (fourteen people, names only); the staff of two of the southern teams that had waited
+  for a GMO (six with their details, and a seventh whose line was cut off in the paste); and
+  corrections for four more southern teams (four to add, two to remove). **How it was read:**
+  the fourteen are asked as MOVE and nobody of them is added (section 7: a list with names only
+  cannot tell a new person from a name the registry spells another way); the ones sent with a
+  phone or an account are NEW (not added when the registry already holds the name, the account
+  or the phone); "remove" is taken as left, so switched to Inactive; the cut-off line is an ASK
+  row that changes nothing. Run twice on a made-up registry of 5,000 on the real team list,
+  three ways (some of the people in it, none, all): under a second, and the second run changes
+  nothing. **Said to the owner as not done:** nobody is switched off for being absent from the
+  list of the three teams; the seventh person. The names are in no file of the repository.
 - **#673** — the rule does not guess (handbook Part 52). #671 took a team with no ZONE into the
   zone MOST of its GMO's teams carried, a tie going A to Z. The owner's own Teams & Staff list
   showed one GMO named on teams of four zones (two, two, one, one): the tie had filed an officer
@@ -142,7 +155,8 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   nothing more is needed, and if it is another the two-row script is run again and files him
   under it; (2) the two questions for the owner from the second round (a man a GMO does not
   know; a new employee sent with no team, role or zone); (3) the staff of five southern teams
-  the GMOs are to send (those teams now carry a GMO, so their staff will be filed by the rule).
+  the GMOs are to send (those teams now carry a GMO, so their staff are filed by the rule): two
+  of the teams came on 12 Nov (the entry at the top), the others have not.
   The names are in no file of the repository.
 - **#670** — the staff template is now the script that answered the second round (handbook Part
   49): transfers, new staff with their details, people a GMO cannot see, and somebody whose name
@@ -351,6 +365,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A check is checked by breaking what it guards.** The first check that the portal and the
   script read a team alike passed, and went on passing with the rule broken: its random numbers
   were nearly always even, so half its cases were never drawn. Break the rule, see the check fail.
+- **A list with names only is asked as MOVE.** A GMO who sends the whole staff of a team sends
+  no phone and no account. Asked as PLACE or NEW, a name the registry spells another way (two
+  letters in one word is enough) becomes a second person, and a second person cannot be taken
+  back; asked as MOVE it comes back NOT FOUND with who carries each of the names, and the next
+  script settles it. New staff are added from rows that carry a phone or an account.
 - **A name a list spells differently is asked for in the registry's own spelling.** When an
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
@@ -388,6 +407,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   Also: whether any of the fifteen cells where the real book is ahead was a change made on 11
   Nov at the new address (a team code is among them: changed on the copy, it locked nobody
   out); and the two questions of the second round.
+  Of the staff list of 12 Nov: the answer of its script (twenty-seven rows); the rest of the
+  message that was cut off; and whether the list of the three teams is their whole staff (if it
+  is, the people the registry files on those teams who are not on it are to be asked about).
   Optional: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say where
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
