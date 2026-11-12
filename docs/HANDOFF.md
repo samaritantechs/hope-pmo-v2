@@ -4340,6 +4340,7 @@ finds, it never rewrites. For a NEW staff only the name, the account and the pho
 **The zone** is the zone of the person's team on Teams & Staff; else the sender's own word for it, used only when a zone of that
 name is already filed (a typed zone is never invented); else the zone of the staff already on that team; else the zone their
 colleagues on the same list carry. A moved staff whose new team has no zone anywhere keeps the old zone and the row says so.
+*(Part 52 took out "the staff already on that team": a staff who kept an old zone was handing it on.)*
 
 **What the live book answered.** Of the forty, thirty-six were done at the first run: sixteen switched off (one already was),
 nine moved, eleven added. Five were found although the sender had spelt them differently, each one letter apart. Two were not
@@ -4394,7 +4395,7 @@ calls one, so a no-break space or a tab pasted in from Excel or WhatsApp does no
   only where Teams & Staff cannot say and each one said on the row: the one zone of the teams whose names begin with the team's
   name; the sender's word, if a zone of that name is already filed; the zone of the staff already on that team; for a new staff,
   their colleagues'. A manager over several teams takes the first of them that has a zone; of two teams whose names differ only
-  by a mark or by capitals, the one written as the list wrote it.
+  by a mark or by capitals, the one written as the list wrote it. *(Part 52 took out "the staff already on that team".)*
 
 **The answer says where a zone came from.** A row whose zone is not the team's own cell names the GMO it was read from. When that
 GMO's teams carry more than one zone the row lists them with their counts, because "most of them" is then a judgement somebody
@@ -4483,7 +4484,8 @@ none, a name beside a number, a phone number corrected. Fifteen were the other w
 on since the copy was taken, among them a GMO now written in full on seven teams, a manager who had changed, and the code of
 one team. A copy is not behind the book or ahead of it; after a day of use it is simply a different book.
 
-**What was done.** No code changed. Two scripts were handed over, run by the owner in the SQL editor of the real book:
+**What was done.** No code changed. Two scripts were handed over, for the owner to run in the SQL editor of the real book
+(their answers were not back when this Part was written):
 
 - one that fills the eleven cells, **only where the real book's cell is empty**, each name **copied from a team of the real book
   that already carries it**. The copying matters more than it looks: the GMO of the southern teams is written in full on the
@@ -4526,17 +4528,37 @@ cost of not choosing is one cell typed once; the cost of choosing wrongly is an 
 the zone was read off Teams & Staff. The first form of this rule was read by three reviewers and nine skeptics, and none of
 them objected to "most": it took the owner's own list to show the GMO it could not serve.
 
-**The script also says why a new staff was not added.** A new officer for whom no zone can be found is not added (a staff with
-no zone is on nobody's list). The row used to say only that; it now says which thing is missing and what to do: type the ZONE
-on the team, or name its GMO.
+**The staff already on a team are no longer asked for its zone.** Where Teams & Staff could not say, the script used to take
+the zone of the staff already filed on that team. Read before the merge, that turned out to undo the rule in the one place it
+was written for. A staff moved to a team with no zone keeps the zone they came from; the next person sent there was then filed
+under that left-over zone, and for the team whose GMO is over four zones the "staff already there" was the officer the tie had
+filed. The same request was refused on one list and granted on the next. The step is gone. When Teams & Staff cannot say, the
+script takes only what the **row itself** says: the sender's word for a zone that is already filed, or, for a new staff, the
+one zone of the colleagues the row names (one zone: colleagues who carry different zones decide nothing). Otherwise a moved
+staff keeps the zone they had, a new staff is not added, and nothing in the script takes "the most common" of anything.
+
+**The row says why, and what settles it.** A new officer for whom no zone can be found is not added (a staff with no zone is
+on nobody's list). The row used to say only that. It now says which thing is missing, and the remedy that fits it: give the
+team on the row; write the team as Teams & Staff names it; name the GMO on the team; or type the ZONE on the team.
+
+**One zone, however its cells were spaced.** A GMO's name was compared with runs of blanks as one; a zone only trimmed. Under
+a rule that wants all of a GMO's teams in the same zone that difference bites: a zone typed with two spaces on one team made
+its GMO "a GMO over two zones". A zone is now compared exactly as a GMO's name is, in both writings.
+
+**Read before the merge.** Two reviewers, each finding put to a second reader: eight findings, none refuted, all fixed here.
+Besides the three above: a PLACE that found its person and took no zone from anybody said the zone was "taken from colleagues
+on the same list" (the note now tests where the zone came from); the advice on a row not added was the same for every reason;
+`CHAT.md` said in one section that the owner's scripts had carried the edits into the real book and in two others that their
+answers were not back; and it described the tip script as it was before this change.
 
 **What it costs.** No read was added and no page changed, so `BUILD` stays where it was. On the live list one team is touched:
 the one whose GMO is over four zones reads NO ZONE SET again, as it did until Part 50, until its ZONE is typed. Every team
 whose GMO has one zone reads exactly what it read before.
 
 **Not done.** The officer who was filed by the tie is not re-filed by this change: a row of a staff script does that once the
-team's ZONE is typed, and that script was handed over (Part 51). The annual deck's zone map still reads the typed cell alone
-(Part 50).
+team's ZONE is typed, and that script was handed over (Part 51). The two scripts handed over on 11 November carry the engine
+as it was that evening; both do what their headings say on the rows they hold, and a later list is answered with the template
+as it is now. The annual deck's zone map still reads the typed cell alone (Part 50).
 
 ---
 

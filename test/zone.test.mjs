@@ -180,6 +180,28 @@ test('the rule does not guess: a GMO named on teams of more than one zone gives 
   assert.equal(zoneLabel(zonesOfUser({ name: 'STAND IN', role: 'GMO', teams: null }, live)), 'ZONE M, ZONE N +2');
 });
 
+/* ONE ZONE, HOWEVER ITS CELLS WERE SPACED. A zone was compared trimmed and in capitals, and a GMO's name with runs of
+   blanks as one. Under the rule that never chooses that difference bites: "DAR  EAST" typed with two spaces on one team
+   and "DAR EAST" on another made their GMO "a GMO over two zones", and every empty team of that GMO lost its zone. Found
+   by review. A zone is now compared exactly as a GMO's name is. */
+test('one zone is one zone however its cells were spaced: a doubled or pasted blank inside a ZONE cell does not split a GMO', () => {
+  const rows = [
+    { team: 'B1', zone: 'DAR  EAST', gmo: 'GMO B' },                 // two spaces
+    { team: 'B2', zone: 'Dar East', gmo: 'GMO B' },
+    { team: 'B3', zone: 'DAR' + String.fromCharCode(160) + 'EAST ', gmo: 'GMO B' },   // a no-break space, pasted
+    { team: 'B4', zone: '', gmo: 'gmo  b' },
+    { team: 'C1', zone: 'DAR EAST', gmo: 'GMO C' }, { team: 'C2', zone: 'DAR-EAST', gmo: 'GMO C' }, { team: 'C3', zone: '', gmo: 'GMO C' },
+  ];
+  const zoned = teamsZoned(rows);
+  assert.equal(zoned[3].zone, 'DAR EAST', 'three spacings of one zone made their GMO a GMO over several zones');
+  assert.equal(zoned[3].zoneFromGmo, true);
+  assert.deepEqual(zonesOfTeams(zoned.slice(0, 4)), ['DAR EAST'], 'the same zone was listed more than once');
+  assert.deepEqual(zoneAnswer({ name: 'GMO B', role: 'GMO', teams: null }, rows), { zone: 'DAR EAST', zones: ['DAR EAST'] });
+  // a mark is not a blank: DAR-EAST is another spelling, the GMO is over two zones, and none is taken
+  assert.equal(zoned[6].zone, '');
+  assert.equal(zoned[0], rows[0], 'a team with its own zone is the very row, as typed');
+});
+
 test('what is typed in a team\'s own ZONE cell always stands, and the rows given are not changed', () => {
   // A FRESH copy, frozen through and through. The first form of this test took its "before" picture of the shared fixture
   // after an earlier test had already passed it through teamsZoned, so a teamsZoned that wrote into its rows had done its

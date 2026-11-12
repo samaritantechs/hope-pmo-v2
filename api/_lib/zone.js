@@ -94,8 +94,10 @@ const NO_ONE = /^(?:NO[ -]|\(UNASSIGNED\))/i;
 const cell = v => { const s = nameOrNull(v); return s === null || NO_ONE.test(s) ? '' : s; };
 /** A GMO's name as it is compared from one team to the next: trimmed, in capitals, runs of blanks as one. '' for nobody. */
 const G = s => cell(s).toUpperCase().replace(/\s+/g, ' ');
-/** A team's own ZONE cell as the rule reads it: trimmed, in capitals. '' when the cell names no zone. */
-const Z = s => cell(s).toUpperCase();
+/** A team's own ZONE cell as the rule reads it: trimmed, in capitals, runs of blanks as one, exactly as a GMO's name is
+    compared. '' when the cell names no zone. (Compared only trimmed, a doubled space inside ONE ZONE cell made its GMO "a
+    GMO over two zones", and under the rule that never chooses every empty team of that GMO lost its zone. Found by review.) */
+const Z = s => cell(s).toUpperCase().replace(/\s+/g, ' ');
 
 /** A TEAM'S ZONE IS ITS GMO'S. The rows of Teams & Staff, each with its zone: the team's own
     ZONE cell where it has one; else the zone its GMO's other teams carry, WHEN THEY ALL CARRY
@@ -126,10 +128,10 @@ export function teamsZoned(teamRows) {
   });
 }
 
-/** The distinct zones of some teams, as Teams & Staff spells them, in capitals and in order.
-    Reads the rows as given: pass them through teamsZoned first (before any filter by team). */
+/** The distinct zones of some teams, in capitals, runs of blanks as one, and in order: one zone is listed once however
+    its cells were spaced. Reads the rows as given: pass them through teamsZoned first (before any filter by team). */
 export function zonesOfTeams(teamRows) {
-  return [...new Set((teamRows || []).map(t => K(t && t.zone)).filter(Boolean))].sort();
+  return [...new Set((teamRows || []).map(t => K(t && t.zone).replace(/\s+/g, ' ')).filter(Boolean))].sort();
 }
 
 /** The rule above, over rows already read. */

@@ -13,7 +13,7 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 11 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
+**As of 12 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
 Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 52**.
 
 ---
@@ -83,10 +83,15 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   SAME one; a GMO over several zones gives none, the team reads NO ZONE SET and the staff script
   lists the zones and leaves the zone as it was. Both writings changed together (`teamsZoned`,
   the `gz` step of the template); the parity check read 600 random tables alike and failed on
-  five deliberate breaks. The script also says why a new staff was not added. The two tips are
-  reworded (the one optional tip script brings any book up to date). On the live list one team
-  is touched: it reads NO ZONE SET until its ZONE is typed. No read added; no page changed, so
-  `BUILD` stays `2026-11-11-b`.
+  deliberate breaks. **The staff already on a team are no longer asked for its zone:** a staff
+  who kept an old zone was handing it to the next person sent there. When Teams & Staff cannot
+  say, only the row itself can (the sender's word for a filed zone; for a new staff, the one zone
+  of the colleagues it names); otherwise the zone is left as it was, or the staff is not added,
+  and the row says what settles it. A zone is compared with runs of blanks as one, as a GMO's
+  name is. The two tips are reworded (the one optional tip script brings any book up to date).
+  Two reviewers read it before the merge, each finding put to a second reader: eight findings,
+  none refuted, all fixed (Part 52). On the live list one team is touched: it reads NO ZONE SET
+  until its ZONE is typed. No read added; no page changed, so `BUILD` stays `2026-11-11-b`.
 - **The two books, met in practice, 11 Nov night** (handbook Part 51) — the owner edited Teams &
   Staff at the NEW address and saw nothing at the old one: the edits went into the copy (section
   5). The two lists the owner pasted differ in 26 cells: 11 are that evening's edits and exist
@@ -115,7 +120,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   the rule there changes each zone's teams and General % on a slide: offered, section 8); the
   staff form in the portal still asks for the zone to be picked. Optional tips:
   `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql`.
-- **Staff registry, 11 Nov night** — the owner ran four more scripts, and every answer is back.
+- **Staff registry, 11 Nov night** (#672) — the owner ran four more scripts, and every answer is back.
   The five left by the second round: the transfer nobody could find was found (one letter apart
   in more than one word); of the three filed under the zone they had left, one was filed by his
   team's GMO's zone and one by the one zone of the teams whose names begin with his team's. A
@@ -206,9 +211,11 @@ Work done on our own server stays in the copy: it is on no report, on no other p
 commission, and neither site says so. **Do no real work at the new address** until this is settled.
 
 **It happened on the night of 11 Nov** (handbook Part 51). The owner edited Teams & Staff at the
-new address and nothing showed at the old one. Two scripts carried the edits into the real book
-(section 4). A chat that sees an address in the owner's message reads WHICH site it is before
-anything else, and says so in its first line if it is the new one.
+new address and nothing showed at the old one. A script was handed over that carries the edits
+into the real book, and a staff script of two rows to run after it; **neither answer is back**
+(sections 4 and 8), so until then the edits are only in the copy. A chat that sees an address in
+the owner's message reads WHICH site it is before anything else, and says so in its first line if
+it is the new one.
 
 **What has to be decided — by the owner, with Demit — is which database is the book:**
 
@@ -322,7 +329,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A rule that has to choose is a guess.** "The zone most of the GMO's teams carry" was read by
   three reviewers and nine skeptics and none objected; the owner's own list had a GMO over four
   zones and the tie went to the alphabet. Where a rule would pick among answers, give none, say
-  what was found, and let one typed cell settle it.
+  what was found, and let one typed cell settle it. And look for the OTHER places that pick: the
+  review of #673 found the script still taking "the zone of the staff already on that team",
+  which handed the tie's own answer to the next person sent there.
 - **Read which site an address is before anything else.** On 11 Nov the owner was asked to name
   a GMO on a team, did it at the new address, and an evening of edits went into the copy. When a
   message carries `recovery-app.sync-book.net`, the first line of the answer says that it is the
@@ -372,9 +381,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   Also: whether any of the fifteen cells where the real book is ahead was a change made on 11
   Nov at the new address (a team code is among them: changed on the copy, it locked nobody
   out); and the two questions of the second round.
-  Optional, once: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say
-  where a zone beside a name comes from; it adds both, and rewords the first where the earlier
-  file was already run; the zone shows without them).
+  Optional: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say where
+  a zone beside a name comes from; it adds both and rewords either one a book holds in an
+  earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
+  without them).
 - **Offered, never asked for — do not start without a yes**: the annual deck's zone map following
   the rule that a team's zone is its GMO's (it moves teams between the zones of that slide and
   changes each zone's General %); the staff form filling the zone from the team in the role; a
