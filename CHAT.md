@@ -103,7 +103,12 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   read on `/api/upload` or `/api/call`; a front-end change, `BUILD 2026-11-12-b`. **Not done:**
   no third staff database (HR's existing advance registry is reused as-is); no Excel export
   beyond the standard board buttons every screen already has. **Waiting on the owner:** whether
-  the 26-day annual allowance should reset each calendar year.
+  the 26-day annual allowance should reset each calendar year. **Found by the owner before this
+  merged** ("am not seeing the new tabs"): `api/_lib/auth.js`'s `ADMIN_TABS`/`EXTRA_TABS` -- the
+  one list that puts a tab on a signed-in person's own tabs, admin included -- had not been
+  given the two new tab ids, though everything else (`NAV`, `MGMT_ORDER`, `MOD_OF`, `FN`/`FN_TAB`)
+  had. Fixed in the same change, with a dedicated test (neither advance's own four tabs nor the
+  general sidebar test check this today).
 - **#679** — the Exp.Def week was never walked past Friday (handbook Part 57). "Expected
   defaulters goes mon to sunday not mon to fri bro." A finished past week's report, and the
   card behind a leader's name, silently stopped at Friday -- Saturday and Sunday were never

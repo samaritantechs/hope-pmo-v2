@@ -2185,6 +2185,35 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(sql.split('\n').length < 100, 'under 100 lines');
 });
 
+/* LEAVE / HOLIDAY -- "the tunnels and approvals must be the same to advances when people
+   request leaves / holidays". Added right after the owner reported "am not seeing the new
+   tabs": they were wired into NAV, MGMT_ORDER, MOD_OF and portal-core.js's FN / FN_TAB, but
+   not into auth.js's ADMIN_TABS / EXTRA_TABS -- the one list that actually puts a tab on a
+   signed-in person's own user.tabs, admin included. The same gap advance's own tabs do not
+   have a dedicated test pinning either; this one exists so the NEXT new tab does not repeat
+   it unnoticed. */
+test('leave / leaverep: granted like advance\'s own tabs -- admin from the start, a role when ticked', async () => {
+  const { ADMIN_TABS, EXTRA_TABS, USER_TABS } = await import('../api/_lib/auth.js');
+  for (const id of ['leave', 'leaverep']) {
+    assert.ok(ADMIN_TABS.includes(id), id + ' is not in ADMIN_TABS -- an admin would not see it either');
+    assert.ok(EXTRA_TABS.includes(id), id + ' is not in EXTRA_TABS -- the role editor could not offer it');
+    assert.ok(!USER_TABS.includes(id), id + ' should start admin-only, ticked onto a role like advreq');
+  }
+  const app = appSrc();
+  const nav = app.slice(app.indexOf("{ id:'advstaff',"), app.indexOf("{ id:'legal',"));
+  for (const id of ['leave', 'leaverep']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits directly after the advance block');
+  assert.ok(/leave:'leave', leaverep:'leave'/.test(app.match(/var MOD_OF = \{([\s\S]*?)\};/)[1]), 'both map to the one leave module');
+  assert.ok(/'advrep', 'leave', 'leaverep', 'impreq'/.test(app.match(/var MGMT_ORDER = \[[\s\S]*?\];/)[0]), 'placed in the sidebar order, between advance and imprest');
+  // FN (the dispatch map) and FN_TAB (the permission gate) are both in portal-core.js, not app.html.
+  const pc = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'portal-core.js'), 'utf8');
+  const fnMap = pc.slice(pc.indexOf('const FN = {'), pc.indexOf('const FN = {') + 2000);
+  for (const fn of ['leaveRequestPage', 'leaveRequest', 'leaveQueue', 'leaveDecide', 'leaveReport']) {
+    assert.ok(new RegExp('\\b' + fn + '\\b').test(fnMap), fn + ' is not in the FN dispatch map');
+  }
+  assert.ok(/leaveRequestPage: \['leave'\], leaveRequest: \['leave'\], leaveQueue: \['leave'\]/.test(pc), 'the ask and the desk are gated on the leave tab');
+  assert.ok(/leaveDecide: \['leave'\]/.test(pc) && /leaveReport: \['leaverep'\]/.test(pc), 'the desk\'s decision and the report are each gated on their own tab');
+});
+
 /* THE FRAUD DETECTOR -- "I need a new nav 'Fraud Detector' where every approved loan with a
    number or name among customer, guarantor or receiver that still exists in an another approved
    of the three columns or in the current defaults sheet, auto list the case list that will open

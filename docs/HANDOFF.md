@@ -4905,6 +4905,17 @@ picker; no third staff database was added, and none of its fields (bank, account
 guarantors) are read or shown here, since leave needs none of them. The report has no Excel
 export of its own beyond the standard board/table buttons every screen already carries.
 
+**Found before this shipped, by the owner: "am not seeing the new tabs."** Everything else was
+wired -- `NAV`, `MGMT_ORDER`, `MOD_OF`, and `portal-core.js`'s own `FN` / `FN_TAB` -- but
+`api/_lib/auth.js`'s `ADMIN_TABS` and `EXTRA_TABS` were not. Those two are the one list that
+actually puts a tab on a signed-in person's own `user.tabs`; without them nobody would have
+seen either tab, admin included, even after this merged. Fixed in the same change, and a
+dedicated test now pins it (`test/pages.test.mjs`, "leave / leaverep: granted like advance's
+own tabs"), since neither advance's own four tabs nor the general sidebar test check this --
+only `fraud`, `bonusplan` and `checklist` happened to have one already. Worth a general
+invariant test one day (every `div:'mgmt'` nav entry present in `ADMIN_TABS`/`EXTRA_TABS`),
+but that is a broader change than this one and was not made here.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

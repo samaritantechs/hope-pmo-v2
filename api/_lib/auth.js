@@ -93,8 +93,12 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    desk; advrep is the report with the bank accounts; advstaff is HR's staff registry.
    advfinal is the finance manager's: the Finalize button on the report, and the whole book on it.
      "I decide what navs are to be accessed by team codes there" */
+/* LEAVE / HOLIDAY -- two panes, granted the same way: admins hold them from the start, and a
+   role gets one when it is ticked. `leave` is the ask and, for whoever the advance-approver
+   routing makes an approver, the desk together; `leaverep` is the report. Reuses advance's own
+   routing (api/_lib/portal-core.js), not a tab of its own for that. */
 export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist', 'annual']);
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leave', 'leaverep', 'fraud', 'checklist', 'annual']);
 /* `annual` (the Annual Report -- the GM's annual workbook read off the system, every team's year
    month by month) is granted the same way `auditrep` is: admins from the start, a role when the
    tab is ticked. It reads the whole year's sales and collection for every team in scope. */
@@ -116,7 +120,7 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
    without inventing its own list. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'fraud', 'checklist', 'annual'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leave', 'leaverep', 'fraud', 'checklist', 'annual'];
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set
