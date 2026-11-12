@@ -14,7 +14,7 @@
 -- never a separate setting to begin with: leave reads advance's own routing
 -- (roles.approver_role, roles.approver_code, access_codes.supervisor -- RUN-ME-045 /
 -- RUN-ME-046) directly, so "Advance approver = Leave approver" already held before this
--- file changes a row. Run db/CHECK-leave-tabs-from-advance.sql before and after to see
+-- file changes a row. Run db/RUN-ME-053-leave-tabs-from-advance-read-only.sql before and after to see
 -- the difference this makes, if you want to look before committing to it.
 -- =====================================================================================
 set lock_timeout = '5s';

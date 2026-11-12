@@ -4978,10 +4978,13 @@ even holds `leavereq`/`leaveappr`/`leaverep` at all is its own tabs-array entry,
 for `advreq` was not automatically ticked for `leavereq`. `db/RUN-ME-052-leave-tabs-from-advance.sql`
 copies the grant: every role or code that holds `advreq`, `advappr` or `advrep` gets the matching
 `leavereq`, `leaveappr` or `leaverep` added to the same tabs array, safe to re-run any time after
-granting more advance tabs. `db/CHECK-leave-tabs-from-advance.sql` is the read-only preview the
-owner asked for first -- every role and code with an advance tab, its full tabs array, and
-whether each leave tab is already there or would be added; changes nothing, runnable before and
-after the write to see the difference.
+granting more advance tabs. `db/RUN-ME-053-leave-tabs-from-advance-read-only.sql` is the
+read-only preview the owner asked for first -- every role and code with an advance tab, its full
+tabs array, and whether each leave tab is already there or would be added; changes nothing,
+runnable before and after the write to see the difference. (Renamed from the one-off
+`CHECK-leave-tabs-from-advance.sql` it shipped as, to the numbered `RUN-ME-NNN-...-read-only`
+form `db/RUN-ME-019-postgres-war-5-read-only.sql` already uses -- caught in review, below -- so
+`db/` keeps one naming rule for a script that only reads, not two.)
 
 **The annual allowance (26 days, `LEAVE_ANNUAL_DAYS`)** was a Setting with no screen of its own
 since Part 58 -- the owner expected to find it, and change it, on the Leave report. It is there
@@ -4995,7 +4998,27 @@ trusted for nothing, a GMO's own `leaveappr` trusted even without RUN-ME-045, ex
 advance's `advappr` already is); a new test for the annual-allowance edit, admin-only, read
 back the same way everywhere (the report, the ask's own balance) off the one Setting, never two.
 `test/pages.test.mjs` gained a dedicated check that `leaveappr`'s idle-approver gate reads
-`withoutIdleApprovalTab` rather than a second copy of the rule. `npm test`: 1,512 pass.
+`withoutIdleApprovalTab` rather than a second copy of the rule.
+
+**Reviewed** by two independent readers before this merged, one real finding, confirmed and
+fixed: `leaveSetAnnualDays`'s own admin check was `isAdminUser(user)`, which answers "does this
+code see the admin screens" -- `resolveTabs` (`api/_lib/auth.js`) gives every AUDITOR/read-only
+code the `settings` tab on purpose, precisely so it can -- not "may this code write." The ONE
+door's own read-only wall (`WRITE_FNS` in `api/_lib/portal-core.js`, derived from `AUDITED` in
+`api/_lib/audit.js`) is what actually stops a view-only code from writing anything, and
+`leaveSetAnnualDays` had never been added to `AUDITED`, unlike every one of its direct siblings
+(`settingSet`, `settingDelete`, `systemOpenSet`) that already were. So a view-only
+code -- exactly the credential this system is built to let "try every screen and change
+nothing" (`_lib/portal-core.js`'s own words, at the wall itself) -- could in fact change the
+company-wide annual leave allowance. The reviewer reproduced it directly against the real test
+harness (an AUDITOR fixture holding none of the leave tabs, calling `leaveSetAnnualDays`
+straight through `portalApi`) before reporting it, not from reading the code alone. Fixed by
+adding `leaveSetAnnualDays` to `AUDITED`, and by adding it to `test/portal.test.mjs`'s own
+"every write is refused at the one door, loudly" test -- the one test that exists to prove this
+exact wall holds, for a representative sample of what `AUDITED` carries. The second reviewer
+found nothing on the two SQL files or the UI wiring; the rename above (the one cosmetic note
+either reviewer raised) is applied. `npm test`: 1,512 pass -- the same count, since the new case
+joined an existing test's list rather than adding a new one.
 
 **What it costs.** Nothing on `/api/upload` or `/api/call`. A front-end change: `BUILD
 2026-11-12-c`.

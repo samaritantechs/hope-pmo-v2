@@ -10800,6 +10800,7 @@ test('every write is refused at the one door, loudly', async () => {
     ['saveAccessCode', { code: 'X1', name: 'X', role: 'GMO' }],
     ['deleteTeam', { team: 'MBAGALA' }],
     ['saveOfficerAccount', { name: 'X', phone: '0713000999', team: 'KONGOWE' }],
+    ['leaveSetAnnualDays', { days: 30 }],  // resolveTabs gives this code 'settings' too; the fn's own isAdminUser check does not catch it
     ['stampWeek', {}],                    // a maintenance write, deliberately unaudited
     ['rebuildFollowup', {}],
   ]) {

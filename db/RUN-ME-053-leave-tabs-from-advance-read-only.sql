@@ -1,9 +1,9 @@
--- READ-ONLY. Changes nothing. Shows every role and every access code that currently holds
--- advreq, advappr or advrep, what its full tabs array is, and whether the matching leave tab
--- (leavereq / leaveappr / leaverep) is already there or would be ADDED by
--- db/RUN-ME-052-leave-tabs-from-advance.sql.
+-- RUN-ME-053 -- LEAVE TABS FROM ADVANCE, READ-ONLY PREVIEW. Changes nothing. Shows every role
+-- and every access code that currently holds advreq, advappr or advrep, what its full tabs
+-- array is, and whether the matching leave tab (leavereq / leaveappr / leaverep) is already
+-- there or would be ADDED by db/RUN-ME-052-leave-tabs-from-advance.sql.
 --
--- Run this first; then run that file; then run this again to see the same rows with every
+-- Run this first; then run RUN-ME-052; then run this again to see the same rows with every
 -- leavereq_already / leaveappr_already / leaverep_already column now matching its advance one.
 
 select x.kind, x.who, x.role_word, x.tabs,
