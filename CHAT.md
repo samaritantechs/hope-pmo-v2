@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 12 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 52**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 53**.
 
 ---
 
@@ -76,19 +76,35 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
-- **Staff registry, 12 Nov** — a new list, answered with one script of twenty-seven rows; **its
-  answer is not back yet.** It brought: the staff of three teams of one zone as their GMO has
-  them (fourteen people, names only); the staff of two of the southern teams that had waited
-  for a GMO (six with their details, and a seventh whose line was cut off in the paste); and
-  corrections for four more southern teams (four to add, two to remove). **How it was read:**
-  the fourteen are asked as MOVE and nobody of them is added (section 7: a list with names only
-  cannot tell a new person from a name the registry spells another way); the ones sent with a
-  phone or an account are NEW (not added when the registry already holds the name, the account
-  or the phone); "remove" is taken as left, so switched to Inactive; the cut-off line is an ASK
-  row that changes nothing. Run twice on a made-up registry of 5,000 on the real team list,
-  three ways (some of the people in it, none, all): under a second, and the second run changes
-  nothing. **Said to the owner as not done:** nobody is switched off for being absent from the
-  list of the three teams; the seventh person. The names are in no file of the repository.
+- **#675** — the staff script takes a whole staff form, and head-office people (handbook Part
+  53; the owner's words above three forms: "Zone pmo hq"). Each form carried a parent, a next of
+  kin, a start date, an address and a second phone, and the script stored six of a form's
+  fields. The rest now travels in a second list (`more`, under the row's number): a NEW staff is
+  added with it (the day they started is the REG-DATE); a PLACE fills only what is EMPTY, and
+  never writes a number beside a name it did not come with; MOVE, OFF and ASK never read it.
+  The birth date is the NIDA's, as the staff form reads it, and a NIDA of an impossible date no
+  longer stops the script. An account is stored as the staff form stores one. The row now says,
+  and does not act on: a zone word that is not filed (with the filed zones that share a word
+  with it), a NIDA that is not twenty digits, a form's date that is not its NIDA's, and, for
+  somebody with no team, the roles the others of that zone carry. **Head-office people** are
+  filed by department (`HQ - PMO`, as the registry already names it) and offered by ROLE
+  (section 7). No code that runs for a user changed, no page: `BUILD` stays `2026-11-11-b`.
+  **Handed over:** the script for the three (its answer is not back). The owner was told which
+  role word was written for whom (the forms give none: the desk Teams & Staff names each on),
+  that one form's birth date is not its NIDA's, that one NIDA has nineteen digits, and that a
+  marital status and an e-mail address are not stored (the registry has no box for them).
+- **Staff registry, 12 Nov** — a list of twenty-seven and its follow-up of five; **every answer
+  is back, and all that was asked is done but one line that was cut off in the paste.** The
+  staff of three teams of one zone came as their GMO has them (fourteen people, names only)
+  and were asked as MOVE (section 7). Ten were found, **every one filed under a zone their team
+  does not carry on Teams & Staff**, which is why none of them was on their team's list; each
+  now sits in their team's zone. One was in the registry a transposed letter away and was asked
+  again in the registry's own spelling. Three were in it under no spelling (their surnames on
+  nobody, in any zone) and were added with name, team and zone only. The southern teams: nine
+  added, two switched off, and one sent as new who was already there as a manager under another
+  zone, asked again as PLACE (moved; the phone and account written only where the registry had
+  none). Each script was run twice on a made-up registry of 5,000 on the real team list before
+  it was handed over. The names are in no file of the repository.
 - **#673** — the rule does not guess (handbook Part 52). #671 took a team with no ZONE into the
   zone MOST of its GMO's teams carried, a tie going A to Z. The owner's own Teams & Staff list
   showed one GMO named on teams of four zones (two, two, one, one): the tie had filed an officer
@@ -358,7 +374,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   copy (while section 5 stands).
 - **A chat can stop in the middle of a change without a word.** On the night of 11 Nov it did,
   for six hours, until the next scheduled check woke it; the change sat unpushed on the chat's
-  machine. Push work in progress to the chat's own branch before a long step.
+  machine. Push work in progress to the chat's own branch before a long step. On 12 Nov the
+  machine itself restarted under three reviewers: the pushed commit and the scratch folder were
+  still there, the test database had to be started again, and the review was resumed from its
+  run. Hand over what is ready before a review, when it is safe to run and to run again.
 - **A long script for the SQL editor starts with `set local jit = off`.** The staff script took
   eight seconds on the test machine, all of it the database compiling the query; it ran in a
   fifth of a second. Time a script with the compiler on and off before believing either number.
@@ -370,6 +389,19 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   letters in one word is enough) becomes a second person, and a second person cannot be taken
   back; asked as MOVE it comes back NOT FOUND with who carries each of the names, and the next
   script settles it. New staff are added from rows that carry a phone or an account.
+- **Head-office people are filed by department and offered by role** (handbook Part 53). They
+  have no team. The zone is the department as the registry already files it (`HQ - PMO`, `HQ -
+  CREDIT`, `MANAGEMENT`: the owner's "pmo hq" is `HQ - PMO`), never the words of a message. The
+  role is written as Roles & access spells it, never left to the script's default: the request
+  tab offers a name only to the holders of its role. When a form gives no role, write the desk
+  Teams & Staff names the person on, tell the owner which word was written for whom, and read
+  the roles the answer lists for that zone.
+- **A NEW that comes back ALREADY IN THE REGISTRY is asked again as PLACE.** The person is
+  there, somewhere else: PLACE moves them to the team and fills only what is empty.
+- **A staff found under a zone their team does not carry was on nobody's list.** When a GMO
+  sends the whole staff of a team, expect the registry to hold them under an older zone. The
+  MOVE that files them under their team's zone is what puts them on their team's code: say so
+  to the owner, it is the reason the list was sent.
 - **A name a list spells differently is asked for in the registry's own spelling.** When an
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
@@ -407,9 +439,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   Also: whether any of the fifteen cells where the real book is ahead was a change made on 11
   Nov at the new address (a team code is among them: changed on the copy, it locked nobody
   out); and the two questions of the second round.
-  Of the staff list of 12 Nov: the answer of its script (twenty-seven rows); the rest of the
-  message that was cut off; and whether the list of the three teams is their whole staff (if it
-  is, the people the registry files on those teams who are not on it are to be asked about).
+  Of the staff lists of 12 Nov: the rest of the message that was cut off (the third name of
+  one southern team); the phone, account and NIDA of the three officers added by name only; and
+  whether the list of the three teams is their whole staff (if it is, the people the registry
+  files on those teams who are not on it are to be asked about).
+  Of the three head-office forms: the answer of their script; and, to confirm with the staff,
+  the NIDA that has nineteen digits and the birth date that is not the one in its NIDA.
   Optional: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say where
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows

@@ -9,7 +9,7 @@
 -- transferred where, who is new (often with phone, account, NIDA, TIN, NSSF), who they cannot
 -- see on their list. Copy this file, fill the list, and hand the owner the copy: new query,
 -- paste, Run. ONE ROW COMES BACK FOR EACH PERSON, saying what was done. (docs/HANDOFF.md
--- Parts 48 to 52.)
+-- Parts 48 to 53.)
 -- NO STAFF NAME IS EVER COMMITTED: this repository is public. The filled copy goes to the owner.
 --
 -- ONE ROW OF THE LIST FOR EACH PERSON:
@@ -21,6 +21,22 @@
 --   zone_like   array of names of colleagues already in the registry: their zone, if they all carry one, as a last resort
 --   account, phone, bank, nida, tin, nssf    (an account also FINDS a person whose name is spelt differently)
 --   why         for ASK: what is missing
+--
+-- THE REST OF A STAFF FORM is a second list (`more`, below the first): one row for each person
+-- who came with one, under the row's number. A NEW staff is added with it. A PLACE fills only
+-- what is EMPTY on a staff the registry already holds. MOVE, OFF and ASK never read it.
+--   phone2      a second phone
+--   residence   where they live, as written
+--   started     the day they started work: the registry's REG-DATE (empty: the day the script is run)
+--   birth       the birth date on the form: used only when the NIDA number gives none (the staff
+--               form reads the date off the NIDA; when the two differ the row says so)
+--   kin1, kin1_phone, kin2, kin2_phone
+--               the two people a form names (a parent, the next of kin, a guarantor): the
+--               registry's JINA LA MDHAMINI and JINA LA MDHAMINI 2, each with their number. Say
+--               who they are after the name: 'NAME (MAMA)'. On a staff already in the registry
+--               a box that names somebody is left alone, and so is the number beside it.
+-- The registry has no place for a marital status or an e-mail address: they are not stored,
+-- and the hand-over says so.
 --
 -- OFF    left, terminated or deactivated: switched to Inactive (off every request list, history
 --        kept, nothing deleted).
@@ -48,6 +64,15 @@
 -- script in the REGISTRY'S OWN SPELLING, or settle them by staff ID
 -- (TEMPLATE-staff-changes-by-id.sql). For a NEW staff only the name, the account and the phone
 -- are compared.
+--
+-- HEAD-OFFICE PEOPLE HAVE NO TEAM (docs/HANDOFF.md Part 53). The registry files them by
+-- department: the zone is "HQ - PMO", "HQ - CREDIT", "HQ - CUSTOMER SERVICE" or "MANAGEMENT"
+-- (portal-core.js, "A department is not a zone"), and the request tab offers such a name to the
+-- holders of its ROLE. So: no team_text and no zone_teams; zone_else is the department AS THE
+-- REGISTRY ALREADY FILES IT; and role_word is the role AS ROLES & ACCESS SPELLS IT ('PMO
+-- RECOVERY', 'LEGAL'), never left to the default: a role written another way puts the person on
+-- nobody's list. A word that is no filed zone adds nobody, and the row lists the filed zones that
+-- share a word with it (asked for as "PMO HQ", it answers "HQ - PMO").
 --
 -- THE ZONE of a moved or new staff IS THE ZONE OF THEIR TEAM'S GMO (docs/HANDOFF.md Parts 50, 52):
 --   "If an officer has team - zone is automatic of the GMO's" ... "to the respective team's gmo"
@@ -96,21 +121,53 @@ ask(n, grp, act, name, role_word, team_text, zone_teams, zone_else, zone_like, a
   (4, 'ZONE NAME', 'PLACE', 'FOURTH MIDDLE LAST', 'Field Officer', 'Team Two', array['TEAM TWO'], 'ZONE NAME', array['FIRST MIDDLE LAST'], null, null, null, null, null, null, null),
   (5, 'ZONE NAME', 'ASK', 'FIFTH MIDDLE LAST', null, null, null, null, null, null, null, null, null, null, null, 'what is missing')
 ),
+-- THE REST OF A STAFF FORM, one row for each person of the list above who came with one. Leave the one row of nulls
+-- (n = 0 is nobody's number) when nobody did.
+more(n, phone2, residence, started, birth, kin1, kin1_phone, kin2, kin2_phone) as (values
+  (0, null::text, null::text, null::date, null::date, null::text, null::text, null::text, null::text)
+),
 a as (   -- each row as it is compared: the name in capitals with single spaces, the account without marks
   select k.*,
          regexp_replace(upper(btrim(k.name)), '\s+', ' ', 'g') as nkey,
          ltrim(regexp_replace(upper(coalesce(k.account, '')), '[^A-Z0-9]', '', 'g'), '0') as akey,
+         -- the account as it is WRITTEN to the registry, the way the staff form saves one: its digits (leading zeros kept)
+         -- when it is digits, blanks, dots and dashes ("307 100 70344"), else the text as it is: some banks write letters
+         case when coalesce(k.account, '') ~ '^[\d.\s-]+$' then nullif(regexp_replace(k.account, '\D', '', 'g'), '')
+              else nullif(btrim(k.account), '') end as account_w,
          (select case when length(d.x) = 9 then d.x end
             from (select right(regexp_replace(regexp_replace(regexp_replace(coalesce(k.phone, ''), '\D', '', 'g'), '^255', ''), '^0+', ''), 9) as x) d) as phone9,
          nullif(regexp_replace(coalesce(k.nida, ''), '\D', '', 'g'), '') as nida_d,
          nullif(regexp_replace(coalesce(k.tin, ''), '\D', '', 'g'), '') as tin_d,
-         nullif(regexp_replace(coalesce(k.nssf, ''), '\D', '', 'g'), '') as nssf_d
+         nullif(regexp_replace(coalesce(k.nssf, ''), '\D', '', 'g'), '') as nssf_d,
+         -- the rest of the form, read the way the portal's staff form saves it: text as written, a phone as its nine digits
+         mo.residence, mo.started, mo.birth_typed, mo.kin1, mo.kin2, coalesce(mo.more_n, 0) as more_n,
+         (select case when length(d.x) = 9 then d.x end
+            from (select right(regexp_replace(regexp_replace(regexp_replace(coalesce(mo.phone2, ''), '\D', '', 'g'), '^255', ''), '^0+', ''), 9) as x) d) as phone2_9,
+         (select case when length(d.x) = 9 then d.x end
+            from (select right(regexp_replace(regexp_replace(regexp_replace(coalesce(mo.kin1_phone, ''), '\D', '', 'g'), '^255', ''), '^0+', ''), 9) as x) d) as kin1_phone9,
+         (select case when length(d.x) = 9 then d.x end
+            from (select right(regexp_replace(regexp_replace(regexp_replace(coalesce(mo.kin2_phone, ''), '\D', '', 'g'), '^255', ''), '^0+', ''), 9) as x) d) as kin2_phone9
   from ask k
+  left join lateral (   -- this row's line of the details list, if it has one (the first, when a number was written twice: the row says so)
+    select nullif(btrim(d.residence), '') as residence, d.started, d.birth as birth_typed,
+           nullif(btrim(d.kin1), '') as kin1, nullif(btrim(d.kin2), '') as kin2, d.phone2, d.kin1_phone, d.kin2_phone,
+           (select count(*) from more c where c.n = k.n) as more_n
+    from more d
+    where d.n = k.n
+    limit 1
+  ) mo on true
 ),
-a2 as (
-  select a.*, row_number() over (partition by a.nkey order by a.n) as nth, string_to_array(a.nkey, ' ') as w,
-         case when a.nida_d ~ '^(19|20)\d\d(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])' then to_date(left(a.nida_d, 8), 'YYYYMMDD') end as birth
-  from a
+a2 as (   -- THE BIRTH DATE IS READ OFF THE NIDA NUMBER (its first eight digits), as the portal's staff form reads it; the
+          -- date written on the form counts only when the NIDA gives none. A NIDA whose first digits are no day of the
+          -- calendar (the 31st of a month of thirty days) gives none: it does not stop the script.
+  select a0.*, coalesce(a0.birth_nida, a0.birth_typed) as birth
+  from (select a.*, row_number() over (partition by a.nkey order by a.n) as nth, string_to_array(a.nkey, ' ') as w,
+               case when a.nida_d ~ '^(19|20)\d\d(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])'
+                    then case when substr(a.nida_d, 7, 2)::int
+                                   <= extract(day from make_date(substr(a.nida_d, 1, 4)::int, substr(a.nida_d, 5, 2)::int, 1) + interval '1 month' - interval '1 day')::int
+                              then make_date(substr(a.nida_d, 1, 4)::int, substr(a.nida_d, 5, 2)::int, substr(a.nida_d, 7, 2)::int) end
+               end as birth_nida
+          from a) a0
 ),
 reg as (   -- the registry as it stands
   select s.id, s.name as name_as_filed, s.status, s.zone, s.role,
@@ -275,6 +332,18 @@ z as (   -- the zone for a row: its team's GMO's (tz); else the one zone of the 
               else 'type the ZONE on the team on Teams & Staff and run the script again' end as z_fix,
          (select zz.zone from zones zz
            where zz.key = nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '')) as z_else,
+         -- the sender's word was given and NO zone is filed under it: said on the row, with the filed zones that share a
+         -- word with it (a head-office department is filed "HQ - PMO", and is asked for as "PMO HQ"). Nothing is chosen.
+         case when nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '') is not null
+               and not exists (select 1 from zones zz where zz.key = regexp_replace(upper(a.zone_else), '[^A-Z0-9]', '', 'g'))
+              then (select 'the sender''s word for the zone (' || btrim(a.zone_else) || ') is not a zone already filed; '
+                           || coalesce('the filed zones that share a word with it: ' || string_agg(q.zone, ', ' order by q.zone collate "C"),
+                                       'no filed zone shares a word with it')
+                      from (select zz.zone from zones zz
+                             where exists (select 1 from regexp_split_to_table(upper(a.zone_else), '[^A-Z0-9]+') as sw(x)
+                                            where length(sw.x) >= 2 and sw.x <> 'ZONE'
+                                              and sw.x = any (regexp_split_to_array(zz.zone, '[^A-Z0-9]+')))
+                             order by zz.zone collate "C" limit 8) q) end as z_word_miss,
          (select min(upper(btrim(r.zone))) from reg r      -- the colleagues the row names, when they all carry ONE zone
            where r.nkey = any (select regexp_replace(upper(btrim(x)), '\s+', ' ', 'g') from unnest(a.zone_like) x)
              and r.zkey <> ''
@@ -299,7 +368,8 @@ z as (   -- the zone for a row: its team's GMO's (tz); else the one zone of the 
   ) tl on true
 ),
 plan as (   -- what a row asks of the staff it means
-  select t.n, t.id, a.act, a.phone9, a.bank, a.account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
+  select t.n, t.id, a.act, a.phone9, a.bank, a.account_w as account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
+         a.phone2_9, a.residence, a.started, a.kin1, a.kin1_phone9, a.kin2, a.kin2_phone9,
          case when a.act = 'OFF' then 'Inactive' else 'Active' end as new_status,
          case when a.act = 'OFF' then r.role
               else coalesce(a.role_word, nullif(btrim(regexp_replace(coalesce(r.role, ''), '\s+-\s+.*$', '')), ''), 'Field Officer')
@@ -323,7 +393,21 @@ upd as (
          nida       = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.nida), ''), p.nida_d) else s.nida end,
          tin        = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.tin), ''), p.tin_d) else s.tin end,
          nssf       = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.nssf), ''), p.nssf_d) else s.nssf end,
-         birth_date = case when p.act = 'PLACE' then coalesce(s.birth_date, p.birth) else s.birth_date end,
+         -- a birth date is written only where the registry has none AND the NIDA beside it will be the row's own (the
+         -- registry has no NIDA, or the same one): a date is never set beside a NIDA number it was not read from
+         birth_date = case when p.act = 'PLACE' and (coalesce(btrim(s.nida), '') = '' or regexp_replace(s.nida, '\D', '', 'g') = p.nida_d)
+                           then coalesce(s.birth_date, p.birth) else s.birth_date end,
+         -- the rest of the form, the same way: only what is EMPTY. One of the two people a form names is written only
+         -- into a box that names nobody, and a number is written only beside the name it came with.
+         phone2     = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.phone2), ''), p.phone2_9) else s.phone2 end,
+         residence  = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.residence), ''), p.residence) else s.residence end,
+         reg_date   = case when p.act = 'PLACE' then coalesce(s.reg_date, p.started) else s.reg_date end,
+         guarantor1 = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.guarantor1), ''), p.kin1) else s.guarantor1 end,
+         guarantor1_phone = case when p.act = 'PLACE' and coalesce(btrim(s.guarantor1), '') = ''
+                                 then coalesce(nullif(btrim(s.guarantor1_phone), ''), p.kin1_phone9) else s.guarantor1_phone end,
+         guarantor2 = case when p.act = 'PLACE' then coalesce(nullif(btrim(s.guarantor2), ''), p.kin2) else s.guarantor2 end,
+         guarantor2_phone = case when p.act = 'PLACE' and coalesce(btrim(s.guarantor2), '') = ''
+                                 then coalesce(nullif(btrim(s.guarantor2_phone), ''), p.kin2_phone9) else s.guarantor2_phone end,
          updated_by = (select done_by from cfg), updated_at = now()
     from plan p
    where s.id = p.id
@@ -335,7 +419,14 @@ upd as (
                or (coalesce(btrim(s.account), '') = '' and p.account is not null)
                or (coalesce(btrim(s.nida), '') = '' and p.nida_d is not null)
                or (coalesce(btrim(s.tin), '') = '' and p.tin_d is not null)
-               or (coalesce(btrim(s.nssf), '') = '' and p.nssf_d is not null))))
+               or (coalesce(btrim(s.nssf), '') = '' and p.nssf_d is not null)
+               or (s.birth_date is null and p.birth is not null
+                   and (coalesce(btrim(s.nida), '') = '' or regexp_replace(s.nida, '\D', '', 'g') = p.nida_d))
+               or (coalesce(btrim(s.phone2), '') = '' and p.phone2_9 is not null)
+               or (coalesce(btrim(s.residence), '') = '' and p.residence is not null)
+               or (s.reg_date is null and p.started is not null)
+               or (coalesce(btrim(s.guarantor1), '') = '' and (p.kin1 is not null or (coalesce(btrim(s.guarantor1_phone), '') = '' and p.kin1_phone9 is not null)))
+               or (coalesce(btrim(s.guarantor2), '') = '' and (p.kin2 is not null or (coalesce(btrim(s.guarantor2_phone), '') = '' and p.kin2_phone9 is not null))))))
   returning s.id
 ),
 num as (   -- where the staff numbers stand: past every number in use, and past the count of rows
@@ -343,7 +434,8 @@ num as (   -- where the staff numbers stand: past every number in use, and past 
   from staff_registry
 ),
 newrows as (   -- a new staff: nobody in the registry could be them, and a zone is known
-  select a.n, a.nkey as name, a.phone9, a.bank, a.account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
+  select a.n, a.nkey as name, a.phone9, a.bank, a.account_w as account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
+         a.phone2_9, a.residence, a.started, a.kin1, a.kin1_phone9, a.kin2, a.kin2_phone9,
          coalesce(a.role_word, 'Field Officer')
            || coalesce(' - ' || case when cardinality(a.zone_teams) = 1 and z.team_filed is not null then z.team_filed else a.team_text end, '') as role,
          coalesce(z.z_team, z.z_else, z.z_like) as zone,
@@ -365,8 +457,10 @@ newid as (
   from newrows n
 ),
 ins as (
-  insert into staff_registry (id, reg_date, name, phone, role, bank, account, zone, nida, birth_date, tin, nssf, status, created_by, updated_by, updated_at)
-  select n.id, (now() at time zone 'Africa/Dar_es_Salaam')::date, n.name, n.phone9, n.role, n.bank, n.account, n.zone, n.nida_d, n.birth, n.tin_d, n.nssf_d,
+  insert into staff_registry (id, reg_date, name, phone, phone2, role, residence, bank, account, zone, nida, birth_date,
+                              guarantor1, guarantor1_phone, guarantor2, guarantor2_phone, tin, nssf, status, created_by, updated_by, updated_at)
+  select n.id, coalesce(n.started, (now() at time zone 'Africa/Dar_es_Salaam')::date), n.name, n.phone9, n.phone2_9, n.role, n.residence, n.bank, n.account, n.zone,
+         n.nida_d, n.birth, n.kin1, n.kin1_phone9, n.kin2, n.kin2_phone9, n.tin_d, n.nssf_d,
          'Active', (select done_by from cfg), (select done_by from cfg), now()
   from newid n
   returning id
@@ -416,6 +510,31 @@ select a.n as "#", a.grp as list, a.act as asked, a.nkey as name,
          -- somebody new for whom no zone could be found at all: the row says why, and what to do about it
          case when a.nth = 1 and a.act in ('NEW', 'PLACE') and t.all_n is null and i.id is null and z.z_why is not null
               then z.z_why || ': ' || z.z_fix end,
+         -- the sender's word for the zone is no filed zone, and nothing else gave one: the row says so, with the zones it may mean
+         case when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and z.z_team is null and z.z_word_miss is not null
+               and (t.id is not null or (a.act in ('NEW', 'PLACE') and t.all_n is null and i.id is null))
+              then z.z_word_miss end,
+         -- what a form's own numbers say about themselves, on a staff this row added or filled in
+         case when a.nth = 1 and (i.id is not null or (a.act = 'PLACE' and u.id is not null)) and a.nida_d is not null and length(a.nida_d) <> 20
+              then 'the NIDA number sent has ' || length(a.nida_d) || ' digits and a NIDA has 20: kept as it was sent' end,
+         case when a.nth = 1 and (i.id is not null or (a.act = 'PLACE' and u.id is not null)) and a.birth_nida is not null and a.birth_typed is not null
+               and a.birth_nida <> a.birth_typed
+              then 'the birth date on the form (' || to_char(a.birth_typed, 'DD/MM/YYYY') || ') is not the one in the NIDA number ('
+                   || to_char(a.birth_nida, 'DD/MM/YYYY') || '): the NIDA''s is kept, as the staff form does' end,
+         case when a.nth = 1 and a.more_n > 1 then 'the details list has this row''s number ' || a.more_n || ' times: the first was read' end,
+         -- somebody with no team (a head-office person) who was added or changed: the roles the others of that zone carry.
+         -- The request tab offers a name to the holders of its role, so a role written another way is seen here at once.
+         case when a.nth = 1 and a.act in ('NEW', 'PLACE', 'MOVE') and coalesce(cardinality(a.zone_teams), 0) = 0
+               and (i.id is not null or u.id is not null)
+              then (select 'the roles the others filed in ' || q0.zone || ' carry: ' || string_agg(q.role_word || ' (' || q.n || ')', ', ' order by q.n desc, q.role_word)
+                      from (select coalesce(case when u.id is not null then p.new_zone end, nw.zone) as zone) q0
+                      cross join lateral (
+                        select upper(btrim(regexp_replace(coalesce(r3.role, ''), '\s+-\s+.*$', ''))) as role_word, count(*) as n
+                          from reg r3
+                         where r3.live and upper(btrim(coalesce(r3.zone, ''))) = upper(btrim(q0.zone)) and r3.id is distinct from t.id
+                         group by 1 order by count(*) desc, 1 limit 8) q
+                     where q.role_word <> ''
+                     group by q0.zone) end,
          case when a.nth = 1 and a.act <> 'ASK' and t.id is null and t.all_n is not null then 'they are: ' || t.ids end,
          case when a.nth = 1 and a.act in ('OFF', 'MOVE') and t.all_n is null then 'nearest names: ' || coalesce((
                 select string_agg(q.name_as_filed || ' [' || q.id || ', ' || coalesce(q.zone, 'no zone') || ', ' || q.status || ']', '; ')

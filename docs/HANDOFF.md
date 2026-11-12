@@ -4561,6 +4561,84 @@ team's ZONE is typed, and that script was handed over (Part 51). The two scripts
 as it was that evening; both do what their headings say on the rows they hold, and a later list is answered with the template
 as it is now. The annual deck's zone map still reads the typed cell alone (Part 50).
 
+## Part 53 — A whole staff form, and head-office people
+
+> "Zone pmo hq" — the owner, 12 November 2026, above three staff forms
+
+Three forms came with two words above them. Each was the form a person fills in when they start: NIDA, bank and account, NSSF,
+TIN, name, birth date, marital status, a parent with a number, a next of kin with a number, the day they started, where they
+live, their phone, their e-mail address. The staff script (Parts 48 to 52) stored six of those. The registry has had a box for
+most of the rest since it was the DATABASE tab of the advance sheet (`db/RUN-ME-044-salary-advance.sql`): PHONE 2, Residence,
+REG-DATE, and two guarantors, each with a number. The staff form in the portal fills them (`advStaffSave`); the script did not.
+
+**The rest of a form travels in a second list.** `more(n, phone2, residence, started, birth, kin1, kin1_phone, kin2,
+kin2_phone)`: one row for each person who came with a form, under that person's number in the first list. A list with no forms
+is written exactly as before, and the second list stays as its one row of nulls. A NEW staff is added with all of it, and the
+day they started is their REG-DATE (empty: the day the script is run, as it always was). A PLACE, a staff the registry already
+holds, has only their EMPTY boxes filled, the rule it always had for the first six. MOVE, OFF and ASK never read it.
+
+**The two people a form names** go into the registry's two guarantor boxes (JINA LA MDHAMINI, JINA LA MDHAMINI 2) with their
+numbers, written with who they are: `NAME (MAMA)`. The registry has no other place for a parent or a next of kin, and the form
+asks for exactly two people. On a staff already there, a box that names somebody is left alone, and so is the number beside
+it: one person's number is never written beside another person's name.
+
+**The birth date is the NIDA's**, as the staff form reads it (`nidaBirth(nida) || the date typed`). The date written on a form
+counts only when the NIDA gives none; when the two differ the row says so and keeps the NIDA's. On a staff already there a
+date is written only where the registry has none and the NIDA beside it will be the row's own. A NIDA whose first digits are
+no day of the calendar (the 31st of a month of thirty days) used to stop the whole script with an error, and the owner would
+have seen the error and none of the list. It now gives no date.
+
+**An account is stored as the staff form stores one** (`accountCell`): its digits, leading zeros kept, when it is digits,
+blanks, dots and dashes; else the text as it is. A form wrote an account in three groups, and it would have gone into the
+column payroll reads with its blanks in it.
+
+**Head-office people have no team.** The registry files them by department, the way the sheet did: the zone is `HQ - PMO`,
+`HQ - CREDIT`, `HQ - CUSTOMER SERVICE` or `MANAGEMENT` (`ADV_DEPT_PREFIXES` in `portal-core.js`, under "A department is not a
+zone"), and the request tab offers such a name to the holders of its ROLE, whatever their teams (`advRoleSame_`: two roles are
+the same when the words of one open the other). So a head-office row gives no team; its zone is the department **as the
+registry already files it** (the owner's "pmo hq" is the registry's `HQ - PMO`); and its role is written **as Roles & access
+spells it**, never left to the script's default, which is Field Officer and would put the person on nobody's list. The forms
+gave no role. Each of the three was written with the desk Teams & Staff names them on, and the owner was told which word was
+written for whom and where to change it.
+
+**What a row now says, and does not act on.**
+
+1. *The sender's word for the zone is no filed zone.* Nobody is added, as before; the row now says that the word is not filed
+   and lists the filed zones that share a word with it. Nothing is chosen: the word still counts only as the name of a zone
+   already filed (Part 52: a rule that has to choose is a guess).
+2. *A NIDA that is not twenty digits* is kept as it was sent, and the row says how many it has.
+3. *A form's birth date that is not its NIDA's*: both are shown, the NIDA's is kept.
+4. *A number written twice in the details list*: the first is read, and the row says so.
+5. *Somebody with no team who was added or changed*: the roles the others filed in that zone carry, with how many carry each.
+   A role written another way is then seen on the first answer, not on the day the person cannot find their name.
+
+**What it costs.** Nothing in the portal or the call app: no code that runs for a user changed and no page did, so `BUILD` and
+`CALL_BUILD` stay where they were. The script is run by hand; it reads the same two tables as before, the staff registry and
+the teams, and on a registry of 5,000 it still answers in under a second.
+
+**Checked** on a PostgreSQL holding the real team list and a made-up registry of 5,000. Nineteen rows written to go wrong in
+every way the list above names: a staff half filled in, one filled in whole, a NIDA of 31 February with and without a typed
+date, a number twice in the details list, a zone word spelt three ways, an account with letters, a MOVE and an OFF that carry
+details they must not read. The second run changed nothing in any of them. The filled copy for the three was run three ways:
+the zone filed and nobody there; one of the three already there under a shorter name and the same phone; no head-office zone
+filed at all. `test/staff-template.test.mjs` holds the promises by their text, in two new tests.
+
+**Not stored, and said to the owner:** a marital status and an e-mail address. The registry has no box for either.
+
+**Not done.** The role of a head-office person is not checked against Roles & access: the row shows what their colleagues
+carry, and a second writing of `advRoleSame_` in SQL would be one rule in two places. The portal's staff form is as it was.
+
+**The lists of the same day** (no code). A list of twenty-seven: the staff of three teams of one zone as their GMO has them,
+the staff of two southern teams that had waited for a GMO, and corrections for four more. The people of the three teams were
+asked as MOVE, never added from a list that carries names only (a name the registry spells another way would have become a
+second person). Ten were found, **every one of them filed under a zone their team does not carry on Teams & Staff**, which is
+why none of them could find their name on their team's code; each now sits in their team's zone. Nine were added, two were
+switched off. Five were left: one was in the registry one transposed letter away and was asked for again in the registry's
+own spelling; three were in it under no spelling (their surnames on nobody, in any zone) and were added with name, team and
+zone only; and one, sent as new, was already there as a manager under another zone, and was asked again as PLACE, which moved
+him and wrote the phone and account the list gave only where the registry had none. One line of the list was cut off in the
+paste and is still owed.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
