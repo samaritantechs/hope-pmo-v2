@@ -968,14 +968,16 @@ async function defaulters(db, user, { type = 'current', weekday, date }, nowMs) 
 
 /** Expected Defaulters -- the WEEKLY CYCLE, not a one-day list. Every defaulter is visited
     twice a week and the two days are derived from the loan itself: the weekday it was
-    disbursed on (Day 1) and three days later (Day 2), with Sunday rolled onto Monday because
-    nobody works Sunday. That is why the tab is a Mon-Sat set of day tabs with a distribution
-    across them -- a customer appears under two of the six.
+    disbursed on (Day 1) and three days later (Day 2) -- full week, Monday through Sunday, like
+    every other Exp.Def clock in this system (handbook Part 57: the week's own report already
+    walks to Sunday). "lets give all the expected defaulters to sunday for full week
+    recoveries" -- the owner. A loan disbursed Thursday has its own Day 2 fall on Sunday, and
+    now keeps that day rather than being merged into Monday's count: the tab is a Mon-Sun set
+    of day tabs with a distribution across them -- a customer appears under two of the seven.
 
     Each row also carries the recycling leader who currently owns the customer, because the
     officer working this list needs to know who else is already on them. */
 const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-function rollSun(u) { return u === 7 ? 1 : u; }        // Sunday -> Monday
 async function expectedDefaulters(db, user, _args, nowMs) {
   const [def, teamRows, strat, iniSnap] = await Promise.all([
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs) }),
@@ -996,8 +998,8 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
-      const primary = raw ? rollSun(raw) : 0;
-      const secondary = primary ? rollSun(((primary - 1 + 3) % 7) + 1) : 0;
+      const primary = raw;
+      const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
       const a = assignFor(d, strat, nowMs);
       const s = K(d.status);
       const team = teamBy[K(d.team)] || {};
@@ -1016,7 +1018,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
   // weekday, and the live system simply dropped them from the cycle. Silently losing a
   // defaulter is the one outcome this tab must never produce, so they get their own bucket
   // and their own tab instead of disappearing.
-  const dist = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+  const dist = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0 };
   for (const r of rows) {
     if (!r.primary) { dist[0]++; continue; }
     dist[r.primary]++;
@@ -1047,7 +1049,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     me: user && user.name ? String(user.name).trim() : '',
     iAmLeader: !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me),
     unplaced: dist[0],
-    todayIndex: rollSun(isoWeekday(nowMs)),
+    todayIndex: isoWeekday(nowMs),
     teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),
     chronic: rows.filter(r => r.status === 'CHRONIC').length,
     expired: rows.filter(r => r.status === 'EXPIRED').length,

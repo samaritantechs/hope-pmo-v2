@@ -5023,9 +5023,70 @@ joined an existing test's list rather than adding a new one.
 **What it costs.** Nothing on `/api/upload` or `/api/call`. A front-end change: `BUILD
 2026-11-12-c`.
 
-**Not done.** `db/RUN-ME-052-leave-tabs-from-advance.sql` and `db/CHECK-leave-tabs-from-advance.sql`
-are handed to the owner, not run by this chat (no database access) -- running the write, and
-re-running the check after, is the owner's own next step.
+**Not done.** `db/RUN-ME-052-leave-tabs-from-advance.sql` and
+`db/RUN-ME-053-leave-tabs-from-advance-read-only.sql` are handed to the owner, not run by this
+chat (no database access) -- running the write, and re-running the check after, is the owner's
+own next step.
+
+## Part 60 — Expected Defaulters, full week: Sunday is a day of its own, not folded into Monday
+
+> "i said lets give all the expected defaulters to sunday for full week recoveries. am sure
+> assignments fall there too bro" — the owner, 12 November 2026
+
+Every defaulter's two cycle days (the weekday a loan was disbursed, and three days later) were
+read through `rollSun`, one copy in `api/_lib/portal-core.js` (the live Expected Defaulters
+list and its "Mgawanyo wa wiki / Weekly distribution" board) and a second, identical copy in
+`api/_lib/expdf.js` (the Exp.Def Report, daily, weekly and monthly): `u === 7 ? 1 : u`, Sunday
+rolled onto Monday, because nobody used to work Sunday. A loan disbursed Thursday, whose own Day
+2 falls three days later on Sunday, was counted as if Day 2 were Monday instead; a loan
+disbursed on a Sunday itself could never be anybody's Day 1; and the live clock that decides
+"which day is today" rolled a real Sunday to Monday's slot too, so a customer actually due
+Monday showed as due on the real Sunday as well -- one Monday obligation, double-counted as a
+borrowed Sunday visit. "Assignments" is this same mechanism by another name: the dedicated
+Defaulter Assignment screen (`assignments` in `portal-core.js`) carries no weekday of its own at
+all (it is "today's deck, whoever owns it now", no day-of-week logic to speak of) -- the owner's
+"assignments" is the Exp.Def list's own distribution board and day pills, which did.
+
+**The fix.** Both `rollSun`s are gone; `primary`, `secondary` and the "which day is today" clock
+read the real ISO weekday (1-7) everywhere they used to roll it. The live list's `dist` object
+and its front-end twin in `VIEWS.defexp` (`public/app.html`, which recomputes the distribution
+client-side so switching "Wangu / Wote" costs no round trip) both gained a `7:` key; the
+"Mgawanyo wa wiki" board and the day-pill bar walk `[1,2,3,4,5,6,7]`, not `[1,...,6]`. The report
+side's own Sunday-specific suppression -- `xdShowDay_`, which hid a leader's card's Sunday
+column and tab unless real decks had been filed that Sunday, on the belief that the rotation
+rolled Sunday away -- is gone too: Sunday now shows its column and tab exactly as Monday through
+Saturday already did, filed or not. Nothing else moved: `assignFor`/`assignStrategy`
+(`api/_lib/assign.js`, the role-rotation clock) read `days_elapsed`, never a weekday, and are
+untouched; the week-walk itself (Part 57, `expdfPeriod`) already reached Sunday -- this is what
+happens once it gets there.
+
+**A customer whose true cycle never touched Sunday is not newly credited for it.** A loan
+disbursed Friday has Day 1 Friday and Day 2 Monday, exactly as the calendar says -- never
+Sunday, before or after this change. Money that happened to move on a Sunday for such a
+customer is now correctly NOT counted as that customer's own cycle-day recovery, the same as
+it would not be counted on an ordinary Wednesday either; before this fix it WAS counted, only
+because the real Sunday's clock was forced to equal Monday's slot number. This is a real
+behaviour change in two existing tests (`test/portal.test.mjs`): a customer's week recovery
+figure, and a leader's card, both drop the ghost Sunday credit that only ever existed because
+Sunday was pretending to be Monday.
+
+**Checked.** A new test proves the positive case directly against `expectedDefaulters`: a loan
+disbursed Thursday keeps Sunday as its own Day 2 (not folded into `dist[1]`), and a loan
+disbursed ON a Sunday keeps Sunday as its own Day 1. The two existing weekly-report tests whose
+numbers depended on the old fold were corrected to the true figures the calendar gives, each
+with a new, locally-added customer (never touching the shared fixture every other caller of
+`expdfWeekTables()` also uses) whose own cycle genuinely reaches Sunday, so the suite still
+proves Sunday's own recovery is counted -- just by the right customer. `test/pages.test.mjs`'s
+source-text checks for the report screen were updated to match (`xdShowDay_` is gone; the day
+columns and day tabs are never filtered). `npm test`: 1,513 pass.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call` -- neither file imports `expdf.js` or
+calls `expectedDefaulters`. A front-end change: `BUILD 2026-11-12-d`.
+
+**Not done.** Whether a customer worked a day early or late (off their own two cycle days, on
+any weekday, Sunday included) should still count toward that week's recovery at all is a
+separate question this change does not touch either way -- it never did, for any day of the
+week, and nothing here starts.
 
 ---
 

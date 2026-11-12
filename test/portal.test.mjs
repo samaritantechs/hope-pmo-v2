@@ -170,6 +170,29 @@ test('expected defaulters place every customer on two weekdays', async () => {
   assert.equal(d.unplaced, 0);
 });
 
+/* "lets give all the expected defaulters to sunday for full week recoveries" -- the owner.
+   Sunday used to be folded into Monday (rollSun): a loan disbursed Thursday, whose own Day 2
+   falls three days later on Sunday, was bucketed as if Day 2 were Monday instead, and Sunday
+   itself could never be anybody's Day 1. Full week now means Sunday is a day like any other. */
+test('a loan whose own cycle day is Sunday keeps Sunday, folded into no other day', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(
+    // Disbursed Thursday (YEST) -> Day 1 Thu, Day 2 three days later -> Sunday, not Monday.
+    { ...D('THU1', 'KONGOWE', 400, 'current'), disb_date: YEST },
+    // Disbursed on a Sunday itself -> Day 1 is Sunday, Day 2 three days later -> Wednesday.
+    { ...D('SUN1', 'KONGOWE', 400, 'current'), disb_date: '2026-07-26' });
+  const d = await run('expectedDefaulters', {}, ADMIN, dbWithRpc(t));
+  const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
+  assert.equal(by.THU1.primaryName, 'Thu'); assert.equal(by.THU1.secondaryName, 'Sun');
+  assert.equal(by.SUN1.primaryName, 'Sun'); assert.equal(by.SUN1.secondaryName, 'Wed');
+  // Sunday's own bucket carries both of them (THU1's Day 2, SUN1's Day 1) -- not folded into Monday's.
+  // Under the old rollSun both would have landed in dist[1] instead (Thursday+3 and a bare
+  // Sunday disbursement both rolled to Monday): dist[1] stays untouched by either of them now.
+  assert.equal(d.dist[7], 2, 'dist[7] is Sunday\'s own bucket, not merged into dist[1]');
+  assert.equal(d.dist[1], 0, 'Monday borrows nothing from the two Sunday-touching customers');
+  assert.equal(d.dayNames[7], 'Sun');
+});
+
 /* "Remove branch column, add recovered so after DS (initial arrears, current arrears, recovered)".
    Each row of the Orodha / List carries the arrears on today's initial deck, the arrears now and
    how far they came down -- the same figures, by the same rule, as the follow-up tab. */
@@ -4777,13 +4800,28 @@ test('the expdf week is the sum of its days, officer by officer -- what each off
 /* "Expected defaulters goes mon to sunday not mon to fri" -- a FINISHED past week, read well
    after it closed, must walk Saturday and Sunday too, with whatever real recovery landed on
    them, not just show the two days as empty tabs. B1 is due on Saturday (its own secondary
-   cycle day) and C1 on Sunday (its secondary slot, which a real Sunday shares); both decks
-   exist in this book. Read on LATER, a Friday the week after, so this week is unambiguously
-   over -- the live-week guard (never read a day that has not happened) cannot be the reason
-   either day shows up. */
+   cycle day); both its decks exist in this book. D1 (added here, local to this test only) is
+   disbursed Thursday, so its own secondary cycle day is genuinely Sunday -- "lets give all the
+   expected defaulters to sunday for full week recoveries" (the owner): Sunday is no longer
+   folded into Monday, so a customer can now actually be due on it, the same as any other day.
+   C1 (disbursed Friday) is NOT due on Sunday -- its own two days are Friday and Monday -- and
+   its Sunday row in the book (money moving on a day that is not its cycle day) is correctly
+   not counted, same as it would not be counted on a Wednesday either. Read on LATER, a Friday
+   the week after, so this week is unambiguously over -- the live-week guard (never read a day
+   that has not happened) cannot be the reason either weekend day shows up. */
 test('a finished past week counts Saturday and Sunday\'s own recovery, not only Monday to Friday\'s', async () => {
   const LATER = Date.parse('2026-07-31T09:00:00Z');
-  const db = fakeDb(expdfWeekTables());
+  const t = expdfWeekTables();
+  // A new customer, local to this test, whose own cycle genuinely reaches Sunday: disbursed
+  // Thursday 2026-07-23, so Day 1 is Thursday and Day 2 three days later is Sunday 2026-07-26.
+  t.defaulter_snapshots.push(
+    { ref: 'D1', full_name: 'CD1', contact: '071400D1', team: 'KONGOWE', arrears: 300, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 5, disb_date: '2026-07-23', snapshot_type: 'initial', weekday: 'SUN', snapshot_date: '2026-07-26',
+      upload_batch: 'bi2026-07-26', created_at: '2026-07-26T04:00:00Z' },
+    { ref: 'D1', full_name: 'CD1', contact: '071400D1', team: 'KONGOWE', arrears: 100, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 5, disb_date: '2026-07-23', snapshot_type: 'current', weekday: 'SUN', snapshot_date: '2026-07-26',
+      upload_batch: 'bc2026-07-26', created_at: '2026-07-26T18:00:00Z' });
+  const db = fakeDb(t);
   const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-20' }, LATER);
   assert.equal(week.pastWeek, true); assert.equal(week.weekOf, '2026-07-20'); assert.equal(week.weekEnd, '2026-07-26');
   assert.equal(week.asOfDate, '2026-07-26', 'a finished week stands as of its own Sunday, not its Friday');
@@ -4792,19 +4830,22 @@ test('a finished past week counts Saturday and Sunday\'s own recovery, not only 
     'Saturday and Sunday were filed in this book, and are walked and measured like any other day');
   const wk = keyed_(week);
   // Monday to Friday read exactly as the sibling test above already proves; only the weekend is new here.
-  assert.equal(wk['GMO|GMO GEE'].recovered, 600, '300 Friday (A1) + 300 Saturday (B1, its own secondary cycle day)');
-  assert.equal(wk['BIKE|BIKE BEE'].recovered, 700, '300 Tuesday (A1) + 300 Friday (C1) + 100 Sunday (C1 again, its secondary slot)');
+  assert.equal(wk['GMO|GMO GEE'].recovered, 800, '300 Friday (A1) + 300 Saturday (B1, its own secondary cycle day) + 200 Sunday (D1, its own secondary cycle day)');
+  assert.equal(wk['BIKE|BIKE BEE'].recovered, 600, '300 Tuesday (A1) + 300 Friday (C1) -- C1\'s Sunday row is not its cycle day, so it is not counted');
   assert.equal(wk['MANAGER|BOSS'].recovered, 500, 'unchanged -- Wednesday only, no weekend cycle day of its own');
-  assert.equal(week.totals.recovered, 1800, '1,400 Monday to Friday + 300 Saturday + 100 Sunday');
-  assert.equal(week.totals.initial, 5900, '4,300 Monday to Friday + 1,500 Saturday + 100 Sunday');
-  assert.equal(week.totals.customers, 3, 'the same three customers -- the weekend is more of their own days, not new people');
-  assert.deepEqual(week.totals.byDay, { '2026-07-21': 300, '2026-07-22': 500, '2026-07-24': 600, '2026-07-25': 300, '2026-07-26': 100 });
-  // The card behind GMO GEE's name carries the same Saturday, as its own day tab, not folded into the week silently.
+  assert.equal(week.totals.recovered, 1900, '1,400 Monday to Friday + 300 Saturday + 200 Sunday');
+  assert.equal(week.totals.initial, 6100, '4,300 Monday to Friday + 1,500 Saturday + 300 Sunday');
+  assert.equal(week.totals.customers, 4, 'the three original customers plus D1 -- the weekend is more of their own days and D1\'s own new one');
+  assert.deepEqual(week.totals.byDay, { '2026-07-21': 300, '2026-07-22': 500, '2026-07-24': 600, '2026-07-25': 300, '2026-07-26': 200 });
+  // The card behind GMO GEE's name carries the same Saturday AND Sunday, each its own day tab, not folded into the week silently.
   const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'GMO', leader: 'GMO GEE', period: 'week', weekOf: '2026-07-20' }, LATER);
-  assert.equal(card.totals.recovered, 600);
+  assert.equal(card.totals.recovered, 800);
   const satTab = card.dayTabs.find(x => x.weekday === 'SAT');
   assert.equal(satTab.measured, true); assert.equal(satTab.totals.recovered, 300);
   assert.deepEqual(satTab.rows.map(r => [r.ref, r.recovered]), [['B1', 300]]);
+  const sunTab = card.dayTabs.find(x => x.weekday === 'SUN');
+  assert.equal(sunTab.measured, true); assert.equal(sunTab.totals.recovered, 200, 'D1\'s own Sunday, its own tab, not merged into Monday\'s');
+  assert.deepEqual(sunTab.rows.map(r => [r.ref, r.recovered]), [['D1', 200]]);
   // The live current week this book also belongs to still stops at today (Friday): nothing here borrows from a day that has not happened.
   const live = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
   assert.equal(live.pastWeek, false);
@@ -5025,12 +5066,14 @@ test('the weekly card for an earlier week is that week\'s own card, tabs and all
   assert.equal(back.pastWeek, true); assert.equal(back.from, '2026-07-20'); assert.equal(back.to, '2026-07-26');
   assert.deepEqual(back.dayTabs.map(x => [x.date, x.measured]), [['2026-07-20', true], ['2026-07-21', true], ['2026-07-22', true], ['2026-07-23', true], ['2026-07-24', true], ['2026-07-25', true], ['2026-07-26', true]]);
   // Both days are filed in this book (see the dedicated test above): Saturday is B1's own day, under GMO, so BIKE BEE's card reads nobody
-  // on it -- the deck was still read, it simply held none of theirs. Sunday is C1's own secondary cycle day, and C1 already is BIKE BEE's
-  // (their Friday row), so it carries a second day's recovery this week, same customer, same card.
+  // on it -- the deck was still read, it simply held none of theirs. Sunday reads the same way: C1 (BIKE BEE's own, via Friday) is disbursed
+  // Friday, so its own two days are Friday and Monday, not Sunday -- its Sunday row in the book is money moving on a day that is not its
+  // cycle day, the same as a Wednesday wouldn't be, so it is correctly not counted. The day was still walked and measured; this leader
+  // simply has nobody due on it, same as Saturday.
   assert.equal(back.dayTabs.find(x => x.date === '2026-07-25').totals.recovered, 0);
-  assert.equal(back.dayTabs.find(x => x.date === '2026-07-26').totals.recovered, 100);
-  assert.equal(back.totals.recovered, 700, '600 Monday-to-Friday + C1\'s 100 on Sunday');
-  assert.deepEqual(back.rows.map(r => [r.ref, r.recovered]).sort(), [['A1', 300], ['C1', 400]], 'C1\'s Friday and Sunday added, one row');
+  assert.equal(back.dayTabs.find(x => x.date === '2026-07-26').totals.recovered, 0);
+  assert.equal(back.totals.recovered, 600, '600 Monday-to-Friday, nothing on the weekend -- Saturday is B1\'s (GMO\'s), Sunday is nobody of BIKE BEE\'s own');
+  assert.deepEqual(back.rows.map(r => [r.ref, r.recovered]).sort(), [['A1', 300], ['C1', 300]], 'C1\'s Friday only -- its Sunday row is not its cycle day');
   // The same card as when it was the current week; only the way it is read differs -- compared over the Monday-to-Friday the live week also has,
   // since the live week (read on NOW, before Saturday has happened) cannot yet carry the weekend this past reading now correctly adds.
   const now = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);

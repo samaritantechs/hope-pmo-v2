@@ -13,7 +13,6 @@ const scoped = (user, rows) => rows.filter(r => teamAllowed(user, r.team));
 const pctOf = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-function rollSun(u) { return u === 7 ? 1 : u; }
 
 import { assignFor, assignStrategy, ROLE_COLS } from './assign.js';
 
@@ -60,13 +59,13 @@ async function monthFirstInitial_(db, user, from, to) {
    report reads it for the day, the week's for every day it adds up -- so a week can never be
    built on a rule the days are not. */
 function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
-  const dayIdx = rollSun(isoWeekday(ms));
+  const dayIdx = isoWeekday(ms);
   return scoped(user, curRows)
     .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
-      const primary = raw ? rollSun(raw) : 0;
-      const secondary = primary ? rollSun(((primary - 1 + 3) % 7) + 1) : 0;
+      const primary = raw;
+      const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
       const a = assignFor(d, strat, ms);
       const team = teamBy[K(d.team)] || {};
       const arrears = num(d.arrears);
@@ -111,7 +110,7 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   const baseBy = {};
   for (const d of base.rows) baseBy[K(d.ref)] = num(d.arrears);
 
-  const dayIdx = rollSun(isoWeekday(nowMs));
+  const dayIdx = isoWeekday(nowMs);
   const rows = buildRows_(user, curSnap.rows, baseBy, teamBy, strat, nowMs);
   return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day') };
@@ -225,7 +224,7 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   }
   const measured = days.filter(x => x.measured), first = measured[0] || null, lastM = measured[measured.length - 1] || null;
   const lastAt = lastM ? Date.parse(lastM.date + 'T09:00:00Z') : (last === today ? nowMs : Date.parse(last + 'T09:00:00Z'));
-  return { rows: [...cells.values()], dayIdx: rollSun(isoWeekday(lastAt)), weekday: WD_[isoWeekday(lastAt)], date: lastM ? lastM.date : null,
+  return { rows: [...cells.values()], dayIdx: isoWeekday(lastAt), weekday: WD_[isoWeekday(lastAt)], date: lastM ? lastM.date : null,
     hasBaseline: measured.length > 0, baseDate: first ? first.date : null, baseline: 'week', days };
 }
 
