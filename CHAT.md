@@ -93,8 +93,17 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   search box's own floor) can come back a little SLOWER with the index (19.6 ms → 41.8 ms) than
   without it, since the old plan could stop early walking a date index backward and the new one
   first gathers every trigram match. No code changed, no `BUILD` bump — a database-only change.
-  **Not done:** whether this exact query caused the dashboard's own spike is still open; a chat
-  has no access to Supabase's Postgres logs to confirm it either way.
+  **Run and confirmed by the owner on 12 Nov:** both indexes are valid on the live table —
+  `idx_def_snap_fullname_trgm` 165MB, `idx_def_snap_ref_trgm` 73MB (three to four times this
+  change's own 2.27-million-row test fixture, so the live table is itself several times bigger
+  than what this was tested against — the fix was warranted at real scale, not only on a
+  synthetic one). The first attempt at the full_name index died silently mid-build: the SQL
+  editor's own tab kept reading "Running..." long after the server-side build had actually
+  stopped, leaving an invalid index behind under the same name — `pg_stat_progress_create_index`
+  returning zero rows is what showed nothing was building any more; `drop index concurrently if
+  exists ...` followed by a clean re-run in a fresh tab fixed it. **Not done:** whether this
+  exact query caused the dashboard's own spike is still open; a chat has no access to Supabase's
+  Postgres logs to confirm it either way.
 - **#684** — Clicking a name on Omba Likizo: the ask form's fields wired before they existed
   (handbook Part 61). "clicking name on omba likizo - Imeshindikana / Could not load. Cannot set
   properties of null (setting 'onchange')." `VIEWS.leavereq` wired `#lvReason`/`#lvStart`/
@@ -685,17 +694,19 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   test book of the live book's size ended in "upstream timeout" in the SQL editor; the owner's
   two exports answered the same question in minutes ("Check from here no need of sql"). A dig is
   not proven until it has run on the live book, and a chat cannot run it there.
+- **A tab still reading "Running..." may already be dead.** `RUN-ME-054`'s first
+  `CREATE INDEX CONCURRENTLY` (12 Nov) sat in the SQL editor reading "Running..." long after the
+  server-side build had actually stopped -- the editor's own connection had dropped, Postgres had
+  already rolled the build back, and the tab was just waiting on a reply that was never coming.
+  It left an invalid index behind under the exact name the next attempt's `IF NOT EXISTS` would
+  then silently protect. Check `pg_stat_progress_create_index` from a SECOND tab before trusting
+  a first tab's spinner on any long `CONCURRENTLY` statement; zero rows there means nothing is
+  really running, whatever the first tab says. `select indexrelid::regclass::text, indisvalid
+  from pg_index where indexrelid::regclass::text = '<name>'` catches the leftover; `drop index
+  concurrently if exists <name>` (alone, the same rule as `CREATE`) clears it before retrying.
 
 ## 8. Waiting on someone
 
-- **The owner**: run `db/RUN-ME-054-legal-find-trigram-index.sql` (handbook Part 62, section 4
-  #685) — two GIN trigram indexes behind the Legal tab's slow search, each statement in Sections
-  2 and 3 run ALONE (select just that one line, not the whole file): `CREATE INDEX CONCURRENTLY`
-  is refused outright inside a transaction block, and the SQL editor sends a whole selection as
-  one. Running the whole file at once fails safely — "cannot run inside a transaction block",
-  nothing half-built — but does not build the index either. If the owner can also open Supabase's
-  Postgres Logs around the time of the "postgress is unsettled" screenshot and paste the actual
-  failing query, that would confirm or rule out whether this was the spike's real cause.
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
