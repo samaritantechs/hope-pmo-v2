@@ -1,4 +1,4 @@
-/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Parts 48 to 52).
+/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Parts 48 to 53).
  *
  *   "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group"
  *   "dont correct names using the gmo data i bring unless its new staff"
@@ -188,4 +188,76 @@ test('a team\'s zone is its GMO\'s, in the script as in the portal, and the row 
   assert.ok(whole.includes('z as (   -- the zone for a row'), LIST + ' renamed the step the parity check cuts up to: it would stop with an error rather than check');
   assert.ok(/const NOBODY = \[/.test(parity) && /const BLANKS = \[/.test(parity) && parity.includes('THE DRAW IS LOPSIDED'),
     'the parity check no longer draws the cells that name nobody and the pasted blanks, or no longer refuses a lopsided draw');
+});
+
+/* THE REST OF A STAFF FORM, AND HEAD-OFFICE PEOPLE (docs/HANDOFF.md Part 53) -- "Zone pmo hq", with three forms that each
+   carried a parent, a next of kin, a start date, an address and a second phone. The registry has a box for every one of
+   those (the staff form in public/mod/advance.js), and the script wrote six of the form's fields and dropped the rest.
+   They travel in a SECOND list (`more`), so a list with no forms is written exactly as before. What is held here: a new
+   staff is added with the whole form; a staff the registry already holds has only their EMPTY boxes filled; a moved
+   staff is never touched by it; and three things a form can say wrongly are said on the row, not acted on. */
+test('the rest of a staff form: stored for a new staff, only what is empty on one already there, nothing on a moved one', () => {
+  const s = code(LIST), n = (text) => s.split(text).length - 1;
+  assert.deepEqual(listed(LIST, 'more(n, phone2, residence, started, birth, kin1, kin1_phone, kin2, kin2_phone) as (values'), [],
+    LIST + ' carries somebody in its details list' + HOW);
+  assert.ok(s.includes('(0, null::text, null::text, null::date, null::date, null::text, null::text, null::text, null::text)'),
+    'the details list no longer starts as one row of nulls under a number nobody has');
+  assert.ok(/from more d\s*\n\s*where d\.n = k\.n\s*\n\s*limit 1/.test(s) && s.includes('(select count(*) from more c where c.n = k.n) as more_n'),
+    'a number written twice in the details list would answer with two rows for one person');
+  // A NEW STAFF carries the whole form, and the day they started is the REG-DATE.
+  assert.ok(s.includes('insert into staff_registry (id, reg_date, name, phone, phone2, role, residence, bank, account, zone, nida, birth_date,')
+    && s.includes('guarantor1, guarantor1_phone, guarantor2, guarantor2_phone, tin, nssf, status, created_by, updated_by, updated_at)'),
+    'a new staff is added without the rest of their form');
+  assert.ok(s.includes("select n.id, coalesce(n.started, (now() at time zone 'Africa/Dar_es_Salaam')::date), n.name, n.phone9, n.phone2_9, n.role, n.residence,"),
+    'the day a staff started is no longer their REG-DATE');
+  // A STAFF ALREADY THERE: only under PLACE, and only into a box that is empty.
+  for (const col of ['phone2', 'residence', 'reg_date', 'guarantor1', 'guarantor2']) {
+    assert.ok(new RegExp('\\n\\s+' + col + "\\s+= case when p\\.act = 'PLACE' then coalesce\\((nullif\\(btrim\\(s\\." + col + "\\), ''\\)|s\\." + col + '), p\\.').test(s),
+      col + ' is written on a staff already in the registry other than under PLACE, or over what is there');
+  }
+  for (const k of ['1', '2']) {
+    assert.ok(s.includes('guarantor' + k + "_phone = case when p.act = 'PLACE' and coalesce(btrim(s.guarantor" + k + "), '') = ''"),
+      'the number of one person can be written beside the name of another (guarantor ' + k + ')');
+  }
+  // every box the SET can fill is also a reason to run the update, or a second run would never say "nothing changed"
+  for (const why of ["(coalesce(btrim(s.phone2), '') = '' and p.phone2_9 is not null)", "(coalesce(btrim(s.residence), '') = '' and p.residence is not null)",
+    '(s.reg_date is null and p.started is not null)', "(coalesce(btrim(s.guarantor1), '') = '' and (p.kin1 is not null or",
+    "(coalesce(btrim(s.guarantor2), '') = '' and (p.kin2 is not null or"]) {
+    assert.ok(s.includes('or ' + why), 'a PLACE that only brings ' + why + ' no longer fills it');
+  }
+  // THE BIRTH DATE is the NIDA's, as the staff form reads it; never beside a NIDA it was not read from; and a NIDA
+  // that says 31 February gives no date instead of stopping the whole script.
+  assert.ok(!/to_date\(/.test(s), 'to_date is back: a NIDA whose first digits are no day of the calendar stops the script with an error');
+  assert.ok(s.includes('then make_date(substr(a.nida_d, 1, 4)::int, substr(a.nida_d, 5, 2)::int, substr(a.nida_d, 7, 2)::int) end')
+    && s.includes('coalesce(a0.birth_nida, a0.birth_typed) as birth'), 'the date written on a form is read before the NIDA number');
+  assert.equal(n("(coalesce(btrim(s.nida), '') = '' or regexp_replace(s.nida, '\\D', '', 'g') = p.nida_d)"), 2,
+    'a birth date is set beside a NIDA number it was not read from, or the SET and the WHERE no longer agree');
+  assert.ok(read('api/_lib/portal-core.js').includes('const birth = nidaBirth(nida) || advDate_(p.birthDate);'),
+    'the staff form no longer reads the birth date off the NIDA first: the script says it does');
+  // AN ACCOUNT is stored as the staff form stores one (accountCell): its digits when it is digits and marks.
+  assert.ok(s.includes(String.raw`case when coalesce(k.account, '') ~ '^[\d.\s-]+$' then nullif(regexp_replace(k.account, '\D', '', 'g'), '')`)
+    && n('a.account_w as account') === 2 && !/\ba\.account\b(?!_w)/.test(s.slice(s.indexOf('\nplan as ('))),
+    'an account is written to the registry as it was typed in a message ("307 100 70344"), not as the staff form saves it');
+  // WHAT THE ROW SAYS and does not act on.
+  for (const said of ["'the NIDA number sent has ' || length(a.nida_d) || ' digits and a NIDA has 20: kept as it was sent'",
+    "): the NIDA''s is kept, as the staff form does'", "' times: the first was read'"]) {
+    assert.ok(s.includes(said), LIST + ' no longer says ' + said + ' on the row');
+  }
+});
+
+test('head-office people: a word that is no filed zone adds nobody, and the row names the zones it may mean', () => {
+  const s = code(LIST), whole = read(LIST);
+  // The zone itself is decided exactly as before: the sender's word counts only as the name of a zone already filed.
+  assert.ok(s.includes("where zz.key = nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '')) as z_else,"));
+  assert.ok(s.includes('and coalesce(z.z_team, z.z_else, z.z_like) is not null'));
+  // ... and what is new is words on the row: defined once, read twice, both times inside the note.
+  assert.equal(s.split('z_word_miss').length - 1, 3, 'z_word_miss is read somewhere else than the note: it is text for a person, never a zone');
+  assert.ok(s.includes('end as z_word_miss,') && s.includes('then z.z_word_miss end,'));
+  assert.ok(s.includes("'the sender''s word for the zone (' || btrim(a.zone_else) || ') is not a zone already filed; '")
+    && s.includes("'no filed zone shares a word with it')"), 'the row no longer says that the word it was given is no filed zone');
+  // The department zones are the portal's (one spelling of the rule there); the template only tells the filler about them.
+  assert.ok(read('api/_lib/portal-core.js').includes("const ADV_DEPT_PREFIXES = ['HQ', 'MANAGEMENT'];"),
+    'the portal no longer files head-office people under HQ / MANAGEMENT: the template\'s paragraph on them is out of date');
+  assert.ok(whole.includes('HEAD-OFFICE PEOPLE HAVE NO TEAM') && whole.includes('role_word is the role AS ROLES & ACCESS SPELLS IT'),
+    LIST + ' no longer tells the filler how a head-office person is written');
 });
