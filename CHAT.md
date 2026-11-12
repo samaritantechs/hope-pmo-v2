@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 12 November 2026** — portal `BUILD 2026-11-12-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 56**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 57**.
 
 ---
 
@@ -76,6 +76,21 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#679** — the Exp.Def week was never walked past Friday (handbook Part 57). "Expected
+  defaulters goes mon to sunday not mon to fri bro." A finished past week's report, and the
+  card behind a leader's name, silently stopped at Friday -- Saturday and Sunday were never
+  measured, never a day tab, never in anybody's total -- because the clock a non-current week
+  is "read as of" (pinned to that week's Friday, mirroring the dashboard's own `asOfWeek`) was
+  also reused, in the same file, as the boundary that decides where the week's own day-loop
+  stops. Fixed by pinning that clock to the week's own Sunday instead; `asOfWeek` and the
+  roughly seventeen other screens that read it are untouched -- nobody asked for those to
+  move. Checked against a book built so two customers' own secondary cycle days land on a
+  Saturday and a Sunday with real recovery filed on both; the live current week still has no
+  tab past today. Two independent reviewers re-derived the cycle-day arithmetic by hand and
+  re-ran the suite themselves; neither found anything to flag. `npm test`: 1,495 pass. No read
+  on `/api/upload` or `/api/call`; no front-end file changed, so `BUILD` stays `2026-11-12-a`.
+  **Not done:** whether the dashboard's own `asOfWeek`-read past-week screens should move to
+  Sunday too is a separate question, not asked yet.
 - **#678** — the disbursement sheet, and the dates it left empty (handbook Parts 55-56).
   "I do not upload disbursment sheet, remove it in uploads. I only upload approved/processed,
   use it everywhere necessary for loan approvals and disb dates." Pending Disbursement and
