@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 57**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 58**.
 
 ---
 
@@ -54,6 +54,7 @@ Given since, and written nowhere else:
 
 | 11 Nov 2026 | "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group" · "dont correct names using the gmo data i bring unless its new staff" · "so provide sql to add staff as we always did" | Staff changes come pasted from the WhatsApp group: who left, who was transferred where and as what, who is new (with phone, account, NIDA, TIN, NSSF), who a GMO cannot see. Answer with a filled copy of `db/TEMPLATE-staff-changes-from-gmo.sql` (one row a person: OFF, MOVE, PLACE, NEW, ASK); a name already in the staff registry is never re-spelt; a GMO's spelling is taken for a new staff only; the ones that come back NOT FOUND are settled by staff ID (`db/TEMPLATE-staff-changes-by-id.sql`). No staff name is committed. Handbook Parts 48 and 49. |
 | 11 Nov 2026 | "If an officer has team - zone is automatic of the GMO's" · "to the respective team's gmo" · "So even manager - must have gmo of one of his team and auto match gmo and zone" | **A team's zone is its GMO's.** A team whose ZONE cell on Teams & Staff is empty sits in the zone its GMO's other teams carry, when they all carry the same one; what is typed on the team stands. **The rule never chooses:** a GMO named on teams of several zones gives none. The name line, the advance desk and the staff scripts read that one rule (`teamsZoned` in `api/_lib/zone.js`; `tz` in the template). Never ask the owner to fill a ZONE cell so that a staff can be filed: read the team's GMO, and ask only when the team has neither a ZONE nor a GMO whose teams all carry one zone. Handbook Parts 50 and 52. |
+| 12 Nov 2026 | "always Auto default grant all tabs to admin role. i dont have to go manually grant all new tabs i create" | Admin's own access to a screen was never actually gated on a hand-typed list in the first place — `allowed()` in `app.html` and `tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either one ever looks at a tabs list, and that stays true for every tab this system has or will have, with no step of any kind. What a new tab's id still has to be named in, once, is `EXTRA_TABS` (`api/_lib/auth.js`) — not for admin's sake, but because that is the one list the Roles & access screen reads to offer a checkbox for granting the tab to a *different* role; `ADMIN_TABS` is now computed from it rather than carrying a second, separately-typed copy, so the two can no longer drift apart the way they did the day this order was given (`leave`/`leaverep` named in one and not the other). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -76,6 +77,51 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#680** — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in (handbook
+  Part 58). "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the
+  Leave reports – for leaves and holiday reports management ... the tunnels and approvals must
+  be the same to advances when people request leaves / holidays." Two tabs (`leave`, the ask
+  and, for an approver, the desk together; `leaverep`, the report), one new table
+  (`leave_requests`, `db/RUN-ME-051-leave-requests.sql`), and the approval tunnel written once:
+  a leave request carries the same `req_role` / `req_code` / `zone` an advance request would, so
+  advance's own routing (`advRouting_`, `advRouteOf_`, `advDeskOf_`, `advSees_`, `advHolds_`)
+  decides a leave request exactly the way it decides an advance, with no second copy. Not
+  carried over, on purpose: advance's calendar-month unit and Finalize/Reopen (leave has no
+  payroll month to close; it expires instead by its own start date, not decided before it
+  arrives); the one-per-month limit (replaced by an overlap check on this person's own other
+  open request, which the Google Form never had at all); the balance exactly as the sheet's own
+  unconditional `SUMIF` read it (a Disapproved or Pending request no longer costs the balance;
+  only Approved days do; Pending is shown, not subtracted); a third, separately-typed day count
+  (the sheet's own rows show two disagreeing with each other; here `days` is always the two
+  dates, inclusive); a reset of the balance on a new year (nothing resets it, exactly as the
+  sheet's own formula never did — **whether it should is the owner's to decide, flagged, not
+  guessed**). `advDeskLine_` moved from `advance.js` into the core page, since two
+  independently-loaded modules now read it. Checked with a dedicated fixture
+  (`test/leave.test.mjs`): the ask, the day count, the overlap guard, the balance, the desk's
+  routing and bulk decide, expiry by start date (written to the row, not just read that way),
+  the report's per-row balance, no month-lock, the missing-table fallback (alone and with
+  neither migration run), and the customer-service special case. `npm test`: 1,508 pass. No
+  read on `/api/upload` or `/api/call`; a front-end change, `BUILD 2026-11-12-b`. **Not done:**
+  no third staff database (HR's existing advance registry is reused as-is); no Excel export
+  beyond the standard board buttons every screen already has. **Waiting on the owner:** whether
+  the 26-day annual allowance should reset each calendar year. **Found by the owner before this
+  merged** ("am not seeing the new tabs"): `api/_lib/auth.js`'s `ADMIN_TABS`/`EXTRA_TABS` -- the
+  one list that puts a tab on a signed-in person's own tabs, admin included -- had not been
+  given the two new tab ids, though everything else (`NAV`, `MGMT_ORDER`, `MOD_OF`, `FN`/`FN_TAB`)
+  had. Fixed in the same change, with a dedicated test (neither advance's own four tabs nor the
+  general sidebar test check this today). **Reviewed** by three independent readers before this
+  merged: one real finding, confirmed and fixed -- without RUN-ME-045, the ask screen's history
+  pane and desk pill fell back to "holds the one `leave` tab", copied from advance's own legacy
+  fallback where that tab is held by approvers alone; here it is held by every ordinary
+  requester too, so it showed a colleague's pending dates, cover name and reason (medical,
+  bereavement) on a database without the routing columns -- reproduced, then fixed to show
+  nobody but admin in that state. Also fixed: the migration collided with an existing
+  `RUN-ME-047` (`#621`) and is now `RUN-ME-051`; its own "under 40 lines" claim was wrong (53)
+  and is now honest; two UI wordings were tightened (a live preview that read as an immediate
+  balance drop on submit, and a hand-edited link landing on a pill bar stuck on "desk" with
+  nothing to show). Everything else -- schema-to-code columns, every nav/dispatch/gate wiring,
+  `advDeskLine_`'s one definition, the day-count math -- was checked and confirmed correct.
+  `npm test`: 1,511 pass.
 - **#679** — the Exp.Def week was never walked past Friday (handbook Part 57). "Expected
   defaulters goes mon to sunday not mon to fri bro." A finished past week's report, and the
   card behind a leader's name, silently stopped at Friday -- Saturday and Sunday were never
@@ -527,6 +573,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
+- **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
+  should reset each calendar year — nothing resets it yet, the same running ledger the Google
+  Sheet's own formula kept, on purpose, until the owner says otherwise.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
   e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,

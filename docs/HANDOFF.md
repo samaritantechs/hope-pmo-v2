@@ -4832,6 +4832,124 @@ clock aside for exactly this reason already, predating this fix).
 **Not done.** Whether the dashboard's own past-week screens (which still read `asOfWeek`,
 Friday-anchored) should move to Sunday too is a separate question nobody has asked yet.
 
+## Part 58 — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in
+
+> "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the Leave
+> reports – for leaves and holiday reports management ... now as already people can request
+> advances – the tunnels and approvals must be the same to advances when people request leaves
+> / holidays" — the owner, 12 November 2026
+
+The Google Form staff filled in to ask for leave (`FOMU YA RUHUSA NA LIKIZO`) and the sheet it
+fed are in the portal now, the way the salary-advance sheet was moved in before it: two tabs
+(**Likizo / Leave & Holiday**, the ask and, for whoever the routing makes an approver, the desk
+together, switched by a pill in the one screen; **Leave reports**, for management), one new
+table (`leave_requests`, `db/RUN-ME-051-leave-requests.sql`), and **none of the approval tunnel
+written a second time**: a leave request carries the same `req_role` / `req_code` / `zone` a
+salary-advance request would, so `advRouting_`, `advRouteOf_`, `advDeskOf_`, `advSees_` and
+`advHolds_` — the one rule for "who approves whose request", built for advances — decide a
+leave request exactly the way they decide an advance, with no second copy of that rule anywhere.
+The `adv` names in that engine are kept rather than renamed: two features now depend on it, and
+renaming it to fit one of them is the bigger risk.
+
+**What did not carry over, on purpose, and why:**
+- **The calendar-month unit and the finance manager's Finalize / Reopen.** That exists so
+  payroll can close a month's advances; leave has no payroll month to close, and nobody asked
+  for one. A leave request stays open until it is decided or it **expires** — not by month, but
+  by its own start date: a request nobody decided before the day it was meant to start arrives
+  and passes reads `Expired`, the same promise advance's own month-expiry makes (not a decision;
+  `decided_by`/`decided_at` stay empty; the owner may ask again), just keyed on the one date that
+  actually matters for a leave request instead of a calendar page.
+- **The one-request-per-month limit.** In its place, a new request is refused only if it
+  **overlaps** this same person's own other open (Pending or Approved) request — the Google Form
+  had no such check at all, so two overlapping asks could both be sent and nobody would notice
+  until the day both showed up. This stops that; it is not a rule the form had that went missing.
+- **SIKU ZILIZOBAKI (days remaining) exactly as the sheet computed it.** The sheet's own column J
+  was `=26-SUMIF($C:$C,$C2,$E:$E)` — every row under that ID, decided or not, so a Disapproved or
+  still-Pending request already cost the balance. Here only **Approved** days are deducted; a
+  Pending request's days are shown separately (awaiting a decision), never subtracted twice and
+  never silently dropped either.
+- **A third, separately-typed day count.** The sheet's own rows show exactly why not to: one
+  request's dates span ten months (`2026-02-03` to `2026-12-03`) while its typed day count says
+  14 — two numbers that can disagree, with no way to tell which one is right. Here `days` is
+  always `end_date − start_date + 1`; there is no second number to disagree with it.
+- **A reset of the balance on a new year.** Nothing here resets it, exactly as the sheet's own
+  formula never did — one running ledger against `LEAVE_ANNUAL_DAYS` (a Setting, 26 unless
+  changed, never hard-coded). **Whether leave should reset each calendar year is the owner's to
+  decide, not guessed here** — flagged in the pull request this shipped in.
+
+**What is the same, deliberately:** the name picker (zone and role-scoped, or the customer-
+service roster by name, exactly as `advRequestPage` already works it out — no second staff
+database); the "only approvers and report-holders see history" rule; the route said before the
+ask is sent, naming who will decide it or saying plainly that nobody is set up to; a stray tick
+outside a desk's own reach skipped rather than failing the whole batch; the report windowed by
+date, by zone, Approved by default, with Excel/CSV like every other board.
+
+**Checked** with a dedicated fixture (`test/leave.test.mjs`): the ask scoped to one zone and
+role; the day count from two dates; the overlap guard; the balance (Approved deducted, Pending
+shown and not deducted, a Disapproved request costing nothing); the desk routing an officer's
+request to their GMO by role, deciding it once, a stray id skipped without failing the rest;
+expiry by the request's own start date, written to the row and no longer decidable once expired;
+the report's per-row balance and its zone summary; that no calendar-month lock exists for leave
+even a month after filing; the missing-table fallback, both for `leave_requests` alone and for
+neither migration having been run at all; and the customer-service special case. `npm test`:
+1,508 pass.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call` — neither file was touched. A fresh
+front-end change: `BUILD 2026-11-12-b`. `advDeskLine_`, previously defined inside
+`public/mod/advance.js` alone, moved to the core page (`app.html`): it is now read by two
+independently lazy-loaded modules, and a tab opened before the other module has ever loaded
+must not come up short a helper.
+
+**Not done.** HR's own advance staff-registry tab (`advstaff`) is reused as-is for the name
+picker; no third staff database was added, and none of its fields (bank, account, NIDA,
+guarantors) are read or shown here, since leave needs none of them. The report has no Excel
+export of its own beyond the standard board/table buttons every screen already carries.
+
+**Found before this shipped, by the owner: "am not seeing the new tabs."** Everything else was
+wired -- `NAV`, `MGMT_ORDER`, `MOD_OF`, and `portal-core.js`'s own `FN` / `FN_TAB` -- but
+`api/_lib/auth.js`'s `ADMIN_TABS` and `EXTRA_TABS` were not. Those two are the one list that
+actually puts a tab on a signed-in person's own `user.tabs`; without them nobody would have
+seen either tab, admin included, even after this merged. Fixed in the same change, and a
+dedicated test now pins it (`test/pages.test.mjs`, "leave / leaverep: granted like advance's
+own tabs"), since neither advance's own four tabs nor the general sidebar test check this --
+only `fraud`, `bonusplan` and `checklist` happened to have one already. Worth a general
+invariant test one day (every `div:'mgmt'` nav entry present in `ADMIN_TABS`/`EXTRA_TABS`),
+but that is a broader change than this one and was not made here.
+
+**Reviewed** by three independent readers before this merged. One real finding, confirmed and
+fixed: without RUN-ME-045 (the routing columns), `leaveRequestPage`'s history pane and desk
+pill fell back to "holds the `leave` tab" -- copied from advance's own legacy fallback
+(`tabs.includes('advappr')`), which works there because `advappr` is a separate tab only
+approvers ever hold. Leave's one tab carries the ask and the desk together, so that same
+fallback showed every ordinary requester every other requester's pending dates, cover name and
+reason (medical, bereavement) on a database that had not yet run RUN-ME-045 -- reproduced with
+an ordinary field officer reading a same-zone colleague's sick-leave request. Fixed: without
+the routing columns, only admin sees the history pane or the desk pill here; a dedicated test
+pins it. Also found and fixed: this file's own migration collided with an existing
+`RUN-ME-047` (`#621`, well before this change) -- renumbered to `RUN-ME-051`, the real
+next-free number; and the file's own claim of "under 40 lines" was wrong (53) and is now
+honest. Two minor, non-blocking UI wordings were also tightened: the live day-count preview's
+"remaining after" read as an immediate deduction on submit, when only an Approved request
+actually reduces the balance (now "remaining if approved"); and asking for the desk pill by a
+hand-edited link while holding none now falls back to the ask screen with its own pill lit, not
+a pill bar stuck on "desk". Schema-to-code column names, the migration's idempotency, every
+NAV/MGMT_ORDER/MOD_OF/FN/FN_TAB wiring, `advDeskLine_`'s single definition, and the day-count
+math client- and server-side were each checked and confirmed correct -- nothing else was
+changed. `npm test`: 1,511 pass.
+
+**"always Auto default grant all tabs to admin role. i dont have to go manually grant all new
+tabs i create" — the owner, 12 November 2026.** Worth saying plainly: admin's own access to a
+screen was never gated on `ADMIN_TABS` to begin with -- `allowed()` in `app.html` and
+`tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either ever
+consults a tabs list, for every tab there is or ever will be, no step needed. What `ADMIN_TABS`
+and `EXTRA_TABS` actually fed, as two separately-typed copies of the same list, was the Roles &
+access screen's own checkbox for granting a tab to a *different* role -- and that pair drifting
+apart (`leave`/`leaverep` named in one, missed in the other) is exactly what the owner had just
+found. `ADMIN_TABS` is now computed as `USER_TABS.concat(EXTRA_TABS)` rather than its own
+literal array, so the two cannot drift apart again: a new tab is named once, in `EXTRA_TABS`,
+and admin carries it automatically, the one manual step that remains being the one no shared
+runtime between `app.html` and `auth.js` can remove.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
