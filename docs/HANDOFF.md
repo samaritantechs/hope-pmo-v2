@@ -4639,6 +4639,85 @@ zone only; and one, sent as new, was already there as a manager under another zo
 him and wrote the phone and account the list gave only where the registry had none. One line of the list was cut off in the
 paste and is still owed.
 
+## Part 54 — A real defaulter is never silently absent from a leader's list
+
+> "some staff like managers have somedays not getting expected defaulters, something not
+> reality, please re-crosscheck expected defaulters being efficiently produced to everyone
+> from teams to leaders" — the owner, 12 November 2026
+
+Not only managers. The three recycling roles — GMO, MANAGER, BIKE — read a customer's turn to
+call them off the customer's own disbursement date: two days a week, on a clock, so the same
+officer is not phoning the same person every week forever (Parts naming the rotation: the
+Exp.Def Report, #622 to #662). A customer whose disbursement date is missing, or in a shape
+`Date.parse` cannot read, has no such clock: their day-of-week came back as a number no real
+weekday ever equals, so the filter that shows "who is due today" showed them on **no** day, to
+**any** leader — not an empty screen (the one case already guarded against, since the whole
+book stands in when every customer in a read shares the fault), but one real customer quietly
+missing from an otherwise normal, populated list, every day, for as long as their date stayed
+unreadable. A manager checking a full board would never notice one customer short; a GMO
+checking their own phone would.
+
+**The fix is the same promise `expectedDefaulters` already keeps** (portal-core.js, an older
+screen): a customer with no cycle day is never dropped, never made to wait for a day that will
+never come. On a single day's reading — the leader's own phone list, and the management
+report's daily board — an undated customer is now shown alongside their dated colleagues,
+every day, not only when they are the only one. The report's phone screen also says, in the
+same diagnostic line that already answers "why is this empty", how many of today's rows carry
+no date at all.
+
+**The week needed care the day's reading did not.** "The week is the sum of its days" (Part …,
+#656: each day's own figures, added) depends on each customer appearing only on the day(s)
+their own cycle names — an undated customer has none, so simply keeping them on every daily
+reading would have counted their arrears once for every day of the week instead of once for
+the week. The week's own per-day loop now keeps the old, exact, onToday-only filtering it
+always had (so a dated customer's weekly figures are unchanged, proved by a direct before/after
+diff on the real function), and separately tracks every undated customer it sees across the
+week, adding each one ONCE, after the loop, with the figures of the most recent day their book
+still carried them.
+
+**Read before it shipped, and worth saying how.** One reviewer, run against a real PostgreSQL
+and the real functions, found that the week's once-per-customer rescue above was keyed the same
+way `cells` itself is keyed — role, leader and customer together — on the assumption that an
+undated customer's role stays put for the week. It does not: `assignFor` reads `days_elapsed`,
+nothing to do with whether a disbursement date can be read, so an undated customer crosses the
+same two-day rotation boundary as everyone else and can go from BIKE to MANAGER (or any pair)
+while remaining undated the whole time. Each leader they passed through got its own rescue
+entry, so one real customer could be counted on two leaders' boards for one week — the report's
+own grand total (which counts a customer once, by reference) disagreeing with its own section
+rows (which did not). Proved with a customer whose `days_elapsed` crosses that boundary midweek,
+counted on both boards for the same five days. Fixed by keying the rescue on the customer's
+reference alone, carrying whichever role and leader applied on the last day they were seen —
+one row, however many leaders they drifted across while undated — and leaving alone anyone who
+reached a real cycle day this week under any role, so they are never rescued a second time once
+dated.
+
+**Checked.** A fixture of three customers in one leader's book — two disbursed on a Tuesday (the
+usual Tue/Fri cycle), one with no disbursement date at all — proves: the daily board and the
+leader's own phone screen both now carry all three; the week counts the undated one exactly
+once, on its last measured day, while the two dated ones keep exactly the figures the existing
+"sum of its days" test already proves for everyone else; summing five separate daily reads for
+that leader (the naive way to check a week) gives a different, inflated number for the undated
+customer specifically — proof that the week's own one-time rescue, not daily summation, is what
+has to carry them. A second fixture reproduces the reviewer's own finding directly (one real
+customer, two leaders inside one week) and shows it gone: counted once, under the leader of its
+last day. Two more checks, run directly against the real functions rather than committed as
+tests: a customer who disappears from the deck for two days and reappears is still rescued from
+whichever day it was last actually seen; a customer who starts undated and becomes dated partway
+through the week, landing on a real cycle day, is counted through that day alone, never also
+rescued for an earlier undated one. The existing "all customers in this leader's book are
+undated" rescue (`noCycleDates`) still stands once there are no dated colleagues to be dropped
+behind. `npm test`: 1,491 pass.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call`; the two reads this touches
+(`teams`, `defaulter_snapshots`) are the same reads the report already made. No page changed —
+only what a leader's existing screens already show — so `BUILD` and `CALL_BUILD` stay as they
+were.
+
+**Not done.** Nothing says HOW a defaulter came to have no readable disbursement date in the
+first place (a column renamed in an export, a date spelt a way the importer does not expect):
+that is an upload-quality question, not this report's to answer, and the owner was told to say
+if a particular team's uploads are the ones missing it.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

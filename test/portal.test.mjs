@@ -4860,6 +4860,50 @@ test('a leader\'s list never silently drops a real defaulter whose cycle day cou
   assert.equal(aloneMine.diag.noCycleDates, true);
 });
 
+/* AN UNDATED CUSTOMER STILL ROTATES ROLE ON THE ORDINARY CLOCK -- found on review, before the
+   fix above shipped. assignFor reads days_elapsed, nothing to do with disb_date, so a customer
+   with no cycle day can cross a bucket boundary (default: every 2 days) partway through a
+   week and change from BIKE to MANAGER (or any other pair) while remaining undated throughout.
+   Keying the once-per-week rescue by role|leader|ref, the way `cells` itself is keyed, gave
+   each leader they passed through its own entry: the SAME real customer rescued once per
+   leader instead of once for the week, each copy carrying one day's figure as if it were the
+   whole week's -- the grand total (which dedupes by ref) then disagreed with its own section
+   rows (which did not). */
+test('an undated customer who rotates role mid-week (days_elapsed alone decides it) is still counted once for the week, not once per leader', async () => {
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  const row = (ref, ini, cur, days, wd, date) => ([
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: ini, status: 'Defaulter', days_elapsed: days, disb_date: null,
+      snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' },
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: cur, status: 'Defaulter', days_elapsed: days, disb_date: null,
+      snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
+  ]);
+  // days_elapsed 44 (Mon, Tue) -> bucket ceil(44/2)=22 -> active[(22-1)%3]=active[0]='BIKE'.
+  // days_elapsed 46 (Wed, Thu, Fri) -> bucket ceil(46/2)=23 -> active[(23-1)%3]=active[1]='MANAGER'.
+  // The same real customer, undated throughout, rotates leader on this ordinary clock alone.
+  const DAYS_OF = { MON: 44, TUE: 44, WED: 46, THU: 46, FRI: 46 };
+  const t = {
+    teams: [{ team: 'KONGOWE', opm: null, recovery: null, gmo: null, manager: 'BOSS', credit: null, expected: null, bike: 'BIKER' }],
+    defaulter_snapshots: WK.flatMap(([wd, date]) => row('999', 500, 400, DAYS_OF[wd], wd, date)),
+  };
+  const db = fakeDb(t);
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const bike = week.sections.find(s => s.role === 'BIKE'), manager = week.sections.find(s => s.role === 'MANAGER');
+  // Only the LAST day's role/leader (Friday, MANAGER) carries the rescued row; the earlier
+  // BIKE days are not a second, separate sighting of the same person.
+  assert.equal(bike.rows.find(r => r.leader === 'BIKER'), undefined, '999 is on the BIKE board too: counted twice');
+  const bossRow = manager.rows.find(r => r.leader === 'BOSS');
+  assert.ok(bossRow, '999 is on no board at all: dropped rather than merely miscounted');
+  assert.equal(bossRow.customers, 1);
+  assert.equal(bossRow.recovered, 100);                    // 500 - 400, the one day it is counted for
+  assert.equal(week.totals.customers, 1, 'the report\'s own grand total (deduped by ref) disagrees with its section rows');
+  assert.equal(week.totals.recovered, 100);
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  assert.deepEqual(card.rows.map(r => r.ref), ['999']);
+  assert.deepEqual(card.rows[0].byDay, { '2026-07-24': 100 });
+  const bikeCard = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKER', period: 'week' }, NOW);
+  assert.deepEqual(bikeCard.rows, [], 'the BIKE leader\'s own card for the week still shows the customer it never really kept');
+});
+
 /* THE DAY TABS ON THE WEEKLY CARD -- "for the weekly tab only, so that they can refer what was achieved each day by officer; maybe after opening
    officer card have day tabs within, as the expected days tabs". Each day tab is the DAILY card for that day, so an officer can lay the two
    side by side: the customers on their list that day, the day's own recovery, and the calls and comments of that day on THOSE customers.

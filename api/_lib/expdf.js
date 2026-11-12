@@ -177,7 +177,16 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   // to the week ONCE, after the loop -- the most recent day their book still carried them,
   // never summed day over day the way a dated customer's cycle days are. See periodRows_'s own
   // note for why `keepUndated: false` is passed into it below.
-  const undatedSeen = new Map();
+  //
+  // KEYED BY REF ALONE, NOT role|leader|ref -- an undated customer's ROLE still rotates on the
+  // ordinary clock (assignFor reads days_elapsed, nothing to do with whether disb_date can be
+  // read), so across a five-day week they can easily cross a bucket boundary and change leader
+  // while still undated the whole time. Keying this the way `cells` is keyed gave each leader
+  // they passed through its own entry -- the SAME customer, rescued once per leader instead of
+  // once for the week, each copy carrying one day's figure as if it were the whole week's.
+  // (Found on review, before this shipped: proved with a customer whose days_elapsed crosses a
+  // bucket boundary mid-week, counted on both the BIKE and the MANAGER board for one week.)
+  const undatedSeen = new Map(), seenAsDated = new Set();
   for (let d = mon; d <= last; d = addDaysKey(d, 1)) {
     const at = d === today ? nowMs : Date.parse(d + 'T09:00:00Z');
     const wd = WD_[isoWeekday(at)];
@@ -198,15 +207,19 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
       if (!c) cells.set(k, { ...r, days: 1, byDay: { [d]: dayCell } });
       else { c.byDay[d] = dayCell;
         Object.assign(c, r, { initial: c.initial + r.initial, recovered: c.recovered + r.recovered, days: c.days + 1, byDay: c.byDay }); }
+      seenAsDated.add(K(r.ref));                  // this ref reached a real cycle day this week: the rescue below must leave it alone
     }
-    for (const r of built) if (RECYCLE_ROLES.includes(r.role) && r.primary === 0) undatedSeen.set(r.role + '|' + K(r.leader) + '|' + K(r.ref), { r, date: d });
+    for (const r of built) if (RECYCLE_ROLES.includes(r.role) && r.primary === 0) undatedSeen.set(K(r.ref), { r, date: d });
     days.push({ date: d, weekday: wd, measured: true, customers: list.length });
   }
   // The once-per-week rescue: a customer never added by the loop above (their cycle day could
-  // never be read, on any day they were seen) goes in now, with the figures of the LAST day
-  // they were still in the book -- counted, exactly once, rather than dropped from the week.
-  for (const [k, { r, date }] of undatedSeen) {
-    if (cells.has(k)) continue;
+  // never be read, on any day they were seen) goes in now, with the figures and the role/leader
+  // of the LAST day they were still in the book -- one customer, one row, however many leaders
+  // they drifted across while undated; a ref that DID reach a real cycle day this week (so it
+  // is already a row in `cells`, perhaps under a different leader entirely) is left as it is.
+  for (const [ref, { r, date }] of undatedSeen) {
+    if (seenAsDated.has(ref)) continue;
+    const k = r.role + '|' + K(r.leader) + '|' + ref;
     const dayCell = { initial: r.initial, arrears: r.arrears, recovered: r.recovered, status: r.status };
     cells.set(k, { ...r, days: 1, byDay: { [date]: dayCell } });
   }
