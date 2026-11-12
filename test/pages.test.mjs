@@ -1843,7 +1843,8 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
   assert.ok(/XD_CARD_ = \{ d: d, weekBody: html, weekBoard: BOARDS\.xd_leader, tab: 'week', role: role, leader: leader \};/.test(lead) && /xdTabs_\(d, 'week'\) \+ '<div id="xdCardBody">'/.test(lead), 'the card opens on the Week with the day tabs above one body');
   const tabs = app.slice(app.indexOf('function xdTabs_(d, tab){'), app.indexOf('function xdDayBody_(d, x){'));
   assert.ok(/!d\.dayTabs \|\| !d\.dayTabs\.length\) return ''/.test(tabs), 'a day or a month card has no tabs');
-  assert.ok(/data-xdtab="week"/.test(tabs) && /d\.dayTabs\.filter\(xdShowDay_\)\.map\(function\(x\)/.test(tabs) && /haikupakiwa \/ not filed/.test(tabs), 'Week first, then a tab per day, the unfiled ones marked');
+  assert.ok(/data-xdtab="week"/.test(tabs) && /d\.dayTabs\.map\(function\(x\)/.test(tabs) && /haikupakiwa \/ not filed/.test(tabs), 'Week first, then a tab per day (Sunday included), the unfiled ones marked');
+  assert.ok(!/xdShowDay_/.test(app), 'Sunday is an ordinary day of the rotation now -- no special-case filter hides its tab or column');
   assert.ok(/body\.innerHTML = day\.html; BOARDS\.xd_leader = day\.board;/.test(tabs) && /body\.innerHTML = c\.weekBody; BOARDS\.xd_leader = c\.weekBoard;/.test(tabs), 'a tab swaps the body and the Excel table, and asks the server for nothing');
   assert.ok(!/srv\(/.test(tabs.slice(tabs.indexOf('function xdLeaderTab_'), tabs.indexOf('function xdDayBody_'))) , 'switching tabs makes no request');
   const dayBody = app.slice(app.indexOf('function xdDayBody_(d, x){'), app.indexOf('/* THE PERSON LIST FOLLOWS THE OTHER FILTERS'));
@@ -1858,7 +1859,10 @@ test('the Exp.Def Report carries the period bar with its arrows and the three re
     'a step is the same one read as opening the card, for the week asked by its Monday');
   assert.ok(/if \(seq !== XD_SEQ_\) return;/.test(stepSrc), 'a slow answer to an older tap never paints over the newest card');
   assert.ok(/xdLeaderTab_\(wantDay\)/.test(stepSrc), 'the weekday you were on is kept when the week changes');
-  assert.ok(/function xdShowDay_\(x\)\{ return x\.measured \|\| String\(x\.weekday\)\.toUpperCase\(\) !== 'SUN'; \}/.test(app) && /d\.days\.filter\(xdShowDay_\)/.test(app) && /d\.dayTabs\.filter\(xdShowDay_\)/.test(app), 'an unfiled Sunday gets no column and no tab');
+  // Sunday is an ordinary day now (xdShowDay_'s Sunday-only-if-measured suppression is gone,
+  // checked above): an unfiled Sunday still gets its column and its tab, same as Mon-Sat.
+  assert.ok(/d\.days\.map\(function\(x\)/.test(dayCols), 'the day columns are never filtered -- an unfiled Sunday keeps its column');
+  assert.ok(/d\.dayTabs\.map\(function\(x\)/.test(tabs), 'the day tabs are never filtered -- an unfiled Sunday keeps its tab');
   assert.ok(/Marejesho kwa siku \/ Recovered by day/.test(note) && /equals the week/.test(note), 'a by-day line under the cards says the days equal the week');
   assert.ok(/kpi\('Wateja \/ Customers', money\(t\.customers\), xdSpan_\(d\)\)/.test(view), 'the customers card names the period');
   assert.ok(/\['GMO','MANAGER','BIKE'\]\.map\(function\(role\)/.test(view) && /kpi\(w\.rec \+ ' · ' \+ role/.test(view)

@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-12-c';
+var BUILD = '2026-11-12-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4332,8 +4332,10 @@ function chipFor(s){
 }
 
 /* Expected Defaulters is a WEEKLY CYCLE, not a one-day list. Each customer is visited twice:
-   on the weekday their loan was disbursed (Day 1) and three days later (Day 2), with Sunday
-   rolled onto Monday. Hence the Mon–Sat day tabs — a customer appears under two of the six. */
+   on the weekday their loan was disbursed (Day 1) and three days later (Day 2) — full week,
+   Monday through Sunday ("lets give all the expected defaulters to sunday for full week
+   recoveries" — the owner). Hence the Mon–Sun day tabs — a customer appears under two of the
+   seven, Sunday included when that is genuinely one of their two days. */
 /* The three recycling categories, each leader with their own book and their own recovery.
    THE WEEK'S REPORT, ALWAYS -- "expected def - remove Leo / Daily and Wiki / Weekly; add weekly
    recovered 3 cards (GMO, Manager, Bike) so that weeks shift shows weekly recovery total on the
@@ -4357,11 +4359,12 @@ function xdSpan_(d){ var p = XD_WORDS[d.period] || XD_WORDS.day; return p.of + '
    week, before Recovered, on each board and on a leader's card: what that day recovered, by the DAILY report's own figure for that officer
    (server: byDay), so an officer lays their own daily numbers beside the row and the columns add up to Recovered. A day nobody filed shows
    blank and says so in its header's tooltip. Same getters feed the cells, the sort, the totals and the Excel/CSV/JPG. */
-/* A Sunday nobody filed is not a day a deck is expected for (the rotation rolls Sunday into Monday): it gets no column and no tab. A Sunday that WAS filed does. */
-function xdShowDay_(x){ return x.measured || String(x.weekday).toUpperCase() !== 'SUN'; }
+/* Sunday is an ordinary day of the rotation now, like every other: its column and tab show
+   whether or not it was filed, the same as Monday through Saturday already do -- a day nobody
+   filed says "not filed" rather than disappearing (xdDayCols_, xdDayBody_ below). */
 function xdDayCols_(d){
   if (d.period !== 'week' || !d.days || !d.days.length) return [];
-  return d.days.filter(xdShowDay_).map(function(x){
+  return d.days.map(function(x){
     var dt = String(x.date);
     return { key: 'd_' + dt, label: x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8), kind: 'money',
       title: x.measured
@@ -4576,7 +4579,7 @@ function xdTabs_(d, tab){
   var wk = d.totals || {};
   return '<div class="pills" id="xdCardTabs" style="margin:4px 0 10px">'
     + '<button type="button" class="pill'+(tab==='week'?' on':'')+'" data-xdtab="week" onclick="xdLeaderTab_(\'week\')">Wiki / Week <b>('+money(wk.recovered||0)+')</b></button>'
-    + d.dayTabs.filter(xdShowDay_).map(function(x){
+    + d.dayTabs.map(function(x){
         var dt = String(x.date), nm = x.weekday.charAt(0) + x.weekday.slice(1).toLowerCase() + ' ' + dt.slice(8);
         return '<button type="button" class="pill'+(tab===dt?' on':'')+'" data-xdtab="'+esc(dt)+'" onclick="xdLeaderTab_(\''+esc(dt)+'\')"'
           + (x.measured ? '' : ' title="'+esc(dt)+' haikupakiwa / not filed" style="opacity:.55"')+'>'+esc(nm)
@@ -4692,7 +4695,7 @@ VIEWS.defexp = function(){
        not there. The distribution rule is the server's own, kept identical on purpose:
        each customer counts on BOTH of their days, so on 'all' every number here lands
        exactly where it did before this change. */
-    var dist = {0:0,1:0,2:0,3:0,4:0,5:0,6:0};
+    var dist = {0:0,1:0,2:0,3:0,4:0,5:0,6:0,7:0};
     book.forEach(function(r){
       if (!r.primary) { dist[0]++; return; }
       dist[r.primary]++;
@@ -4732,12 +4735,12 @@ VIEWS.defexp = function(){
           + ' hivyo hawawezi kupangwa siku. / customers carry no disbursement date, so they cannot be placed on a'
           + ' weekday. They are under the <b>No date</b> tab — work them, and fix the upload.</div>' : '')
       + board('dxDist','Mgawanyo wa wiki / Weekly distribution',
-          'each customer appears twice: disbursement weekday + 3 days (Sunday → Monday)',
-          [1,2,3,4,5,6].map(function(u){ return { day:names[u], customers:(dist[u]||0) }; })
+          'each customer appears twice: disbursement weekday + 3 days, full week Monday through Sunday',
+          [1,2,3,4,5,6,7].map(function(u){ return { day:names[u], customers:(dist[u]||0) }; })
             .concat(unplaced ? [{ day:'No date', customers:unplaced }] : []),
           [col('day','Day'), col('customers','Customers','num')],
-          {day:'', customers:[1,2,3,4,5,6].reduce(function(s,u){ return s+(dist[u]||0); },0) + (unplaced||0)})
-      + '<div class="pills">' + [1,2,3,4,5,6].map(function(u){
+          {day:'', customers:[1,2,3,4,5,6,7].reduce(function(s,u){ return s+(dist[u]||0); },0) + (unplaced||0)})
+      + '<div class="pills">' + [1,2,3,4,5,6,7].map(function(u){
           return '<button class="pill'+(u===day?' on':'')+'" data-day="'+u+'">'+names[u]
             + ' <b>('+(dist[u]||0)+')</b>' + (u===d.todayIndex?' · leo':'') + '</button>'; }).join('')
         + (unplaced ? '<button class="pill'+(day===0?' on':'')+'" data-day="0">No date <b>('

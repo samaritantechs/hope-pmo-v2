@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 59**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-d` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 60**.
 
 ---
 
@@ -77,6 +77,37 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#682** — Expected Defaulters, full week: Sunday is a day of its own, not folded into Monday
+  (handbook Part 60). "i said lets give all the expected defaulters to sunday for full week
+  recoveries. am sure assignments fall there too bro." Both copies of `rollSun` (one in
+  `portal-core.js`, one in `expdf.js`) are gone: a loan's two cycle days, and the live "which day
+  is today" clock, now read the real weekday (1-7) everywhere, so Sunday is a day in its own
+  right -- a loan disbursed Thursday keeps its own Day 2 on Sunday instead of Monday, a loan
+  disbursed on a Sunday can now be anybody's Day 1, and the Exp.Def Report's leader cards show a
+  Sunday column and tab the same as every other day, filed or not (`xdShowDay_`'s own
+  Sunday-only-if-measured suppression is gone too). "Assignments" turned out to be the Exp.Def
+  list's own distribution board under another name -- the dedicated Defaulter Assignment screen
+  carries no weekday logic of its own at all, so nothing there needed to change. A real
+  behaviour change, not only cosmetic: a customer whose true two days never touched Sunday
+  (disbursed Friday: Friday and Monday) is no longer credited for money that happened to move on
+  a Sunday, the same as it never was for an off-cycle Wednesday either -- the old credit only
+  ever existed because a real Sunday's clock was forced to equal Monday's slot number. Checked
+  with a new, direct test against the live list (Thursday- and Sunday-disbursed loans keep
+  Sunday as their own slot) and corrected the two existing weekly-report tests whose figures
+  depended on the old fold: one was given a new, locally-added customer whose cycle genuinely
+  reaches Sunday, proving Sunday's own recovery is counted; the other needed none -- it proves
+  the ghost credit's removal on the pre-existing customer, Sunday's tab still there and
+  correctly empty. **Reviewed** by two independent readers before this merged, both finding the
+  same real gap: the first draft of this entry (and of handbook Part 60) said neither
+  `/api/upload` nor `/api/call` imports `expdf.js` -- true for `upload.js`, **false for
+  `call.js`**, whose `call-core.js` calls `expdfMine` (the same shared function) from the phone's
+  own Exp.Def list and its EXP.DEF% strip figure. The right design -- one shared definition, not
+  a third copy -- and no new read or latency either way (both call sites predate this commit),
+  but untested beforehand. Fixed with a new test in `test/call.test.mjs` proving the phone's own
+  two entry points see a Thursday-disbursed customer's Sunday correctly. `npm test`: 1,514 pass.
+  No new read or query on `/api/upload` or `/api/call`; `BUILD 2026-11-12-d`. **Not done:**
+  whether off-cycle-day recovery (any day, not only Sunday) should count at all is a separate
+  question, untouched either way.
 - **#681** — Leave becomes three tabs, its tunnel is advance's own approvers, its annual
   allowance moves onto the report (handbook Part 59). "it needs to be 3 tabs to fit perfection
   like advances ... request tab, approval tab and reports tab" · "Advance approver = Leave

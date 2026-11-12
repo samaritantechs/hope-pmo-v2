@@ -2684,6 +2684,51 @@ test('weekend with the standing rule and a Saturday deck: the week includes Satu
   assert.equal(d.recToday.isToday, true);
 });
 
+/* THE PHONE'S OWN EXP.DEF LIST AND ITS TOP-BAR % SHARE expdfCore/buildRows_ WITH THE PORTAL --
+   "lets give all the expected defaulters to sunday for full week recoveries" (the owner,
+   handbook Part 60) removed the Sunday-onto-Monday fold there, and api_callList('expdf') /
+   api_callDailySummary's own expdf figure call straight into that same shared function
+   (expdfMine, api/_lib/expdf.js) -- not a second copy. Checked directly here, through the
+   phone's own two entry points, rather than only through the portal's: a customer disbursed
+   Thursday has their own Day 2 genuinely on Sunday now, and the phone sees it on the real
+   Sunday and nowhere else. */
+test('the phone\'s own Exp.Def list and daily-summary % see a customer\'s Sunday cycle day, not Monday\'s', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], gmo: 'GMO G' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  // Disbursed Thursday 2026-07-23 -> Day 1 Thursday, Day 2 three days later -> Sunday 2026-07-26,
+  // not Monday. Filed on that Sunday, days_elapsed 5 -> bucket 3 -> GMO (the role this book rotates it to).
+  t.defaulter_snapshots.push(
+    { ref: 'SUN1', full_name: 'C SUN1', contact: '0714000900', team: 'KONGOWE', arrears: 500, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 5, disb_date: '2026-07-23', snapshot_type: 'initial', weekday: 'SUN', snapshot_date: '2026-07-26', upload_batch: 'bi', created_at: '2026-07-26T04:00:00Z' },
+    { ref: 'SUN1', full_name: 'C SUN1', contact: '0714000900', team: 'KONGOWE', arrears: 200, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 5, disb_date: '2026-07-23', snapshot_type: 'current', weekday: 'SUN', snapshot_date: '2026-07-26', upload_batch: 'bc', created_at: '2026-07-26T18:00:00Z' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dSUN', 'GMO G', '', '', '0712999900', 'KON123'], NOW);
+  const sun = Date.parse('2026-07-26T09:00:00Z');
+
+  const list = await callApi(db, 'api_callList', ['dSUN', 'expdf'], sun);
+  assert.equal(list.ok, true);
+  assert.deepEqual(list.rows.map(r => r.ref), ['SUN1'], 'on the real Sunday, the customer whose own Day 2 is Sunday is on the phone\'s list');
+  assert.equal(list.rows[0].recovered, 300); assert.equal(list.rows[0].initial, 500);
+
+  const summarySun = await callApi(db, 'api_callDailySummary', ['dSUN'], sun);
+  assert.equal(summarySun.expdf.customers, 1); assert.equal(summarySun.expdf.num, 300); assert.equal(summarySun.expdf.den, 500);
+
+  // The following Monday: the same deck is still the latest filed (nothing newer), but this
+  // customer's two days are Thursday and Sunday, never Monday -- so they are correctly absent,
+  // the same as any other off-cycle day, not a second visit silently borrowed from the fold
+  // this fix removed.
+  _clearSummaryCache(); _clearWidgetCache();
+  const mon = Date.parse('2026-07-27T09:00:00Z');
+  const listMon = await callApi(db, 'api_callList', ['dSUN', 'expdf'], mon);
+  assert.deepEqual(listMon.rows, [], 'Monday is not this customer\'s cycle day, on the phone either');
+  const summaryMon = await callApi(db, 'api_callDailySummary', ['dSUN'], mon);
+  assert.equal(summaryMon.expdf.customers, 0); assert.equal(summaryMon.expdf.num, 0);
+});
+
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();
