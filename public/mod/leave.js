@@ -30,7 +30,9 @@ VIEWS.leave = function(){
   return srv('leaveRequestPage', { staffId: staffId, staffName: staffName }).then(function(d){
     S.leaveReq = d;
     if (sub === 'desk' && d.canApprove) return srv('leaveQueue', {}).then(function(q){ d.deskCount = q.count; S.leaveQ = q; leaveDeskPaint_(d, q); });
-    leaveAskPaint_(d, sub);
+    // Desk asked for but not held (no approver standing, or a stale link): the ask, not a
+    // pill bar still marked "desk" for a screen that cannot show it.
+    leaveAskPaint_(d, sub === 'desk' ? 'ask' : sub);
   });
 };
 function leaveAskPaint_(d, sub){
@@ -90,7 +92,7 @@ function leaveAskPaint_(d, sub){
       var s = $('#lvStart').value, e = $('#lvEnd').value, note = $('#lvDaysNote');
       if (!s || !e){ note.textContent = '—'; return; }
       var days = Math.round((new Date(e + 'T00:00:00Z') - new Date(s + 'T00:00:00Z')) / 86400000) + 1;
-      note.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki / remaining after: ' + money(b.remaining - days) : ''))
+      note.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki ikiidhinishwa / remaining if approved: ' + money(b.remaining - days) : ''))
         : 'Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.';
     };
     $('#lvStart').oninput = recalc; $('#lvEnd').oninput = recalc; recalc();

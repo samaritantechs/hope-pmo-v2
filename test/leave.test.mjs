@@ -16,7 +16,8 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ||
 const { portalApi } = await import('../api/_lib/portal-core.js');
 
 const NOW = Date.parse('2026-11-12T09:00:00Z');   // Thursday noon EAT
-const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['leave', 'leaverep'] };
+// isAdminUser (api/_lib/system-gate.js) reads the resolved tabs, not the role text: 'settings' is what ADMIN_TABS always carries.
+const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'leave', 'leaverep'] };
 const FO = { code: 'KON', name: 'KONGOWE', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['leave'] };
 const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: ['leave', 'leaverep'] };
 
@@ -155,7 +156,7 @@ test('no month to close: leave has no finance Finalize, unlike advance -- a deci
   assert.equal(dec.approved, 1, 'no month-closed refusal exists for leave -- only its own start date can expire it');
 });
 
-test('a database without RUN-ME-047 refuses cleanly on every leave action that reads or writes leave_requests, never throws', async () => {
+test('a database without RUN-ME-051 refuses cleanly on every leave action that reads or writes leave_requests, never throws', async () => {
   const db = fakeDb(tables(), { missingTables: ['leave_requests'] });
   // leaveRequestPage's `on` mirrors advRequestPage's own: it reports whether staff_registry (the
   // name picker) is reachable, not leave_requests -- the same design advance already ships with.
@@ -163,17 +164,29 @@ test('a database without RUN-ME-047 refuses cleanly on every leave action that r
   // directly) that must refuse.
   const page = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
   assert.equal(page.on, true);
-  await assert.rejects(() => portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-16', reason: 'LIKIZO' }, NOW), /RUN-ME-047/);
+  await assert.rejects(() => portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-16', reason: 'LIKIZO' }, NOW), /RUN-ME-051/);
   const q = await portalApi(db, GMO, 'leaveQueue', {}, NOW);
-  assert.equal(q.on, false); assert.match(q.note, /RUN-ME-047/);
+  assert.equal(q.on, false); assert.match(q.note, /RUN-ME-051/);
   const rep = await portalApi(db, GMO, 'leaveReport', {}, NOW);
-  assert.equal(rep.on, false); assert.match(rep.note, /RUN-ME-047/);
+  assert.equal(rep.on, false); assert.match(rep.note, /RUN-ME-051/);
 });
 
 test('neither migration run at all (a fresh database): the ask says so plainly instead of pretending there is nobody to pick', async () => {
   const db = fakeDb(tables(), { missingTables: ['leave_requests', 'staff_registry'] });
   const page = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
-  assert.equal(page.on, false); assert.match(page.note, /RUN-ME-047/); assert.deepEqual(page.staff, []);
+  assert.equal(page.on, false); assert.match(page.note, /RUN-ME-051/); assert.deepEqual(page.staff, []);
+});
+
+test('without RUN-ME-045, an ordinary requester sees nobody\'s history and gets no desk pill -- only admin does', async () => {
+  // access_codes.supervisor absent -> advRouting_'s own signal for "RUN-ME-045 not run", routing.on = false.
+  const db = fakeDb(tables(), { missingColumns: { access_codes: ['supervisor'] } });
+  await portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-18', reason: 'UGONJWA' }, NOW);
+  const page = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
+  assert.equal(page.routingOn, false);
+  assert.equal(page.canApprove, false, 'an ordinary requester is not handed the desk pill just for holding the one combined tab');
+  assert.equal(page.canHistory, false); assert.deepEqual(page.history, [], 'and not a colleague\'s dates, cover name or reason either');
+  const adminPage = await portalApi(db, ADMIN, 'leaveRequestPage', {}, NOW);
+  assert.equal(adminPage.canHistory, true); assert.equal(adminPage.history.length, 1, 'admin alone still sees it while the routing columns are not in');
 });
 
 test('customer service: one shared code, names off the call-agents roster, no zone -- the same special case advance makes', async () => {

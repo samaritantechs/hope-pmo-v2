@@ -4843,7 +4843,7 @@ The Google Form staff filled in to ask for leave (`FOMU YA RUHUSA NA LIKIZO`) an
 fed are in the portal now, the way the salary-advance sheet was moved in before it: two tabs
 (**Likizo / Leave & Holiday**, the ask and, for whoever the routing makes an approver, the desk
 together, switched by a pill in the one screen; **Leave reports**, for management), one new
-table (`leave_requests`, `db/RUN-ME-047-leave-requests.sql`), and **none of the approval tunnel
+table (`leave_requests`, `db/RUN-ME-051-leave-requests.sql`), and **none of the approval tunnel
 written a second time**: a leave request carries the same `req_role` / `req_code` / `zone` a
 salary-advance request would, so `advRouting_`, `advRouteOf_`, `advDeskOf_`, `advSees_` and
 `advHolds_` — the one rule for "who approves whose request", built for advances — decide a
@@ -4915,6 +4915,40 @@ own tabs"), since neither advance's own four tabs nor the general sidebar test c
 only `fraud`, `bonusplan` and `checklist` happened to have one already. Worth a general
 invariant test one day (every `div:'mgmt'` nav entry present in `ADMIN_TABS`/`EXTRA_TABS`),
 but that is a broader change than this one and was not made here.
+
+**Reviewed** by three independent readers before this merged. One real finding, confirmed and
+fixed: without RUN-ME-045 (the routing columns), `leaveRequestPage`'s history pane and desk
+pill fell back to "holds the `leave` tab" -- copied from advance's own legacy fallback
+(`tabs.includes('advappr')`), which works there because `advappr` is a separate tab only
+approvers ever hold. Leave's one tab carries the ask and the desk together, so that same
+fallback showed every ordinary requester every other requester's pending dates, cover name and
+reason (medical, bereavement) on a database that had not yet run RUN-ME-045 -- reproduced with
+an ordinary field officer reading a same-zone colleague's sick-leave request. Fixed: without
+the routing columns, only admin sees the history pane or the desk pill here; a dedicated test
+pins it. Also found and fixed: this file's own migration collided with an existing
+`RUN-ME-047` (`#621`, well before this change) -- renumbered to `RUN-ME-051`, the real
+next-free number; and the file's own claim of "under 40 lines" was wrong (53) and is now
+honest. Two minor, non-blocking UI wordings were also tightened: the live day-count preview's
+"remaining after" read as an immediate deduction on submit, when only an Approved request
+actually reduces the balance (now "remaining if approved"); and asking for the desk pill by a
+hand-edited link while holding none now falls back to the ask screen with its own pill lit, not
+a pill bar stuck on "desk". Schema-to-code column names, the migration's idempotency, every
+NAV/MGMT_ORDER/MOD_OF/FN/FN_TAB wiring, `advDeskLine_`'s single definition, and the day-count
+math client- and server-side were each checked and confirmed correct -- nothing else was
+changed. `npm test`: 1,511 pass.
+
+**"always Auto default grant all tabs to admin role. i dont have to go manually grant all new
+tabs i create" — the owner, 12 November 2026.** Worth saying plainly: admin's own access to a
+screen was never gated on `ADMIN_TABS` to begin with -- `allowed()` in `app.html` and
+`tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either ever
+consults a tabs list, for every tab there is or ever will be, no step needed. What `ADMIN_TABS`
+and `EXTRA_TABS` actually fed, as two separately-typed copies of the same list, was the Roles &
+access screen's own checkbox for granting a tab to a *different* role -- and that pair drifting
+apart (`leave`/`leaverep` named in one, missed in the other) is exactly what the owner had just
+found. `ADMIN_TABS` is now computed as `USER_TABS.concat(EXTRA_TABS)` rather than its own
+literal array, so the two cannot drift apart again: a new tab is named once, in `EXTRA_TABS`,
+and admin carries it automatically, the one manual step that remains being the one no shared
+runtime between `app.html` and `auth.js` can remove.
 
 ---
 

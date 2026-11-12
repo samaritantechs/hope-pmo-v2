@@ -97,8 +97,6 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    role gets one when it is ticked. `leave` is the ask and, for whoever the advance-approver
    routing makes an approver, the desk together; `leaverep` is the report. Reuses advance's own
    routing (api/_lib/portal-core.js), not a tab of its own for that. */
-export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leave', 'leaverep', 'fraud', 'checklist', 'annual']);
 /* `annual` (the Annual Report -- the GM's annual workbook read off the system, every team's year
    month by month) is granted the same way `auditrep` is: admins from the start, a role when the
    tab is ticked. It reads the whole year's sales and collection for every team in scope. */
@@ -118,9 +116,20 @@ export const ADMIN_TABS = USER_TABS.concat(['upload', 'settings', 'audit', 'adju
    when it is ticked on their role. It reads the whole book as at a month end, which is not a
    screen every code should carry.
 /* Tabs an admin holds that are not in USER_TABS, so a role-editing screen can offer them
-   without inventing its own list. */
+   without inventing its own list -- and the ONE place a brand-new tab is named, now that
+   ADMIN_TABS is computed from this rather than carrying a second, separately-typed copy of it.
+     "always auto default grant all tabs to admin role. i dont have to go manually grant all
+      new tabs i create" -- the owner, 12 November 2026.
+   Admin's own ACCESS to a screen was never gated by this list in the first place: allowed() in
+   app.html and tabGate_ in portal-core.js both short-circuit to true the moment a sign-in's
+   role reads ADMIN, tabs never consulted. What this list actually feeds is the Roles & access
+   screen's own checkbox for granting a tab to a DIFFERENT role -- without a tab named here,
+   the owner could set up Leave's approval for a GMO's role at all, admin or not. Keeping it ONE
+   list (ADMIN_TABS derived from this, not duplicated beside it) is what stops the two drifting
+   apart the way they did until this same change: a tab added to one and not the other. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
   'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leave', 'leaverep', 'fraud', 'checklist', 'annual'];
+export const ADMIN_TABS = USER_TABS.concat(EXTRA_TABS);
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
    into an "Extra tabs" box on every access code. "i'll then need to from now on set

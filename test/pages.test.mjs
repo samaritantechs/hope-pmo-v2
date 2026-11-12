@@ -2214,6 +2214,22 @@ test('leave / leaverep: granted like advance\'s own tabs -- admin from the start
   assert.ok(/leaveDecide: \['leave'\]/.test(pc) && /leaveReport: \['leaverep'\]/.test(pc), 'the desk\'s decision and the report are each gated on their own tab');
 });
 
+/* "always auto default grant all tabs to admin role. i dont have to go manually grant all new
+   tabs i create" -- the owner, 12 November 2026. Admin's own access was never gated by
+   ADMIN_TABS to begin with (allowed() in app.html and tabGate_ in portal-core.js both
+   short-circuit on role === 'ADMIN' before either ever looks at a tabs list); what ADMIN_TABS
+   and EXTRA_TABS fed was the Roles & access screen's own checkbox list for granting a tab to a
+   DIFFERENT role. They used to be two separately-typed copies of the same "extra" list, which
+   is exactly how leave's own tabs ended up missing from one of them. Now there is one list
+   (EXTRA_TABS) and ADMIN_TABS is computed from it, so they cannot drift apart again. */
+test('ADMIN_TABS is computed from EXTRA_TABS, not a second hand-typed copy of it -- so a new tab named once cannot be forgotten in the other', async () => {
+  const { USER_TABS, ADMIN_TABS, EXTRA_TABS } = await import('../api/_lib/auth.js');
+  assert.deepEqual(ADMIN_TABS, USER_TABS.concat(EXTRA_TABS), 'ADMIN_TABS is exactly USER_TABS + EXTRA_TABS');
+  const src = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'auth.js'), 'utf8');
+  assert.ok(/ADMIN_TABS = USER_TABS\.concat\(EXTRA_TABS\)/.test(src), 'derived, not a literal array of its own');
+  assert.equal((src.match(/'leave', 'leaverep'/g) || []).length, 1, 'leave\'s own tabs are named once in this file, not once per list');
+});
+
 /* THE FRAUD DETECTOR -- "I need a new nav 'Fraud Detector' where every approved loan with a
    number or name among customer, guarantor or receiver that still exists in an another approved
    of the three columns or in the current defaults sheet, auto list the case list that will open

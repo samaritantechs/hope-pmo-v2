@@ -2494,7 +2494,7 @@ async function advReopen(db, user, p, nowMs = Date.now()) {
    in the same way the advance-request sheet was: "the tunnels and approvals must be the same
    to advances when people request leaves / holidays". Two tabs (`leave`, the ask and, for an
    approver, the desk together; `leaverep`, the report), one new table (leave_requests,
-   db/RUN-ME-047-leave-requests.sql), and NONE of the routing written again: a leave request
+   db/RUN-ME-051-leave-requests.sql), and NONE of the routing written again: a leave request
    carries the same req_role / req_code / zone a request of any other kind would, so
    advRouting_, advRouteOf_, advDeskOf_, advSees_ and advHolds_ -- the one rule for "who
    approves whose request", built for advances -- decide a leave request exactly the way they
@@ -2523,8 +2523,8 @@ async function advReopen(db, user, p, nowMs = Date.now()) {
        changed). Whether it should reset each calendar year is the owner's to decide -- flagged
        in the pull request this shipped in, not guessed here.
    ===================================================================================== */
-const LEAVE_NOTE = 'Jedwali la likizo halipo bado: endesha db/RUN-ME-047-leave-requests.sql kwenye SQL editor. '
-  + '/ The leave-request table is not there yet: run db/RUN-ME-047-leave-requests.sql in the SQL editor.';
+const LEAVE_NOTE = 'Jedwali la likizo halipo bado: endesha db/RUN-ME-051-leave-requests.sql kwenye SQL editor. '
+  + '/ The leave-request table is not there yet: run db/RUN-ME-051-leave-requests.sql in the SQL editor.';
 const leaveMissing_ = e => /leave_requests|staff_registry|does not exist|schema cache/i.test(String((e && e.message) || e || ''));
 /** A read of either table, null when RUN-ME-047 (or RUN-ME-044, for staff_registry) has not
     been run -- the tab says so, nothing fails. */
@@ -2583,9 +2583,17 @@ async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = D
   const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
   const dept = !admin && !cs && zones !== null;
   const tabs = user.tabs || [];
-  // No separate approval tab here (leave and its desk share one, unlike advance's four): the
-  // fallback without RUN-ME-045 is simply holding the Leave / Holiday tab at all.
-  const seesHistory = admin || tabs.includes('leaverep') || (routing.on ? routing.isApprover(user) : tabs.includes('leave'));
+  /* NO FALLBACK TO "HOLDS THE TAB" HERE -- unlike advance's advappr (a separate tab only
+     approvers ever hold), the one `leave` tab is held by every ordinary requester too, since
+     it carries the ask and the desk together. advRequestPage's own legacy fallback
+     (tabs.includes('advappr')) would, copied here, show every requester every other
+     requester's history -- dates, who covers for them, and the reason itself (medical,
+     bereavement), on a database that has not yet run RUN-ME-045. Found on review, before this
+     shipped, and reproduced: an ordinary field officer holding only `leave` read a same-zone
+     colleague's full pending request. So without RUN-ME-045 there is no history pane or desk
+     pill for anyone but admin here -- a real restriction, not the blanket "trust the tab" this
+     mirrored at first, until the routing columns exist to tell an asker from an approver. */
+  const seesHistory = admin || tabs.includes('leaverep') || (routing.on && routing.isApprover(user));
   const roleWord = advRoleWords_(user.role)[0] || '~none~';
   const histQ = () => db.from('leave_requests').select('id, submitted_at, staff_id, staff_name, zone, start_date, end_date, days, reason, cover_name, approval, comment, decided_by, decided_at, req_role')
     .order('submitted_at', { ascending: false }).limit(100);
@@ -2625,8 +2633,8 @@ async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = D
     if (chosen) balance = await leaveBalance_(db, Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT))), chosen.id || null, chosen.name, user.role);
   }
   // Whether the "Dawati / Desk" pill is offered at all -- an approver, same test isAdvApprover
-  // makes for advance's own approval tab, since the one tab here carries both.
-  const canApprove = admin || (routing.on ? routing.isApprover(user) : tabs.includes('leave'));
+  // makes for advance's own approval tab. No "holds the tab" fallback: see seesHistory above.
+  const canApprove = admin || (routing.on && routing.isApprover(user));
   return { on, note: on ? null : LEAVE_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, reasons: leaveReasons_(cfg), chosen, balance,
     role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, canApprove, csAgents: cs,

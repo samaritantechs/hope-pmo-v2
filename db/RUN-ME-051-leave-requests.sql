@@ -1,10 +1,10 @@
 -- =====================================================================================
--- RUN-ME-047  LEAVE / HOLIDAY REQUESTS: the FOMU YA RUHUSA NA LIKIZO Google Form and its
+-- RUN-ME-051  LEAVE / HOLIDAY REQUESTS: the FOMU YA RUHUSA NA LIKIZO Google Form and its
 --             sheet, moved into the portal the same way the salary-advance sheet was
 --             (RUN-ME-044) -- "the tunnels and approvals must be the same to advances when
 --             people request leaves / holidays".
 --
--- Whole file: new query, paste, Ctrl+A, Run. Under 40 lines on purpose. SAFE TO RE-RUN.
+-- Whole file: new query, paste, Ctrl+A, Run. Under 60 lines. SAFE TO RE-RUN.
 --
 --   leave_requests   one row per request. A staff picks their own name from their zone's or
 --                    role's list on the Leave / Holiday tab, the same desk that decides their
