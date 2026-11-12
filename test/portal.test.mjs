@@ -4762,6 +4762,148 @@ test('the expdf week is the sum of its days, officer by officer -- what each off
   assert.equal(dayRep.totals.byDay, undefined); assert.equal(Object.values(keyed_(dayRep))[0].byDay, undefined);
 });
 
+/* A REAL DEFAULTER, SHARING A LEADER'S BOOK WITH DATED COLLEAGUES, IS NEVER SILENTLY ABSENT --
+   "some staff like managers have somedays not getting expected defaulters, something not
+   reality, please re-crosscheck expected defaulters being efficiently produced to everyone
+   from teams to leaders". A customer whose own disbursement date is missing or unreadable has
+   `primary === 0`, which equals no real weekday, so the old onToday filter put them on NO
+   leader's daily list, on any day -- UNLESS every other customer the filter was run over
+   shared the same fault (expdfMine's existing "noCycleDates" rescue, and periodRows_'s old
+   whole-book fallback), which in a real book of thousands rarely happens: one customer with a
+   bad date, among colleagues with good ones, simply vanished, every day, from the leader's
+   phone AND from the management report's totals -- exactly the gap reported above, and not
+   particular to MANAGER: the fix is in periodRows_ and expdfMine, read by all three recycling
+   roles alike. */
+function expdfUndatedTables_() {
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  const row = (ref, ini, cur, disb, wd, date) => ([
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: ini, status: 'Defaulter', days_elapsed: 45, disb_date: disb,
+      snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' },
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: cur, status: 'Defaulter', days_elapsed: 45, disb_date: disb,
+      snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
+  ]);
+  return {
+    teams: [{ team: 'KONGOWE', opm: null, recovery: null, gmo: null, manager: 'BOSS', credit: null, expected: null, bike: null }],
+    // 111 and 555, disbursed on a Tuesday (cycle days Tue + Fri, as the rest of this file's fixtures use), carry BOSS's book
+    // as usual. 888 is exactly as real -- same team, same status, same leader by the same rule -- but no day of the week was
+    // ever its disb_date's weekday, because it does not have one.
+    defaulter_snapshots: WK.flatMap(([wd, date]) => [
+      ...row('111', 500, 300, '2026-07-21', wd, date),
+      ...row('555', 500, 600, '2026-07-21', wd, date),
+      ...row('888', 500, 400, null, wd, date),
+    ]),
+  };
+}
+test('a leader\'s list never silently drops a real defaulter whose cycle day could not be read -- even one who shares the book with dated colleagues', async () => {
+  const BOSS = { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: USER_TABS.slice() };
+  const db = fakeDb(expdfUndatedTables_());
+
+  // The daily board (what the GM's own report shows): 888's real 400 arrears is in BOSS's count, not lost to it.
+  // Each day: 111 recovers 500-300=200 (on its two cycle days only), 555 recovers 500-600=0, 888 recovers 500-400=100 (every day it is read alone).
+  const today = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);   // Friday: both 111 and 555 are on their cycle (Fri is their second day)
+  const bossToday = today.sections.find(s => s.role === 'MANAGER').rows.find(r => r.leader === 'BOSS');
+  assert.equal(bossToday.customers, 3, 'the undated customer is missing from the leader\'s daily count');
+  assert.equal(bossToday.arrears, 300 + 600 + 400);
+  assert.equal(bossToday.recovered, 200 + 0 + 100);
+
+  // BOSS's own phone screen: 888 sits beside 111 and 555, and the diagnostic strip says there was one it could not place.
+  const mine = await portalApi(db, BOSS, 'expdfMine', {}, NOW);
+  assert.deepEqual(mine.rows.map(r => r.ref).sort(), ['111', '555', '888']);
+  assert.equal(mine.diag.undated, 1);
+  assert.equal(mine.diag.noCycleDates, false, 'this is the ordinary mixed book, not the all-undated rescue');
+  assert.equal(mine.allTotals.customers, 3);
+
+  // The week: 888 is counted ONCE (its last measured day, Friday: 500-400=100), not once per day it was seen --
+  // there is no cycle day to spread it across, unlike 111 and 555, who keep exactly their usual two on-days
+  // (Tue 500-300=200, Fri 500-300=200 -> 400; Tue+Fri 500-600=0 twice -> 0).
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const wk = keyed_(week);
+  assert.equal(wk['MANAGER|BOSS'].recovered, 400 + 0 + 100);
+  assert.equal(wk['MANAGER|BOSS'].initial, 1000 + 1000 + 500);
+  assert.equal(wk['MANAGER|BOSS'].customers, 3, 'the week still drops the undated customer, or counts it as a second BOSS');
+
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  const byRef = Object.fromEntries(card.rows.map(r => [r.ref, r]));
+  assert.ok(byRef['888'], '888 is absent from the week\'s own card for BOSS');
+  assert.equal(byRef['888'].recovered, 100);
+  assert.equal(Object.keys(byRef['888'].byDay).length, 1, '888 is counted on more than one day of the week: its figures are now inflated');
+  assert.deepEqual(byRef['888'].byDay, { '2026-07-24': 100 }, '888\'s one day is the last day its book was read, Friday');
+  // 111 and 555 (dated) are exactly as every other customer in this file: five days read, recovery only on their own two cycle days.
+  assert.equal(byRef['111'].recovered, 400);
+  assert.equal(byRef['555'].recovered, 0);
+  assert.deepEqual(Object.keys(byRef['111'].byDay), ['2026-07-21', '2026-07-24']);
+  assert.deepEqual(Object.keys(byRef['555'].byDay), ['2026-07-21', '2026-07-24']);
+
+  // Naively summing five separate daily reads, the way the "week is the sum of its days" test above proves holds for
+  // every ordinary customer, does NOT hold for 888 -- a day's own read is kept open to it (expdfMine's own exception,
+  // unaffected by this), so it would be read, and counted, on all five days, inflating it fivefold. This is why the
+  // week's own compute keeps it to one day itself, rather than ever letting a single-day read stand in for the week.
+  let fiveDaySum = 0;
+  for (const day of ['2026-07-20', '2026-07-21', '2026-07-22', '2026-07-23', '2026-07-24']) {
+    const d = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: day }, NOW);
+    fiveDaySum += (keyed_(d)['MANAGER|BOSS'] || { recovered: 0 }).recovered;
+  }
+  // Mon 100 (888 alone, kept every day) + Tue 300 (111 200 + 888 100) + Wed 100 + Thu 100 + Fri 300 (111 200 + 888 100) = 900.
+  assert.equal(fiveDaySum, 900);
+  assert.notEqual(fiveDaySum, wk['MANAGER|BOSS'].recovered, 'summing five daily reads would be the wrong way to total this week, and must stay so');
+
+  // The all-undated case (expdfMine's long-standing rescue) still works once there are no dated siblings to rescue them from.
+  const aloneRows = ['2026-07-20', '2026-07-24'].flatMap(date => ([
+    { ref: '888', full_name: 'C888', team: 'KONGOWE', arrears: 400, status: 'Defaulter', days_elapsed: 45, disb_date: null,
+      snapshot_type: 'current', weekday: date === '2026-07-20' ? 'MON' : 'FRI', snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
+    { ref: '888', full_name: 'C888', team: 'KONGOWE', arrears: 500, status: 'Defaulter', days_elapsed: 45, disb_date: null,
+      snapshot_type: 'initial', weekday: date === '2026-07-20' ? 'MON' : 'FRI', snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' },
+  ]));
+  const alone = fakeDb({ teams: expdfUndatedTables_().teams, defaulter_snapshots: aloneRows });
+  const aloneMine = await portalApi(alone, BOSS, 'expdfMine', {}, NOW);
+  assert.deepEqual(aloneMine.rows.map(r => r.ref), ['888']);
+  assert.equal(aloneMine.diag.noCycleDates, true);
+});
+
+/* AN UNDATED CUSTOMER STILL ROTATES ROLE ON THE ORDINARY CLOCK -- found on review, before the
+   fix above shipped. assignFor reads days_elapsed, nothing to do with disb_date, so a customer
+   with no cycle day can cross a bucket boundary (default: every 2 days) partway through a
+   week and change from BIKE to MANAGER (or any other pair) while remaining undated throughout.
+   Keying the once-per-week rescue by role|leader|ref, the way `cells` itself is keyed, gave
+   each leader they passed through its own entry: the SAME real customer rescued once per
+   leader instead of once for the week, each copy carrying one day's figure as if it were the
+   whole week's -- the grand total (which dedupes by ref) then disagreed with its own section
+   rows (which did not). */
+test('an undated customer who rotates role mid-week (days_elapsed alone decides it) is still counted once for the week, not once per leader', async () => {
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  const row = (ref, ini, cur, days, wd, date) => ([
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: ini, status: 'Defaulter', days_elapsed: days, disb_date: null,
+      snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' },
+    { ref, full_name: 'C' + ref, team: 'KONGOWE', arrears: cur, status: 'Defaulter', days_elapsed: days, disb_date: null,
+      snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
+  ]);
+  // days_elapsed 44 (Mon, Tue) -> bucket ceil(44/2)=22 -> active[(22-1)%3]=active[0]='BIKE'.
+  // days_elapsed 46 (Wed, Thu, Fri) -> bucket ceil(46/2)=23 -> active[(23-1)%3]=active[1]='MANAGER'.
+  // The same real customer, undated throughout, rotates leader on this ordinary clock alone.
+  const DAYS_OF = { MON: 44, TUE: 44, WED: 46, THU: 46, FRI: 46 };
+  const t = {
+    teams: [{ team: 'KONGOWE', opm: null, recovery: null, gmo: null, manager: 'BOSS', credit: null, expected: null, bike: 'BIKER' }],
+    defaulter_snapshots: WK.flatMap(([wd, date]) => row('999', 500, 400, DAYS_OF[wd], wd, date)),
+  };
+  const db = fakeDb(t);
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const bike = week.sections.find(s => s.role === 'BIKE'), manager = week.sections.find(s => s.role === 'MANAGER');
+  // Only the LAST day's role/leader (Friday, MANAGER) carries the rescued row; the earlier
+  // BIKE days are not a second, separate sighting of the same person.
+  assert.equal(bike.rows.find(r => r.leader === 'BIKER'), undefined, '999 is on the BIKE board too: counted twice');
+  const bossRow = manager.rows.find(r => r.leader === 'BOSS');
+  assert.ok(bossRow, '999 is on no board at all: dropped rather than merely miscounted');
+  assert.equal(bossRow.customers, 1);
+  assert.equal(bossRow.recovered, 100);                    // 500 - 400, the one day it is counted for
+  assert.equal(week.totals.customers, 1, 'the report\'s own grand total (deduped by ref) disagrees with its section rows');
+  assert.equal(week.totals.recovered, 100);
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  assert.deepEqual(card.rows.map(r => r.ref), ['999']);
+  assert.deepEqual(card.rows[0].byDay, { '2026-07-24': 100 });
+  const bikeCard = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKER', period: 'week' }, NOW);
+  assert.deepEqual(bikeCard.rows, [], 'the BIKE leader\'s own card for the week still shows the customer it never really kept');
+});
+
 /* THE DAY TABS ON THE WEEKLY CARD -- "for the weekly tab only, so that they can refer what was achieved each day by officer; maybe after opening
    officer card have day tabs within, as the expected days tabs". Each day tab is the DAILY card for that day, so an officer can lay the two
    side by side: the customers on their list that day, the day's own recovery, and the calls and comments of that day on THOSE customers.

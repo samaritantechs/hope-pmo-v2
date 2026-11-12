@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 12 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 53**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 54**.
 
 ---
 
@@ -76,6 +76,24 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#677** — a real defaulter is never silently absent from a leader's list (handbook Part 54).
+  "some staff like managers have somedays not getting expected defaulters, something not
+  reality... re-crosscheck expected defaulters being efficiently produced to everyone from
+  teams to leaders." Confirmed against the real code, for all three recycling roles, not only
+  MANAGER: a customer whose disbursement date is missing or unreadable got no cycle day, and
+  the filter that shows "who is due today" put them on no leader's list, any day — unless
+  every other customer in the same read shared the fault. Real arrears, on nobody's screen,
+  for as long as the date stayed unreadable. The daily board and the leader's own phone screen
+  now keep such a customer alongside their dated colleagues; the week (which sums each day
+  separately) counts them once, after its own loop, with the last day's figures — never once
+  per day, which would have inflated them. **Read before it shipped:** one reviewer, run
+  against a real PostgreSQL, found that the week's one-time rescue was keyed by role and
+  leader as well as the customer, on the wrong assumption that an undated customer's role
+  holds still for the week — it does not, since the rotation reads `days_elapsed` regardless
+  of whether a date can be read, so an undated customer can cross a role boundary mid-week and
+  be rescued twice, once per leader. Proved with a real case (one customer, two boards, one
+  week) and fixed by keying the rescue on the customer alone. No code that runs for a user
+  changed, no page: `BUILD` and `CALL_BUILD` stay `2026-11-11-b`. `npm test`: 1,491 pass.
 - **#675** — the staff script takes a whole staff form, and head-office people (handbook Part
   53; the owner's words above three forms: "Zone pmo hq"). Each form carried a parent, a next of
   kin, a start date, an address and a second phone, and the script stored six of a form's
@@ -428,6 +446,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
   which.
+- **A rescue keyed on the wrong thing can double what it was built to save from going
+  missing.** The week's one-time catch for an undated customer (Part 54) was keyed by role and
+  leader as well as the customer, assuming those stay put for the week; `days_elapsed` moves a
+  customer's role on its own clock regardless of whether a date can be read, so the same
+  customer crossed that boundary mid-week and was rescued once per leader instead of once for
+  the week. Key a once-only rule on the one thing that is actually constant — here, the
+  customer's own reference — never on a value that can legitimately change under it.
 - **A `\uXXXX` typed into a command reaches the file as the character itself.** A no-break
   space, a line separator and a byte-order mark went into a script's pattern that way, invisible
   and waiting to be mangled by a paste. Write such a character with a doubled backslash, or build
