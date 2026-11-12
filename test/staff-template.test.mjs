@@ -1,4 +1,4 @@
-/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Parts 48 to 50).
+/* THE STAFF-CHANGE TEMPLATES CARRY NO STAFF (docs/HANDOFF.md Parts 48 to 52).
  *
  *   "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group"
  *   "dont correct names using the gmo data i bring unless its new staff"
@@ -102,7 +102,7 @@ test('the time limits end with the script, and both say what was done for every 
   assert.ok(/^set local jit = off;/m.test(code(LIST)), LIST + ' no longer switches the query compiler off for itself: seconds of compiling before it runs');
 });
 
-/* A TEAM'S ZONE IS ITS GMO'S (docs/HANDOFF.md Part 50) -- the same rule the portal reads a team by (teamsZoned in
+/* A TEAM'S ZONE IS ITS GMO'S (docs/HANDOFF.md Parts 50 and 52) -- the same rule the portal reads a team by (teamsZoned in
    api/_lib/zone.js), written here in SQL. Two spellings of one rule can drift, and this one drifting files a staff under
    one zone while their team's code lists another. The text is held here; that the two READ ALIKE is checked on a real
    PostgreSQL by tools/db-checks/gmo-zone-parity.mjs, which cuts these steps out of the template by name. */
@@ -119,8 +119,12 @@ test('a team\'s zone is its GMO\'s, in the script as in the portal, and the row 
   const rule = whole.slice(whole.indexOf('\ntm as ('), whole.indexOf('\nz as (   -- the zone for a row'));
   assert.ok(rule.length > 500 && !/staff_registry|\breg\b/.test(rule.split('\n').map(l => l.replace(/--.*$/, '')).join('\n')),
     'the steps tm / gz / tz read the staff registry: the portal does not, and the two would part');
-  assert.ok(s.includes('(array_agg(g.zone order by g.teams desc, g.zone collate "C"))[1] as zone'),
-    'a GMO\'s zone is no longer the one MOST of their teams carry, a tie going A to Z whatever the database\'s own ordering');
+  // THE RULE DOES NOT GUESS (docs/HANDOFF.md Part 52): a GMO's zone is read only when ALL their teams that carry a zone
+  // carry the SAME one. Its first form took the zone most teams carried, a tie going A to Z, and the live Teams & Staff had
+  // a GMO named on teams of four zones: an officer was filed by alphabet.
+  assert.ok(s.includes('select g.gkey, case when count(*) = 1 then min(g.zone) end as zone, count(*) as zones_n,'),
+    'a GMO named on teams of more than one zone gives one of them again: that is a choice, and the rule makes none');
+  assert.ok(!/array_agg\(g\.zone order by/.test(s), LIST + ' still picks among a GMO\'s zones');
   assert.ok(s.includes("case when c.g_named then upper(regexp_replace(c.g, sp.blank || '+', ' ', 'g')) end as gkey"),
     'a GMO is no longer one person however the name was typed (capitals, runs of blanks)');
   // A DASH IS NOT A PERSON, AND NOT A ZONE: the cells are read by the repository's one definition of "nobody named". The
@@ -144,14 +148,15 @@ test('a team\'s zone is its GMO\'s, in the script as in the portal, and the row 
     'a zone cell holding only a dash or a tab is handed to every row of the list that names no zone');
   // said, never silent: a zone that is not the team's own cell is explained on the row, and so is a zone that could not be
   // found; somebody who is not found is answered name by name
-  for (const said of ["zone is its GMO''s", "that GMO''s teams carry more than one zone", 'no GMO is named on it', 'has no team with a zone',
-    'no team of that name on Teams & Staff', 'no team was given', 'who carries a name like each of these', "'nobody')"]) {
+  for (const said of ["zone is its GMO''s", 'is named on teams of more than one zone (', 'so none is taken', 'no GMO is named on it',
+    'has no team with a zone', 'no team of that name on Teams & Staff', 'no team was given', 'who carries a name like each of these', "'nobody')",
+    'type the ZONE on the team (or name its GMO) on Teams & Staff and run the script again']) {
     assert.ok(s.includes(said), LIST + ' no longer says "' + said + '" on the row');
   }
   // the portal's side of the rule is where the template says it is, with the same tie-break and the same nobody
   const zone = read('api/_lib/zone.js');
-  assert.ok(/export function teamsZoned\(teamRows\)/.test(zone) && zone.includes('if (c > n || (c === n && z < zone))'),
-    'teamsZoned in api/_lib/zone.js is gone or breaks a tie differently: the template names it as the same rule');
+  assert.ok(/export function teamsZoned\(teamRows\)/.test(zone) && zone.includes('if (of && of.size === 1) return { ...t, zone: of.values().next().value, zoneFromGmo: true };'),
+    'teamsZoned in api/_lib/zone.js is gone, or takes a zone from a GMO whose teams carry more than one: the template names it as the same rule');
   assert.ok(zone.includes(String.raw`const NO_ONE = /^(?:NO[ -]|\(UNASSIGNED\))/i;`) && zone.includes('const s = nameOrNull(v);'),
     'zone.js no longer reads a cell through nameOrNull and the two words: the script\'s `nobody` pattern is the same list');
   assert.ok(whole.includes('teamsZoned in api/_lib/zone.js'), LIST + ' no longer points at the portal\'s side of the rule');

@@ -9,7 +9,8 @@
    between them files a staff under one zone while the portal lists their team under another.
    Node cannot run SQL in `npm test`, so this is the check that can: it draws random Teams &
    Staff tables (GMO cells in mixed case and with stray spaces, empty ZONE cells, GMOs whose
-   teams sit in two zones, ties), reads each one both ways, and fails on the first difference.
+   teams sit in two zones and so give none), reads each one both ways, and fails on the first
+   difference.
    It also draws what a cell holds when it names nobody (a dash, N/A, "NO GMO") and the blanks a
    cell pasted from Excel or WhatsApp carries (a no-break space, a tab, a line break): a review
    found both read differently by the two, while this check, which drew neither, passed.
@@ -26,9 +27,9 @@
    always even and half of its cases never came up.
 
    BREAK THE RULE AND SEE IT FAIL before trusting a change to this file. In api/_lib/zone.js:
-   turn the tie the other way (z > zone), stop reading a dash as nobody, stop treating runs of
-   blanks in a GMO's name as one, or let the GMO's zone beat a typed cell. Each must come back
-   DIFFERENT. */
+   let a GMO named on teams of two zones give one of them, stop reading a dash as nobody, stop
+   treating runs of blanks in a GMO's name as one, or let the GMO's zone beat a typed cell.
+   Each must come back DIFFERENT. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

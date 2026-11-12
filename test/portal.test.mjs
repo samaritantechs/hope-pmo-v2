@@ -11886,6 +11886,8 @@ test('salary advance: a team with an empty ZONE cell is in its GMO\'s zone, and 
   t.teams.push({ team: 'NOZONE', team_code: 'NZ1' });                                  // no ZONE and no GMO
   // A DASH IS NOT A PERSON: two teams with a dash in the GMO cell are not one GMO's teams, so DASHED does not sit in LAKE
   t.teams.push({ team: 'DASHLAKE', zone: 'LAKE', gmo: '-', team_code: 'DL1' }, { team: 'DASHED', zone: '', gmo: '-', team_code: 'DS1' });
+  // THE RULE DOES NOT GUESS: GMO S is named on a team in MARA and on one in DAR EAST, so SPLIT (no ZONE of its own) takes neither
+  t.teams.push({ team: 'S IN MARA', zone: 'MARA', gmo: 'GMO S' }, { team: 'S IN DAR', zone: 'DAR EAST', gmo: 'GMO S' }, { team: 'SPLIT', zone: '', gmo: 'gmo s', team_code: 'SP1' });
   t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' });
   t.staff_registry = [
     { id: 'AAA/001/2026', name: 'ASHA ALI AMANI', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
@@ -11917,6 +11919,11 @@ test('salary advance: a team with an empty ZONE cell is in its GMO\'s zone, and 
   assert.deepEqual(dPage.zones, [], 'a dash in two GMO cells made two teams one GMO\'s');
   assert.deepEqual(dPage.noZoneTeams, ['DASHED']); assert.deepEqual(dPage.staff, []);
   assert.deepEqual((await portalApi(db, { ...(await teamCodeUser('dl1', db)), tabs: ['advreq'] }, 'advRequestPage', {}, NOW)).staff.map(x => x.id), ['LLL/004/2026']);
+  // the team whose GMO is named on teams of two zones: no zone is taken (neither MARA's nor DAR EAST's names), and the team is named
+  const split = { ...(await teamCodeUser('sp1', db)), tabs: ['advreq'] };
+  const sPage = await portalApi(db, split, 'advRequestPage', {}, NOW);
+  assert.deepEqual(sPage.zones, [], 'a team took one of the two zones its GMO is named in: the rule guessed');
+  assert.deepEqual(sPage.noZoneTeams, ['SPLIT']); assert.deepEqual(sPage.staff, []);
 });
 
 test('advance approval tab: the person chosen holds it on their own code, the rest of the department does not', async () => {

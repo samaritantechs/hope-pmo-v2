@@ -4369,7 +4369,8 @@ It was the rule those cells were standing in for. A zone is the teams under one 
 
 **The rule, in one place** (`teamsZoned` in `api/_lib/zone.js`). A team's zone is what is typed in its own ZONE cell. Where that
 cell is empty, it is the zone **most of its GMO's other teams carry**; a tie goes to the first in A-to-Z order, so the answer never
-depends on the order of the rows. The GMO is matched from one team to the next trimmed, in capitals, with runs of blanks as one.
+depends on the order of the rows. *(Part 52 changed this the next day: the GMO's zone is read only when all of that GMO's teams
+carry the same one. A GMO over several zones gives none.)* The GMO is matched from one team to the next trimmed, in capitals, with runs of blanks as one.
 What is typed in a team's own cell always stands, even against its GMO's other teams. A team with no GMO named, or whose GMO has
 no team that carries a zone, still has none, and is still said to have none. Nothing is written back: the ZONE cell stays empty
 for whoever edits Teams & Staff, and the rule is read every time.
@@ -4466,6 +4467,76 @@ to be picked from its list; it does not fill it from the team in the role. A sta
 the portal when Teams & Staff changes: a person moves when a list asks and a script is run. HOPE Calls shows no zone. No page
 changed, so `BUILD` stays where it was. The scripts were run on a test PostgreSQL holding a made-up registry of live size; their
 answers from the live book are in no file of the repository.
+
+## Part 51 — The copy answered instead of the book
+
+> "changes am making in https://recovery-app.sync-book.net/dashboard ... aint reflecting into
+> https://hope-pmo-v2-ten.vercel.app/dashboard" — the owner, 11 November 2026
+
+Part 44 said it would happen: *work done on our own server stays in the copy; it is on no report, on no other phone and in no
+commission, and neither site says so.* The same evening it did. The owner had been asked to name a GMO on a team in Teams &
+Staff, did it at the new address, and pasted the two lists side by side when the old address showed nothing.
+
+**What the two lists showed.** Ninety-two teams on each, and twenty-six cells that differed. They did not all point the same
+way. Eleven were the owner's edits of that evening and existed only on the new server: an OPM and a GMO named on teams that had
+none, a name beside a number, a phone number corrected. Fifteen were the other way round: places where the real book had moved
+on since the copy was taken, among them a GMO now written in full on seven teams, a manager who had changed, and the code of
+one team. A copy is not behind the book or ahead of it; after a day of use it is simply a different book.
+
+**What was done.** No code changed. Two scripts were handed over, run by the owner in the SQL editor of the real book:
+
+- one that fills the eleven cells, **only where the real book's cell is empty**, each name **copied from a team of the real book
+  that already carries it**. The copying matters more than it looks: the GMO of the southern teams is written in full on the
+  real book and by one name on the copy, and a team given the short spelling would have had a GMO nobody else has, and so no
+  zone (Part 50);
+- one of two rows for the two staff whose team had no zone.
+
+And the owner was told three things. Work only at the old address until the server reads the real database (the two lines for
+whoever runs the server are in `CHAT.md` section 5). Anything else done at the new address that day, an upload, an approval, is
+in the copy too. And a team code changed on the copy locks nobody out: the handsets sign in against the real book.
+
+**What it leaves for the move.** The page at the new address gives no sign that it is not the book. The first thing to build,
+when both sites read one book, was already the in-page forwarding; until then the plainest protection is the one this Part
+records: the owner knows, and the next chat is told (`CHAT.md` section 5). One more measurement came with the deploys of that
+evening: asked for its version eighty-four times while it restarted, the own server left one request unanswered. Part 44 had
+measured none in four hundred and eighty-four; the restart gap is real, and small.
+
+## Part 52 — The rule does not guess: a GMO over several zones gives no zone
+
+> "If an officer has team - zone is automatic of the GMO's" — the owner, 11 November 2026
+
+Part 50 took a team with no ZONE of its own into *the zone most of its GMO's other teams carry, a tie going to the first in
+A-to-Z order*. That was written for the GMO the owner had in mind: one person, one zone. The lists of Part 51 showed the other
+kind. One GMO is named on teams of **four** zones, two teams in each of two of them and one in each of the others: somebody
+standing in wherever a zone's own GMO does not hold a team. For the one team of his with no ZONE, "most" was a tie, the tie
+went to the alphabet, and an officer moved to that team was filed under a zone nobody had chosen. The row said the zone was
+its GMO's, which was true, and the name line would have said the same to every officer of that team.
+
+**The rule now.** A GMO's zone is read only when **all** of that GMO's teams that carry a zone carry the **same** one. A GMO
+named on teams of more than one zone has no one zone to give, and the rule does not choose among them. The team then has no
+zone, exactly as a team with no GMO has none: its people read NO ZONE SET (Part 47), the advance desk names it as a team
+without a zone, and the staff script leaves a moved staff under the zone they had and lists what it found: *its GMO is named
+on teams of more than one zone (two here, two there, one, one), so none is taken*. One ZONE typed on the team settles it, as it
+always did. Both writings of the rule changed together, `teamsZoned` in `api/_lib/zone.js` and the `gz` step of the template,
+and `tools/db-checks/gmo-zone-parity.mjs` read six hundred random tables both ways without a difference, and failed, as it
+must, when the portal's side was made to take one of a GMO's two zones.
+
+**Why not "most", without the tie.** Because five teams against one is still a choice somebody else made for the sixth. The
+cost of not choosing is one cell typed once; the cost of choosing wrongly is an officer on the wrong list, with a row that says
+the zone was read off Teams & Staff. The first form of this rule was read by three reviewers and nine skeptics, and none of
+them objected to "most": it took the owner's own list to show the GMO it could not serve.
+
+**The script also says why a new staff was not added.** A new officer for whom no zone can be found is not added (a staff with
+no zone is on nobody's list). The row used to say only that; it now says which thing is missing and what to do: type the ZONE
+on the team, or name its GMO.
+
+**What it costs.** No read was added and no page changed, so `BUILD` stays where it was. On the live list one team is touched:
+the one whose GMO is over four zones reads NO ZONE SET again, as it did until Part 50, until its ZONE is typed. Every team
+whose GMO has one zone reads exactly what it read before.
+
+**Not done.** The officer who was filed by the tie is not re-filed by this change: a row of a staff script does that once the
+team's ZONE is typed, and that script was handed over (Part 51). The annual deck's zone map still reads the typed cell alone
+(Part 50).
 
 ---
 
