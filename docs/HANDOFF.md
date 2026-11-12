@@ -5115,6 +5115,62 @@ any weekday, Sunday included) should still count toward that week's recovery at 
 separate question this change does not touch either way -- it never did, for any day of the
 week, and nothing here starts.
 
+## Part 61 — Clicking a name on Omba Likizo: the ask form's fields wired before they existed
+
+> "clicking name on omba likizo - Imeshindikana / Could not load.
+> Cannot set properties of null (setting 'onchange')" -- the owner, 12 November 2026
+
+The very first time a name was ever picked on the Leave & Holiday ask screen, the screen failed
+to load at all. `VIEWS.leavereq`'s own promise (`public/mod/leave.js`) set `HEAD` to the new
+page -- with the request form in it, now that a name was chosen -- and in the same breath tried
+to wire `#lvReason`'s change, `#lvStart`/`#lvEnd`'s input and `#lvSubmit`'s click. But that
+promise resolves BEFORE `drawView_()` (`public/app.html`) ever paints `HEAD` into the real page:
+`load_()` calls the view function and only THEN calls `drawView_()`, once the view's own promise
+has settled. So the wiring ran against the PREVIOUS paint -- the one with no name chosen yet,
+where none of those four elements exist -- `$('#lvReason')` returned `null`, and
+`null.onchange = ...` threw. The throw rejected the view's promise, `drawView_()` never ran, and
+the screen showed nothing but the generic failure message: exactly "Imeshindikana / Could not
+load."
+
+This is not a new kind of bug in this codebase -- it is the exact one HOPE Loan's own HEAD
+buttons had on first write (the note beside `wireLnCs_` in `app.html`: "every other HOPE Loan
+HEAD button ... had exactly this bug on first write"), and the one `portal-imprest.mjs` was
+built to catch on the imprest request form's Submit button. Advance's own ask screen
+(`VIEWS.advreq`) never had it, because it never wires anything itself: its one button,
+`#advSubmit`, is wired from `wireForms()` in the core, and reads its own chosen staff from
+`S.advReq.chosen` rather than taking it as an argument, so nothing needs wiring inside the view
+function at all. Leave's ask screen copied advance's HTML shape but not that half of the
+pattern -- and its own desk-wiring function, `wireLeaveDesk()`, already said on its own tin that
+it was meant to be "one function for every button this module draws, on any of its three tabs":
+the ask form's fields were simply never added to it.
+
+**The fix.** `lvReason`/`lvStart`/`lvEnd`/`lvSubmit` are wired from `wireLeaveDesk()` now, not
+from inside `VIEWS.leavereq`. `wireLeaveDesk()` is called from the core's `wireBar()` after
+every paint (the same hook that already wired the desk's bulk-approve buttons and the report's
+annual-days Save), so by the time it runs the elements are real. Every new lookup is guarded
+with `if (el)`, the same as every other button already in that function, because it runs on
+every tab's paint, not only `leavereq`'s. `leaveSubmit_` takes no argument any more -- it reads
+its own chosen staff off `S.leaveReq.chosen`, exactly the way `advSubmit()` reads `S.advReq.chosen`,
+so a post-paint hook can wire it with nothing to capture.
+
+**Checked**, two ways. A new browser check, `tools/browser-checks/portal-leave-ask.mjs` (modelled
+on `portal-imprest.mjs`), drives the real `public/app.html` in a real Chromium: it picks a name
+for the first time -- the exact action the owner's report names -- and proves no script error
+fires, all four fields are genuinely wired (not just present), the Other-reason field toggles,
+the day count recalculates, and pressing Submit sends one `leaveRequest` with what was typed.
+Run against the code as it stood before this fix, the same check times out waiting for the form
+to ever appear -- the render throws before painting, exactly as the owner saw it. A second,
+fast, source-level check in `test/pages.test.mjs` (part of `npm test`, unlike the browser one)
+pins the shape of the fix: none of the four ids may be wired inside `VIEWS.leavereq` itself, and
+`wireLeaveDesk` must wire all four, each behind its own `if` guard. Run against the original
+code, it fails on the first assertion.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call`. A front-end change: `BUILD
+2026-11-12-e`.
+
+**Not done.** Nothing else on this screen was touched -- the desk and report tabs, already
+wired the correct way since they were built, needed no change.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

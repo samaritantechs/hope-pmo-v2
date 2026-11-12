@@ -2223,6 +2223,37 @@ test('leavereq / leaveappr / leaverep: granted like advance\'s own tabs -- admin
     'leaveappr goes through the same idle-approver check advappr does, not a second copy of the rule');
 });
 
+/* "clicking name on omba likizo - Imeshindikana / Could not load. Cannot set properties of null
+   (setting 'onchange')" -- the owner. VIEWS.leavereq's own promise used to wire lvReason/lvStart/
+   lvEnd/lvSubmit in the same breath as setting HEAD, before drawView_() ever painted HEAD into
+   the page -- so the FIRST time a name was picked (the moment those elements are drawn at all),
+   the wiring reached into a DOM that did not have them yet and threw, and the whole render
+   aborted before painting (portal-leave-ask.mjs reproduces this directly in a real browser).
+   Fixed by moving all four into wireLeaveDesk(), called from the core's wireBar() AFTER that
+   paint -- the same fix HOPE Loan's own HEAD buttons needed (the note beside wireLnCs_ in
+   app.html), checked here the way that fix is: by source, for the shape of the bug, not just
+   that these four ids exist somewhere. */
+test('the leave ask form\'s own fields are wired after the paint, not inside VIEWS.leavereq itself', () => {
+  const leaveSrc = readFileSync(join(PUBLIC, 'mod', 'leave.js'), 'utf8');
+  const askView = leaveSrc.slice(leaveSrc.indexOf('VIEWS.leavereq = function'), leaveSrc.indexOf('function leaveSubmit_'));
+  for (const id of ['lvReason', 'lvStart', 'lvEnd', 'lvSubmit']) {
+    assert.ok(!new RegExp("\\$\\('#" + id + "'\\)\\.(onchange|oninput|onclick)\\s*=").test(askView),
+      '#' + id + ' must not be wired inside VIEWS.leavereq\'s own promise -- drawView_() has not painted HEAD yet there');
+  }
+  const deskFn = leaveSrc.slice(leaveSrc.indexOf('function wireLeaveDesk'), leaveSrc.indexOf('VIEWS.leaverep = function'));
+  assert.ok(/getElementById\('lvReason'\)/.test(deskFn) && /\.onchange\s*=/.test(deskFn), 'lvReason is wired from wireLeaveDesk, called post-paint');
+  assert.ok(/getElementById\('lvStart'\)/.test(deskFn) && /getElementById\('lvEnd'\)/.test(deskFn) && /\.oninput\s*=/.test(deskFn), 'lvStart/lvEnd are wired from wireLeaveDesk');
+  assert.ok(/getElementById\('lvSubmit'\)/.test(deskFn) && /\.onclick\s*=\s*leaveSubmit_/.test(deskFn), 'lvSubmit is wired from wireLeaveDesk, calling the argument-free leaveSubmit_');
+  // leaveSubmit_ reads its own chosen staff from S.leaveReq, the way advSubmit reads S.advReq --
+  // no closure argument, so a post-paint hook can wire it with no name to capture.
+  assert.ok(/function leaveSubmit_\(\)\{/.test(leaveSrc) && /var c = \(S\.leaveReq \|\| \{\}\)\.chosen/.test(leaveSrc),
+    'leaveSubmit_ takes no argument and reads S.leaveReq.chosen itself');
+  // wireLeaveDesk runs on EVERY tab's paint, not only leavereq's -- an unguarded element would
+  // throw null.onchange on leaveappr/leaverep, where these ids do not exist at all.
+  assert.ok(/if \(lvReason\)/.test(deskFn) && /if \(lvStart && lvEnd/.test(deskFn) && /if \(lvSubmit\)/.test(deskFn),
+    'each new lookup is null-guarded before it is used, the way every other button in this function already is');
+});
+
 /* "always auto default grant all tabs to admin role. i dont have to go manually grant all new
    tabs i create" -- the owner, 12 November 2026. Admin's own access was never gated by
    ADMIN_TABS to begin with (allowed() in app.html and tabGate_ in portal-core.js both

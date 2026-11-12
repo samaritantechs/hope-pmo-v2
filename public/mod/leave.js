@@ -81,18 +81,10 @@ VIEWS.leavereq = function(){
             + '<button class="btn w" id="lvSubmit">Tuma ombi / Submit request</button>'
           : '<div class="sub">Chagua jina lako kuona fomu. / Pick your name to see the form.</div>')
       + '</div></div>';
-    if (c){
-      $('#lvReason').onchange = function(){ $('#lvOtherFld').style.display = $('#lvReason').value === 'Other' ? '' : 'none'; };
-      var recalc = function(){
-        var s = $('#lvStart').value, e = $('#lvEnd').value, note = $('#lvDaysNote');
-        if (!s || !e){ note.textContent = '—'; return; }
-        var days = Math.round((new Date(e + 'T00:00:00Z') - new Date(s + 'T00:00:00Z')) / 86400000) + 1;
-        note.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki ikiidhinishwa / remaining if approved: ' + money(b.remaining - days) : ''))
-          : 'Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.';
-      };
-      $('#lvStart').oninput = recalc; $('#lvEnd').oninput = recalc; recalc();
-      $('#lvSubmit').onclick = function(){ leaveSubmit_(c); };
-    }
+    /* #lvReason/#lvStart/#lvEnd/#lvSubmit are not in the real DOM yet here -- this promise
+       resolves BEFORE drawView_() paints HEAD into the page (the exact bug HOPE Loan's own
+       HEAD buttons had on first write; see the note beside wireLnCs_ in app.html). Wired from
+       wireLeaveDesk() instead, called from the core's wireBar() after that paint. */
     if (d.canHistory === false){ S.rows = []; S.cols = []; ONROW = null; return; }
     S.rows = d.history || [];
     S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('zone','Zone'),
@@ -104,7 +96,8 @@ VIEWS.leavereq = function(){
     S.foot = 'Historia ya maombi ya ' + (d.role ? 'wadhifa ' + d.role : 'wadhifa zote') + ' katika zone yako / History: ' + money(S.rows.length) + ' · mapya juu / newest first';
   });
 };
-function leaveSubmit_(c){
+function leaveSubmit_(){
+  var c = (S.leaveReq || {}).chosen; if (!c) return;
   var start = $('#lvStart').value, end = $('#lvEnd').value, reason = $('#lvReason').value;
   var other = ($('#lvOther') ? $('#lvOther').value : '').trim();
   if (!start || !end){ toast('Weka tarehe ya kuanza na kurudi. / Pick the start and return date.', true); return; }
@@ -236,9 +229,14 @@ function leaveBulk_(approval){
       pickClear_(); render({ force:true }); })
     .catch(function(e){ toast(String(e.message||e), true); });
 }
-/* Wired by wireForms (app.html) after every paint, like the advance module -- one function for
+/* Wired by wireBar (app.html) after every paint, like the advance module -- one function for
    every button this module draws, on any of its three tabs, the same way wireAdvDesk also
-   wires advFinalizeBtn/advReopenBtn even though those sit on advrep, not advappr. */
+   wires advFinalizeBtn/advReopenBtn even though those sit on advrep, not advappr. Covers
+   leavereq's own ask form too (lvReason/lvStart/lvEnd/lvSubmit): wiring those from inside
+   VIEWS.leavereq itself, before this runs, attaches to elements that do not exist yet --
+   "clicking name on omba likizo - Imeshindikana / Cannot set properties of null (setting
+   'onchange')" was exactly that, the first time a name was ever picked and the form first
+   appeared. */
 function wireLeaveDesk(){
   var a = document.getElementById('lvApproveMany');
   if (a) a.onclick = function(){ leaveBulk_('Approved'); };
@@ -256,6 +254,21 @@ function wireLeaveDesk(){
       .then(function(r){ toast('✅ Siku za likizo kwa mwaka: ' + r.annualDays + '. / Annual leave allowance: ' + r.annualDays + '.'); render({ force:true }); })
       .catch(function(e){ s.disabled = false; toast(String(e.message||e), true); });
   };
+  var lvReason = document.getElementById('lvReason'), lvOther = document.getElementById('lvOtherFld');
+  if (lvReason) lvReason.onchange = function(){ if (lvOther) lvOther.style.display = lvReason.value === 'Other' ? '' : 'none'; };
+  var lvStart = document.getElementById('lvStart'), lvEnd = document.getElementById('lvEnd'), lvDaysNote = document.getElementById('lvDaysNote');
+  if (lvStart && lvEnd && lvDaysNote) {
+    var b = (S.leaveReq || {}).balance;
+    var recalc = function(){
+      if (!lvStart.value || !lvEnd.value){ lvDaysNote.textContent = '—'; return; }
+      var days = Math.round((new Date(lvEnd.value + 'T00:00:00Z') - new Date(lvStart.value + 'T00:00:00Z')) / 86400000) + 1;
+      lvDaysNote.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki ikiidhinishwa / remaining if approved: ' + money(b.remaining - days) : ''))
+        : 'Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.';
+    };
+    lvStart.oninput = recalc; lvEnd.oninput = recalc; recalc();
+  }
+  var lvSubmit = document.getElementById('lvSubmit');
+  if (lvSubmit) lvSubmit.onclick = leaveSubmit_;
 }
 
 /* THE REPORT: a window, Approved by default, by zone, with the standing leave balance beside
