@@ -4485,7 +4485,8 @@ on since the copy was taken, among them a GMO now written in full on seven teams
 one team. A copy is not behind the book or ahead of it; after a day of use it is simply a different book.
 
 **What was done.** No code changed. Two scripts were handed over, for the owner to run in the SQL editor of the real book
-(their answers were not back when this Part was written):
+(both were run the next morning: the six teams were filled, and the manager whose team had no GMO was filed under that GMO's
+zone with no ZONE typed anywhere; the officer of Part 52 still waits on his team's ZONE):
 
 - one that fills the eleven cells, **only where the real book's cell is empty**, each name **copied from a team of the real book
   that already carries it**. The copying matters more than it looks: the GMO of the southern teams is written in full on the
