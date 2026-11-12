@@ -94,11 +94,20 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   ever existed because a real Sunday's clock was forced to equal Monday's slot number. Checked
   with a new, direct test against the live list (Thursday- and Sunday-disbursed loans keep
   Sunday as their own slot) and corrected the two existing weekly-report tests whose figures
-  depended on the old fold, each given its own small, locally-added customer whose cycle
-  genuinely reaches Sunday, so the suite still proves Sunday's own recovery is counted -- by the
-  right customer this time. `npm test`: 1,513 pass. No read on `/api/upload` or `/api/call`;
-  `BUILD 2026-11-12-d`. **Not done:** whether off-cycle-day recovery (any day, not only Sunday)
-  should count at all is a separate question, untouched either way.
+  depended on the old fold: one was given a new, locally-added customer whose cycle genuinely
+  reaches Sunday, proving Sunday's own recovery is counted; the other needed none -- it proves
+  the ghost credit's removal on the pre-existing customer, Sunday's tab still there and
+  correctly empty. **Reviewed** by two independent readers before this merged, both finding the
+  same real gap: the first draft of this entry (and of handbook Part 60) said neither
+  `/api/upload` nor `/api/call` imports `expdf.js` -- true for `upload.js`, **false for
+  `call.js`**, whose `call-core.js` calls `expdfMine` (the same shared function) from the phone's
+  own Exp.Def list and its EXP.DEF% strip figure. The right design -- one shared definition, not
+  a third copy -- and no new read or latency either way (both call sites predate this commit),
+  but untested beforehand. Fixed with a new test in `test/call.test.mjs` proving the phone's own
+  two entry points see a Thursday-disbursed customer's Sunday correctly. `npm test`: 1,514 pass.
+  No new read or query on `/api/upload` or `/api/call`; `BUILD 2026-11-12-d`. **Not done:**
+  whether off-cycle-day recovery (any day, not only Sunday) should count at all is a separate
+  question, untouched either way.
 - **#681** — Leave becomes three tabs, its tunnel is advance's own approvers, its annual
   allowance moves onto the report (handbook Part 59). "it needs to be 3 tabs to fit perfection
   like advances ... request tab, approval tab and reports tab" · "Advance approver = Leave

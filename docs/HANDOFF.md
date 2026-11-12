@@ -5073,15 +5073,42 @@ Sunday was pretending to be Monday.
 **Checked.** A new test proves the positive case directly against `expectedDefaulters`: a loan
 disbursed Thursday keeps Sunday as its own Day 2 (not folded into `dist[1]`), and a loan
 disbursed ON a Sunday keeps Sunday as its own Day 1. The two existing weekly-report tests whose
-numbers depended on the old fold were corrected to the true figures the calendar gives, each
-with a new, locally-added customer (never touching the shared fixture every other caller of
+numbers depended on the old fold were corrected to the true figures the calendar gives: the
+first ("a finished past week counts Saturday and Sunday's own recovery...") was given a new,
+locally-added customer (never touching the shared fixture every other caller of
 `expdfWeekTables()` also uses) whose own cycle genuinely reaches Sunday, so the suite still
-proves Sunday's own recovery is counted -- just by the right customer. `test/pages.test.mjs`'s
-source-text checks for the report screen were updated to match (`xdShowDay_` is gone; the day
-columns and day tabs are never filtered). `npm test`: 1,513 pass.
+proves Sunday's own recovery is counted; the second ("the weekly card for an earlier week...")
+needed no new customer -- it demonstrates the ghost credit's *removal* on the pre-existing C1,
+whose own two days are Friday and Monday, and that Sunday's tab still appears, correctly empty,
+the same as Saturday's already did for that leader. `test/pages.test.mjs`'s source-text checks
+for the report screen were updated to match (`xdShowDay_` is gone; the day columns and day tabs
+are never filtered). `npm test`: 1,513 pass.
 
-**What it costs.** Nothing on `/api/upload` or `/api/call` -- neither file imports `expdf.js` or
-calls `expectedDefaulters`. A front-end change: `BUILD 2026-11-12-d`.
+**Reviewed** by two independent readers before this merged, converging on the same real gap:
+`docs/HANDOFF.md`'s own first draft of this Part said "neither file imports `expdf.js`" of both
+`/api/upload` and `/api/call` -- true for `upload.js` (its one `portalApi` call is hard-coded to
+`'purgeSuperseded'`), **false for `call.js`**: `api/_lib/call-core.js` imports `expdfMine` from
+`expdf.js` directly and calls it from two live, reachable handlers -- `api_callList`'s `'expdf'`
+list (the GMO/MANAGER/BIKE rotation list a phone itself shows) and `api_callDailySummary`'s own
+EXP.DEF% figure in the strip handsets poll every few minutes. This is the right design --
+`call-core.js` sharing the one `expdfCore`/`buildRows_` definition rather than a third copy is
+exactly "one definition of a rule, in one place" -- and it costs `/api/call` no new read or
+latency (those two call sites predate this commit; only the arithmetic they run now differs).
+But it does mean the fix reaches one of the two paths this repository is built never to get
+wrong, and neither reviewer could find a test exercising it either way beforehand. Fixed: a new
+test in `test/call.test.mjs` proves, through the phone's own two entry points, that a
+Thursday-disbursed customer appears on the real Sunday and is correctly absent on the following
+Monday. Both reviewers independently re-derived the day arithmetic for all seven weekdays (one
+by writing throwaway scripts against the real committed modules, the other by hand against
+`assignStrategy`'s bucket math) and the two corrected tests' exact figures, and found both
+correct; one reviewer also live-reverted the `xdShowDay_` removal in a scratch copy to confirm
+the `pages.test.mjs` checks actually fail without the fix, then reverted cleanly. `npm test`:
+1,514 pass.
+
+**What it costs.** No new read or query on `/api/upload` or `/api/call` -- `api/call.js` does
+reach this fix, through `call-core.js`'s two pre-existing `expdfMine` call sites (now tested,
+see above), but neither call site is new and neither runs a query it did not already run. A
+front-end change: `BUILD 2026-11-12-d`.
 
 **Not done.** Whether a customer worked a day early or late (off their own two cycle days, on
 any weekday, Sunday included) should still count toward that week's recovery at all is a
