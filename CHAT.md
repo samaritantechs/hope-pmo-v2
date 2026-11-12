@@ -136,9 +136,10 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   renamed from `CHECK-leave-tabs-from-advance.sql` to the numbered `RUN-ME-NNN-...-read-only`
   form the one other read-only script in `db/` already uses, so `db/` keeps one naming rule, not
   two. `npm test`: 1,512 pass (same count: the new case joined an existing test's list). No read
-  on `/api/upload` or `/api/call`; `BUILD 2026-11-12-c`. **Not done:** the two SQL files
-  (`RUN-ME-052`, and `RUN-ME-053` as its before/after check) are for the owner to run; not run by
-  this chat.
+  on `/api/upload` or `/api/call`; `BUILD 2026-11-12-c`. `RUN-ME-051`, `RUN-ME-052` and
+  `RUN-ME-053` were run by the owner on 12 Nov; `RUN-ME-053`'s own after-the-fact check came
+  back clean -- every role and code holding an advance tab holds the matching leave tab, no
+  row left out, no row with one it should not have.
 - **Staff registry, 12 Nov** — a CS Supervisor's WhatsApp message naming two staff with bank
   details missing, one with a full intake-style form (birth date, start date, residence, bank
   account, five guarantors) and one with only a name and a number. Neither role, team nor zone
@@ -654,10 +655,6 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   should reset each calendar year — nothing resets it yet, the same running ledger the Google
   Sheet's own formula kept, on purpose, until the owner says otherwise (it is now editable on
   the Leave report itself, admin-only, Part 59, if the number alone needs changing).
-- **The owner**: run `db/RUN-ME-051-leave-requests.sql` (the table) if not already done, then
-  `db/RUN-ME-052-leave-tabs-from-advance.sql` (grants `leavereq`/`leaveappr`/`leaverep` to
-  whoever already holds the matching advance tab) — `db/RUN-ME-053-leave-tabs-from-advance-
-  read-only.sql` is the read-only preview, safe to run before and after. Handbook Part 59.
 - **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
   form, new hire or existing staff with a gap (and if new, the role and team, or the zone
   directly for a head-office role; if existing, a staff ID or their filed team), and which one
