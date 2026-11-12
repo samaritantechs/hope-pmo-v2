@@ -108,6 +108,21 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   on `/api/upload` or `/api/call`; `BUILD 2026-11-12-c`. **Not done:** the two SQL files
   (`RUN-ME-052`, and `RUN-ME-053` as its before/after check) are for the owner to run; not run by
   this chat.
+- **Staff registry, 12 Nov** — a CS Supervisor's WhatsApp message naming two staff with bank
+  details missing, one with a full intake-style form (birth date, start date, residence, bank
+  account, five guarantors) and one with only a name and a number. Neither role, team nor zone
+  came with either, so neither can be matched or filed safely: asked (`ASK`), not moved, placed
+  or added — a script never guesses whether a name is a new hire or an existing staff with a
+  gap, the same as it never merges two staff records on a name alone. The filled script went to
+  the owner directly (never committed); it changes nothing by itself and says, for each person,
+  exactly what is needed to act — role and team (or, for a head-office role, the zone directly)
+  if new, or a staff ID / their filed team if existing. Flagged on the row and separately: the
+  registry has no box for a marital status or an e-mail address (neither is stored either way);
+  of five named guarantors on the fuller form, only one fits the registry's two guarantor/kin
+  slots (the other four are named for the owner's own record, not silently dropped) — which one
+  is kept is the owner's to say once the first question is answered. Tested twice against a
+  synthetic registry (ASK matches and changes nothing, and running it twice gives the same
+  answer both times). The names are in no file of the repository.
 - **#680** — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in (handbook
   Part 58). "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the
   Leave reports – for leaves and holiday reports management ... the tunnels and approvals must
@@ -612,6 +627,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   `db/RUN-ME-052-leave-tabs-from-advance.sql` (grants `leavereq`/`leaveappr`/`leaverep` to
   whoever already holds the matching advance tab) — `db/RUN-ME-053-leave-tabs-from-advance-
   read-only.sql` is the read-only preview, safe to run before and after. Handbook Part 59.
+- **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
+  form, new hire or existing staff with a gap (and if new, the role and team, or the zone
+  directly for a head-office role; if existing, a staff ID or their filed team), and which one
+  of the five named guarantors to keep in the registry's second slot; for the other, who they
+  are (a staff ID, or their team/zone) and which bank the account is at. Nothing is filed until
+  the answer comes back — the script sent changes nothing by itself.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
   e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,
