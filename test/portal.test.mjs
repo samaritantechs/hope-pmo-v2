@@ -4633,15 +4633,17 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   assert.equal(w.totals.recovered, 900);
   assert.deepEqual(await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW).then(x => [x.period, x.from, x.to]), ['week', MON, '2026-07-26']);
   /* THE WEEK ARROWS -- "i need expected defaulters report to have the weekly forward and
-     backward buttons there too". This week carries the week bar's fields; a past week is read
-     as it stood on its Friday, like the dashboard; a stray date snaps to its Monday. */
+     backward buttons there too". This week carries the week bar's fields; a past week is
+     walked all the way to its own Sunday ("Expected defaulters goes mon to sunday not mon to
+     fri") -- unlike the dashboard's own asOfWeek, which stays Friday-anchored on purpose and
+     is untouched here; a stray date snaps to its Monday. */
   assert.equal(w.weekOf, MON); assert.equal(w.weekEnd, '2026-07-26');
   assert.equal(w.pastWeek, false); assert.equal(w.weekFuture, false); assert.equal(w.asOfDate, TODAY);
   const past = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.weekOf, '2026-07-13', 'the Wednesday asked for resolves to its Monday');
   assert.equal(past.weekRequested, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19');
-  assert.equal(past.pastWeek, true); assert.equal(past.asOfDate, '2026-07-17', 'read as it stood on that Friday');
-  assert.equal(past.date, null, 'date is the deck\'s own date, and no deck was uploaded that week'); assert.equal(past.weekday, 'FRI');
+  assert.equal(past.pastWeek, true); assert.equal(past.asOfDate, '2026-07-19', 'read as it stood on that week\'s own Sunday, not its Friday');
+  assert.equal(past.date, null, 'date is the deck\'s own date, and no deck was uploaded that week'); assert.equal(past.weekday, 'SUN');
   assert.equal(past.totals.customers, 0, 'no deck that week in this fixture: nothing invented');
   const next = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-27' }, NOW);
   assert.equal(next.weekFuture, true); assert.equal(next.pastWeek, false); assert.equal(next.weekOf, '2026-07-27');
@@ -4679,7 +4681,14 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
    Days added: BIKE 600, MANAGER 500, GMO 300 -- what each of them actually did. */
 function expdfWeekTables() {
   const t = expdfTables();
-  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  /* SAT and SUN are in this book too, not just MON-FRI -- "Expected defaulters goes mon to
+     sunday not mon to fri". B1's own secondary cycle day is Saturday (disbursed a Wednesday:
+     primary 3, secondary 6) and C1's is the Sunday/Monday slot (disbursed a Friday: primary 5,
+     secondary 1 -- rollSun treats a real Sunday as that same slot, same as every other day of
+     the rotation), so both were already due those two days; this fixture simply never had a
+     weekend deck to prove it against, and neither day's recovery was ever tested. See the test
+     right after expdfWeekTables's sibling below for what this book now proves. */
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24'], ['SAT', '2026-07-25'], ['SUN', '2026-07-26']];
   const R = (ref, ini, cur, dayN, disb, wd, date, only) => {
     const rows = [];
     if (only !== 'cur') rows.push({ ref, full_name: 'C' + ref, contact: '07140000' + ref, team: 'KONGOWE', arrears: ini, status: 'Defaulter', ds: '2/6', dc: 2,
@@ -4688,9 +4697,12 @@ function expdfWeekTables() {
       days_elapsed: dayN, disb_date: disb, snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' });
     return rows;
   };
-  const A = { MON: [1000, 1000], TUE: [1000, 700], WED: [700, 700], THU: [700, 700], FRI: [900, 600] };
-  const B = { MON: [2000, 2000], TUE: [2000, 2000], WED: [2000, 1500], THU: [1500, 1500], FRI: [1500, 1500] };
-  const C = { THU: [400, 400], FRI: [400, 100] };
+  // SAT/SUN values for A and B are placeholders where neither is that customer's cycle day (A's
+  // is Tue/Fri; B's Sunday-slot is not its own) -- present only so every customer has a row on
+  // every date in WK, never read as "onToday", so they cost the totals nothing.
+  const A = { MON: [1000, 1000], TUE: [1000, 700], WED: [700, 700], THU: [700, 700], FRI: [900, 600], SAT: [600, 600], SUN: [600, 600] };
+  const B = { MON: [2000, 2000], TUE: [2000, 2000], WED: [2000, 1500], THU: [1500, 1500], FRI: [1500, 1500], SAT: [1500, 1200], SUN: [1200, 1200] };
+  const C = { THU: [400, 400], FRI: [400, 100], SUN: [100, 0] };
   t.defaulter_snapshots = WK.flatMap(([wd, date], i) => [
     ...R('A1', A[wd][0], A[wd][1], i + 1, '2026-07-14', wd, date),
     ...R('B1', B[wd][0], B[wd][1], i + 1, '2026-07-15', wd, date),
@@ -4760,6 +4772,43 @@ test('the expdf week is the sum of its days, officer by officer -- what each off
   // A day report and the phone's totals carry no days: only a week does.
   const dayRep = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
   assert.equal(dayRep.totals.byDay, undefined); assert.equal(Object.values(keyed_(dayRep))[0].byDay, undefined);
+});
+
+/* "Expected defaulters goes mon to sunday not mon to fri" -- a FINISHED past week, read well
+   after it closed, must walk Saturday and Sunday too, with whatever real recovery landed on
+   them, not just show the two days as empty tabs. B1 is due on Saturday (its own secondary
+   cycle day) and C1 on Sunday (its secondary slot, which a real Sunday shares); both decks
+   exist in this book. Read on LATER, a Friday the week after, so this week is unambiguously
+   over -- the live-week guard (never read a day that has not happened) cannot be the reason
+   either day shows up. */
+test('a finished past week counts Saturday and Sunday\'s own recovery, not only Monday to Friday\'s', async () => {
+  const LATER = Date.parse('2026-07-31T09:00:00Z');
+  const db = fakeDb(expdfWeekTables());
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-20' }, LATER);
+  assert.equal(week.pastWeek, true); assert.equal(week.weekOf, '2026-07-20'); assert.equal(week.weekEnd, '2026-07-26');
+  assert.equal(week.asOfDate, '2026-07-26', 'a finished week stands as of its own Sunday, not its Friday');
+  assert.deepEqual(week.days.map(x => [x.weekday, x.measured]),
+    [['MON', true], ['TUE', true], ['WED', true], ['THU', true], ['FRI', true], ['SAT', true], ['SUN', true]],
+    'Saturday and Sunday were filed in this book, and are walked and measured like any other day');
+  const wk = keyed_(week);
+  // Monday to Friday read exactly as the sibling test above already proves; only the weekend is new here.
+  assert.equal(wk['GMO|GMO GEE'].recovered, 600, '300 Friday (A1) + 300 Saturday (B1, its own secondary cycle day)');
+  assert.equal(wk['BIKE|BIKE BEE'].recovered, 700, '300 Tuesday (A1) + 300 Friday (C1) + 100 Sunday (C1 again, its secondary slot)');
+  assert.equal(wk['MANAGER|BOSS'].recovered, 500, 'unchanged -- Wednesday only, no weekend cycle day of its own');
+  assert.equal(week.totals.recovered, 1800, '1,400 Monday to Friday + 300 Saturday + 100 Sunday');
+  assert.equal(week.totals.initial, 5900, '4,300 Monday to Friday + 1,500 Saturday + 100 Sunday');
+  assert.equal(week.totals.customers, 3, 'the same three customers -- the weekend is more of their own days, not new people');
+  assert.deepEqual(week.totals.byDay, { '2026-07-21': 300, '2026-07-22': 500, '2026-07-24': 600, '2026-07-25': 300, '2026-07-26': 100 });
+  // The card behind GMO GEE's name carries the same Saturday, as its own day tab, not folded into the week silently.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'GMO', leader: 'GMO GEE', period: 'week', weekOf: '2026-07-20' }, LATER);
+  assert.equal(card.totals.recovered, 600);
+  const satTab = card.dayTabs.find(x => x.weekday === 'SAT');
+  assert.equal(satTab.measured, true); assert.equal(satTab.totals.recovered, 300);
+  assert.deepEqual(satTab.rows.map(r => [r.ref, r.recovered]), [['B1', 300]]);
+  // The live current week this book also belongs to still stops at today (Friday): nothing here borrows from a day that has not happened.
+  const live = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.equal(live.pastWeek, false);
+  assert.deepEqual(live.days.map(x => x.weekday), ['MON', 'TUE', 'WED', 'THU', 'FRI'], 'today is Friday in this fixture\'s clock: Saturday and Sunday have not happened yet, so the live week still has no tab for them');
 });
 
 /* A REAL DEFAULTER, SHARING A LEADER'S BOOK WITH DATED COLLEAGUES, IS NEVER SILENTLY ABSENT --
@@ -4966,18 +5015,27 @@ test('the weekly card files a comment under the EAT day it was written, not the 
 });
 
 /* STEPPING THE CARD A WEEK BACK -- "we can swap the forward and backward weeks in the cards". The card asks for the week it is on by its Monday;
-   a week behind is read as it stood on its Friday, with its own day tabs, the same as the report for that week. */
-test('the weekly card for an earlier week is that week\'s own card, tabs and all, read as it stood on its Friday', async () => {
+   a week behind is walked all the way to its own Sunday, with its own day tabs, the same as the report for that week ("Expected defaulters
+   goes mon to sunday not mon to fri") -- here BIKE BEE has nothing of their own on Saturday or Sunday, so both tabs are there, just unfiled. */
+test('the weekly card for an earlier week is that week\'s own card, tabs and all, walked all the way to its own Sunday', async () => {
   const t = expdfWeekTables();
   const LATER = Date.parse('2026-07-31T09:00:00Z');   // the Friday a week after the decks
   const db = fakeDb(t);
   const back = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-20' }, LATER);
   assert.equal(back.pastWeek, true); assert.equal(back.from, '2026-07-20'); assert.equal(back.to, '2026-07-26');
-  assert.deepEqual(back.dayTabs.map(x => [x.date, x.measured]), [['2026-07-20', true], ['2026-07-21', true], ['2026-07-22', true], ['2026-07-23', true], ['2026-07-24', true]]);
-  assert.equal(back.totals.recovered, 600);
-  // The same card as when it was the current week; only the way it is read differs.
+  assert.deepEqual(back.dayTabs.map(x => [x.date, x.measured]), [['2026-07-20', true], ['2026-07-21', true], ['2026-07-22', true], ['2026-07-23', true], ['2026-07-24', true], ['2026-07-25', true], ['2026-07-26', true]]);
+  // Both days are filed in this book (see the dedicated test above): Saturday is B1's own day, under GMO, so BIKE BEE's card reads nobody
+  // on it -- the deck was still read, it simply held none of theirs. Sunday is C1's own secondary cycle day, and C1 already is BIKE BEE's
+  // (their Friday row), so it carries a second day's recovery this week, same customer, same card.
+  assert.equal(back.dayTabs.find(x => x.date === '2026-07-25').totals.recovered, 0);
+  assert.equal(back.dayTabs.find(x => x.date === '2026-07-26').totals.recovered, 100);
+  assert.equal(back.totals.recovered, 700, '600 Monday-to-Friday + C1\'s 100 on Sunday');
+  assert.deepEqual(back.rows.map(r => [r.ref, r.recovered]).sort(), [['A1', 300], ['C1', 400]], 'C1\'s Friday and Sunday added, one row');
+  // The same card as when it was the current week; only the way it is read differs -- compared over the Monday-to-Friday the live week also has,
+  // since the live week (read on NOW, before Saturday has happened) cannot yet carry the weekend this past reading now correctly adds.
   const now = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
-  assert.deepEqual(back.dayTabs.map(x => x.totals && x.totals.recovered), now.dayTabs.map(x => x.totals && x.totals.recovered));
+  assert.equal(now.dayTabs.length, 5);
+  assert.deepEqual(back.dayTabs.slice(0, 5).map(x => x.totals && x.totals.recovered), now.dayTabs.map(x => x.totals && x.totals.recovered));
   // The week before it has no decks in this book: its tabs are there, unfiled, and nothing is borrowed.
   const before = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-13' }, LATER);
   assert.equal(before.from, '2026-07-13'); assert.equal(before.pastWeek, true); assert.equal(before.totals.recovered, 0); assert.deepEqual(before.rows, []);
@@ -5011,7 +5069,7 @@ test('the expdf week adds only the days that were filed; an older deck on the sa
   const none = await portalApi(fakeDb({ ...expdfWeekTables(), defaulter_snapshots: [] }), ADMIN, 'expdfReport', { period: 'week' }, NOW);
   assert.equal(none.hasBaseline, false); assert.equal(none.totals.customers, 0); assert.equal(none.totals.recovered, 0); assert.equal(none.baseDate, null);
   assert.ok(none.days.every(x => !x.measured));
-  // A past week is read as it stood on its Friday, by its own days.
+  // A past week is walked Monday to Sunday, by its own days -- this one just has none in this book.
   const past = await portalApi(fakeDb(expdfWeekTables()), ADMIN, 'expdfReport', { period: 'week', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.pastWeek, true); assert.equal(past.totals.recovered, 0, 'the week of the 13th has no decks in this book');
 });
@@ -12977,7 +13035,7 @@ test('expdf leader card: the leader\'s own calls and comments on their own custo
   assert.deepEqual(bike.rows.map(r => r.ref), ['A1']);
   assert.equal(bike.inCalls, false, 'not registered in HOPE Calls under that name');
   assert.equal(bike.totals.calls, 0); assert.equal(bike.totals.comments, 0); assert.equal(bike.totals.recovered, 400);
-  // A past week is read as it stood on its Friday, like the report; the windows move with it.
+  // A past week is walked Monday to Sunday, like the report; the windows move with it.
   const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week', weekOf: '2026-07-15' }, NOW);
   assert.equal(past.weekOf, '2026-07-13'); assert.equal(past.weekEnd, '2026-07-19'); assert.equal(past.pastWeek, true);
   assert.equal(past.rows.length, 0, 'no deck that week in this fixture');

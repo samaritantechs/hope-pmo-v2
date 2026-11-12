@@ -237,10 +237,21 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
    the same period. `period` is day (the default), week or month; `date` (or the older
    `weekOf`) is any day, and the period says what to make of it: the day itself, the Monday
    week that holds it, the month that holds it. A past period is read as it stood at its close
-   (a past day on that day, a past week on its Friday, a past month on its last day); the
+   (a past day on that day, a past week on its Sunday, a past month on its last day); the
    current one as of now; a future one at its close too, since a future deck is one somebody
    has already uploaded in advance. `weekly: true` without a period means a week, for the
-   weekly e-mail and older callers. */
+   weekly e-mail and older callers.
+
+   THE WEEK IS MONDAY TO SUNDAY, NOT MONDAY TO FRIDAY -- "Expected defaulters goes mon to
+   sunday not mon to fri". `ms` used to pin a past or future week's clock to its FRIDAY
+   (mirroring the dashboard's own asOfWeek, portal-core.js) -- and that same clock is what
+   expdfWeekCore reads back out, as `todayKey(nowMs)`, to decide where its own day-loop stops.
+   So for any week that was not the live one, Saturday and Sunday were never walked at all --
+   not measured, not in a day tab, not in anybody's week total -- even though `to` on this same
+   answer already said Sunday. Pinned to the week's own Sunday instead, so the clock this
+   resolver hands back can never fall short of the range it also hands back. asOfWeek is left
+   alone on purpose: it is the dashboard's own helper, shared by screens that have nothing to
+   do with Exp.Def, and nobody asked for those to change. */
 export function expdfPeriod(nowMs, args = {}) {
   const today = todayKey(nowMs);
   let period = String(args.period || '').toLowerCase();
@@ -252,7 +263,7 @@ export function expdfPeriod(nowMs, args = {}) {
   }
   if (period === 'week') {
     const thisMon = weekMondayKey(nowMs), mon = weekMondayKey(at(pick));
-    return { period, from: mon, to: addDaysKey(mon, 6), ms: mon === thisMon ? nowMs : at(addDaysKey(mon, 4)),
+    return { period, from: mon, to: addDaysKey(mon, 6), ms: mon === thisMon ? nowMs : at(addDaysKey(mon, 6)),
       requested: mon, past: mon < thisMon, future: mon > thisMon };
   }
   const ym = pick.slice(0, 7), thisYm = today.slice(0, 7);

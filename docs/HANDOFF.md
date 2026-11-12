@@ -4789,6 +4789,49 @@ path) still writes a loan to `disbursed` the one time somebody uses it; this is 
 upload sheet, and the pipeline's own stage machinery is otherwise untouched. `BUILD
 2026-11-12-a`.
 
+## Part 57 — The Exp.Def week was never walked past Friday
+
+> "Expected defaulters goes mon to sunday not mon to fri bro" — the owner, 12 November 2026
+
+A FINISHED past week on the Exp.Def Report, or the card behind a leader's name, counted only
+Monday through Friday — never Saturday or Sunday — even though the very same answer's own `to`
+field already said Sunday. The cause: `expdfPeriod` (`api/_lib/expdf.js`) pins a past or future
+week's "read as of" clock to that week's Friday, mirroring the dashboard's own `asOfWeek`
+(`api/_lib/portal-core.js`, untouched here — it is shared by about seventeen other screens
+nobody asked to change). That same clock is reused by `expdfWeekCore`, in the same file, as
+`todayKey(nowMs)` — the boundary that decides where its own Monday-to-Sunday day-loop stops.
+Because the real Sunday is never earlier than that fake Friday, the loop stopped at Friday for
+every week that was not the live one: Saturday and Sunday were never measured, never on a day
+tab, never in anybody's week total.
+
+**The fix.** `expdfPeriod`'s week branch now pins a non-current week's clock to its own Sunday,
+not its Friday. Nothing else changed: the dashboard's `asOfWeek` and the roughly seventeen
+screens that read it (applications, recovery-by-credit, call agents and the rest) are
+untouched on purpose — a different helper, for a different set of screens, and nobody asked for
+those to move. The weekly e-mail is unaffected either way: it always calls `expdfReport` on the
+live current week directly, never through a chosen past week.
+
+**Checked**, with a book built so two customers' own secondary cycle days land on a Saturday
+and a Sunday with real recovery filed on both: a finished past week now correctly measures and
+counts both days, by the right leader, in the week's own total and in the day tabs behind a
+leader's card; the live current week (read before Saturday has happened yet) still has no tab
+past Friday, exactly as before. `npm test`: 1,495 pass.
+
+**Reviewed** by two independent readers, each re-deriving the cycle-day arithmetic by hand
+against the real code rather than trusting the comments, and each re-running the full suite
+themselves: neither found anything wrong or left to flag. One confirmed the change cannot
+reach `/api/upload` or `/api/call` (upload.js's only portal call is `purgeSuperseded`; call.js
+does not import this file at all); the other searched for the same shape of bug — a clock
+meant for "read as of" reused as a loop's stopping point — elsewhere in the file and found none
+live (two other places, `monthReportCompute_` and `dashboardFullCompute_`, keep their own real
+clock aside for exactly this reason already, predating this fix).
+
+**What it costs.** Nothing on `/api/upload` or `/api/call`. No front-end file changed, so
+`BUILD` stays `2026-11-12-a`.
+
+**Not done.** Whether the dashboard's own past-week screens (which still read `asOfWeek`,
+Friday-anchored) should move to Sunday too is a separate question nobody has asked yet.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
