@@ -9,7 +9,8 @@
    between them files a staff under one zone while the portal lists their team under another.
    Node cannot run SQL in `npm test`, so this is the check that can: it draws random Teams &
    Staff tables (GMO cells in mixed case and with stray spaces, empty ZONE cells, GMOs whose
-   teams sit in two zones, ties), reads each one both ways, and fails on the first difference.
+   teams sit in two zones and so give none), reads each one both ways, and fails on the first
+   difference.
    It also draws what a cell holds when it names nobody (a dash, N/A, "NO GMO") and the blanks a
    cell pasted from Excel or WhatsApp carries (a no-break space, a tab, a line break): a review
    found both read differently by the two, while this check, which drew neither, passed.
@@ -26,9 +27,9 @@
    always even and half of its cases never came up.
 
    BREAK THE RULE AND SEE IT FAIL before trusting a change to this file. In api/_lib/zone.js:
-   turn the tie the other way (z > zone), stop reading a dash as nobody, stop treating runs of
-   blanks in a GMO's name as one, or let the GMO's zone beat a typed cell. Each must come back
-   DIFFERENT. */
+   let a GMO named on teams of two zones give one of them, stop reading a dash as nobody, stop
+   treating runs of blanks as one (in a GMO's name, or in a zone), or let the GMO's zone beat a
+   typed cell. Each must come back DIFFERENT. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -76,9 +77,14 @@ const dressGmo = s => {
   return k === 0 ? pick(BLANKS) + s : k === 1 ? s + pick(BLANKS) : k === 2 ? s.toLowerCase() : k === 3 ? s.replace(/ /g, '   ')
     : k === 4 ? s.replace(/ /g, pick(BLANKS)) : s;
 };
-const dressZone = s => { const k = rnd(7); return k === 0 ? pick(BLANKS) + s : k === 1 ? s + pick(BLANKS) : k === 2 ? s.toLowerCase() : s; };
+// ... and a zone typed with a doubled or pasted blank INSIDE it is still that zone (it once made its GMO "over two zones")
+const dressZone = s => {
+  const k = rnd(8);
+  return k === 0 ? pick(BLANKS) + s : k === 1 ? s + pick(BLANKS) : k === 2 ? s.toLowerCase() : k === 3 ? s.replace(/ /g, pick(BLANKS)) : s;
+};
 const q = v => (v === null ? 'null' : "'" + String(v).replace(/'/g, "''") + "'");
-const K = s => String(s == null ? '' : s).trim().toUpperCase();
+// a zone as the rule compares it: trimmed, in capitals, runs of blanks as one
+const K = s => String(s == null ? '' : s).trim().toUpperCase().replace(/\s+/g, ' ');
 const byTeam = (a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
 
 let bad = 0, fromGmo = 0, split = 0, spaced = 0, dashed = 0, pasted = 0;
@@ -101,7 +107,7 @@ for (let c = 0; c < CASES; c++) {
   const zonesOfGmo = new Map();
   const isNobody = v => NOBODY.some(x => K(v) === K(x));
   for (const t of teams) {
-    const g = K(t.gmo).replace(/\s+/g, ' ');
+    const g = K(t.gmo);
     if (g && !isNobody(t.gmo) && K(t.zone) && !isNobody(t.zone)) zonesOfGmo.set(g, (zonesOfGmo.get(g) || new Set()).add(K(t.zone)));
   }
   if ([...zonesOfGmo.values()].some(s => s.size > 1)) split++;

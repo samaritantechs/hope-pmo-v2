@@ -69,7 +69,7 @@ tested without a browser or a network.
 | `passcode.js` | ~55 | Field officer passcodes. |
 | `recovery.js` | ~42 | **The Recovery % rule, in one place.** PAID/OVERPAID, UNDERPAID and everything else. Every screen calls this rather than re-deriving it. |
 | `time.js` | ~41 | Every "what day is it" decision, on the EAT clock (UTC+3). Weekday keys, week Mondays, date arithmetic. |
-| `zone.js` | ~130 | **Whose zone**: the zone written beside a signed-in name. The teams that name the person on Teams & Staff, else the teams the code holds. **A team's zone is its GMO's** (`teamsZoned`): an empty ZONE cell takes the zone most of that GMO's other teams carry. One read, at sign-in only; the advance desk reads the same helpers. |
+| `zone.js` | ~130 | **Whose zone**: the zone written beside a signed-in name. The teams that name the person on Teams & Staff, else the teams the code holds. **A team's zone is its GMO's** (`teamsZoned`): an empty ZONE cell takes the zone that GMO's other teams carry, when they all carry the same one; a GMO over several zones gives none. One read, at sign-in only; the advance desk reads the same helpers. |
 
 ---
 
@@ -81,7 +81,7 @@ tested without a browser or a network.
 | `seed.sql` | The first access code. Change `CHANGE-ME-1234` before running. |
 | `migrations/` | One file per change since 2026-07-25, oldest first. Existing databases run these. **All are safe to re-run.** |
 | `migrations/RUN-ME-*.sql` | Convenience files bundling several migrations for pasting into the SQL editor. |
-| `TEMPLATE-staff-changes-*.sql` | The two scripts a GMO's list of staff changes is answered with (docs/HANDOFF.md Parts 48 to 50). Templates: no staff name is ever committed. A moved or new staff takes the zone of their team's GMO: the same rule as `teamsZoned` in `api/_lib/zone.js`, and `tools/db-checks/gmo-zone-parity.mjs` reads random team tables both ways on a PostgreSQL to keep them alike. |
+| `TEMPLATE-staff-changes-*.sql` | The two scripts a GMO's list of staff changes is answered with (docs/HANDOFF.md Parts 48 to 52). Templates: no staff name is ever committed. A moved or new staff takes the zone of their team's GMO: the same rule as `teamsZoned` in `api/_lib/zone.js`, and `tools/db-checks/gmo-zone-parity.mjs` reads random team tables both ways on a PostgreSQL to keep them alike. |
 
 > `migrations/2026-08-05b-snapshot-totals-indexes.sql` is **not** in the bundled RUN-ME file:
 > it creates indexes `CONCURRENTLY`, which cannot run inside a transaction block. Run it on

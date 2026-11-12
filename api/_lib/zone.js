@@ -21,7 +21,14 @@
    names its GMO: it sits in the zone that GMO's other teams carry. Nobody has to fill the cell
    for an officer of that team to be in a zone, and a manager over several teams is in the zone
    of the GMO of any one of them. What is typed in a team's own ZONE cell always stands; the
-   GMO's zone is read only where the cell is empty. A cell that holds a dash, N/A or "NO GMO"
+   GMO's zone is read only where the cell is empty.
+
+   THE RULE DOES NOT GUESS. A GMO's zone is read only when ALL of that GMO's teams that carry
+   a zone carry the SAME one. Its first form took the zone MOST of them carried, a tie going A
+   to Z; then the live Teams & Staff showed one GMO named on teams of four zones (two, two, one
+   and one), and the tie had filed an officer under a zone by alphabet. A GMO named on teams of
+   more than one zone has no one zone to give: the team reads NO ZONE SET, which is the cue to
+   type its ZONE, exactly as for a team with no GMO at all (docs/HANDOFF.md Part 52). A cell that holds a dash, N/A or "NO GMO"
    names nobody (nameOrNull in parse.js), in the GMO column and in the ZONE column alike.
    Everything below reads the teams THROUGH teamsZoned, and so does the advance desk
    (advZones_), so the name line, the staff a code may list and the staff-change scripts (tz in
@@ -50,8 +57,8 @@
         from a fault). A code that holds every team and is named nowhere holds every zone, which
         is how the advance desk has always read it: ALL ZONES. A person whose teams are known
         and carry no zone on Teams & Staff -- no ZONE cell of their own and no GMO whose other
-        teams carry one -- reads NO ZONE SET, which is the admin's cue to fill the ZONE column
-        or name the GMO. The page writes the words; this module says which case it is
+        teams all carry one zone -- reads NO ZONE SET, which is the admin's cue to fill the
+        ZONE column or name the GMO. The page writes the words; this module says which case it is
         (zoneAll, zoneUnset). Only a read that failed or ran out of time leaves the name bare.
 
    A zone is compared and shown in capitals, as the advance desk has always read it. Several
@@ -87,44 +94,44 @@ const NO_ONE = /^(?:NO[ -]|\(UNASSIGNED\))/i;
 const cell = v => { const s = nameOrNull(v); return s === null || NO_ONE.test(s) ? '' : s; };
 /** A GMO's name as it is compared from one team to the next: trimmed, in capitals, runs of blanks as one. '' for nobody. */
 const G = s => cell(s).toUpperCase().replace(/\s+/g, ' ');
-/** A team's own ZONE cell as the rule reads it: trimmed, in capitals. '' when the cell names no zone. */
-const Z = s => cell(s).toUpperCase();
+/** A team's own ZONE cell as the rule reads it: trimmed, in capitals, runs of blanks as one, exactly as a GMO's name is
+    compared. '' when the cell names no zone. (Compared only trimmed, a doubled space inside ONE ZONE cell made its GMO "a
+    GMO over two zones", and under the rule that never chooses every empty team of that GMO lost its zone. Found by review.) */
+const Z = s => cell(s).toUpperCase().replace(/\s+/g, ' ');
 
 /** A TEAM'S ZONE IS ITS GMO'S. The rows of Teams & Staff, each with its zone: the team's own
-    ZONE cell where it has one; else the zone most of its GMO's other teams carry (a tie goes to
-    the first in A-to-Z order, so the answer never depends on the order of the rows). A team with
-    no ZONE cell and no GMO, or whose GMO has no team with a zone, stays without one (and a cell
-    that only holds a dash comes back as the empty cell it is). Takes ALL the rows -- a GMO's
+    ZONE cell where it has one; else the zone its GMO's other teams carry, WHEN THEY ALL CARRY
+    THE SAME ONE (so the answer cannot depend on the order of the rows, and is never a choice).
+    A team with no ZONE cell and no GMO, or whose GMO has no team with a zone, or whose GMO is
+    named on teams of more than one zone, stays without one (and a cell that only holds a dash
+    comes back as the empty cell it is). Takes ALL the rows -- a GMO's
     other teams can lie outside the teams a code holds -- and is asked BEFORE any filter by
     team. The rows given are not changed; a row that took its GMO's zone is a copy marked
     zoneFromGmo. */
 export function teamsZoned(teamRows) {
   const rows = teamRows || [];
-  const carried = new Map();                     // GMO -> zone -> how many of their teams carry it
+  const carried = new Map();                     // GMO -> the zones their teams carry
   for (const t of rows) {
     const g = t ? G(t.gmo) : '', z = t ? Z(t.zone) : '';
     if (!g || !z) continue;
-    if (!carried.has(g)) carried.set(g, new Map());
-    carried.get(g).set(z, (carried.get(g).get(z) || 0) + 1);
+    if (!carried.has(g)) carried.set(g, new Set());
+    carried.get(g).add(z);
   }
   return rows.map(t => {
     if (!t || Z(t.zone)) return t;                // what is typed in the team's own cell stands
     const of = carried.get(G(t.gmo));
-    if (of) {
-      let zone = '', n = 0;
-      for (const [z, c] of of) if (c > n || (c === n && z < zone)) { zone = z; n = c; }
-      return { ...t, zone, zoneFromGmo: true };
-    }
+    // ONE zone, or none: a GMO named on teams of two zones has no one zone to give, and taking one would be a guess
+    if (of && of.size === 1) return { ...t, zone: of.values().next().value, zoneFromGmo: true };
     // no zone from anywhere. A cell that holds a dash is handed on as the empty cell it is, so that the team reads
     // NO ZONE SET and is named on the advance desk, rather than sitting in a zone called "-".
     return K(t.zone) ? { ...t, zone: '' } : t;
   });
 }
 
-/** The distinct zones of some teams, as Teams & Staff spells them, in capitals and in order.
-    Reads the rows as given: pass them through teamsZoned first (before any filter by team). */
+/** The distinct zones of some teams, in capitals, runs of blanks as one, and in order: one zone is listed once however
+    its cells were spaced. Reads the rows as given: pass them through teamsZoned first (before any filter by team). */
 export function zonesOfTeams(teamRows) {
-  return [...new Set((teamRows || []).map(t => K(t && t.zone)).filter(Boolean))].sort();
+  return [...new Set((teamRows || []).map(t => K(t && t.zone).replace(/\s+/g, ' ')).filter(Boolean))].sort();
 }
 
 /** The rule above, over rows already read. */

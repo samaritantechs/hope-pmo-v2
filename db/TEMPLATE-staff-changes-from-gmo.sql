@@ -9,7 +9,7 @@
 -- transferred where, who is new (often with phone, account, NIDA, TIN, NSSF), who they cannot
 -- see on their list. Copy this file, fill the list, and hand the owner the copy: new query,
 -- paste, Run. ONE ROW COMES BACK FOR EACH PERSON, saying what was done. (docs/HANDOFF.md
--- Parts 48 to 50.)
+-- Parts 48 to 52.)
 -- NO STAFF NAME IS EVER COMMITTED: this repository is public. The filled copy goes to the owner.
 --
 -- ONE ROW OF THE LIST FOR EACH PERSON:
@@ -18,7 +18,7 @@
 --   team_text   the team as it should read after "ROLE - "
 --   zone_teams  array of team names whose zone the person takes: the first one that has a zone, its own or its GMO's
 --   zone_else   the sender's word for the zone: used only if a zone of that name is already filed
---   zone_like   array of names of colleagues already in the registry: their zone, as a last resort
+--   zone_like   array of names of colleagues already in the registry: their zone, if they all carry one, as a last resort
 --   account, phone, bank, nida, tin, nssf    (an account also FINDS a person whose name is spelt differently)
 --   why         for ASK: what is missing
 --
@@ -49,12 +49,15 @@
 -- (TEMPLATE-staff-changes-by-id.sql). For a NEW staff only the name, the account and the phone
 -- are compared.
 --
--- THE ZONE of a moved or new staff IS THE ZONE OF THEIR TEAM'S GMO (docs/HANDOFF.md Part 50):
+-- THE ZONE of a moved or new staff IS THE ZONE OF THEIR TEAM'S GMO (docs/HANDOFF.md Parts 50, 52):
 --   "If an officer has team - zone is automatic of the GMO's" ... "to the respective team's gmo"
 --   "So even manager - must have gmo of one of his team and auto match gmo and zone"
--- The team's own ZONE cell on Teams & Staff; where that is empty, the zone most of its GMO's
--- other teams carry (a tie goes to the first in A-to-Z order). A cell that holds a dash, N/A,
--- NONE or "NO GMO" names nobody: two teams whose GMO cell says "-" are not one GMO's teams.
+-- The team's own ZONE cell on Teams & Staff; where that is empty, the zone its GMO's other
+-- teams carry, WHEN THEY ALL CARRY THE SAME ONE. A GMO named on teams of more than one zone
+-- has no one zone to give, and the script does not choose among them (docs/HANDOFF.md Part
+-- 52): the row lists the zones and the zone is left as it was until the ZONE is typed on the
+-- team. A cell that holds a dash, N/A, NONE or "NO GMO" names nobody: two teams whose GMO
+-- cell says "-" are not one GMO's teams.
 -- The portal reads a team the same way: teamsZoned in api/_lib/zone.js is this rule in
 -- JavaScript, and tm / gz / tz below are it in SQL. KEEP THE TWO ALIKE
 -- (tools/db-checks/gmo-zone-parity.mjs reads random team tables both ways). A manager over
@@ -63,12 +66,13 @@
 -- who was moved would take with him every officer later sent to the teams that still name
 -- him, and a second run would not agree with the first). Only where Teams & Staff cannot say
 -- does the script look further, in this order: the one zone of the teams whose names begin
--- with the team's name; the sender's word, only if a zone of that name is already filed; the
--- zone of the staff already on that team; (new staff) the zone of the colleagues named in
--- zone_like. A moved staff for whom none of these says keeps the old zone, and the row says
--- which is missing: name the GMO on the team, or type the ZONE on one of that GMO's teams, on
--- Teams & Staff and run the script again. Whenever a zone is not the team's own cell the row
--- says where it came from, and when a GMO's teams carry more than one zone it lists them.
+-- with the team's name; then what the ROW ITSELF says: the sender's word, only if a zone of
+-- that name is already filed; (new staff) the one zone of the colleagues named in zone_like.
+-- THE STAFF ALREADY ON THE TEAM ARE NOT ASKED (docs/HANDOFF.md Part 52): a staff moved to a
+-- team with no zone keeps the zone they came from, and would hand that left-over zone to the
+-- next person sent there. A moved staff for whom nothing says keeps the old zone, a new staff
+-- is not added, and the row says which thing is missing and what settles it. Whenever a zone
+-- is not the team's own cell the row says where it came from.
 --
 -- SAFE TO RUN AGAIN: the second run changes nothing and says so.
 -- It reads and writes the staff registry and reads the teams table. Nothing on uploads,
@@ -212,14 +216,15 @@ zones as (   -- every zone name already filed, on Teams & Staff first, then in t
 ),
 tm as (   -- Teams & Staff as it stands: each team, its own ZONE cell, its GMO. A cell is read as the portal reads it
           -- (teamsZoned in api/_lib/zone.js): blanks at its ends dropped, a no-break space or a tab counting as a blank
-          -- (cells pasted from Excel or WhatsApp carry them); in capitals; a GMO's name with runs of blanks as one.
+          -- (cells pasted from Excel or WhatsApp carry them); in capitals; runs of blanks as one, in a GMO's name and in a
+          -- zone alike (a doubled space inside one ZONE cell must not make its GMO "a GMO over two zones").
           -- A DASH IS NOT A PERSON, AND NOT A ZONE: a cell holding only dashes, N/A, NONE, NIL, HAKUNA, 0, "NO ..." or
           -- "(unassigned)" names nobody (nameOrNull in api/_lib/parse.js), so two teams whose GMO cell says "-" are not
           -- one GMO's teams.
   select t.team, regexp_replace(upper(t.team), '[^A-Z0-9]', '', 'g') as tkey,
          case when c.g_named then c.g end as gmo,
          case when c.g_named then upper(regexp_replace(c.g, sp.blank || '+', ' ', 'g')) end as gkey,
-         case when c.z_named then upper(c.z) end as own
+         case when c.z_named then upper(regexp_replace(c.z, sp.blank || '+', ' ', 'g')) end as own
   from teams t
   cross join (select '[\s\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF]'::text as blank,
                      '^([-\u2010-\u2015_.\u00B7]+|n/?a|none|nil|null|hakuna|0|no[ -].*|\(unassigned\).*)$'::text as nobody) sp
@@ -227,9 +232,12 @@ tm as (   -- Teams & Staff as it stands: each team, its own ZONE cell, its GMO. 
                              regexp_replace(coalesce(t.zone, ''), '^' || sp.blank || '+|' || sp.blank || '+$', '', 'g') as z) c0
   cross join lateral (select c0.g, c0.z, c0.g <> '' and c0.g !~* sp.nobody as g_named, c0.z <> '' and c0.z !~* sp.nobody as z_named) c
 ),
-gz as (   -- A GMO'S ZONE: the one most of their teams carry on Teams & Staff (a tie goes to the first in A-to-Z order).
+gz as (   -- A GMO'S ZONE: the zone their teams carry on Teams & Staff, WHEN THEY ALL CARRY THE SAME ONE. A GMO named on
+          -- teams of more than one zone has no one zone to give: the script does not choose among them (its first form
+          -- took the one most teams carried, a tie going A to Z, and filed an officer by alphabet). Then `zone` is
+          -- null and `spread` lists what was found, so that the row can say it.
           -- The same reading the portal makes (teamsZoned in api/_lib/zone.js): one rule, written twice, kept alike.
-  select g.gkey, (array_agg(g.zone order by g.teams desc, g.zone collate "C"))[1] as zone, count(*) as zones_n,
+  select g.gkey, case when count(*) = 1 then min(g.zone) end as zone, count(*) as zones_n,
          string_agg(g.zone || ' on ' || g.teams, ', ' order by g.teams desc, g.zone collate "C") as spread
   from (select m.gkey, m.own as zone, count(*) as teams from tm m where m.gkey is not null and m.own is not null group by m.gkey, m.own) g
   group by g.gkey
@@ -245,20 +253,32 @@ tz as (   -- A TEAM'S ZONE IS ITS GMO'S -- "If an officer has team - zone is aut
   from tm m
   left join gz on gz.gkey = m.gkey
 ),
-z as (   -- the zone for a row: its team's GMO's (tz); else the one zone of the teams whose names begin with it; else the
-         -- sender's word if such a zone is filed; else the zone of the staff already on that team; else its colleagues'
+z as (   -- the zone for a row: its team's GMO's (tz); else the one zone of the teams whose names begin with it; else what
+         -- the ROW ITSELF says: the sender's word if such a zone is filed, or (new staff) the one zone of the colleagues it
+         -- names. THE STAFF ALREADY ON THE TEAM ARE NOT ASKED. They once were, and a staff moved to a team with no zone, who
+         -- keeps the zone he came from, then handed that left-over zone to the next person sent there.
   select a.n, tf.team as team_filed, tf.gmo as team_gmo, tf.spread as gmo_spread, coalesce(tf.zone, tl.zone) as z_team,
          case when tf.zone is not null then tf.how when tl.zone is not null then 'like' end as z_how,
+         -- why Teams & Staff gives this row no zone, in words, for the answer (null when it gives one)
+         case when coalesce(tf.zone, tl.zone) is not null then null
+              when coalesce(cardinality(a.zone_teams), 0) = 0 then 'no team was given'
+              when tf.team is null then 'no team of that name on Teams & Staff'
+              when tf.gmo is null then 'the team has no ZONE on Teams & Staff and no GMO is named on it'
+              when tf.spread is not null then 'the team has no ZONE on Teams & Staff, and its GMO (' || tf.gmo || ') is named on teams of more than one zone ('
+                                              || tf.spread || '), so none is taken'
+              else 'the team has no ZONE on Teams & Staff, and its GMO (' || tf.gmo || ') has no team with a zone' end as z_why,
+         -- ... and what settles it, which is not the same thing for every reason
+         case when coalesce(tf.zone, tl.zone) is not null then null
+              when coalesce(cardinality(a.zone_teams), 0) = 0 then 'give the team on the row (zone_teams), or the sender''s word for a filed zone (zone_else), and run the script again'
+              when tf.team is null then 'write the team as Teams & Staff names it, or add it there with its ZONE, and run the script again'
+              when tf.gmo is null then 'type the ZONE on the team (or name its GMO) on Teams & Staff and run the script again'
+              else 'type the ZONE on the team on Teams & Staff and run the script again' end as z_fix,
          (select zz.zone from zones zz
            where zz.key = nullif(regexp_replace(upper(coalesce(a.zone_else, '')), '[^A-Z0-9]', '', 'g'), '')) as z_else,
-         (select mode() within group (order by upper(btrim(r.zone))) from reg r
+         (select min(upper(btrim(r.zone))) from reg r      -- the colleagues the row names, when they all carry ONE zone
            where r.nkey = any (select regexp_replace(upper(btrim(x)), '\s+', ' ', 'g') from unnest(a.zone_like) x)
-             and r.zkey <> '') as z_like,
-         (select mode() within group (order by upper(btrim(r.zone))) from reg r
-           where a.team_text is not null and r.live and r.zkey <> '' and r.role ~ '\S\s+-\s+\S'
-             and regexp_replace(upper(regexp_replace(r.role, '^.*?\s+-\s+', '')), '[^A-Z0-9]', '', 'g')
-                 like regexp_replace(upper(a.team_text), '[^A-Z0-9]', '', 'g') || '%'
-             and r.nkey not in (select x.nkey from a2 x)) as z_peers
+             and r.zkey <> ''
+          having count(distinct upper(btrim(r.zone))) = 1) as z_like
   from a2 a
   left join lateral (   -- the team as Teams & Staff names it: the first of zone_teams found, one with a zone first. Two
                         -- teams can differ only by a mark or by capitals ("TEAM-1", "Team 1"): then the one written as the
@@ -286,8 +306,8 @@ plan as (   -- what a row asks of the staff it means
                    || coalesce(' - ' || case when cardinality(a.zone_teams) = 1 and z.team_filed is not null then z.team_filed else a.team_text end, '')
          end as new_role,
          case when a.act = 'OFF' then r.zone
-              when a.act = 'MOVE' then coalesce(z.z_team, z.z_else, z.z_peers, r.zone)
-              else coalesce(z.z_team, z.z_else, z.z_peers, z.z_like, r.zone) end as new_zone
+              when a.act = 'MOVE' then coalesce(z.z_team, z.z_else, r.zone)
+              else coalesce(z.z_team, z.z_else, z.z_like, r.zone) end as new_zone
   from tgt t
   join a2 a on a.n = t.n
   join reg r on r.id = t.id
@@ -326,7 +346,7 @@ newrows as (   -- a new staff: nobody in the registry could be them, and a zone 
   select a.n, a.nkey as name, a.phone9, a.bank, a.account, a.nida_d, a.tin_d, a.nssf_d, a.birth,
          coalesce(a.role_word, 'Field Officer')
            || coalesce(' - ' || case when cardinality(a.zone_teams) = 1 and z.team_filed is not null then z.team_filed else a.team_text end, '') as role,
-         coalesce(z.z_team, z.z_else, z.z_peers, z.z_like) as zone,
+         coalesce(z.z_team, z.z_else, z.z_like) as zone,
          (select top from num) + row_number() over (order by a.n) as serial,
          (select string_agg(left(w.word, 1), '' order by w.pos)
             from (select regexp_replace(x.raw, '[^A-Z]', '', 'g') as word, x.pos
@@ -337,7 +357,7 @@ newrows as (   -- a new staff: nobody in the registry could be them, and a zone 
   join tgt t on t.n = a.n
   join z on z.n = a.n
   where a.nth = 1 and a.act in ('NEW', 'PLACE') and t.all_n is null
-    and coalesce(z.z_team, z.z_else, z.z_peers, z.z_like) is not null
+    and coalesce(z.z_team, z.z_else, z.z_like) is not null
 ),
 newid as (
   select n.*, coalesce(nullif(n.initials, ''), 'STF') || '/' || case when n.serial < 1000 then lpad(n.serial::text, 3, '0') else n.serial::text end
@@ -382,21 +402,20 @@ select a.n as "#", a.grp as list, a.act as asked, a.nkey as name,
               then 'was: ' || coalesce(r.role, 'no role') || ', ' || coalesce(r.zone, 'no zone') || ', ' || r.status end,
          case when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_how = 'gmo'
               then 'the team has no ZONE on Teams & Staff: zone is its GMO''s' || coalesce(' (' || z.team_gmo || ')', '')
-                   || coalesce('; that GMO''s teams carry more than one zone (' || z.gmo_spread || '): the one most of them carry was taken', '')
               when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_how = 'like'
               then case when z.team_filed is null then 'no team of that very name on Teams & Staff'
                         when z.team_gmo is null then 'the team has no ZONE on Teams & Staff and no GMO is named on it'
+                        when z.gmo_spread is not null then 'the team has no ZONE on Teams & Staff, and its GMO (' || z.team_gmo || ') is named on teams of more than one zone (' || z.gmo_spread || '), so none is taken'
                         else 'the team has no ZONE on Teams & Staff, and its GMO (' || z.team_gmo || ') has no team with a zone' end
                    || ': zone is the one zone of the teams whose names begin with it' end,
          case when a.nth = 1 and a.act in ('MOVE', 'PLACE', 'NEW') and (t.id is not null or i.id is not null) and z.z_team is null
-              then case when coalesce(cardinality(a.zone_teams), 0) = 0 then 'no team was given'
-                        when z.team_filed is null then 'no team of that name on Teams & Staff'
-                        when z.team_gmo is null then 'the team has no ZONE on Teams & Staff and no GMO is named on it'
-                        else 'the team has no ZONE on Teams & Staff, and its GMO (' || z.team_gmo || ') has no team with a zone' end
+              then z.z_why
                    || case when z.z_else is not null then ': zone taken from the sender''s word'
-                           when z.z_peers is not null then ': zone taken from the staff already on that team'
-                           when a.act = 'MOVE' then ': zone left as it was'
-                           else ': zone taken from colleagues on the same list' end end,
+                           when a.act <> 'MOVE' and z.z_like is not null then ': zone taken from the colleagues the row names'
+                           else ': zone left as it was. To file them: ' || z.z_fix end end,
+         -- somebody new for whom no zone could be found at all: the row says why, and what to do about it
+         case when a.nth = 1 and a.act in ('NEW', 'PLACE') and t.all_n is null and i.id is null and z.z_why is not null
+              then z.z_why || ': ' || z.z_fix end,
          case when a.nth = 1 and a.act <> 'ASK' and t.id is null and t.all_n is not null then 'they are: ' || t.ids end,
          case when a.nth = 1 and a.act in ('OFF', 'MOVE') and t.all_n is null then 'nearest names: ' || coalesce((
                 select string_agg(q.name_as_filed || ' [' || q.id || ', ' || coalesce(q.zone, 'no zone') || ', ' || q.status || ']', '; ')

@@ -1696,11 +1696,11 @@ const advDate_ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) :
 const advUpper_ = v => { const s = textOrNull(v); return s ? s.toUpperCase().replace(/\s+/g, ' ') : null; };
 /** The zones a signed-in person may see: null for every zone (ALL teams), else the distinct
     zones of the teams they hold, as Teams & Staff spells them (upper-cased): a team's own ZONE
-    cell, else the zone its GMO's other teams carry. */
+    cell, else the one zone its GMO's other teams carry. */
 function advZones_(user, teamRows) {
   if (!user.teams) return { zones: null, noZoneTeams: [] };
   // A TEAM'S ZONE IS ITS GMO'S (teamsZoned in zone.js): a team with an empty ZONE cell is in the zone its GMO's other teams
-  // carry, so its officers are listed with that zone's staff and it is no longer named as a team without one.
+  // carry (when they all carry one), so its officers are listed with that zone's staff and it is not named as a team without one.
   const mine = teamsZoned(teamRows).filter(t => teamAllowed(user, t.team));
   const zones = zonesOfTeams(mine);                 // the same reading the name line uses (zone.js)
   return { zones, noZoneTeams: mine.filter(t => !K(t.zone)).map(t => t.team).sort() };

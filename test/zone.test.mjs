@@ -122,10 +122,10 @@ test('no zone is said, not left blank: ALL ZONES for a code over every team, NO 
    in its GMO's zone. */
 const GMO_TEAMS = TEAMS.concat([
   { team: 'SENGEREMA', zone: '', gmo: ' mark   ii ', manager: 'NEEMA' },   // Mark II's other teams are LAKE ZONE
-  { team: 'NEWALA', zone: null, gmo: 'Juma', manager: 'NEEMA' },           // JUMA's carry SOUTHERN HIGHLANDS and SOUTH: one each
+  { team: 'NEWALA', zone: null, gmo: 'Juma', manager: 'NEEMA' },           // JUMA's carry SOUTHERN HIGHLANDS and SOUTH: two zones, so none
   { team: 'LINDI', zone: '  ', gmo: 'NEW GMO', manager: 'OMAR' },          // a GMO none of whose teams has a zone
   { team: 'RUANGWA', zone: '', gmo: 'New Gmo' },
-  { team: 'MASASI', zone: 'South', gmo: 'PILI' },                          // PILI: two teams in SOUTH, one in COAST
+  { team: 'MASASI', zone: 'South', gmo: 'PILI' },                          // PILI: two teams in SOUTH, one in COAST: two zones, so none
   { team: 'MTWARA', zone: 'SOUTH', gmo: 'PILI' },
   { team: 'KILWA', zone: 'Coast', gmo: 'PILI' },
   { team: 'NACHINGWEA', gmo: 'pili' },                                     // no zone key at all
@@ -135,20 +135,71 @@ const GMO_TEAMS = TEAMS.concat([
 GMO_TEAMS.forEach(Object.freeze);
 const zonedTeam = (rows, name) => teamsZoned(rows).find(t => t.team === name);
 
-test('a team\'s zone is its GMO\'s: an empty ZONE cell takes the zone most of that GMO\'s other teams carry', () => {
+test('a team\'s zone is its GMO\'s: an empty ZONE cell takes the zone that GMO\'s other teams carry, when they all carry one', () => {
   const sengerema = zonedTeam(GMO_TEAMS, 'SENGEREMA');
   assert.equal(sengerema.zone, 'LAKE ZONE', 'the GMO is matched trimmed, in capitals, with runs of spaces as one');
   assert.equal(sengerema.zoneFromGmo, true);
-  assert.equal(zonedTeam(GMO_TEAMS, 'NACHINGWEA').zone, 'SOUTH', 'the zone MOST of the GMO\'s teams carry, not the first met');
-  assert.equal(zonedTeam(GMO_TEAMS.slice().reverse(), 'NACHINGWEA').zone, 'SOUTH');
-  assert.equal(zonedTeam(GMO_TEAMS, 'NEWALA').zone, 'SOUTH', 'a tie goes to the first in A-to-Z order');
-  assert.equal(zonedTeam(GMO_TEAMS.slice().reverse(), 'NEWALA').zone, 'SOUTH', '... whatever the order of the rows');
+  assert.equal(zonedTeam(GMO_TEAMS.slice().reverse(), 'SENGEREMA').zone, 'LAKE ZONE', 'whatever the order of the rows');
   // nothing is invented: no GMO, or a GMO with no team that carries a zone, is still no zone
   for (const name of ['HQ', 'LINDI', 'RUANGWA']) {
     const t = zonedTeam(GMO_TEAMS, name);
     assert.equal(String(t.zone == null ? '' : t.zone).trim(), '', name + ' was given a zone nobody typed and no GMO carries');
     assert.ok(!t.zoneFromGmo);
   }
+});
+
+/* THE RULE DOES NOT GUESS (docs/HANDOFF.md Part 52). Its first form took the zone MOST of the GMO's teams carried, a tie
+   going A to Z. The live Teams & Staff then showed one GMO named on teams of four zones -- two, two, one and one -- and
+   the tie had filed an officer under a zone by alphabet. A GMO named on teams of more than one zone has no one zone to
+   give. */
+test('the rule does not guess: a GMO named on teams of more than one zone gives no zone', () => {
+  // PILI: two teams in SOUTH and one in COAST. "Most" would say SOUTH; it is not PILI's one zone.
+  for (const rows of [GMO_TEAMS, GMO_TEAMS.slice().reverse()]) {
+    const t = zonedTeam(rows, 'NACHINGWEA');
+    assert.equal(t.zone || '', '', 'a team took the zone MOST of its GMO\'s teams carry: that is a choice, and the rule makes none');
+    assert.ok(!t.zoneFromGmo);
+  }
+  // JUMA: one team in SOUTHERN HIGHLANDS and one in SOUTH. A tie went A to Z once.
+  assert.equal(zonedTeam(GMO_TEAMS, 'NEWALA').zone || '', '', 'a tie between two zones was settled by alphabet');
+  // the live case: a GMO named on teams of four zones, two, two, one and one
+  const live = [
+    { team: 'T1', zone: 'ZONE M', gmo: 'STAND IN' }, { team: 'T2', zone: 'ZONE M', gmo: 'STAND IN' },
+    { team: 'T3', zone: 'ZONE T', gmo: 'STAND IN' }, { team: 'T4', zone: 'ZONE T', gmo: 'STAND IN' },
+    { team: 'T5', zone: 'ZONE W', gmo: 'STAND IN' }, { team: 'T6', zone: 'ZONE N', gmo: 'STAND IN' },
+    { team: 'T7', zone: '', gmo: 'Stand  In' },
+  ];
+  assert.equal(zonedTeam(live, 'T7').zone, '');
+  assert.deepEqual(zoneAnswer({ name: 'T7 · F.O', role: 'FIELD OFFICER', teams: ['T7'], teamCode: true }, live), { zone: '', zones: [], zoneUnset: true },
+    'said, as for a team with no GMO: NO ZONE SET is the cue to type its ZONE');
+  // one ZONE typed on the team settles it, whatever its GMO's other teams carry
+  assert.equal(zonedTeam(live.map(t => (t.team === 'T7' ? { ...t, zone: 'Zone N' } : t)), 'T7').zone, 'Zone N');
+  // a GMO whose teams all carry ONE zone still gives it, however many teams that is
+  const one = zonedTeam(live.filter(t => !/ZONE [TWN]/.test(t.zone)), 'T7');
+  assert.equal(one.zone, 'ZONE M'); assert.equal(one.zoneFromGmo, true);
+  // the GMO himself, named on those teams, sees all his zones as before
+  assert.equal(zoneLabel(zonesOfUser({ name: 'STAND IN', role: 'GMO', teams: null }, live)), 'ZONE M, ZONE N +2');
+});
+
+/* ONE ZONE, HOWEVER ITS CELLS WERE SPACED. A zone was compared trimmed and in capitals, and a GMO's name with runs of
+   blanks as one. Under the rule that never chooses that difference bites: "DAR  EAST" typed with two spaces on one team
+   and "DAR EAST" on another made their GMO "a GMO over two zones", and every empty team of that GMO lost its zone. Found
+   by review. A zone is now compared exactly as a GMO's name is. */
+test('one zone is one zone however its cells were spaced: a doubled or pasted blank inside a ZONE cell does not split a GMO', () => {
+  const rows = [
+    { team: 'B1', zone: 'DAR  EAST', gmo: 'GMO B' },                 // two spaces
+    { team: 'B2', zone: 'Dar East', gmo: 'GMO B' },
+    { team: 'B3', zone: 'DAR' + String.fromCharCode(160) + 'EAST ', gmo: 'GMO B' },   // a no-break space, pasted
+    { team: 'B4', zone: '', gmo: 'gmo  b' },
+    { team: 'C1', zone: 'DAR EAST', gmo: 'GMO C' }, { team: 'C2', zone: 'DAR-EAST', gmo: 'GMO C' }, { team: 'C3', zone: '', gmo: 'GMO C' },
+  ];
+  const zoned = teamsZoned(rows);
+  assert.equal(zoned[3].zone, 'DAR EAST', 'three spacings of one zone made their GMO a GMO over several zones');
+  assert.equal(zoned[3].zoneFromGmo, true);
+  assert.deepEqual(zonesOfTeams(zoned.slice(0, 4)), ['DAR EAST'], 'the same zone was listed more than once');
+  assert.deepEqual(zoneAnswer({ name: 'GMO B', role: 'GMO', teams: null }, rows), { zone: 'DAR EAST', zones: ['DAR EAST'] });
+  // a mark is not a blank: DAR-EAST is another spelling, the GMO is over two zones, and none is taken
+  assert.equal(zoned[6].zone, '');
+  assert.equal(zoned[0], rows[0], 'a team with its own zone is the very row, as typed');
 });
 
 test('what is typed in a team\'s own ZONE cell always stands, and the rows given are not changed', () => {
@@ -167,7 +218,7 @@ test('what is typed in a team\'s own ZONE cell always stands, and the rows given
     assert.equal(is.team, was.team, 'the rows come back in the order they were given');
     if (String(was.zone == null ? '' : was.zone).trim()) assert.equal(is, was, was.team + ' has its own ZONE and must come back untouched, the very row');
   }
-  // KILWA is typed Coast although most of its GMO's teams are SOUTH: the cell wins
+  // KILWA is typed Coast although its GMO's other teams are SOUTH: what is typed on the team stands
   assert.equal(zonedTeam(GMO_TEAMS, 'KILWA').zone, 'Coast');
   assert.deepEqual(teamsZoned(null), []);
   assert.deepEqual(teamsZoned([]), []);
@@ -225,11 +276,12 @@ test('the name line follows it: the team\'s officers, its manager and its GMO se
   // a team code: "If an officer has team - zone is automatic of the GMO's"
   assert.deepEqual(zoneAnswer({ name: 'SENGEREMA · F.O', role: 'FIELD OFFICER', teams: ['SENGEREMA'], teamCode: true }, GMO_TEAMS),
     { zone: 'LAKE ZONE', zones: ['LAKE ZONE'] }, 'the GMO\'s other teams lie outside the code\'s own team and still decide its zone');
-  // "So even manager - must have gmo of one of his team": NEEMA manages SENGEREMA and NEWALA, neither with a ZONE of its own
-  assert.equal(zoneLabel(zonesOfUser({ name: 'NEEMA', role: 'MANAGER', teams: null }, GMO_TEAMS)), 'LAKE ZONE, SOUTH');
+  // "So even manager - must have gmo of one of his team": NEEMA manages SENGEREMA and NEWALA, neither with a ZONE of its
+  // own. SENGEREMA's GMO has one zone and NEWALA's is over two: one of his teams is enough to put him in a zone.
+  assert.equal(zoneLabel(zonesOfUser({ name: 'NEEMA', role: 'MANAGER', teams: null }, GMO_TEAMS)), 'LAKE ZONE');
   assert.equal(zoneLabel(zonesOfUser({ name: 'NEEMA', role: 'MANAGER', teams: ['SENGEREMA'] }, GMO_TEAMS)), 'LAKE ZONE');
-  // a code that only holds the team
-  assert.equal(zoneLabel(zonesOfUser({ name: 'NOBODY', role: 'OPM', teams: ['NACHINGWEA', 'HQ'] }, GMO_TEAMS)), 'SOUTH');
+  // a code that only holds a team whose GMO is over two zones: no zone is taken, and that is said
+  assert.deepEqual(zoneAnswer({ name: 'NOBODY', role: 'OPM', teams: ['NACHINGWEA', 'HQ'] }, GMO_TEAMS), { zone: '', zones: [], zoneUnset: true });
   // the GMO himself is unchanged by it: his zones were already his teams'
   assert.deepEqual(zoneAnswer({ name: 'MARK II', role: 'GMO', teams: null }, GMO_TEAMS), { zone: 'LAKE ZONE', zones: ['LAKE ZONE'] });
   // and where the GMO has no zone either, it is still said, not left blank
