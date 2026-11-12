@@ -7,107 +7,103 @@
 /* =====================================================================================
    LEAVE / HOLIDAY -- the FOMU YA RUHUSA NA LIKIZO Google Form and its sheet, moved in the
    same way advance.js moved the salary-advance sheet: "the tunnels and approvals must be the
-   same to advances when people request leaves / holidays". Two tabs only (the owner's own
-   count), not advance's four: `leave` carries the ask AND, for whoever the routing makes an
-   approver, the desk, switched by a pill inside the one screen; `leaverep` is the report.
+   same to advances when people request leaves / holidays" ... "it needs to be 3 tabs to fit
+   perfection like advances ... request tab, approval tab and reports tab for leaves". Three
+   tabs, not advance's four: `leavereq` is the ask, `leaveappr` is the desk (hidden from an
+   idle holder the same way advappr's own is -- withoutIdleApprovalTab, api/me.js, one
+   routing read twice, not copied), `leaverep` is the report. No fourth, HR-registry tab:
+   advance's own staff registry (advstaff) is reused as it is.
    Server side: api/_lib/portal-core.js's leaveRequestPage / leaveRequest / leaveQueue /
    leaveDecide / leaveReport, reusing advance's own routing (advRouting_, advRouteOf_,
-   advDeskOf_, advSees_) rather than a second copy of "who approves whom".
+   advDeskOf_, advSees_) rather than a second copy of "who approves whom" -- "Advance
+   approver = Leave approver" was already true the moment that was reused. Who even SEES the
+   tabs at all (a separate question) is copied from advance's own tab grants by
+   db/RUN-ME-052-leave-tabs-from-advance.sql, so the owner does not have to re-tick Roles &
+   access by hand.
    ===================================================================================== */
 function leaveApprCls_(r){ var a = String(r.approval||'').toUpperCase(); return a === 'APPROVED' ? 'good' : a === 'DISAPPROVED' ? 'bad' : a === 'EXPIRED' ? 'mut' : ''; }
 function leaveExpired_(r){ return String((r && r.approval) || '').toUpperCase() === 'EXPIRED'; }
 var LEAVE_EXPIRED_NOTE = 'Muda umeisha: halikuamuliwa kabla ya tarehe yake ya kuanza, haliwezi kuamuliwa tena. Mhusika anaweza kuomba tena. / Expired: nobody decided it before its own start date, so it can no longer be decided. The staff can ask again.';
-/* The pill bar shared by both sub-views of the one tab -- Desk offered only when the server says canApprove. */
-function leaveSubBar_(d, sub){
-  return '<div class="pills" style="margin-bottom:8px">'
-    + '<button class="pill' + (sub === 'ask' ? ' on' : '') + '" data-arg="sub" data-val="ask">Omba / Request</button>'
-    + (d.canApprove ? '<button class="pill' + (sub === 'desk' ? ' on' : '') + '" data-arg="sub" data-val="desk">Dawati / Desk' + (d.deskCount ? ' (' + money(d.deskCount) + ')' : '') + '</button>' : '')
-    + '</div>';
-}
-VIEWS.leave = function(){
-  var sub = S.args.sub === 'desk' ? 'desk' : 'ask';
+
+/* THE ASK. Pick your own name (your zone's or role's list, or the call-agents roster for
+   customer service), the dates, a reason, who covers; the balance and who will decide it
+   come from the server. The history below is for approvers and report holders only. */
+VIEWS.leavereq = function(){
   var staffId = S.args.staffId || '', staffName = S.args.staffName || '';
   return srv('leaveRequestPage', { staffId: staffId, staffName: staffName }).then(function(d){
     S.leaveReq = d;
-    if (sub === 'desk' && d.canApprove) return srv('leaveQueue', {}).then(function(q){ d.deskCount = q.count; S.leaveQ = q; leaveDeskPaint_(d, q); });
-    // Desk asked for but not held (no approver standing, or a stale link): the ask, not a
-    // pill bar still marked "desk" for a screen that cannot show it.
-    leaveAskPaint_(d, sub === 'desk' ? 'ask' : sub);
+    var c = d.chosen;
+    var manyZones = !(d.zones && d.zones.length === 1);
+    var byName = !!d.csAgents;
+    var b = d.balance;
+    HEAD = (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.noZoneTeams && d.noZoneTeams.length
+          ? '<div class="note bad">Timu hizi hazina zone kwenye Teams & Staff, hivyo wafanyakazi wake hawaonekani hapa: ' + esc(d.noZoneTeams.join(', '))
+            + '. / These teams carry no zone on Teams & Staff, so their staff cannot be listed here. Set the zone there and come back.</div>' : '')
+      + '<div class="card"><div class="card-h">🌴 Ombi la likizo / Ruhusa / Leave &amp; holiday request'
+        + '<span class="sub">' + esc((d.role ? 'wadhifa / role: ' + d.role + ' · ' : 'wadhifa zote / every role · ')
+          + (d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone')) + '</span></div>'
+      + (d.roleNote ? '<div class="note bad" style="margin:10px 14px 0">⚠️ ' + esc(d.roleNote) + '</div>' : '')
+      + (d.route ? '<div class="note' + (d.route.kind === 'none' ? ' bad' : '') + '" style="margin:10px 14px 0">Ombi lako litaenda kwa / Your request goes to: <b>' + esc(d.route.label) + '</b></div>' : '')
+      + (d.routingOn === false ? '<div class="note" style="margin:10px 14px 0">⚠ ' + esc(d.routingNote || '') + '</div>' : '')
+      + '<div class="cleanbox">'
+      + '<div class="fld"><label>Jina lako / Your name *</label>'
+        + '<select data-arg="' + (byName ? 'staffName' : 'staffId') + '"><option value="">— chagua jina lako / pick your name —</option>'
+        + (d.staff || []).map(function(s){
+            var v = byName ? s.name : s.id, on = c && (byName ? c.name === s.name : c.id === s.id);
+            return '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(s.name)
+              + (s.onRegistry === false ? ' ⚠ si kwenye rejista ya HR / not on HR registry' : '')
+              + (s.role && !byName ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
+        + '</select>'
+        + '<div class="fldnote">' + (byName
+            ? 'Majina kutoka orodha ya mawakala wa simu (Settings → Call agents). / Names from the call-agents roster (Settings → Call agents).'
+            : 'Majina ya wadhifa wako katika zone yako tu. / Only your role\'s names in your zone.') + '</div></div>'
+      + (c
+          ? '<div class="facts">'
+              + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id || '— (si kwenye rejista ya HR / not on HR registry)') + '</b></div>'
+              + '<div class="frow"><span>Jina / Name</span><b>' + esc(c.name) + '</b></div>'
+              + '<div class="frow"><span>Wadhifa / Role</span><span>' + esc(c.role || '—') + '</span></div>'
+              + '<div class="frow"><span>Zone</span><span>' + esc(c.zone || '—') + '</span></div></div>'
+            + (b ? '<div class="kpis" style="margin:10px 14px 0">'
+                + kpi('Siku za likizo kwa mwaka / Annual days', money(b.annualDays), null)
+                + kpi('Zilizotumika (zilizoidhinishwa) / Taken (approved)', money(b.taken), null, b.taken ? 'warnc' : 'good')
+                + kpi('Zinazosubiri uamuzi / Pending decision', money(b.pending), null, b.pending ? 'warnc' : '')
+                + kpi('Zilizobaki / Remaining', money(b.remaining), null, b.remaining < 0 ? 'bad' : (b.remaining === 0 ? 'warnc' : 'good'))
+                + '</div>' : '')
+            + '<div class="fld"><label>Tarehe ya kuanza / Start date</label><input id="lvStart" type="date" value="' + today() + '"></div>'
+            + '<div class="fld"><label>Tarehe ya kurudi / Return date (last day back at work)</label><input id="lvEnd" type="date" value="' + today() + '"></div>'
+            + '<div class="fldnote" id="lvDaysNote">—</div>'
+            + '<div class="fld"><label>Sababu / Reason</label><select id="lvReason">'
+              + (d.reasons || []).map(function(r){ return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('') + '</select></div>'
+            + '<div class="fld" id="lvOtherFld" style="display:none"><label>Sababu nyingine / Other reason</label><input id="lvOther" type="text"></div>'
+            + '<div class="fld"><label>Atakayekaimu majukumu yako / Who covers for you</label><input id="lvCover" type="text"></div>'
+            + '<div class="fld"><label>Maelezo zaidi (si lazima) / Notes (optional)</label><input id="lvNotes" type="text"></div>'
+            + '<button class="btn w" id="lvSubmit">Tuma ombi / Submit request</button>'
+          : '<div class="sub">Chagua jina lako kuona fomu. / Pick your name to see the form.</div>')
+      + '</div></div>';
+    if (c){
+      $('#lvReason').onchange = function(){ $('#lvOtherFld').style.display = $('#lvReason').value === 'Other' ? '' : 'none'; };
+      var recalc = function(){
+        var s = $('#lvStart').value, e = $('#lvEnd').value, note = $('#lvDaysNote');
+        if (!s || !e){ note.textContent = '—'; return; }
+        var days = Math.round((new Date(e + 'T00:00:00Z') - new Date(s + 'T00:00:00Z')) / 86400000) + 1;
+        note.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki ikiidhinishwa / remaining if approved: ' + money(b.remaining - days) : ''))
+          : 'Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.';
+      };
+      $('#lvStart').oninput = recalc; $('#lvEnd').oninput = recalc; recalc();
+      $('#lvSubmit').onclick = function(){ leaveSubmit_(c); };
+    }
+    if (d.canHistory === false){ S.rows = []; S.cols = []; ONROW = null; return; }
+    S.rows = d.history || [];
+    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('zone','Zone'),
+      col('start_date','Kuanza / Start','date'), col('end_date','Kurudi / Return','date'), col('days','Siku / Days','num'),
+      col('reason','Sababu / Reason'), col('cover_name','Kaimu / Cover'),
+      {key:'approval', label:'Idhini / Approval', cls:leaveApprCls_}, col('comment','Maoni / Comment'),
+      col('decided_by','Aliyeamua / Decided by'), col('decided_at','Uamuzi / Decided','dt')];
+    ONROW = null;
+    S.foot = 'Historia ya maombi ya ' + (d.role ? 'wadhifa ' + d.role : 'wadhifa zote') + ' katika zone yako / History: ' + money(S.rows.length) + ' · mapya juu / newest first';
   });
 };
-function leaveAskPaint_(d, sub){
-  var c = d.chosen;
-  var manyZones = !(d.zones && d.zones.length === 1);
-  var byName = !!d.csAgents;
-  var b = d.balance;
-  HEAD = leaveSubBar_(d, sub)
-    + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
-    + (d.noZoneTeams && d.noZoneTeams.length
-        ? '<div class="note bad">Timu hizi hazina zone kwenye Teams & Staff, hivyo wafanyakazi wake hawaonekani hapa: ' + esc(d.noZoneTeams.join(', '))
-          + '. / These teams carry no zone on Teams & Staff, so their staff cannot be listed here. Set the zone there and come back.</div>' : '')
-    + '<div class="card"><div class="card-h">🌴 Ombi la likizo / Ruhusa / Leave &amp; holiday request'
-      + '<span class="sub">' + esc((d.role ? 'wadhifa / role: ' + d.role + ' · ' : 'wadhifa zote / every role · ')
-        + (d.zones && d.zones.length ? 'zone: ' + d.zones.join(', ') : 'zone zote / every zone')) + '</span></div>'
-    + (d.roleNote ? '<div class="note bad" style="margin:10px 14px 0">⚠️ ' + esc(d.roleNote) + '</div>' : '')
-    + (d.route ? '<div class="note' + (d.route.kind === 'none' ? ' bad' : '') + '" style="margin:10px 14px 0">Ombi lako litaenda kwa / Your request goes to: <b>' + esc(d.route.label) + '</b></div>' : '')
-    + (d.routingOn === false ? '<div class="note" style="margin:10px 14px 0">⚠ ' + esc(d.routingNote || '') + '</div>' : '')
-    + '<div class="cleanbox">'
-    + '<div class="fld"><label>Jina lako / Your name *</label>'
-      + '<select data-arg="' + (byName ? 'staffName' : 'staffId') + '"><option value="">— chagua jina lako / pick your name —</option>'
-      + (d.staff || []).map(function(s){
-          var v = byName ? s.name : s.id, on = c && (byName ? c.name === s.name : c.id === s.id);
-          return '<option value="' + esc(v) + '"' + (on ? ' selected' : '') + '>' + esc(s.name)
-            + (s.onRegistry === false ? ' ⚠ si kwenye rejista ya HR / not on HR registry' : '')
-            + (s.role && !byName ? ' · ' + esc(s.role) : '') + (manyZones && s.zone ? ' (' + esc(s.zone) + ')' : '') + '</option>'; }).join('')
-      + '</select>'
-      + '<div class="fldnote">' + (byName
-          ? 'Majina kutoka orodha ya mawakala wa simu (Settings → Call agents). / Names from the call-agents roster (Settings → Call agents).'
-          : 'Majina ya wadhifa wako katika zone yako tu. / Only your role\'s names in your zone.') + '</div></div>'
-    + (c
-        ? '<div class="facts">'
-            + '<div class="frow"><span>Staff ID</span><b>' + esc(c.id || '— (si kwenye rejista ya HR / not on HR registry)') + '</b></div>'
-            + '<div class="frow"><span>Jina / Name</span><b>' + esc(c.name) + '</b></div>'
-            + '<div class="frow"><span>Wadhifa / Role</span><span>' + esc(c.role || '—') + '</span></div>'
-            + '<div class="frow"><span>Zone</span><span>' + esc(c.zone || '—') + '</span></div></div>'
-          + (b ? '<div class="kpis" style="margin:10px 14px 0">'
-              + kpi('Siku za likizo kwa mwaka / Annual days', money(b.annualDays), null)
-              + kpi('Zilizotumika (zilizoidhinishwa) / Taken (approved)', money(b.taken), null, b.taken ? 'warnc' : 'good')
-              + kpi('Zinazosubiri uamuzi / Pending decision', money(b.pending), null, b.pending ? 'warnc' : '')
-              + kpi('Zilizobaki / Remaining', money(b.remaining), null, b.remaining < 0 ? 'bad' : (b.remaining === 0 ? 'warnc' : 'good'))
-              + '</div>' : '')
-          + '<div class="fld"><label>Tarehe ya kuanza / Start date</label><input id="lvStart" type="date" value="' + today() + '"></div>'
-          + '<div class="fld"><label>Tarehe ya kurudi / Return date (last day back at work)</label><input id="lvEnd" type="date" value="' + today() + '"></div>'
-          + '<div class="fldnote" id="lvDaysNote">—</div>'
-          + '<div class="fld"><label>Sababu / Reason</label><select id="lvReason">'
-            + (d.reasons || []).map(function(r){ return '<option value="' + esc(r) + '">' + esc(r) + '</option>'; }).join('') + '</select></div>'
-          + '<div class="fld" id="lvOtherFld" style="display:none"><label>Sababu nyingine / Other reason</label><input id="lvOther" type="text"></div>'
-          + '<div class="fld"><label>Atakayekaimu majukumu yako / Who covers for you</label><input id="lvCover" type="text"></div>'
-          + '<div class="fld"><label>Maelezo zaidi (si lazima) / Notes (optional)</label><input id="lvNotes" type="text"></div>'
-          + '<button class="btn w" id="lvSubmit">Tuma ombi / Submit request</button>'
-        : '<div class="sub">Chagua jina lako kuona fomu. / Pick your name to see the form.</div>')
-    + '</div></div>';
-  if (c){
-    $('#lvReason').onchange = function(){ $('#lvOtherFld').style.display = $('#lvReason').value === 'Other' ? '' : 'none'; };
-    var recalc = function(){
-      var s = $('#lvStart').value, e = $('#lvEnd').value, note = $('#lvDaysNote');
-      if (!s || !e){ note.textContent = '—'; return; }
-      var days = Math.round((new Date(e + 'T00:00:00Z') - new Date(s + 'T00:00:00Z')) / 86400000) + 1;
-      note.textContent = days > 0 ? (days + ' siku / day(s)' + (b ? ' · zitakazobaki ikiidhinishwa / remaining if approved: ' + money(b.remaining - days) : ''))
-        : 'Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.';
-    };
-    $('#lvStart').oninput = recalc; $('#lvEnd').oninput = recalc; recalc();
-    $('#lvSubmit').onclick = function(){ leaveSubmit_(c); };
-  }
-  if (d.canHistory === false){ S.rows = []; S.cols = []; ONROW = null; return; }
-  S.rows = d.history || [];
-  S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('zone','Zone'),
-    col('start_date','Kuanza / Start','date'), col('end_date','Kurudi / Return','date'), col('days','Siku / Days','num'),
-    col('reason','Sababu / Reason'), col('cover_name','Kaimu / Cover'),
-    {key:'approval', label:'Idhini / Approval', cls:leaveApprCls_}, col('comment','Maoni / Comment'),
-    col('decided_by','Aliyeamua / Decided by'), col('decided_at','Uamuzi / Decided','dt')];
-  ONROW = null;
-  S.foot = 'Historia ya maombi ya ' + (d.role ? 'wadhifa ' + d.role : 'wadhifa zote') + ' katika zone yako / History: ' + money(S.rows.length) + ' · mapya juu / newest first';
-}
 function leaveSubmit_(c){
   var start = $('#lvStart').value, end = $('#lvEnd').value, reason = $('#lvReason').value;
   var other = ($('#lvOther') ? $('#lvOther').value : '').trim();
@@ -126,73 +122,75 @@ function leaveSubmit_(c){
    standard table with tick-boxes for the bulk save, a drawer for one request). */
 function leaveAgeDays_(r){ var t = Date.parse(r.submitted_at); return isNaN(t) ? 0 : Math.max(0, Math.floor((Date.now() - t) / 86400000)); }
 function leaveApprChip_(r){ return String(r.approval||'').toUpperCase() === 'APPROVED' ? 'ok' : String(r.approval||'').toUpperCase() === 'DISAPPROVED' ? 'bad' : leaveExpired_(r) ? 'warn' : 'mut'; }
-function leaveDeskPaint_(d, q){
-  var state = S.args.state === 'decided' ? 'decided' : S.args.state === 'expired' ? 'expired' : 'pending';
-  var pend = q.pending || [], rec = q.recent || [], exp = q.expired || [];
-  pend.forEach(function(r){ r.age = leaveAgeDays_(r); });
-  exp.forEach(function(r){ r.age = leaveAgeDays_(r); });
-  var deskLine = advDeskLine_(q.desk || {});
-  var unr = q.unrouted || [];
-  HEAD = leaveSubBar_(d, 'desk')
-    + '<div class="kpis">'
-    + kpi('Yanayosubiri / Pending', money(q.count), 'maombi / requests', q.count ? 'warnc' : 'good')
-    + kpi('Siku zinazosubiri / Pending days', money(q.days), null, q.days ? 'warnc' : '')
-    + kpi('Zimeisha muda / Expired', money(q.expiredCount), 'hayakuamuliwa kabla ya tarehe ya kuanza / never decided before the start date', q.expiredCount ? 'bad' : 'good')
-    + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money(rec.length), null)
-    + '</div>'
-    + (q.on === false ? '<div class="note">⚠ ' + esc(q.note || '') + '</div>' : '')
-    + (q.routingOn === false
-        ? '<div class="note">⚠ ' + esc(q.routingNote || '') + '</div>'
-        : '<div class="note' + (deskLine ? '' : ' bad') + '">Dawati lako / Your desk: ' + (deskLine ? esc(deskLine)
-            : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako bado. / nothing is routed to this desk yet.') + '</div>')
-    + (unr.length
-        ? '<div class="note bad">⚠️ Maombi ' + unr.length + ' hayamfikii mtu isipokuwa admin / ' + unr.length + ' request(s) reach nobody but an admin: '
-          + esc(unr.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + (u.zone ? ' · ' + u.zone : '') + ' — ' + (u.why || '') + ')'; }).join('; ')) + '</div>'
-        : '')
-    + (q.noZoneTeams && q.noZoneTeams.length
-        ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(q.noZoneTeams.join(', ')) + '.</div>' : '')
-    + bar('<button class="btn sm' + (state === 'pending' ? '' : ' ghost') + '" data-arg="state" data-val="pending">Yanayosubiri / Pending (' + money(pend.length) + ')</button>'
-        + '<button class="btn sm' + (state === 'decided' ? '' : ' ghost') + '" data-arg="state" data-val="decided" style="margin-left:6px">Yaliyoamuliwa / Decided (' + money(rec.length) + ')</button>'
-        + '<button class="btn sm' + (state === 'expired' ? '' : ' ghost') + '" data-arg="state" data-val="expired" style="margin-left:6px">Zimeisha muda / Expired (' + money(exp.length) + ')</button>'
-        + '<select data-filter="zone" style="margin-left:8px"><option value="">Zone zote / All zones</option>'
-          + (q.zones || []).map(function(z){ return '<option' + (S.filters.zone === z ? ' selected' : '') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
-        + (state === 'pending' && pend.length
-            ? '<input id="lvBulkCom" placeholder="Maoni kwa zilizochaguliwa / Comment for the ticked" style="margin-left:8px;min-width:200px">'
-              + '<button class="btn sm" id="lvApproveMany" style="margin-left:6px">✅ Idhinisha zilizochaguliwa / Approve ticked</button>'
-              + '<button class="btn sm bad" id="lvRejectMany" style="margin-left:6px">✖ Kataa zilizochaguliwa / Disapprove ticked</button>'
-              + '<span class="chip mut" data-pickcount="1" style="margin-left:8px">0</span><span class="mutl" style="font-size:12px">zimechaguliwa / ticked</span>'
-              + '<button class="btn sm ghost" id="lvPickNone" style="margin-left:6px">Ondoa chaguo / Clear</button>'
-            : ''));
-  var dayCols = [col('start_date','Kuanza / Start','date'), col('end_date','Kurudi / Return','date'), {key:'days', label:'Siku / Days', kind:'num'}];
-  if (state === 'pending') {
-    S.pickKey = 'id';
-    S.rows = pend;
-    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
-      {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
-      col('zone','Zone')].concat(dayCols).concat([col('reason','Sababu / Reason'), col('cover_name','Kaimu / Cover'),
-      {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(r){ return r.age > 14 ? 'bad' : r.age > 3 ? 'warn' : 'mut'; }},
-      {key:'routeTo', label:'Kwa / To', kind:'chip', get:function(r){ return r.routeTo || ''; }, chip:function(r){ return r.routeKind === 'none' ? 'bad' : 'mut'; }}]);
-    ONROW = function(r){ leaveDecideDrawer_(r, true); };
-    S.foot = 'Yanayosubiri / Pending: ' + money(pend.length) + ' · siku ' + money(q.days) + ' · gusa safu kwa uamuzi mmoja, tiki kwa wengi / tap a row for one decision, tick for many';
-  } else if (state === 'expired') {
-    S.pickKey = '';
-    S.rows = exp;
-    S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'), col('zone','Zone')]
-      .concat(dayCols).concat([col('reason','Sababu / Reason'),
-      {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(){ return 'mut'; }}]);
-    ONROW = function(r){ leaveDecideDrawer_(r, false, LEAVE_EXPIRED_NOTE); };
-    S.foot = 'Zimeisha muda / Expired (hazikuamuliwa / never decided): ' + money(exp.length) + ' · wahusika wanaweza kuomba tena / their owners can ask again';
-  } else {
-    S.pickKey = '';
-    S.rows = rec;
-    S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'), col('zone','Zone')]
-      .concat(dayCols).concat([col('reason','Sababu / Reason'),
-      {key:'approval', label:'Idhini / Approval', kind:'chip', get:function(r){ return r.approval || ''; }, chip:leaveApprChip_},
-      col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')]);
-    ONROW = function(r){ leaveDecideDrawer_(r, false); };
-    S.foot = 'Yaliyoamuliwa / Decided: ' + money(rec.length) + ' · mapya juu / newest first';
-  }
-}
+VIEWS.leaveappr = function(){
+  return srv('leaveQueue', {}).then(function(q){
+    S.leaveQ = q;
+    var state = S.args.state === 'decided' ? 'decided' : S.args.state === 'expired' ? 'expired' : 'pending';
+    var pend = q.pending || [], rec = q.recent || [], exp = q.expired || [];
+    pend.forEach(function(r){ r.age = leaveAgeDays_(r); });
+    exp.forEach(function(r){ r.age = leaveAgeDays_(r); });
+    var deskLine = advDeskLine_(q.desk || {});
+    var unr = q.unrouted || [];
+    HEAD = '<div class="kpis">'
+      + kpi('Yanayosubiri / Pending', money(q.count), 'maombi / requests', q.count ? 'warnc' : 'good')
+      + kpi('Siku zinazosubiri / Pending days', money(q.days), null, q.days ? 'warnc' : '')
+      + kpi('Zimeisha muda / Expired', money(q.expiredCount), 'hayakuamuliwa kabla ya tarehe ya kuanza / never decided before the start date', q.expiredCount ? 'bad' : 'good')
+      + kpi('Yaliyoamuliwa mwezi huu / Decided this month', money(rec.length), null)
+      + '</div>'
+      + (q.on === false ? '<div class="note">⚠ ' + esc(q.note || '') + '</div>' : '')
+      + (q.routingOn === false
+          ? '<div class="note">⚠ ' + esc(q.routingNote || '') + '</div>'
+          : '<div class="note' + (deskLine ? '' : ' bad') + '">Dawati lako / Your desk: ' + (deskLine ? esc(deskLine)
+              : '⚠️ hakuna wadhifa wala mtu aliyeelekezwa kwako bado. / nothing is routed to this desk yet.') + '</div>')
+      + (unr.length
+          ? '<div class="note bad">⚠️ Maombi ' + unr.length + ' hayamfikii mtu isipokuwa admin / ' + unr.length + ' request(s) reach nobody but an admin: '
+            + esc(unr.map(function(u){ return u.staff_name + ' (' + (u.req_role || '?') + (u.zone ? ' · ' + u.zone : '') + ' — ' + (u.why || '') + ')'; }).join('; ')) + '</div>'
+          : '')
+      + (q.noZoneTeams && q.noZoneTeams.length
+          ? '<div class="note bad">Timu bila zone kwenye Teams & Staff: ' + esc(q.noZoneTeams.join(', ')) + '.</div>' : '')
+      + bar('<button class="btn sm' + (state === 'pending' ? '' : ' ghost') + '" data-arg="state" data-val="pending">Yanayosubiri / Pending (' + money(pend.length) + ')</button>'
+          + '<button class="btn sm' + (state === 'decided' ? '' : ' ghost') + '" data-arg="state" data-val="decided" style="margin-left:6px">Yaliyoamuliwa / Decided (' + money(rec.length) + ')</button>'
+          + '<button class="btn sm' + (state === 'expired' ? '' : ' ghost') + '" data-arg="state" data-val="expired" style="margin-left:6px">Zimeisha muda / Expired (' + money(exp.length) + ')</button>'
+          + '<select data-filter="zone" style="margin-left:8px"><option value="">Zone zote / All zones</option>'
+            + (q.zones || []).map(function(z){ return '<option' + (S.filters.zone === z ? ' selected' : '') + '>' + esc(z) + '</option>'; }).join('') + '</select>'
+          + (state === 'pending' && pend.length
+              ? '<input id="lvBulkCom" placeholder="Maoni kwa zilizochaguliwa / Comment for the ticked" style="margin-left:8px;min-width:200px">'
+                + '<button class="btn sm" id="lvApproveMany" style="margin-left:6px">✅ Idhinisha zilizochaguliwa / Approve ticked</button>'
+                + '<button class="btn sm bad" id="lvRejectMany" style="margin-left:6px">✖ Kataa zilizochaguliwa / Disapprove ticked</button>'
+                + '<span class="chip mut" data-pickcount="1" style="margin-left:8px">0</span><span class="mutl" style="font-size:12px">zimechaguliwa / ticked</span>'
+                + '<button class="btn sm ghost" id="lvPickNone" style="margin-left:6px">Ondoa chaguo / Clear</button>'
+              : ''));
+    var dayCols = [col('start_date','Kuanza / Start','date'), col('end_date','Kurudi / Return','date'), {key:'days', label:'Siku / Days', kind:'num'}];
+    if (state === 'pending') {
+      S.pickKey = 'id';
+      S.rows = pend;
+      S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
+        {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
+        col('zone','Zone')].concat(dayCols).concat([col('reason','Sababu / Reason'), col('cover_name','Kaimu / Cover'),
+        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(r){ return r.age > 14 ? 'bad' : r.age > 3 ? 'warn' : 'mut'; }},
+        {key:'routeTo', label:'Kwa / To', kind:'chip', get:function(r){ return r.routeTo || ''; }, chip:function(r){ return r.routeKind === 'none' ? 'bad' : 'mut'; }}]);
+      ONROW = function(r){ leaveDecideDrawer_(r, true); };
+      S.foot = 'Yanayosubiri / Pending: ' + money(pend.length) + ' · siku ' + money(q.days) + ' · gusa safu kwa uamuzi mmoja, tiki kwa wengi / tap a row for one decision, tick for many';
+    } else if (state === 'expired') {
+      S.pickKey = '';
+      S.rows = exp;
+      S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'), col('zone','Zone')]
+        .concat(dayCols).concat([col('reason','Sababu / Reason'),
+        {key:'age', label:'Umri / Age', kind:'chip', get:function(r){ return r.age == null ? '' : r.age + ' d'; }, chip:function(){ return 'mut'; }}]);
+      ONROW = function(r){ leaveDecideDrawer_(r, false, LEAVE_EXPIRED_NOTE); };
+      S.foot = 'Zimeisha muda / Expired (hazikuamuliwa / never decided): ' + money(exp.length) + ' · wahusika wanaweza kuomba tena / their owners can ask again';
+    } else {
+      S.pickKey = '';
+      S.rows = rec;
+      S.cols = [col('decided_at','Uamuzi / Decided','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'), col('zone','Zone')]
+        .concat(dayCols).concat([col('reason','Sababu / Reason'),
+        {key:'approval', label:'Idhini / Approval', kind:'chip', get:function(r){ return r.approval || ''; }, chip:leaveApprChip_},
+        col('comment','Maoni / Comment'), col('decided_by','Aliyeamua / Decided by'), col('submitted_at','Imetumwa / Submitted','dt')]);
+      ONROW = function(r){ leaveDecideDrawer_(r, false); };
+      S.foot = 'Yaliyoamuliwa / Decided: ' + money(rec.length) + ' · mapya juu / newest first';
+    }
+  });
+};
 function leaveDecideDrawer_(r, decidable, closedNote){
   var row = function(k, v){ return '<div class="frow"><span>' + k + '</span><b>' + (v == null || v === '' ? '—' : esc(String(v))) + '</b></div>'; };
   drawer('<h3>' + esc(r.staff_name || '—') + '</h3>'
@@ -238,7 +236,9 @@ function leaveBulk_(approval){
       pickClear_(); render({ force:true }); })
     .catch(function(e){ toast(String(e.message||e), true); });
 }
-/* Wired by wireForms (app.html) after every paint, like the advance module. */
+/* Wired by wireForms (app.html) after every paint, like the advance module -- one function for
+   every button this module draws, on any of its three tabs, the same way wireAdvDesk also
+   wires advFinalizeBtn/advReopenBtn even though those sit on advrep, not advappr. */
 function wireLeaveDesk(){
   var a = document.getElementById('lvApproveMany');
   if (a) a.onclick = function(){ leaveBulk_('Approved'); };
@@ -246,6 +246,16 @@ function wireLeaveDesk(){
   if (r) r.onclick = function(){ leaveBulk_('Disapproved'); };
   var n = document.getElementById('lvPickNone');
   if (n) n.onclick = function(){ pickClear_(); paint(true); };
+  var s = document.getElementById('lvAnnualSave');
+  if (s) s.onclick = function(){
+    var days = $('#lvAnnualDays').value;
+    if (days === '' || Number(days) < 0){ toast('Weka idadi ya siku, sifuri au zaidi. / Enter a whole number of days, zero or more.', true); return; }
+    if (!confirm('Badilisha siku za likizo kwa mwaka, kwa kila mfanyakazi, kuwa ' + days + '? / Change the annual leave allowance, per staff, to ' + days + '?')) return;
+    s.disabled = true;
+    srv('leaveSetAnnualDays', { days: days })
+      .then(function(r){ toast('✅ Siku za likizo kwa mwaka: ' + r.annualDays + '. / Annual leave allowance: ' + r.annualDays + '.'); render({ force:true }); })
+      .catch(function(e){ s.disabled = false; toast(String(e.message||e), true); });
+  };
 }
 
 /* THE REPORT: a window, Approved by default, by zone, with the standing leave balance beside
@@ -262,8 +272,15 @@ VIEWS.leaverep = function(){
       + kpi('Yaliyoidhinishwa / Approved', money(d.approved), null, 'good')
       + kpi('Siku zilizoidhinishwa / Approved days', money(d.approvedDays), null, 'good')
       + kpi('Zimeisha muda / Expired', money(d.expired), null, d.expired ? 'bad' : 'good')
+      + kpi('Siku za likizo kwa mwaka / Annual days per staff', money(d.annualDays), 'kwa kila mfanyakazi / per staff, kampuni nzima / company-wide')
       + '</div>'
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>' : '')
+      + (d.canSetAnnualDays
+          ? '<div class="note" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+            + '<span>Badilisha siku za likizo kwa mwaka, kwa kila mfanyakazi / Change the annual leave allowance, per staff:</span>'
+            + '<input id="lvAnnualDays" type="number" min="0" step="1" value="' + esc(String(d.annualDays)) + '" style="width:70px">'
+            + '<button class="btn sm" id="lvAnnualSave">Hifadhi / Save</button></div>'
+          : '')
       + (d.routingOn === false
           ? '<div class="note">⚠ ' + esc(d.routingNote || '') + '</div>'
           : '<div class="note' + (deskLine ? '' : ' bad') + '">Ripoti hii inaonyesha / This report shows: '

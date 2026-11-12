@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 58**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-c` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 59**.
 
 ---
 
@@ -77,6 +77,23 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#681** — Leave becomes three tabs, its tunnel is advance's own approvers, its annual
+  allowance moves onto the report (handbook Part 59). "it needs to be 3 tabs to fit perfection
+  like advances ... request tab, approval tab and reports tab" · "Advance approver = Leave
+  approver. i dont have to start ressetting those. even pull the nav grantings of advance tabs
+  so that we use sql to grant leave tabs to the same tunnels" · "remember we had holiday max
+  days pert staff - i think we have this settung at report tab." `leave` split into `leavereq`
+  (the ask) and `leaveappr` (the desk, hidden from an idle holder by `withoutIdleApprovalTab`,
+  generalised to take a tab name instead of staying hard-coded to advance's own `advappr`); no
+  fourth HR-registry tab, advance's own `advstaff` is still reused. The routing-level
+  "advance approver = leave approver" was already true (Part 58 reused advance's routing
+  wholesale); what still needed a hand was the NAV GRANT, so `db/RUN-ME-052-leave-tabs-from-
+  advance.sql` copies it: every role or code holding `advreq`/`advappr`/`advrep` gets the
+  matching leave tab added, safe to re-run; `db/CHECK-leave-tabs-from-advance.sql` is the
+  read-only preview, run before and after to see the difference. `LEAVE_ANNUAL_DAYS` now has
+  the edit on the report the owner expected (admin-only, `leaveSetAnnualDays`). `npm test`:
+  1,512 pass. No read on `/api/upload` or `/api/call`; `BUILD 2026-11-12-c`. **Not done:**
+  the two SQL files are for the owner to run; not run by this chat.
 - **#680** — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in (handbook
   Part 58). "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the
   Leave reports – for leaves and holiday reports management ... the tunnels and approvals must
@@ -575,7 +592,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
   should reset each calendar year — nothing resets it yet, the same running ledger the Google
-  Sheet's own formula kept, on purpose, until the owner says otherwise.
+  Sheet's own formula kept, on purpose, until the owner says otherwise (it is now editable on
+  the Leave report itself, admin-only, Part 59, if the number alone needs changing).
+- **The owner**: run `db/RUN-ME-051-leave-requests.sql` (the table) if not already done, then
+  `db/RUN-ME-052-leave-tabs-from-advance.sql` (grants `leavereq`/`leaveappr`/`leaverep` to
+  whoever already holds the matching advance tab) — `db/CHECK-leave-tabs-from-advance.sql` is
+  the read-only preview, safe to run before and after. Handbook Part 59.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
   e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,

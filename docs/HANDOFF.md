@@ -4950,6 +4950,60 @@ literal array, so the two cannot drift apart again: a new tab is named once, in 
 and admin carries it automatically, the one manual step that remains being the one no shared
 runtime between `app.html` and `auth.js` can remove.
 
+## Part 59 — Leave becomes three tabs, like advance's own; its tunnel is advance's approvers; its annual allowance moves onto the report
+
+> "so it needs to be 3 tabs to fit perfection like advances so that there is request tab,
+> approval tab and reports tab for leaves. sorry" · "Advance approver = Leave approver. i dont
+> have to start ressetting those. even pull the nav grantings of advance tabs so that we use
+> sql to grant leave tabs to the same tunnels bro" · "so provide sql to read the adv nav tabs
+> grantings.. then give one to write grantings for leaves" · "remember we had holiday max days
+> pert staff - i think we have this settung at report tab" — the owner, 12 November 2026
+
+Part 58's two tabs (ask and desk together behind a pill) are three now: **`leavereq`** (the
+ask), **`leaveappr`** (the desk), **`leaverep`** (the report) -- no fourth, HR-registry tab,
+advance's own staff registry (`advstaff`) is still reused as it is. `leaveappr` is hidden from
+a holder the routing does not make an approver exactly the way advance's own `advappr` is:
+`withoutIdleApprovalTab` (`api/_lib/adv-approver.js`, called from `api/me.js`) took a tab-name
+parameter instead of staying hard-coded to `advappr`, so the one rule is read twice, not copied.
+With the desk its own tab, `leaveRequestPage`'s history fallback is now exactly
+`advRequestPage`'s own (`tabs.includes('leaverep') || (routing.on ? routing.isApprover(user) :
+tabs.includes('leaveappr'))`) -- the narrower, combined-tab-only fallback Part 58 added stops
+applying, because the condition that made it necessary (one tab serving both an asker and an
+approver) no longer holds.
+
+**"Advance approver = Leave approver"** was already true at the ROUTING level the moment Part 58
+reused `advRouting_`/`advRouteOf_`/`advDeskOf_` wholesale -- the same `roles.approver_role` /
+`access_codes.supervisor` columns decide both. What was still separate was the NAV GRANT: who
+even holds `leavereq`/`leaveappr`/`leaverep` at all is its own tabs-array entry, so a role ticked
+for `advreq` was not automatically ticked for `leavereq`. `db/RUN-ME-052-leave-tabs-from-advance.sql`
+copies the grant: every role or code that holds `advreq`, `advappr` or `advrep` gets the matching
+`leavereq`, `leaveappr` or `leaverep` added to the same tabs array, safe to re-run any time after
+granting more advance tabs. `db/CHECK-leave-tabs-from-advance.sql` is the read-only preview the
+owner asked for first -- every role and code with an advance tab, its full tabs array, and
+whether each leave tab is already there or would be added; changes nothing, runnable before and
+after the write to see the difference.
+
+**The annual allowance (26 days, `LEAVE_ANNUAL_DAYS`)** was a Setting with no screen of its own
+since Part 58 -- the owner expected to find it, and change it, on the Leave report. It is there
+now: a KPI card states it, and admin alone (`leaveSetAnnualDays`, a whole number, zero or more,
+no upper cap -- a company policy above 26 is this company's to set) gets the input and Save
+button beside it, wired the same way advance's own `advFinalizeBtn`/`advReopenBtn` are -- one
+"wire" function for a module's buttons on any of its tabs, not one per screen.
+
+**Checked**: `test/leave.test.mjs` updated for the three-tab fixtures (an ordinary requester
+trusted for nothing, a GMO's own `leaveappr` trusted even without RUN-ME-045, exactly as
+advance's `advappr` already is); a new test for the annual-allowance edit, admin-only, read
+back the same way everywhere (the report, the ask's own balance) off the one Setting, never two.
+`test/pages.test.mjs` gained a dedicated check that `leaveappr`'s idle-approver gate reads
+`withoutIdleApprovalTab` rather than a second copy of the rule. `npm test`: 1,512 pass.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call`. A front-end change: `BUILD
+2026-11-12-c`.
+
+**Not done.** `db/RUN-ME-052-leave-tabs-from-advance.sql` and `db/CHECK-leave-tabs-from-advance.sql`
+are handed to the owner, not run by this chat (no database access) -- running the write, and
+re-running the check after, is the owner's own next step.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-12-b';
+var BUILD = '2026-11-12-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1031,11 +1031,13 @@ var NAV = [
   { id:'advstaff',    div:'mgmt', label:'Wafanyakazi (HR) / HR staff data', ic:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>' },
   /* LEAVE / HOLIDAY -- the FOMU YA RUHUSA NA LIKIZO Google Form moved in, directly under the
      advance block it reuses the approval routing of: "the tunnels and approvals must be the
-     same to advances when people request leaves / holidays". Two navs only, the owner's own
-     count (advance's four, ask/desk/report/HR, fold into one ask-and-desk tab here plus the
-     report): `leave` carries the ask and, for whoever the routing makes an approver, the desk,
-     switched by a pill inside the one screen. */
-  { id:'leave',       div:'mgmt', label:'Likizo / Leave & Holiday', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15h3M13 15h3M8 18h3"/>' },
+     same to advances when people request leaves / holidays" ... "it needs to be 3 tabs to fit
+     perfection like advances ... request tab, approval tab and reports tab for leaves". Three
+     navs, not advance's four: no fourth, HR-registry pane, since advance's own staff registry
+     (advstaff) is reused as it is. leaveappr is hidden from an idle holder the same way
+     advappr's own is (withoutIdleApprovalTab, api/me.js) -- one routing, read twice. */
+  { id:'leavereq',    div:'mgmt', label:'Omba likizo / Leave request', ic:'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 15h3M13 15h3M8 18h3"/>' },
+  { id:'leaveappr',   div:'mgmt', label:'Idhini ya likizo / Leave approval', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
   { id:'leaverep',    div:'mgmt', label:'Ripoti ya likizo / Leave report', ic:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>' },
   { id:'legal',       label:'Legal / Demand Notices', ic:'<path d="M3 6l9-3 9 3"/><path d="M6 9v7a6 6 0 0 0 12 0V9"/><path d="M3 6l3 3M21 6l-3 3"/>' },
   /* THE FRAUD DETECTOR -- "every approved loan with a number or name among customer, guarantor
@@ -1165,7 +1167,7 @@ var HIDDEN_VIEWS = ['findcust', 'monthreport', 'cmmonth', 'teamtrend'];
    by the working day the HOPE PMO list follows). Nothing else about them changes: same ids,
    same ticks on Roles & access (in their own list there too), same gate, same screens. A tab
    that is not here is HOPE PMO's. To move one, flag it and place it here. */
-var MGMT_ORDER = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leave', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
+var MGMT_ORDER = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leavereq', 'leaveappr', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
   'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
 function isMgmtId_(id){ var n = NAV.filter(function(x){ return x.id===id; })[0]; return !!(n && n.div === 'mgmt'); }
 
@@ -1319,7 +1321,7 @@ function buildNav(){
    opened; the three places that could run earlier are guarded (window.wireDevices, bpWire_,
    presStop). */
 var MOD_OF = { deduct:'deduct', advreq:'advance', advappr:'advance', advrep:'advance', advstaff:'advance',
-  leave:'leave', leaverep:'leave',
+  leavereq:'leave', leaveappr:'leave', leaverep:'leave',
   legal:'legal', fraud:'fraud', adjust:'adjust', impreq:'imprest', impappr:'imprest', imprep:'imprest',
   devlock:'devices', devunlock:'devices', teams:'admin', settings:'admin', bonusplan:'bonusplan', checklist:'checklist', present:'present',
   /* THE REPORTS AND ANALYSIS SCREENS -- read, not worked: the month report and team trend,

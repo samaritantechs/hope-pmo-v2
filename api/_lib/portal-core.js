@@ -2492,14 +2492,21 @@ async function advReopen(db, user, p, nowMs = Date.now()) {
 /* =====================================================================================
    LEAVE / HOLIDAY REQUESTS -- the FOMU YA RUHUSA NA LIKIZO Google Form and its sheet, moved
    in the same way the advance-request sheet was: "the tunnels and approvals must be the same
-   to advances when people request leaves / holidays". Two tabs (`leave`, the ask and, for an
-   approver, the desk together; `leaverep`, the report), one new table (leave_requests,
-   db/RUN-ME-051-leave-requests.sql), and NONE of the routing written again: a leave request
-   carries the same req_role / req_code / zone a request of any other kind would, so
-   advRouting_, advRouteOf_, advDeskOf_, advSees_ and advHolds_ -- the one rule for "who
-   approves whose request", built for advances -- decide a leave request exactly the way they
-   decide an advance. The `adv` names are kept: renaming a routing engine two features now
-   depend on, to fit one of them, would be the bigger risk.
+   to advances when people request leaves / holidays" ... "it needs to be 3 tabs to fit
+   perfection like advances ... request tab, approval tab and reports tab for leaves". Three
+   tabs (`leavereq`, the ask; `leaveappr`, the desk, hidden from an idle holder the same way
+   advappr's own is; `leaverep`, the report) -- no fourth, HR-registry tab, since advance's own
+   staff registry (advstaff) is reused as it is -- and NONE of the routing written again: a
+   leave request carries the same req_role / req_code / zone a request of any other kind
+   would, so advRouting_, advRouteOf_, advDeskOf_, advSees_ and advHolds_ -- the one rule for
+   "who approves whose request", built for advances -- decide a leave request exactly the way
+   they decide an advance. "Advance approver = Leave approver. i dont have to start ressetting
+   those" -- that was already true the moment the routing was reused rather than copied; the
+   NAV GRANT (who even sees `leavereq`/`leaveappr`/`leaverep` at all) is a separate question,
+   answered by db/RUN-ME-052-leave-tabs-from-advance.sql, which copies the existing advreq /
+   advappr / advrep tab grants onto their leave equivalents so the owner does not have to
+   re-tick Roles & access by hand. The `adv` names in the routing engine are kept: renaming it,
+   when two features now depend on it, would be the bigger risk.
 
    What is NOT carried over, on purpose:
      - the calendar-MONTH unit and the finance manager's Finalize / Reopen. That exists so
@@ -2583,17 +2590,10 @@ async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = D
   const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
   const dept = !admin && !cs && zones !== null;
   const tabs = user.tabs || [];
-  /* NO FALLBACK TO "HOLDS THE TAB" HERE -- unlike advance's advappr (a separate tab only
-     approvers ever hold), the one `leave` tab is held by every ordinary requester too, since
-     it carries the ask and the desk together. advRequestPage's own legacy fallback
-     (tabs.includes('advappr')) would, copied here, show every requester every other
-     requester's history -- dates, who covers for them, and the reason itself (medical,
-     bereavement), on a database that has not yet run RUN-ME-045. Found on review, before this
-     shipped, and reproduced: an ordinary field officer holding only `leave` read a same-zone
-     colleague's full pending request. So without RUN-ME-045 there is no history pane or desk
-     pill for anyone but admin here -- a real restriction, not the blanket "trust the tab" this
-     mirrored at first, until the routing columns exist to tell an asker from an approver. */
-  const seesHistory = admin || tabs.includes('leaverep') || (routing.on && routing.isApprover(user));
+  // leavereq and leaveappr are two tabs now, like advreq/advappr: the same fallback
+  // advRequestPage's own seesHistory uses (an idle holder of leaveappr never happens --
+  // withoutIdleApprovalTab, api/me.js, drops it before it reaches a non-approver's tabs).
+  const seesHistory = admin || tabs.includes('leaverep') || (routing.on ? routing.isApprover(user) : tabs.includes('leaveappr'));
   const roleWord = advRoleWords_(user.role)[0] || '~none~';
   const histQ = () => db.from('leave_requests').select('id, submitted_at, staff_id, staff_name, zone, start_date, end_date, days, reason, cover_name, approval, comment, decided_by, decided_at, req_role')
     .order('submitted_at', { ascending: false }).limit(100);
@@ -2632,12 +2632,9 @@ async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = D
     chosen = staff.find(s => (wantId && s.id && K(s.id) === wantId) || (wantName && K(s.name) === wantName)) || null;
     if (chosen) balance = await leaveBalance_(db, Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT))), chosen.id || null, chosen.name, user.role);
   }
-  // Whether the "Dawati / Desk" pill is offered at all -- an approver, same test isAdvApprover
-  // makes for advance's own approval tab. No "holds the tab" fallback: see seesHistory above.
-  const canApprove = admin || (routing.on && routing.isApprover(user));
   return { on, note: on ? null : LEAVE_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, reasons: leaveReasons_(cfg), chosen, balance,
-    role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, canApprove, csAgents: cs,
+    role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, csAgents: cs,
     requester: user.name, teamCode: !!user.teamCode,
     route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
     routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
@@ -2827,8 +2824,22 @@ async function leaveReport(db, user, { from, to, approval, zone } = {}, nowMs = 
     approved: rows.filter(r => K(r.approval) === 'APPROVED').length,
     approvedDays: rows.filter(r => K(r.approval) === 'APPROVED').reduce((s2, r) => s2 + num(r.days), 0),
     expired: rows.filter(r => r.approval === LEAVE_EXPIRED).length,
-    annualDays, summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(LEAVE_APPROVALS, LEAVE_EXPIRED),
+    annualDays, canSetAnnualDays: admin, summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(LEAVE_APPROVALS, LEAVE_EXPIRED),
     desk, routingOn: routing ? routing.on : true, routingNote: routing && !routing.on ? ADV_ROUTE_NOTE : null };
+}
+/** "remember we had holiday max days pert staff - i think we have this settung at report
+    tab" -- the owner. LEAVE_ANNUAL_DAYS (a Setting, 26 by default) was there from the start
+    but only ever changeable by hand, in the settings table; this is the admin-only edit on
+    the report itself the owner expected to find. Whole number, zero or more -- no cap, since
+    a company policy of more than 26 is this company's to set, not this code's to refuse. */
+async function leaveSetAnnualDays(db, user, p) {
+  if (!isAdminUser(user)) throw forbidden('Kubadilisha siku za likizo kwa mwaka ni kwa admin. / Changing the annual leave allowance is for admin.');
+  const days = Math.round(num(p && p.days));
+  if (!Number.isFinite(days) || days < 0) throw badRequest('Weka idadi ya siku, sifuri au zaidi. / Enter a whole number of days, zero or more.');
+  const { error } = await db.from('settings').upsert({ key: LEAVE_DAYS_KEY, value: String(days) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  noteSettingsWritten(db);
+  return { annualDays: days };
 }
 
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
@@ -10300,7 +10311,7 @@ const FN = {
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
   deductions, addDeduction, hrDeduction,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
-  leaveRequestPage, leaveRequest, leaveQueue, leaveDecide, leaveReport,
+  leaveRequestPage, leaveRequest, leaveQueue, leaveDecide, leaveReport, leaveSetAnnualDays,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
@@ -10704,10 +10715,10 @@ const FN_TAB = {
   advRequestPage: ['advreq'], advRequest: ['advreq'],
   advQueue: ['advappr'], advDecide: ['advappr'],
   advReport: ['advrep'], advFinalize: ['advfinal'], advReopen: ['advfinal'],
-  // Leave / Holiday: one tab for the ask and the desk together, a second for the report --
-  // the same approver routing as advance (FN_TAB does not gate the routing, only the tab).
-  leaveRequestPage: ['leave'], leaveRequest: ['leave'], leaveQueue: ['leave'],
-  leaveDecide: ['leave'], leaveReport: ['leaverep'],
+  // Leave / Holiday: three panes, like advance's own four (FN_TAB does not gate the
+  // routing, only the tab -- advance's own routing decides who approves which request).
+  leaveRequestPage: ['leavereq'], leaveRequest: ['leavereq'],
+  leaveQueue: ['leaveappr'], leaveDecide: ['leaveappr'], leaveReport: ['leaverep'], leaveSetAnnualDays: ['leaverep'],
   /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
      asking the admin to tick a new permission for a second view onto a book somebody already
      holds. The download page and the pane both come through here. */
