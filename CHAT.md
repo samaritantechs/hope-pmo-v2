@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 58**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-c` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 59**.
 
 ---
 
@@ -77,6 +77,52 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#681** — Leave becomes three tabs, its tunnel is advance's own approvers, its annual
+  allowance moves onto the report (handbook Part 59). "it needs to be 3 tabs to fit perfection
+  like advances ... request tab, approval tab and reports tab" · "Advance approver = Leave
+  approver. i dont have to start ressetting those. even pull the nav grantings of advance tabs
+  so that we use sql to grant leave tabs to the same tunnels" · "remember we had holiday max
+  days pert staff - i think we have this settung at report tab." `leave` split into `leavereq`
+  (the ask) and `leaveappr` (the desk, hidden from an idle holder by `withoutIdleApprovalTab`,
+  generalised to take a tab name instead of staying hard-coded to advance's own `advappr`); no
+  fourth HR-registry tab, advance's own `advstaff` is still reused. The routing-level
+  "advance approver = leave approver" was already true (Part 58 reused advance's routing
+  wholesale); what still needed a hand was the NAV GRANT, so `db/RUN-ME-052-leave-tabs-from-
+  advance.sql` copies it: every role or code holding `advreq`/`advappr`/`advrep` gets the
+  matching leave tab added, safe to re-run; `db/RUN-ME-053-leave-tabs-from-advance-read-only.sql`
+  is the read-only preview, run before and after to see the difference. `LEAVE_ANNUAL_DAYS` now
+  has the edit on the report the owner expected (admin-only, `leaveSetAnnualDays`). **Reviewed**
+  by two independent readers before this merged: one real finding, confirmed and fixed —
+  `leaveSetAnnualDays` checked `isAdminUser(user)`, which means "sees the admin screens" (every
+  AUDITOR/read-only code is given the `settings` tab on purpose, so an auditor passes it too),
+  not "may write" — and it had not been added to `AUDITED`, so the one door's own read-only wall
+  (`WRITE_FNS`, `_lib/portal-core.js`) never saw it either. A view-only code — exactly the
+  credential this system is built to let "try every screen and change nothing" — could change
+  the company-wide annual leave allowance. Reproduced against the real test harness, then fixed
+  the way its siblings (`settingSet`, `settingDelete`, `systemOpenSet`) already were: added to
+  `AUDITED` (`api/_lib/audit.js`), with a case for it in `test/portal.test.mjs`'s own "every
+  write is refused at the one door" test. Also, cosmetically: the read-only preview file is
+  renamed from `CHECK-leave-tabs-from-advance.sql` to the numbered `RUN-ME-NNN-...-read-only`
+  form the one other read-only script in `db/` already uses, so `db/` keeps one naming rule, not
+  two. `npm test`: 1,512 pass (same count: the new case joined an existing test's list). No read
+  on `/api/upload` or `/api/call`; `BUILD 2026-11-12-c`. **Not done:** the two SQL files
+  (`RUN-ME-052`, and `RUN-ME-053` as its before/after check) are for the owner to run; not run by
+  this chat.
+- **Staff registry, 12 Nov** — a CS Supervisor's WhatsApp message naming two staff with bank
+  details missing, one with a full intake-style form (birth date, start date, residence, bank
+  account, five guarantors) and one with only a name and a number. Neither role, team nor zone
+  came with either, so neither can be matched or filed safely: asked (`ASK`), not moved, placed
+  or added — a script never guesses whether a name is a new hire or an existing staff with a
+  gap, the same as it never merges two staff records on a name alone. The filled script went to
+  the owner directly (never committed); it changes nothing by itself and says, for each person,
+  exactly what is needed to act — role and team (or, for a head-office role, the zone directly)
+  if new, or a staff ID / their filed team if existing. Flagged on the row and separately: the
+  registry has no box for a marital status or an e-mail address (neither is stored either way);
+  of five named guarantors on the fuller form, only one fits the registry's two guarantor/kin
+  slots (the other four are named for the owner's own record, not silently dropped) — which one
+  is kept is the owner's to say once the first question is answered. Tested twice against a
+  synthetic registry (ASK matches and changes nothing, and running it twice gives the same
+  answer both times). The names are in no file of the repository.
 - **#680** — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in (handbook
   Part 58). "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the
   Leave reports – for leaves and holiday reports management ... the tunnels and approvals must
@@ -575,7 +621,18 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
   should reset each calendar year — nothing resets it yet, the same running ledger the Google
-  Sheet's own formula kept, on purpose, until the owner says otherwise.
+  Sheet's own formula kept, on purpose, until the owner says otherwise (it is now editable on
+  the Leave report itself, admin-only, Part 59, if the number alone needs changing).
+- **The owner**: run `db/RUN-ME-051-leave-requests.sql` (the table) if not already done, then
+  `db/RUN-ME-052-leave-tabs-from-advance.sql` (grants `leavereq`/`leaveappr`/`leaverep` to
+  whoever already holds the matching advance tab) — `db/RUN-ME-053-leave-tabs-from-advance-
+  read-only.sql` is the read-only preview, safe to run before and after. Handbook Part 59.
+- **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
+  form, new hire or existing staff with a gap (and if new, the role and team, or the zone
+  directly for a head-office role; if existing, a staff ID or their filed team), and which one
+  of the five named guarantors to keep in the registry's second slot; for the other, who they
+  are (a staff ID, or their team/zone) and which bank the account is at. Nothing is filed until
+  the answer comes back — the script sent changes nothing by itself.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
   e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,

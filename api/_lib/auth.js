@@ -93,10 +93,12 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    desk; advrep is the report with the bank accounts; advstaff is HR's staff registry.
    advfinal is the finance manager's: the Finalize button on the report, and the whole book on it.
      "I decide what navs are to be accessed by team codes there" */
-/* LEAVE / HOLIDAY -- two panes, granted the same way: admins hold them from the start, and a
-   role gets one when it is ticked. `leave` is the ask and, for whoever the advance-approver
-   routing makes an approver, the desk together; `leaverep` is the report. Reuses advance's own
-   routing (api/_lib/portal-core.js), not a tab of its own for that. */
+/* LEAVE / HOLIDAY -- three panes, to fit the pattern advance's own four set: admins hold them
+   from the start, and a role gets one when it is ticked. `leavereq` is the ask; `leaveappr` is
+   the desk, hidden from an idle holder by the same rule advappr's own is (withoutIdleApprovalTab,
+   api/me.js, api/_lib/adv-approver.js -- one routing, read twice, not copied); `leaverep` is the
+   report. Reuses advance's own routing (api/_lib/portal-core.js), not a tab of its own for that;
+   no fourth, HR-registry pane -- advance's own staff registry (advstaff) is reused as it is. */
 /* `annual` (the Annual Report -- the GM's annual workbook read off the system, every team's year
    month by month) is granted the same way `auditrep` is: admins from the start, a role when the
    tab is ticked. It reads the whole year's sales and collection for every team in scope. */
@@ -128,7 +130,7 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    list (ADMIN_TABS derived from this, not duplicated beside it) is what stops the two drifting
    apart the way they did until this same change: a tab added to one and not the other. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leave', 'leaverep', 'fraud', 'checklist', 'annual'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leavereq', 'leaveappr', 'leaverep', 'fraud', 'checklist', 'annual'];
 export const ADMIN_TABS = USER_TABS.concat(EXTRA_TABS);
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand

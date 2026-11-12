@@ -37,16 +37,18 @@ export function isAdvApprover(roleRows, codeRows, user) {
 }
 
 /** `tabs` without the approval tab when this sign-in is not an approver. Two small reads, and
-    only for somebody who holds the tab at all; any trouble leaves the tabs exactly as they are. */
-export async function withoutIdleApprovalTab(db, user, tabs) {
-  if (!Array.isArray(tabs) || !tabs.includes('advappr')) return tabs;
+    only for somebody who holds the tab at all; any trouble leaves the tabs exactly as they are.
+    `tab` defaults to advance's own `advappr`; leave's `leaveappr` reads the exact same rule
+    (the same routing, by the owner's own order) rather than a second copy of this function. */
+export async function withoutIdleApprovalTab(db, user, tabs, tab = 'advappr') {
+  if (!Array.isArray(tabs) || !tabs.includes(tab)) return tabs;
   try {
     const [roles, codes] = await Promise.all([
       db.from('roles').select('role, approver_role, approver_code'),
       db.from('access_codes').select('code, role, supervisor').not('supervisor', 'is', null),
     ]);
     if (roles.error || codes.error) return tabs;
-    return isAdvApprover(roles.data || [], codes.data || [], user) ? tabs : tabs.filter(t => t !== 'advappr');
+    return isAdvApprover(roles.data || [], codes.data || [], user) ? tabs : tabs.filter(t => t !== tab);
   } catch (e) {
     return tabs;
   }

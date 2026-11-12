@@ -26,8 +26,11 @@ export default withApi(async (req, res) => {
      end, so it runs beside the reads below and the sign-in is not a round trip slower for it. */
   const zoneAsked = String(req.query.zone || '') === '1' ? zoneOfSignIn(supabase, user) : null;
   /* The approval tab is for the people the routing makes approvers, whatever a role is ticked for
-     (adv-approver.js): a department that has its own approver does not draw it for the rest. */
-  const tabs = admin ? user.tabs : await withoutIdleApprovalTab(supabase, user, user.tabs);
+     (adv-approver.js): a department that has its own approver does not draw it for the rest.
+     leaveappr reads the exact same routing (the owner's own order: the tunnels are advance's),
+     so it is hidden from an idle holder the same way, not by a second rule. */
+  const tabs = admin ? user.tabs : await withoutIdleApprovalTab(supabase, user,
+    await withoutIdleApprovalTab(supabase, user, user.tabs), 'leaveappr');
   const open = admin || await isSystemOpen(supabase);
   return {
     name: user.name,

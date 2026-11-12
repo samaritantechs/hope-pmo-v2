@@ -17,18 +17,18 @@ const { portalApi } = await import('../api/_lib/portal-core.js');
 
 const NOW = Date.parse('2026-11-12T09:00:00Z');   // Thursday noon EAT
 // isAdminUser (api/_lib/system-gate.js) reads the resolved tabs, not the role text: 'settings' is what ADMIN_TABS always carries.
-const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'leave', 'leaverep'] };
-const FO = { code: 'KON', name: 'KONGOWE', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['leave'] };
-const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: ['leave', 'leaverep'] };
+const ADMIN = { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'leavereq', 'leaveappr', 'leaverep'] };
+const FO = { code: 'KON', name: 'KONGOWE', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['leavereq'] };
+const GMO = { code: 'G', name: 'JUMA G', role: 'GMO', teams: ['KONGOWE'], tabs: ['leavereq', 'leaveappr', 'leaverep'] };
 
 function tables() {
   return {
     teams: [{ team: 'KONGOWE', zone: 'LAKE ZONE', gmo: 'JUMA G', manager: 'BOSS' }],
     roles: [
-      { role: 'ADMIN', tabs: ['leave', 'leaverep'] },
+      { role: 'ADMIN', tabs: ['leavereq', 'leaveappr', 'leaverep'] },
       // FIELD OFFICER's requests are routed to the GMO role, in zone -- advance's own rule, read again here.
-      { role: 'FIELD OFFICER', tabs: ['leave'], approver_role: 'GMO' },
-      { role: 'GMO', tabs: ['leave', 'leaverep'] },
+      { role: 'FIELD OFFICER', tabs: ['leavereq'], approver_role: 'GMO' },
+      { role: 'GMO', tabs: ['leavereq', 'leaveappr', 'leaverep'] },
     ],
     access_codes: [
       { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null },
@@ -52,7 +52,6 @@ test('the ask: a field officer sees only their own zone and role, the reasons li
   const pick = await portalApi(fakeDb(tables()), FO, 'leaveRequestPage', { staffId: 'S1' }, NOW);
   assert.equal(pick.chosen.name, 'ASHA K');
   assert.equal(pick.route.kind, 'role'); assert.equal(pick.route.label.split(' ')[0], 'GMO', 'routed to the GMO role, by advance\'s own rule');
-  assert.equal(pick.canApprove, false, 'a field officer does not get the desk pill');
   assert.deepEqual(pick.balance, { annualDays: 26, taken: 0, pending: 0, remaining: 26 }, 'nothing asked yet: the sheet\'s own default');
 });
 
@@ -108,9 +107,8 @@ test('the desk: the GMO sees the field officer\'s pending request by role routin
   assert.equal(dec.approved, 1);
   const q1 = await portalApi(db, GMO, 'leaveQueue', {}, NOW);
   assert.equal(q1.count, 0); assert.equal(q1.recent.length, 1); assert.equal(q1.recent[0].approval, 'Approved');
-  // A field officer is not an approver: no desk pill, and a second decision is refused as not decided-once.
-  const pageFO = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
-  assert.equal(pageFO.canApprove, false);
+  // A field officer holds no leaveappr tab at all -- the desk is its own tab now, not a pill on the ask -- so the gate refuses outright.
+  await assert.rejects(() => portalApi(db, FO, 'leaveQueue', {}, NOW), /leaveappr|ask the admin/i);
   const again = await portalApi(db, GMO, 'leaveDecide', { updates: [{ id: r.id, approval: 'Disapproved', comment: 'x' }] }, NOW);
   assert.deepEqual(again, { updated: 0, approved: 0, disapproved: 0, skipped: ['ASHA K: already Approved -- a request is decided once'] });
 });
@@ -177,24 +175,47 @@ test('neither migration run at all (a fresh database): the ask says so plainly i
   assert.equal(page.on, false); assert.match(page.note, /RUN-ME-051/); assert.deepEqual(page.staff, []);
 });
 
-test('without RUN-ME-045, an ordinary requester sees nobody\'s history and gets no desk pill -- only admin does', async () => {
+test('the annual allowance: admin alone can change it, from the report screen the owner expected to find it on', async () => {
+  const db = fakeDb(tables());
+  const before = await portalApi(db, GMO, 'leaveReport', {}, NOW);
+  assert.equal(before.annualDays, 26); assert.equal(before.canSetAnnualDays, false, 'a GMO sees the figure but not the edit control');
+  await assert.rejects(() => portalApi(db, GMO, 'leaveSetAnnualDays', { days: 30 }, NOW), /admin/i);
+  const adminBefore = await portalApi(db, ADMIN, 'leaveReport', {}, NOW);
+  assert.equal(adminBefore.canSetAnnualDays, true);
+  const r = await portalApi(db, ADMIN, 'leaveSetAnnualDays', { days: 30 }, NOW);
+  assert.deepEqual(r, { annualDays: 30 });
+  const after = await portalApi(db, ADMIN, 'leaveReport', {}, NOW);
+  assert.equal(after.annualDays, 30, 'reads back from the one Setting, not cached from the old value');
+  const pick = await portalApi(db, FO, 'leaveRequestPage', { staffId: 'S1' }, NOW);
+  assert.equal(pick.balance.annualDays, 30, 'the ask\'s own balance reads the new figure too -- one Setting, not two');
+  await assert.rejects(() => portalApi(db, ADMIN, 'leaveSetAnnualDays', { days: -1 }, NOW), /sifuri|zero/i);
+});
+
+test('without RUN-ME-045, leavereq and leaveappr are now two tabs like advance\'s own: holding leaveappr is trusted, holding only leavereq is not', async () => {
   // access_codes.supervisor absent -> advRouting_'s own signal for "RUN-ME-045 not run", routing.on = false.
   const db = fakeDb(tables(), { missingColumns: { access_codes: ['supervisor'] } });
-  await portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-18', reason: 'UGONJWA' }, NOW);
-  const page = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
-  assert.equal(page.routingOn, false);
-  assert.equal(page.canApprove, false, 'an ordinary requester is not handed the desk pill just for holding the one combined tab');
-  assert.equal(page.canHistory, false); assert.deepEqual(page.history, [], 'and not a colleague\'s dates, cover name or reason either');
+  // The history pane is the viewer's own role's requests (ilike req_role) -- not the approval
+  // queue -- so a GMO's own leave request (S2, JUMA G, a GMO themselves) is what proves this.
+  await portalApi(db, GMO, 'leaveRequest', { staffId: 'S2', startDate: '2026-11-16', endDate: '2026-11-18', reason: 'UGONJWA' }, NOW);
+  const foPage = await portalApi(db, FO, 'leaveRequestPage', {}, NOW);
+  assert.equal(foPage.routingOn, false);
+  assert.equal(foPage.canHistory, false, 'FO holds only leavereq -- never trusted as an approver, routing columns or not');
+  assert.deepEqual(foPage.history, [], 'and not a colleague\'s dates, cover name or reason either');
+  // GMO genuinely holds leaveappr (ticked on Roles & access, same as GMO's own advappr) -- trusted the same way
+  // advRequestPage's own legacy fallback trusts advappr, since nobody is handed that tab who should not decide.
+  const gmoPage = await portalApi(db, GMO, 'leaveRequestPage', {}, NOW);
+  assert.equal(gmoPage.canHistory, true, 'GMO holds leaveappr, so the legacy fallback trusts it, exactly as advance\'s own does for advappr');
+  assert.equal(gmoPage.history.length, 1);
   const adminPage = await portalApi(db, ADMIN, 'leaveRequestPage', {}, NOW);
-  assert.equal(adminPage.canHistory, true); assert.equal(adminPage.history.length, 1, 'admin alone still sees it while the routing columns are not in');
+  assert.equal(adminPage.canHistory, true); assert.equal(adminPage.history.length, 1, 'admin always sees it regardless');
 });
 
 test('customer service: one shared code, names off the call-agents roster, no zone -- the same special case advance makes', async () => {
   const t = tables();
   t.access_codes.push({ code: 'CS', name: 'CS DESK', role: 'CUSTOMER SERVICE', teams: null });
-  t.roles.push({ role: 'CUSTOMER SERVICE', tabs: ['leave'], approver_role: 'GMO' });
+  t.roles.push({ role: 'CUSTOMER SERVICE', tabs: ['leavereq'], approver_role: 'GMO' });
   t.call_agents = [{ user_id: 'u1', names: 'HAPPY AGENT' }];
-  const CS = { code: 'CS', name: 'CS DESK', role: 'CUSTOMER SERVICE', teams: null, tabs: ['leave'] };
+  const CS = { code: 'CS', name: 'CS DESK', role: 'CUSTOMER SERVICE', teams: null, tabs: ['leavereq'] };
   const db = fakeDb(t);
   const page = await portalApi(db, CS, 'leaveRequestPage', {}, NOW);
   assert.deepEqual(page.staff.map(s => s.name), ['HAPPY AGENT']);

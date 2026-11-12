@@ -1214,7 +1214,7 @@ test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, 
   // Out of the vm realm (its Array is not this realm's Array, and strict deepEqual minds).
   const nav = JSON.parse(JSON.stringify(ctx.NAV)), order = JSON.parse(JSON.stringify(ctx.MGMT_ORDER));
   const mgmt = nav.filter(n => n.div === 'mgmt').map(n => n.id);
-  const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leave', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
+  const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leavereq', 'leaveappr', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
     'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
   assert.deepEqual(order, expected, 'the management division, in its own order');
   for (const id of expected) assert.ok(mgmt.includes(id), id + ' is flagged div:mgmt');
@@ -2192,26 +2192,31 @@ test('advance routing: Roles & access takes the approver role, the code form the
    signed-in person's own user.tabs, admin included. The same gap advance's own tabs do not
    have a dedicated test pinning either; this one exists so the NEXT new tab does not repeat
    it unnoticed. */
-test('leave / leaverep: granted like advance\'s own tabs -- admin from the start, a role when ticked', async () => {
+test('leavereq / leaveappr / leaverep: granted like advance\'s own tabs -- admin from the start, a role when ticked', async () => {
   const { ADMIN_TABS, EXTRA_TABS, USER_TABS } = await import('../api/_lib/auth.js');
-  for (const id of ['leave', 'leaverep']) {
+  for (const id of ['leavereq', 'leaveappr', 'leaverep']) {
     assert.ok(ADMIN_TABS.includes(id), id + ' is not in ADMIN_TABS -- an admin would not see it either');
     assert.ok(EXTRA_TABS.includes(id), id + ' is not in EXTRA_TABS -- the role editor could not offer it');
     assert.ok(!USER_TABS.includes(id), id + ' should start admin-only, ticked onto a role like advreq');
   }
   const app = appSrc();
   const nav = app.slice(app.indexOf("{ id:'advstaff',"), app.indexOf("{ id:'legal',"));
-  for (const id of ['leave', 'leaverep']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits directly after the advance block');
-  assert.ok(/leave:'leave', leaverep:'leave'/.test(app.match(/var MOD_OF = \{([\s\S]*?)\};/)[1]), 'both map to the one leave module');
-  assert.ok(/'advrep', 'leave', 'leaverep', 'impreq'/.test(app.match(/var MGMT_ORDER = \[[\s\S]*?\];/)[0]), 'placed in the sidebar order, between advance and imprest');
+  for (const id of ['leavereq', 'leaveappr', 'leaverep']) assert.ok(new RegExp("\\{ id:'" + id + "',").test(nav), id + ' sits directly after the advance block');
+  assert.ok(/leavereq:'leave', leaveappr:'leave', leaverep:'leave'/.test(app.match(/var MOD_OF = \{([\s\S]*?)\};/)[1]), 'all three map to the one leave module');
+  assert.ok(/'advrep', 'leavereq', 'leaveappr', 'leaverep', 'impreq'/.test(app.match(/var MGMT_ORDER = \[[\s\S]*?\];/)[0]), 'placed in the sidebar order, between advance and imprest');
   // FN (the dispatch map) and FN_TAB (the permission gate) are both in portal-core.js, not app.html.
   const pc = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'portal-core.js'), 'utf8');
   const fnMap = pc.slice(pc.indexOf('const FN = {'), pc.indexOf('const FN = {') + 2000);
-  for (const fn of ['leaveRequestPage', 'leaveRequest', 'leaveQueue', 'leaveDecide', 'leaveReport']) {
+  for (const fn of ['leaveRequestPage', 'leaveRequest', 'leaveQueue', 'leaveDecide', 'leaveReport', 'leaveSetAnnualDays']) {
     assert.ok(new RegExp('\\b' + fn + '\\b').test(fnMap), fn + ' is not in the FN dispatch map');
   }
-  assert.ok(/leaveRequestPage: \['leave'\], leaveRequest: \['leave'\], leaveQueue: \['leave'\]/.test(pc), 'the ask and the desk are gated on the leave tab');
-  assert.ok(/leaveDecide: \['leave'\]/.test(pc) && /leaveReport: \['leaverep'\]/.test(pc), 'the desk\'s decision and the report are each gated on their own tab');
+  assert.ok(/leaveRequestPage: \['leavereq'\], leaveRequest: \['leavereq'\]/.test(pc), 'the ask is gated on its own tab');
+  assert.ok(/leaveQueue: \['leaveappr'\], leaveDecide: \['leaveappr'\]/.test(pc), 'the desk is gated on its own tab');
+  assert.ok(/leaveReport: \['leaverep'\], leaveSetAnnualDays: \['leaverep'\]/.test(pc), 'the report and its one setting are gated on the report tab');
+  // leaveappr is hidden from an idle holder exactly the way advappr's own is -- one routing, read twice.
+  const meSrc = readFileSync(join(PUBLIC, '..', 'api', 'me.js'), 'utf8');
+  assert.ok(/withoutIdleApprovalTab\(supabase, user,\s*\n\s*await withoutIdleApprovalTab\(supabase, user, user\.tabs\), 'leaveappr'\)/.test(meSrc),
+    'leaveappr goes through the same idle-approver check advappr does, not a second copy of the rule');
 });
 
 /* "always auto default grant all tabs to admin role. i dont have to go manually grant all new
@@ -2227,7 +2232,7 @@ test('ADMIN_TABS is computed from EXTRA_TABS, not a second hand-typed copy of it
   assert.deepEqual(ADMIN_TABS, USER_TABS.concat(EXTRA_TABS), 'ADMIN_TABS is exactly USER_TABS + EXTRA_TABS');
   const src = readFileSync(join(PUBLIC, '..', 'api', '_lib', 'auth.js'), 'utf8');
   assert.ok(/ADMIN_TABS = USER_TABS\.concat\(EXTRA_TABS\)/.test(src), 'derived, not a literal array of its own');
-  assert.equal((src.match(/'leave', 'leaverep'/g) || []).length, 1, 'leave\'s own tabs are named once in this file, not once per list');
+  assert.equal((src.match(/'leavereq', 'leaveappr', 'leaverep'/g) || []).length, 1, 'leave\'s own tabs are named once in this file, not once per list');
 });
 
 /* THE FRAUD DETECTOR -- "I need a new nav 'Fraud Detector' where every approved loan with a
