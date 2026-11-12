@@ -2489,6 +2489,340 @@ async function advReopen(db, user, p, nowMs = Date.now()) {
   return { month: monthNow, reopenUntil: all[monthNow].reopenUntil, hours, by: all[monthNow].reopenBy };
 }
 
+/* =====================================================================================
+   LEAVE / HOLIDAY REQUESTS -- the FOMU YA RUHUSA NA LIKIZO Google Form and its sheet, moved
+   in the same way the advance-request sheet was: "the tunnels and approvals must be the same
+   to advances when people request leaves / holidays". Two tabs (`leave`, the ask and, for an
+   approver, the desk together; `leaverep`, the report), one new table (leave_requests,
+   db/RUN-ME-047-leave-requests.sql), and NONE of the routing written again: a leave request
+   carries the same req_role / req_code / zone a request of any other kind would, so
+   advRouting_, advRouteOf_, advDeskOf_, advSees_ and advHolds_ -- the one rule for "who
+   approves whose request", built for advances -- decide a leave request exactly the way they
+   decide an advance. The `adv` names are kept: renaming a routing engine two features now
+   depend on, to fit one of them, would be the bigger risk.
+
+   What is NOT carried over, on purpose:
+     - the calendar-MONTH unit and the finance manager's Finalize / Reopen. That exists so
+       payroll can close a month's advances; leave has no payroll month to close, and nobody
+       asked for one. A leave request is open until it is decided or it expires (below).
+     - the one-request-per-month limit. A leave request is instead checked against this same
+       person's OWN other open requests for an overlapping date -- the Google Form had no such
+       check at all, so two overlapping requests could both be sent; this stops that, not a
+       policy the form had that is now missing.
+     - SIKU ZILIZOBAKI (days remaining) as a typed sheet column read back with no filter at
+       all: "=26-SUMIF($C:$C,$C2,$E:$E)" sums EVERY row under that ID, decided or not, so a
+       Disapproved or still-Pending request already cost the balance in the sheet. Here only
+       Approved days are deducted (leaveBalance_); a Pending request's days are shown
+       separately, as what is already asked and awaiting a decision -- never subtracted twice
+       and never silently ignored either.
+     - the day count as a THIRD, separately-typed number the dates could disagree with --
+       which is exactly what the sheet's own rows show happening (one request's dates span ten
+       months; its typed day count says 14). Here days is always end_date - start_date + 1.
+     - a reset of the balance on a new year: nothing here resets it, exactly as the sheet's own
+       formula never did, one running ledger against LEAVE_ANNUAL_DAYS (a Setting, 26 unless
+       changed). Whether it should reset each calendar year is the owner's to decide -- flagged
+       in the pull request this shipped in, not guessed here.
+   ===================================================================================== */
+const LEAVE_NOTE = 'Jedwali la likizo halipo bado: endesha db/RUN-ME-047-leave-requests.sql kwenye SQL editor. '
+  + '/ The leave-request table is not there yet: run db/RUN-ME-047-leave-requests.sql in the SQL editor.';
+const leaveMissing_ = e => /leave_requests|staff_registry|does not exist|schema cache/i.test(String((e && e.message) || e || ''));
+/** A read of either table, null when RUN-ME-047 (or RUN-ME-044, for staff_registry) has not
+    been run -- the tab says so, nothing fails. */
+async function leaveRead_(q) {
+  try { return await fetchAll(q); } catch (e) { if (leaveMissing_(e)) return null; throw e; }
+}
+const LEAVE_DAYS_KEY = 'LEAVE_ANNUAL_DAYS', LEAVE_DAYS_DEFAULT = 26;
+const LEAVE_REASONS_KEY = 'LEAVE_REASONS', LEAVE_REASONS_DEFAULT = 'UGONJWA, LIKIZO, MSIBA, PATERNITY LEAVE, MATERNITY LEAVE, Other';
+function leaveReasons_(cfg) {
+  return [...new Set(String(cfg.get(LEAVE_REASONS_KEY, LEAVE_REASONS_DEFAULT)).split(',').map(s => s.trim()).filter(Boolean))];
+}
+const LEAVE_APPROVALS = ['Pending', 'Approved', 'Disapproved'];
+/* EXPIRED, LEAVE'S OWN WAY -- advance's unit is the calendar month; leave has no month, it has
+   the date the staff asked to start. A request nobody decided before its own start date has
+   come and gone cannot be decided after the fact (the leave either happened without a decision
+   or did not), so it reads Expired, the same as an advance's undecided month -- not a decision,
+   decided_by and decided_at stay empty, and it never counts against a later request. Read this
+   way everywhere (leaveExpireView_); written once the first reader meets one (leaveExpireOld_),
+   the same division of labour advStale_ / advExpireOld_ use. */
+const LEAVE_EXPIRED = 'Expired';
+const leaveStale_ = (r, today) => K(r && r.approval) === 'PENDING' && String((r && r.start_date) || '') < today;
+function leaveExpireView_(rows, today) {
+  let stale = 0;
+  const out = (rows || []).map(r => (leaveStale_(r, today) ? (stale++, { ...r, approval: LEAVE_EXPIRED }) : r));
+  return { rows: out, stale };
+}
+async function leaveExpireOld_(db, today) {
+  try {
+    const { error } = await db.from('leave_requests').update({ approval: LEAVE_EXPIRED }).eq('approval', 'Pending').lt('start_date', today);
+    if (error) throw new Error(error.message);
+    return true;
+  } catch (e) { console.warn('[leave] expiring undecided past requests failed:', (e && e.message) || e); return false; }
+}
+/** This staff's leave standing: days taken (Approved, ever -- the sheet's own SUMIF, minus its
+    one flaw: only a decided, Approved request counts), days still pending a decision, and what
+    is left of LEAVE_ANNUAL_DAYS. Matched by staff_id when there is one, else by name under this
+    same role -- advRequest's own customer-service fallback, kept the same way here. */
+async function leaveBalance_(db, annualDays, staffId, staffName, role) {
+  const rows = (await leaveRead_(() => {
+    const q = db.from('leave_requests').select('days, approval').in('approval', ['Approved', 'Pending']);
+    return staffId ? q.eq('staff_id', staffId) : q.ilike('staff_name', staffName).ilike('req_role', String(role || '~none~'));
+  })) || [];
+  const taken = rows.filter(r => K(r.approval) === 'APPROVED').reduce((s, r) => s + num(r.days), 0);
+  const pending = rows.filter(r => K(r.approval) === 'PENDING').reduce((s, r) => s + num(r.days), 0);
+  return { annualDays, taken, pending, remaining: annualDays - taken };
+}
+/** The ask: a staff of the viewer's zone or role, a date range, a reason, who covers -- the
+    same zone / role / customer-service picking advRequestPage already works out, the same
+    "only approvers and report holders see history" rule, and who will decide it said before it
+    is sent. */
+async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = Date.now()) {
+  const [teamRows, cfg, routing] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [LEAVE_DAYS_KEY, LEAVE_REASONS_KEY]), advRouting_(db)]);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const admin = isAdminUser(user);
+  const cs = advCustomerService_(user);
+  const route = advRouteOf_(routing, { req_role: user.role, req_code: user.code });
+  const dept = !admin && !cs && zones !== null;
+  const tabs = user.tabs || [];
+  // No separate approval tab here (leave and its desk share one, unlike advance's four): the
+  // fallback without RUN-ME-045 is simply holding the Leave / Holiday tab at all.
+  const seesHistory = admin || tabs.includes('leaverep') || (routing.on ? routing.isApprover(user) : tabs.includes('leave'));
+  const roleWord = advRoleWords_(user.role)[0] || '~none~';
+  const histQ = () => db.from('leave_requests').select('id, submitted_at, staff_id, staff_name, zone, start_date, end_date, days, reason, cover_name, approval, comment, decided_by, decided_at, req_role')
+    .order('submitted_at', { ascending: false }).limit(100);
+  const [staff0, history0, agents0, deptStaff0, deptHist0] = await Promise.all([
+    leaveRead_(() => onZones_(db.from('staff_registry').select('id, name, role, zone, status').order('name', { ascending: true }), zones)),
+    seesHistory ? leaveRead_(() => admin ? onZones_(histQ(), zones) : onZones_(histQ(), zones).ilike('req_role', String(user.role || '~none~'))) : [],
+    cs ? leaveRead_(() => db.from('call_agents').select('user_id, names')) : [],
+    dept ? leaveRead_(() => onDept_(db.from('staff_registry').select('id, name, role, zone, status').ilike('role', roleWord + '%')).order('name', { ascending: true })) : [],
+    dept && seesHistory ? leaveRead_(() => histQ().is('zone', null).ilike('req_role', String(user.role || '~none~'))) : [],
+  ]);
+  const on = Array.isArray(staff0);
+  const zoneStaff = (staff0 || []).concat(deptStaff0 || []).filter(r => K(r.status) !== 'INACTIVE' && (advZoneOk_(zones, r.zone) || advDeptZone_(r.zone)))
+    .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  let staff;
+  if (cs) {
+    const regBy = new Map(zoneStaff.map(r => [K(r.name), r]));
+    staff = advAgentNames_(agents0).map(n => {
+      const r = regBy.get(K(n));
+      return { id: r ? r.id : null, name: r ? r.name : n, role: r ? (r.role || 'CUSTOMER SERVICE') : 'CUSTOMER SERVICE', zone: r ? (r.zone || '') : '', onRegistry: !!r };
+    });
+  } else {
+    staff = (admin ? zoneStaff : zoneStaff.filter(r => advRoleSame_(r.role, user.role))).map(s => ({ id: s.id, name: s.name, role: s.role || '', zone: s.zone || '' }));
+  }
+  const spellings = [...new Set(zoneStaff.map(s => String(s.role || '').trim() || '—'))].sort();
+  const roleNote = !admin && !cs && on && !staff.length && zoneStaff.length
+    ? `Hakuna jina la wadhifa ${user.role} kwenye rejista ya zone yako; rejista inaandika wadhifa kama: ${spellings.join(', ')}. HR aandike ROLE kama Nafasi na ruhusa inavyouita. `
+      + `/ No name with role ${user.role} on your zone's registry; the registry spells roles as: ${spellings.join(', ')}. HR should set ROLE there as Roles & access spells it.`
+    : (cs && on && !staff.length ? 'Hakuna majina kwenye orodha ya mawakala wa simu (Settings → Call agents). / No names on the call-agents roster yet (Settings → Call agents).' : null);
+  const today = todayKey(nowMs);
+  const hist = leaveExpireView_((history0 || []).concat(deptHist0 || []).filter(r => !r.zone || advZoneOk_(zones, r.zone)), today);
+  if (hist.stale) await leaveExpireOld_(db, today);
+  const history = hist.rows.sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
+  let chosen = null, balance = null;
+  const wantId = K(staffId), wantName = K(staffName);
+  if (wantId || wantName) {
+    chosen = staff.find(s => (wantId && s.id && K(s.id) === wantId) || (wantName && K(s.name) === wantName)) || null;
+    if (chosen) balance = await leaveBalance_(db, Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT))), chosen.id || null, chosen.name, user.role);
+  }
+  // Whether the "Dawati / Desk" pill is offered at all -- an approver, same test isAdvApprover
+  // makes for advance's own approval tab, since the one tab here carries both.
+  const canApprove = admin || (routing.on ? routing.isApprover(user) : tabs.includes('leave'));
+  return { on, note: on ? null : LEAVE_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
+    staff, count: staff.length, reasons: leaveReasons_(cfg), chosen, balance,
+    role: admin ? null : (user.role || ''), roleNote, history: seesHistory ? history : [], canHistory: seesHistory, canApprove, csAgents: cs,
+    requester: user.name, teamCode: !!user.teamCode,
+    route: { kind: routing.on ? route.kind : 'legacy', label: routing.on ? advRouteLabel_(route, zones && zones.length === 1 ? zones[0] : null) : advRouteLabel_({ kind: 'legacy' }) },
+    routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
+}
+/** The ask itself: start, end (on or after start), a reason, who covers. `days` is always
+    end_date - start_date + 1 -- never a third, separately-typed number the dates could
+    disagree with. Blocked only on an overlap with this same person's own other OPEN request --
+    never on the balance: a negative balance is the approver's to see and decide on, as the
+    sheet itself never blocked it either. */
+async function leaveRequest(db, user, p, nowMs = Date.now()) {
+  if (!p) throw badRequest('Nothing to save.');
+  const staffId = String(p.staffId || '').trim().toUpperCase();
+  const staffName = String(p.staffName || '').trim();
+  const cs = advCustomerService_(user);
+  if (!staffId && !(cs && staffName)) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
+  const start = advDate_(p.startDate), end = advDate_(p.endDate);
+  if (!start || !end) throw badRequest('Weka tarehe ya kuanza na kurudi. / Pick the start and return date.');
+  if (end < start) throw badRequest('Tarehe ya kurudi haiwezi kuwa kabla ya kuanza. / The return date cannot be before the start date.');
+  const days = Math.round((Date.parse(end + 'T00:00:00Z') - Date.parse(start + 'T00:00:00Z')) / 86400000) + 1;
+  if (days > 90) throw badRequest('Siku nyingi sana kwa ombi moja (zaidi ya 90). / Too many days for one request (over 90).');
+  const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [LEAVE_REASONS_KEY])]);
+  const reasons = leaveReasons_(cfg);
+  const reason = String(p.reason || '').trim();
+  if (!reason) throw badRequest('Chagua sababu. / Pick a reason.');
+  const { zones } = advZones_(user, teamRows);
+  let s;
+  if (cs && !staffId) {
+    const agents = await leaveRead_(() => db.from('call_agents').select('names'));
+    const hit = advAgentNames_(agents).find(n => K(n) === K(staffName));
+    if (!hit) throw badRequest('Jina hilo halipo kwenye orodha ya mawakala wa simu. / That name is not on the call-agents roster.');
+    const reg = (await leaveRead_(() => db.from('staff_registry').select('*').ilike('name', hit).limit(2))) || [];
+    s = reg.find(r => K(r.status) !== 'INACTIVE') || { id: null, name: hit, role: 'CUSTOMER SERVICE', zone: null, status: 'Active' };
+  } else {
+    const { data: row, error: sErr } = await db.from('staff_registry').select('*').eq('id', staffId).maybeSingle();
+    if (sErr) { if (leaveMissing_(sErr)) throw badRequest(LEAVE_NOTE); throw new Error(sErr.message); }
+    s = row;
+  }
+  if (!s) throw badRequest('Jina hilo halipo kwenye orodha ya wafanyakazi. / That staff is not in the registry.');
+  if (K(s.status) === 'INACTIVE') throw badRequest('Staff huyu si active. / This staff is marked inactive.');
+  if (s.zone && !advDeptZone_(s.zone) && !advZoneOk_(zones, s.zone)) throw forbidden(`You do not have access to zone ${s.zone}.`);
+  if (!isAdminUser(user) && !cs && !advRoleSame_(s.role, user.role)) {
+    throw forbidden(`Jina hilo si la wadhifa wako (${user.role}). / That name is not of your role (${user.role}).`);
+  }
+  // One open request at a time per person -- not the sheet's rule (it had none), but two
+  // overlapping asks for the same days is not something an approver should have to notice by eye.
+  const open = await leaveRead_(() => {
+    const q = db.from('leave_requests').select('id, start_date, end_date').in('approval', ['Pending', 'Approved']);
+    return s.id ? q.eq('staff_id', s.id) : q.ilike('staff_name', s.name).ilike('req_role', String(user.role || '~none~'));
+  });
+  if (open === null) throw badRequest(LEAVE_NOTE);
+  const clash = (open || []).find(r => String(r.start_date) <= end && String(r.end_date) >= start);
+  if (clash) throw badRequest(`⚠️ Una ombi lingine la likizo linalogongana na tarehe hizi (${clash.start_date} → ${clash.end_date}). `
+    + `/ You already have a leave request overlapping these dates (${clash.start_date} → ${clash.end_date}).`);
+  const at = new Date(nowMs).toISOString();
+  const row = { submitted_at: at, staff_id: s.id || null, staff_name: s.name, staff_role: s.role || null,
+    start_date: start, end_date: end, days, reason: reasons.includes(reason) ? reason : (textOrNull(p.reasonOther) || reason),
+    cover_name: textOrNull(p.coverName), notes: textOrNull(p.notes), approval: 'Pending', comment: null,
+    zone: cs || advDeptZone_(s.zone) ? null : (K(s.zone) || null), code: user.teamCode ? (user.teams || [])[0] || null : (user.role || null),
+    req_role: K(user.role) || null, req_code: user.code || null, created_by: user.name, created_at: at };
+  const { data: ins, error } = await db.from('leave_requests').insert(row).select('id');
+  if (error) { if (leaveMissing_(error)) throw badRequest(LEAVE_NOTE); throw new Error(error.message); }
+  const route = advRouteOf_(await advRouting_(db), { req_role: user.role, req_code: user.code });
+  return { id: (ins && ins[0] && ins[0].id) || null, staffId: s.id, staffName: s.name, days, startDate: start, endDate: end, zone: row.zone,
+    route: { kind: route.kind, label: advRouteLabel_(route, row.zone) } };
+}
+/** The desk: pending, newest-filed first, and recently decided -- the same two reads advQueue
+    narrows to this desk (advDeskOf_) plus the zone read every role also reaches through. */
+async function leaveQueue(db, user, { zone } = {}, nowMs = Date.now()) {
+  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const today = todayKey(nowMs);
+  const since = today.slice(0, 7) + '-01';
+  const { mine, roleKeys, desk } = advDeskOf_(routing, user);
+  const pendQ = () => db.from('leave_requests').select('*').in('approval', ['Pending', LEAVE_EXPIRED]).order('submitted_at', { ascending: false });
+  const recQ = () => db.from('leave_requests').select('*').neq('approval', 'Pending').neq('approval', LEAVE_EXPIRED).gte('decided_at', since).order('decided_at', { ascending: false }).limit(500);
+  const [pending0, recent0, pendS, recS, pendR, recR] = await Promise.all([
+    leaveRead_(() => onZoneLegacy_(pendQ(), zones, routing, isAdminUser(user))),
+    leaveRead_(() => onZoneLegacy_(recQ(), zones, routing, isAdminUser(user))),
+    mine.length ? leaveRead_(() => pendQ().in('req_code', mine)) : [],
+    mine.length ? leaveRead_(() => recQ().in('req_code', mine)) : [],
+    roleKeys.length ? leaveRead_(() => pendQ().in('req_role', roleKeys)) : [],
+    roleKeys.length ? leaveRead_(() => recQ().in('req_role', roleKeys)) : [],
+  ]);
+  const on = Array.isArray(pending0);
+  const sees = r => advSees_(routing, user, zones, r) && (!zone || K(r.zone) === K(zone));
+  const withRoute = r => { const rt = advRouteOf_(routing, r); return { ...r, route: advRouteLabel_(rt, r.zone), routeTo: rt.kind === 'role' ? rt.to : rt.kind === 'supervisor' ? rt.name : rt.kind === 'legacy' ? 'zone' : 'admin', routeKind: rt.kind }; };
+  const view = leaveExpireView_(advMerge_(pending0, pendS, pendR), today);
+  if (view.stale) await leaveExpireOld_(db, today);
+  const pendingAll = view.rows.filter(sees).sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at))).map(withRoute);
+  const pending = pendingAll.filter(r => K(r.approval) === 'PENDING');
+  const expired = pendingAll.filter(r => K(r.approval) !== 'PENDING');
+  const recent = advMerge_(recent0, recS, recR).filter(r => sees(r) || K(r.decided_by) === K(user.name))
+    .sort((a, b) => String(b.decided_at).localeCompare(String(a.decided_at))).map(withRoute);
+  const admin = desk.admin;
+  const holds = admin ? advHolds_(routing, teamRows) : null;
+  const unrouted = admin ? pending.map(r => ({ r, rt: advRouteOf_(routing, r) }))
+    .filter(x => x.rt.kind === 'none' || (x.rt.kind === 'role' && !holds(x.rt.to, x.r.zone)))
+    .map(x => ({ staff_name: x.r.staff_name, req_role: x.r.req_role || x.r.staff_role, zone: x.r.zone,
+      why: x.rt.kind === 'none' ? 'no approver set' : 'no ' + x.rt.to + ' holds zone ' + (K(x.r.zone) || '?') })) : [];
+  return { on, note: on ? null : LEAVE_NOTE, pending, recent, expired, count: pending.length, expiredCount: expired.length,
+    days: pending.reduce((s2, r) => s2 + num(r.days), 0),
+    zones: zones === null ? [...new Set((pending0 || []).concat(recent0 || []).map(r => K(r.zone)).filter(Boolean))].sort() : zones,
+    noZoneTeams, approvals: LEAVE_APPROVALS.slice(1), desk, unrouted, routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
+}
+/** Bulk decide, the same shape as advDecide: a stray tick outside this desk is skipped, not
+    fatal to the rest of the batch. A request already Expired (its own start date has come and
+    gone, undecided) can no longer be decided; its owner may ask again. */
+async function leaveDecide(db, user, p, nowMs = Date.now()) {
+  const updates = (p && Array.isArray(p.updates) ? p.updates : []).map(u => ({
+    id: String((u && u.id) || '').trim(), approval: LEAVE_APPROVALS.find(a => K(a) === K(u && u.approval)) || null,
+    comment: textOrNull(u && u.comment) })).filter(u => u.id);
+  if (!updates.length) throw badRequest('Chagua angalau ombi moja. / Select at least one request.');
+  if (updates.some(u => !u.approval || u.approval === 'Pending')) throw badRequest('Kila ombi lichaguliwe Approved au Disapproved. / Each request needs Approved or Disapproved.');
+  const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
+  const { zones } = advZones_(user, teamRows);
+  const today = todayKey(nowMs);
+  const rows = await leaveRead_(() => db.from('leave_requests').select('*').in('id', updates.map(u => u.id)));
+  if (rows === null) throw badRequest(LEAVE_NOTE);
+  const by = new Map(rows.map(r => [String(r.id), r]));
+  const at = new Date(nowMs).toISOString();
+  let approved = 0, disapproved = 0; const skipped = []; let refused = null;
+  for (const u of updates) {
+    const r = by.get(u.id);
+    if (!r) { skipped.push(u.id + ': no longer there'); continue; }
+    let why = null;
+    if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') why = forbidden(`You do not have access to zone ${r.zone}.`);
+    else if (!advSees_(routing, user, zones, r)) why = forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
+    if (why) { refused = refused || why; skipped.push(`${r.staff_name}: ${why.message}`); continue; }
+    if (K(r.approval) === K(LEAVE_EXPIRED) || leaveStale_(r, today)) { skipped.push(`${r.staff_name}: expired -- its start date (${r.start_date}) came and went undecided; they can ask again`); continue; }
+    if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval} -- a request is decided once`); continue; }
+    const { error } = await db.from('leave_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
+    if (error) throw new Error(error.message);
+    if (u.approval === 'Approved') approved++; else disapproved++;
+  }
+  if (refused && !(approved + disapproved) && updates.length === 1) throw refused;
+  return { updated: approved + disapproved, approved, disapproved, skipped };
+}
+/** The management report: a window (by start_date), Approved by default, by zone -- the same
+    desk-or-admin visibility rule as advReport, with each row's own balance (what Approving it
+    would leave them with, or already has) so HR and payroll-adjacent leave-tracking is one
+    screen rather than the Google Sheet. No finalize: see the note at the top of this section
+    for why. */
+async function leaveReport(db, user, { from, to, approval, zone } = {}, nowMs = Date.now()) {
+  const today = todayKey(nowMs);
+  const fromKey = advDate_(from) || today.slice(0, 8) + '01';
+  const toKey = advDate_(to) || today;
+  const want = approval == null || approval === '' ? 'Approved' : (K(approval) === 'ALL' ? 'ALL' : (LEAVE_APPROVALS.concat(LEAVE_EXPIRED).find(a => K(a) === K(approval)) || 'Approved'));
+  const admin = isAdminUser(user);
+  const [teamRows, routing, cfg] = await Promise.all([readTeamsAll(db, nowMs), admin ? null : advRouting_(db), settingsMany(db, [LEAVE_DAYS_KEY])]);
+  const annualDays = Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT)));
+  const { zones, noZoneTeams } = advZones_(user, teamRows);
+  const { mine, roleKeys, desk: desk0 } = advDeskOf_(routing, user);
+  const desk = admin ? { ...desk0, admin: true } : desk0;
+  const winQ = () => {
+    const q = db.from('leave_requests').select('*').gte('start_date', fromKey).lte('start_date', toKey).order('start_date', { ascending: false });
+    return want === 'ALL' ? q : want === LEAVE_EXPIRED ? q.in('approval', [LEAVE_EXPIRED, 'Pending']) : q.eq('approval', want);
+  };
+  const [rows0, rowsS, rowsR] = await Promise.all([
+    leaveRead_(() => onZoneLegacy_(winQ(), zones, routing, admin)),
+    mine.length ? leaveRead_(() => winQ().in('req_code', mine)) : [],
+    roleKeys.length ? leaveRead_(() => winQ().in('req_role', roleKeys)) : [],
+  ]);
+  const on = Array.isArray(rows0);
+  const sees = r => (admin ? advZoneOk_(zones, r.zone) : (advSees_(routing, user, zones, r) || K(r.decided_by) === K(user.name)))
+    && (!zone || K(r.zone) === K(zone));
+  const view = leaveExpireView_(advMerge_(rows0, rowsS, rowsR), today);
+  if (view.stale) await leaveExpireOld_(db, today);
+  let rows = view.rows.filter(r => sees(r) && (want === 'ALL' || K(r.approval) === K(want)))
+    .sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)));
+  // Each distinct person's balance, read once rather than once per row.
+  const balKey = r => r.staff_id ? 'id:' + K(r.staff_id) : 'nm:' + K(r.staff_name) + '|' + K(r.req_role);
+  const people = [...new Map(rows.map(r => [balKey(r), r])).values()];
+  const balBy = new Map();
+  for (const p2 of people) balBy.set(balKey(p2), await leaveBalance_(db, annualDays, p2.staff_id || null, p2.staff_name, p2.req_role));
+  rows = rows.map(r => ({ ...r, balance: balBy.get(balKey(r)) || null }));
+  const byZone = new Map();
+  for (const r of rows) {
+    const z = K(r.zone) || '—';
+    const s = byZone.get(z) || { zone: z, requests: 0, days: 0, approved: 0, approvedDays: 0 };
+    s.requests++; s.days += num(r.days);
+    if (K(r.approval) === 'APPROVED') { s.approved++; s.approvedDays += num(r.days); }
+    byZone.set(z, s);
+  }
+  const summary = [...byZone.values()].sort((a, b) => a.zone.localeCompare(b.zone));
+  return { rows, count: rows.length, from: fromKey, to: toKey, approval: want, on, note: on ? null : LEAVE_NOTE,
+    days: rows.reduce((s2, r) => s2 + num(r.days), 0),
+    approved: rows.filter(r => K(r.approval) === 'APPROVED').length,
+    approvedDays: rows.filter(r => K(r.approval) === 'APPROVED').reduce((s2, r) => s2 + num(r.days), 0),
+    expired: rows.filter(r => r.approval === LEAVE_EXPIRED).length,
+    annualDays, summary, zones: advZoneList_(teamRows, rows0, zones), noZoneTeams, approvals: ['ALL'].concat(LEAVE_APPROVALS, LEAVE_EXPIRED),
+    desk, routingOn: routing ? routing.on : true, routingNote: routing && !routing.on ? ADV_ROUTE_NOTE : null };
+}
+
 /** Loan restructuring. A restructure is a written offer: the customer pays something now, and
     whatever is left -- optionally with fresh interest -- is rescheduled into N weekly
     installments. Every number is derived, so NONE of it is taken from the client:
@@ -9958,6 +10292,7 @@ const FN = {
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
   deductions, addDeduction, hrDeduction,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
+  leaveRequestPage, leaveRequest, leaveQueue, leaveDecide, leaveReport,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
@@ -10361,6 +10696,10 @@ const FN_TAB = {
   advRequestPage: ['advreq'], advRequest: ['advreq'],
   advQueue: ['advappr'], advDecide: ['advappr'],
   advReport: ['advrep'], advFinalize: ['advfinal'], advReopen: ['advfinal'],
+  // Leave / Holiday: one tab for the ask and the desk together, a second for the report --
+  // the same approver routing as advance (FN_TAB does not gate the routing, only the tab).
+  leaveRequestPage: ['leave'], leaveRequest: ['leave'], leaveQueue: ['leave'],
+  leaveDecide: ['leave'], leaveReport: ['leaverep'],
   /* The credit info report and its stats pane ride on the Credit Analysts tab rather than
      asking the admin to tick a new permission for a second view onto a book somebody already
      holds. The download page and the pane both come through here. */

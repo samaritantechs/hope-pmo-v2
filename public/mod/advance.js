@@ -114,17 +114,8 @@ function advSubmit(){
     .catch(function(e){ toast(String(e.message||e), true); });
 }
 
-/* WHAT A DESK IS, in words, for the desk and the report alike (advDeskOf_ on the server): the
-   roles routed to it, the roles it supervises whole, the people it supervises by name -- "every
-   request" for an admin -- or '' when nothing is routed to it yet. */
-function advDeskLine_(desk){
-  if (desk.admin) return 'admin — maombi yote / every request';
-  var bits = [];
-  if ((desk.roles||[]).length) bits.push('wadhifa unaoidhinisha / roles you approve: ' + desk.roles.join(', '));
-  if ((desk.deptRoles||[]).length) bits.push('msimamizi wa wadhifa wote / supervisor of every code of: ' + desk.deptRoles.join(', '));
-  if ((desk.supervisees||[]).length) bits.push('unaowasimamia / you supervise: ' + desk.supervisees.map(function(s){ return s.name; }).join(', '));
-  return bits.join(' · ');
-}
+// advDeskLine_ moved to the core (app.html): leave.js now reads it too, and a tab opened
+// before the other module has ever loaded must not come up short a helper.
 
 /* THE APPROVAL DESK, in the app's own pattern -- "the advance approvals user interface is not aligning to our
    app standard yet": KPI cards; Pending / Decided pills; ONE standard table (sort, search, zone box, S/N, Excel and

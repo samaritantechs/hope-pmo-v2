@@ -32,7 +32,7 @@ const PUBLIC = new URL('../public/', import.meta.url).pathname;
    core first, so every slice that starts and ends inside one module still works; a slice that
    starts in a module and ends in the core bounds itself with page('name') instead. */
 const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
-const MODS = ['deduct', 'advance', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud', 'checklist', 'annual'];
+const MODS = ['deduct', 'advance', 'leave', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud', 'checklist', 'annual'];
 const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
 const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
@@ -1214,7 +1214,7 @@ test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, 
   // Out of the vm realm (its Array is not this realm's Array, and strict deepEqual minds).
   const nav = JSON.parse(JSON.stringify(ctx.NAV)), order = JSON.parse(JSON.stringify(ctx.MGMT_ORDER));
   const mgmt = nav.filter(n => n.div === 'mgmt').map(n => n.id);
-  const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'impreq', 'impappr', 'imprep', 'deduct',
+  const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leave', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
     'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
   assert.deepEqual(order, expected, 'the management division, in its own order');
   for (const id of expected) assert.ok(mgmt.includes(id), id + ' is flagged div:mgmt');
@@ -2091,7 +2091,10 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/id="rSupCode"/.test(admin) && /approverCode: supSel && !supSel\.disabled \? supSel\.value : undefined/.test(admin), 'the role form names one supervisor for the whole role');
   assert.ok(/id="kSupRole"/.test(admin) && /roleSupervisor: !!\(document\.getElementById\('kSupRole'\)/.test(admin), 'the code form can write them on the role instead');
   assert.ok(/r\.approverName/.test(admin) && /msimamizi \/ supervisor: ' \+ esc\(r\.approverName\)/.test(admin), 'the roles table names the role\'s supervisor, never the code');
-  assert.ok(/desk\.deptRoles/.test(adv) && /supervisor of every code of: /.test(adv), 'the desk says which roles it supervises whole');
+  // advDeskLine_ (desk.deptRoles, "supervisor of every code of: ") lives in the core now
+  // (app.html), not this module: leave.js reads it too, and a tab opened before advance.js has
+  // ever loaded must not come up short a helper (see the leave module tests for the same read).
+  assert.ok(/desk\.deptRoles/.test(appCore()) && /supervisor of every code of: /.test(appCore()), 'the desk says which roles it supervises whole');
   const sql46 = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-046-role-supervisor.sql'), 'utf8');
   assert.ok(sql46.includes('alter table public.roles add column if not exists approver_code text;') && sql46.split('\n').length < 100, 'RUN-ME-046, under 100 lines');
   // The request screen is the viewer's ROLE in their zone: the names, the history, the month's rule with a date alone.
@@ -2122,7 +2125,8 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok((admin.match(/RUN-ME-045|routingNote/g) || []).length >= 3, 'both forms say when the routing columns are not in');
   assert.ok(/Ombi lako litaenda kwa \/ Your request goes to: <b>' \+ esc\(d\.route\.label\)/.test(adv), 'the ask says who will see it');
   assert.ok(/d\.route\.kind === 'none' \? ' bad'/.test(adv), 'and says "nobody" in red');
-  assert.ok(/Dawati lako \/ Your desk: /.test(adv) && /desk\.supervisees/.test(adv) && /d\.unrouted/.test(adv), 'the desk says what it is and names the unrouted');
+  // desk.supervisees is advDeskLine_'s own text, in the core now (see the earlier note); the rest is still this module's.
+  assert.ok(/Dawati lako \/ Your desk: /.test(adv) && /d\.unrouted/.test(adv) && /desk\.supervisees/.test(appCore()), 'the desk says what it is and names the unrouted');
   assert.ok(/key:'routeTo', label:'Kwa \/ To'/.test(adv) && /r\.route/.test(adv), 'each row says where it went (a chip; the full wording is in the drawer)');
   /* HOW TO REPORT A MISSING PERSON, said on the request tab -- "how must they report a missing person so that when those staff login they must see themselves". */
   assert.ok(/Jina lako halionekani\? Mwambie GMO wako au HR atume/.test(adv) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(adv), 'the request tab says what to send HR when a name is missing');

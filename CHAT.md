@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 57**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 58**.
 
 ---
 
@@ -76,6 +76,34 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#680** — Leave / Holiday requests: the FOMU YA RUHUSA NA LIKIZO sheet, moved in (handbook
+  Part 58). "We need to add 2 tabs: Leave / holiday where staff request leaves & holidays, the
+  Leave reports – for leaves and holiday reports management ... the tunnels and approvals must
+  be the same to advances when people request leaves / holidays." Two tabs (`leave`, the ask
+  and, for an approver, the desk together; `leaverep`, the report), one new table
+  (`leave_requests`, `db/RUN-ME-047-leave-requests.sql`), and the approval tunnel written once:
+  a leave request carries the same `req_role` / `req_code` / `zone` an advance request would, so
+  advance's own routing (`advRouting_`, `advRouteOf_`, `advDeskOf_`, `advSees_`, `advHolds_`)
+  decides a leave request exactly the way it decides an advance, with no second copy. Not
+  carried over, on purpose: advance's calendar-month unit and Finalize/Reopen (leave has no
+  payroll month to close; it expires instead by its own start date, not decided before it
+  arrives); the one-per-month limit (replaced by an overlap check on this person's own other
+  open request, which the Google Form never had at all); the balance exactly as the sheet's own
+  unconditional `SUMIF` read it (a Disapproved or Pending request no longer costs the balance;
+  only Approved days do; Pending is shown, not subtracted); a third, separately-typed day count
+  (the sheet's own rows show two disagreeing with each other; here `days` is always the two
+  dates, inclusive); a reset of the balance on a new year (nothing resets it, exactly as the
+  sheet's own formula never did — **whether it should is the owner's to decide, flagged, not
+  guessed**). `advDeskLine_` moved from `advance.js` into the core page, since two
+  independently-loaded modules now read it. Checked with a dedicated fixture
+  (`test/leave.test.mjs`): the ask, the day count, the overlap guard, the balance, the desk's
+  routing and bulk decide, expiry by start date (written to the row, not just read that way),
+  the report's per-row balance, no month-lock, the missing-table fallback (alone and with
+  neither migration run), and the customer-service special case. `npm test`: 1,508 pass. No
+  read on `/api/upload` or `/api/call`; a front-end change, `BUILD 2026-11-12-b`. **Not done:**
+  no third staff database (HR's existing advance registry is reused as-is); no Excel export
+  beyond the standard board buttons every screen already has. **Waiting on the owner:** whether
+  the 26-day annual allowance should reset each calendar year.
 - **#679** — the Exp.Def week was never walked past Friday (handbook Part 57). "Expected
   defaulters goes mon to sunday not mon to fri bro." A finished past week's report, and the
   card behind a leader's name, silently stopped at Friday -- Saturday and Sunday were never
@@ -527,6 +555,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
+- **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
+  should reset each calendar year — nothing resets it yet, the same running ledger the Google
+  Sheet's own formula kept, on purpose, until the owner says otherwise.
 - **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
   e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,
