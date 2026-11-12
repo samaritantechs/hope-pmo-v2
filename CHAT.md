@@ -89,10 +89,20 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   somebody with no team, the roles the others of that zone carry. **Head-office people** are
   filed by department (`HQ - PMO`, as the registry already names it) and offered by ROLE
   (section 7). No code that runs for a user changed, no page: `BUILD` stays `2026-11-11-b`.
-  **Handed over:** the script for the three (its answer is not back). The owner was told which
-  role word was written for whom (the forms give none: the desk Teams & Staff names each on),
-  that one form's birth date is not its NIDA's, that one NIDA has nineteen digits, and that a
-  marital status and an e-mail address are not stored (the registry has no box for them).
+  **Reviewed alone**: a three-reader panel was started and failed twice in a row on the
+  account's usage-credit limit; checked instead by hand against a real PostgreSQL (section 7).
+  **The answer is back.** Of the three, one was added as new (LEGAL, HQ - PMO); the other two
+  were already in the registry, filed generically as PMO, so the first script's NEW left them
+  untouched. A second script asked for those two by PLACE, to fill whatever was still empty on
+  their rows; it changed neither of them, because every box their form would have filled was
+  already filled in the registry — nothing was missing after all. **Flagged, not acted on:**
+  the one added as new shares two of its three names with somebody already filed in the same
+  zone, under a shorter form of the name — the row said so on its own ("look: a name like it is
+  already in this zone"), and whether the two are one person is the owner's to say (section 8):
+  a script never merges two staff records on a name alone. The owner was also told which role
+  word was written for the one added (the forms give none: the desk Teams & Staff names each
+  on), that one form's birth date is not its NIDA's, that one NIDA has nineteen digits, and that
+  a marital status and an e-mail address are not stored (the registry has no box for them).
 - **Staff registry, 12 Nov** — a list of twenty-seven and its follow-up of five; **every answer
   is back, and all that was asked is done but one line that was cut off in the paste.** The
   staff of three teams of one zone came as their GMO has them (fourteen people, names only)
@@ -375,6 +385,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **A chat can stop in the middle of a change without a word.** On the night of 11 Nov it did,
   for six hours, until the next scheduled check woke it; the change sat unpushed on the chat's
   machine. Push work in progress to the chat's own branch before a long step. On 12 Nov the
+  machine itself restarted twice under three reviewers, each time losing the local test
+  database (not the repository or the scratch folder): the second restart also emptied the
+  account's usage credits, so the review that had failed once on a restart failed again on
+  that, and #675 went in checked by hand instead (section 7). On 12 Nov the
   machine itself restarted under three reviewers: the pushed commit and the scratch folder were
   still there, the test database had to be started again, and the review was resumed from its
   run. Hand over what is ready before a review, when it is safe to run and to run again.
@@ -402,6 +416,14 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   sends the whole staff of a team, expect the registry to hold them under an older zone. The
   MOVE that files them under their team's zone is what puts them on their team's code: say so
   to the owner, it is the reason the list was sent.
+- **A NEW that comes back ALREADY IN THE REGISTRY is asked again as PLACE** — the person is
+  there, and PLACE fills only what is empty. The same holds with no team at all: two
+  head-office staff came back ALREADY IN THE REGISTRY under a bare department role, and a PLACE
+  with no role or zone on the row touched neither, because every box was already filled.
+- **A script never merges two staff records on a name alone.** "Look: a name like it is already
+  in this zone" is the script noticing, not deciding; a staff script can switch one record to
+  Inactive and move a form onto the other once the owner says they are the same person, and not
+  before.
 - **A name a list spells differently is asked for in the registry's own spelling.** When an
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
@@ -443,8 +465,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   one southern team); the phone, account and NIDA of the three officers added by name only; and
   whether the list of the three teams is their whole staff (if it is, the people the registry
   files on those teams who are not on it are to be asked about).
-  Of the three head-office forms: the answer of their script; and, to confirm with the staff,
-  the NIDA that has nineteen digits and the birth date that is not the one in its NIDA.
+  Of the three head-office forms: **whether the one added as new and the shorter-named record
+  already filed in the same zone are one person** — if so, say which staff ID to keep; a script
+  then switches the other to Inactive and moves its form across. If not, say so and this is
+  closed. And, to confirm with the staff: the NIDA that has nineteen digits and the birth date
+  that is not the one in its NIDA.
   Optional: `db/RUN-ME-2026-11-11b-hint-team-zone-is-its-gmos.sql` (the two tips that say where
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
