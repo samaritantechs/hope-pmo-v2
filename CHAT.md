@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-d` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 60**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-e` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 61**.
 
 ---
 
@@ -77,6 +77,28 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#684** — Clicking a name on Omba Likizo: the ask form's fields wired before they existed
+  (handbook Part 61). "clicking name on omba likizo - Imeshindikana / Could not load. Cannot set
+  properties of null (setting 'onchange')." `VIEWS.leavereq` wired `#lvReason`/`#lvStart`/
+  `#lvEnd`/`#lvSubmit` inside its own promise, which resolves BEFORE `drawView_()` paints `HEAD`
+  into the page -- so the first time a name was ever picked (the moment those elements are
+  first drawn at all), the wiring reached a DOM that did not have them yet, threw on
+  `null.onchange`, and the whole render aborted before painting: exactly "Imeshindikana / Could
+  not load." The same bug class HOPE Loan's own HEAD buttons had on first write (the note
+  beside `wireLnCs_` in `app.html`); advance's own ask screen never had it, because its one
+  button is wired from the core's `wireForms()` and reads its chosen staff from `S.advReq`
+  itself, no argument to capture. Fixed the same way: all four now wired from
+  `wireLeaveDesk()`, called from the core's `wireBar()` after the paint -- the function's own
+  comment already said it was meant to cover "any of its three tabs," it just never had these
+  four added to it. `leaveSubmit_` takes no argument any more, reading `S.leaveReq.chosen`
+  itself like `advSubmit()` does. Checked two ways: a new real-browser check,
+  `tools/browser-checks/portal-leave-ask.mjs` (picks a name, confirms no script error, confirms
+  all four are genuinely wired and do something, submits one request with what was typed --
+  times out waiting for the form to ever appear against the original code), and a fast
+  source-level test in `test/pages.test.mjs` pinning the same shape, part of `npm test`. `npm
+  test`: 1,515 pass. No read on `/api/upload` or `/api/call`; `BUILD 2026-11-12-e`. **Not
+  done:** the desk and report tabs needed no change, already wired the right way since they
+  were built.
 - **#682** — Expected Defaulters, full week: Sunday is a day of its own, not folded into Monday
   (handbook Part 60). "i said lets give all the expected defaulters to sunday for full week
   recoveries. am sure assignments fall there too bro." Both copies of `rollSun` (one in
