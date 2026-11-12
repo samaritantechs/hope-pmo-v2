@@ -1410,6 +1410,19 @@ test('the dated stages keep the append/replace choice', async () => {
   }
 });
 
+/* "i do not upload disbursment sheet, remove it in uploads. i only upload approved/
+   proceseessed, use it everywhere necesary for loan approvals and disb dates" -- the two
+   stages dropped from the Upload page's picker (public/upload.html) are refused here too, so
+   an old saved link naming one cannot slip past the page being changed. Every stage still
+   genuinely used by this pipeline must stay untouched. */
+test('an upload can no longer choose the Pending Disbursement or Disbursed Loans stage', async () => {
+  const { LOAN_UPLOAD_STAGES_REMOVED } = await import('../api/upload.js');
+  assert.deepEqual([...LOAN_UPLOAD_STAGES_REMOVED].sort(), ['disbursed', 'pending_disb']);
+  for (const stage of ['unassigned', 'assigned', 'unassessed', 'assessed', 'pending_approval', 'approved']) {
+    assert.ok(!LOAN_UPLOAD_STAGES_REMOVED.has(stage), stage + ' must still be an uploadable stage');
+  }
+});
+
 test('other stamped reports are untouched by the redo rule', async () => {
   const { stampPlan } = await import('../api/upload.js');
   const NOON_EAT = Date.parse('2026-08-14T09:00:00Z');

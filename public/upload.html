@@ -199,9 +199,13 @@
         <option value="assessed">Assessed Applications</option>
         <option value="pending_approval">Pending Approval</option>
         <option value="approved">Approved (Processed)</option>
-        <option value="pending_disb">Pending Disbursement</option>
-        <option value="disbursed">Disbursed Loans</option>
       </select>
+      <!-- "i do not upload disbursment sheet, remove it in uploads. i only upload
+           approved/proceseessed, use it everywhere necesary for loan approvals and disb dates" --
+           the two stages between Approved and the end of the pipeline are gone from this list
+           (api/upload.js refuses their values too, in case an old saved link still names one).
+           The in-app Disburse button still moves a loan past Approved when it is used; this
+           change is only about the upload sheet. -->
     </div>
 
     <!-- For reports that ACCUMULATE, the upload stamp is the handle that makes a day
@@ -389,7 +393,6 @@ function dataDateLabel_(){
   if (t === 'loans'){
     var s = $('stage').value;
     if (s === 'approved') return 'APPROVED DATE';
-    if (s === 'disbursed') return 'DISB DATE';
   }
   return '';
 }
@@ -1227,7 +1230,6 @@ function suggestSheet(names){
       unassigned: /^unassigned applications$/, assigned: /^assigned applications$/,
       unassessed: /^unassessed/, assessed: /^assessed applications$/,
       pending_approval: /^pending approval$/, approved: /^approved/,
-      pending_disb: /^pending disbursement$/, disbursed: /^disbursed loans$/,
     }[$('stage').value];
     return find(m);
   }

@@ -2039,6 +2039,18 @@ test('the salary-advance navs, screens, F.O row and uploads are wired', () => {
    page's hint per kind now matches what the server does: the demand-notice register is replaced
    by REF NO or Kumb.Na., the Google Sheets registers are updated on their own facts, the
    payment books keep the copy already in, and only the un-keyed registers still append. */
+/* "i do not upload disbursment sheet, remove it in uploads. i only upload approved/
+   proceseessed, use it everywhere necesary for loan approvals and disb dates". */
+test('the loan-stage picker no longer offers Pending Disbursement or Disbursed Loans', () => {
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  assert.ok(!/Pending Disbursement/.test(up) && !/Disbursed Loans/.test(up), 'the two removed options are still on the page');
+  assert.ok(!/value="pending_disb"/.test(up) && !/value="disbursed"/.test(up), 'the two removed stage values are still selectable');
+  for (const opt of ['Unassigned Applications', 'Assigned Applications', 'Unassessed Applications',
+    'Assessed Applications', 'Pending Approval', 'Approved (Processed)']) {
+    assert.ok(up.includes(opt), opt + ' -- a genuinely used stage went missing too');
+  }
+});
+
 test('the upload page says what a re-upload does per kind, from the key the server writes on', () => {
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
   const map = up.match(/var TYPE_BEHAVIOUR = \{([\s\S]*?)\};/);

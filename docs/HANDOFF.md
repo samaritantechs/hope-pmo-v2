@@ -4718,6 +4718,67 @@ first place (a column renamed in an export, a date spelt a way the importer does
 that is an upload-quality question, not this report's to answer, and the owner was told to say
 if a particular team's uploads are the ones missing it.
 
+## Part 55 — The disbursement sheet, and the dates it left empty
+
+> "I do not upload disbursment sheet, remove it in uploads. I only upload approved/processed,
+> use it everywhere necessary for loan approvals and disb dates" — the owner, 12 November 2026
+
+Two of the Upload page's eight loan-pipeline stages — Pending Disbursement, Disbursed Loans —
+are no longer offered, and the server refuses them if asked for directly: nobody here ever ran
+either, confirmed with the owner (the in-app Disburse button that would otherwise reach the
+same stage is also never used — every loan this company works simply sits at Approved). Two
+things on the Upload page were reading nothing because of it; one, read before this shipped,
+was a bigger gap than the sheet itself.
+
+**The small one first.** `disb_date` on a loan is set only by the Disbursed Loans upload or the
+Disburse button, both unused, so it is empty on every row, forever. Nothing elsewhere in the
+portal needed fixing for this — `SALES_STAGES` (the one definition of "this is a sale", read
+everywhere a sale is counted) already starts at `approved`, so sales figures were never missing
+it. The one place still gated on `disb_date` alone was the Audit Report panel's PAR > 30
+denominator (the cohort of loans disbursed in a chosen month, against the loans table): a book
+with no `disb_date` anywhere gave it nothing to total, so `disbursedLoans` and `disbursedTotal`
+came back zero and null every month, and `par30` — the auditor's own headline ratio — read
+blank beside a real number of defaulters. **This is the whole-portfolio PAR that has stood on
+the waiting list since the 11th,** not only waiting on a historic upload: the figure the owner
+was told to wait for would have stayed blank even once uploaded, because the column it was
+read from is one this book never fills.
+
+**The fix.** A loan counts here the same way it counts everywhere else — `SALES_STAGES`, not
+`disbursed` alone — and its own date is `disb_date` where a row genuinely carries one, else
+`approved_date`, the same fallback `loanTotalsByTeam` already uses a few lines above in this
+same file. Fetched by stage, not by either date's range: a range filter on one column can only
+drop rows a book like this one never had in it to begin with, never find more than reading by
+stage already does, and it costs no more than the read `par`'s own all-time total already makes
+of this table.
+
+**Checked** against the exact fixture the existing audit-report test already proves correct
+(disb_date set on every row, nothing changed there — isolated from `tables()`'s own stray
+loans, which would otherwise have joined the count once SALES_STAGES started reading them too),
+and a second fixture built the other way: three approved-only loans across two months, one
+rejected loan that must not count, and one loan with a real `disb_date` a month after its
+`approved_date`, which must be dated by the real one and not also picked up under its approval
+month. `npm test`: 1,494 pass.
+
+**What it costs.** Nothing on `/api/upload` or `/api/call`. The audit report's own read of the
+loans table is no larger than `par`'s all-time total already makes of it; no page changed for
+an ordinary user, so `BUILD` moved only for the Upload page's own change below, not for this.
+
+**Not done.** The defaulter deck's own `disb_date` column — the rotation's cycle day (Part 54)
+and the PAR-by-year breakdown on this same `par` tab — is a different column on a different
+upload, fed by the daily current-book file rather than the loans-stage pipeline, and this
+change does not touch it: a defaulter row with no readable disbursement date there is still
+read exactly as Part 54 left it.
+
+## Part 56 — Two loan-pipeline stages dropped from Upload; defence in depth
+
+The Upload page's loan-stage picker no longer offers Pending Disbursement or Disbursed Loans
+(`public/upload.html`); `api/upload.js` refuses the same two stage values outright, named in
+one small exported set (`LOAN_UPLOAD_STAGES_REMOVED`) so an old saved link cannot slip one past
+the page having changed. The in-app Disburse button (`managerDisburse`, a wholly different code
+path) still writes a loan to `disbursed` the one time somebody uses it; this is only about the
+upload sheet, and the pipeline's own stage machinery is otherwise untouched. `BUILD
+2026-11-12-a`.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

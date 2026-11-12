@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-11-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 54**.
+**As of 12 November 2026** — portal `BUILD 2026-11-12-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 56**.
 
 ---
 
@@ -76,6 +76,27 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#678** — the disbursement sheet, and the dates it left empty (handbook Parts 55-56).
+  "I do not upload disbursment sheet, remove it in uploads. I only upload approved/processed,
+  use it everywhere necessary for loan approvals and disb dates." Pending Disbursement and
+  Disbursed Loans are gone from the Upload page's stage picker, and the server refuses the two
+  stage values outright (one named set, `LOAN_UPLOAD_STAGES_REMOVED`), in case an old saved
+  link still names one — the in-app Disburse button, confirmed never used either, still writes
+  the same stages the one time somebody uses it; only the upload sheet changed. **The bigger
+  half:** `disb_date` on a loan is set only by that sheet and the Disburse button, so it was
+  empty on every row, forever, and the Audit Report's PAR > 30 figure — the auditor's own
+  headline ratio — read it alone: `disbursedLoans` and `disbursedTotal` came back zero and
+  null every month, whatever was uploaded. **This is the whole-portfolio PAR that has been on
+  the waiting list since 11 Nov**, and it was not only waiting on a historic upload: the figure
+  would have stayed blank even once uploaded, reading a column this book never fills. Fixed: a
+  loan counts the same way it counts everywhere else (`SALES_STAGES`), dated by `disb_date`
+  where a row really has one, else `approved_date` — the same fallback `loanTotalsByTeam`
+  already used a few lines above in the same file. Checked against the existing audit-report
+  test (unchanged, isolated from a shared fixture's stray loans that would otherwise have
+  joined the count) and a new one: three approved-only loans across two months, a rejected one
+  that must not count, and one with a real `disb_date` a month later that must be dated by it,
+  not by its approval. No code on `/api/upload` or `/api/call`; no read added beyond what `par`
+  already makes of the loans table. `npm test`: 1,494 pass.
 - **#677** — a real defaulter is never silently absent from a leader's list (handbook Part 54).
   "some staff like managers have somedays not getting expected defaulters, something not
   reality... re-crosscheck expected defaulters being efficiently produced to everyone from
@@ -476,8 +497,15 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
-- **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); the historic
-  sales upload for the Audit report's whole-portfolio PAR; whether the e-mailed reports arrive.
+- **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
+  e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
+  blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,
+  a column this book never fills, so it would have stayed blank even once uploaded. Fixed
+  (`approved_date` now counts, the same as everywhere else). Whether the 2024-to-July-2026
+  historic sales still need uploading at all is now the open question: check the Audit Report
+  for a month in that range and say whether `par30` already shows a real number (the loans
+  table's own SALES-HISTORY import may already cover it) or still reads blank (then the upload
+  is still needed, and will now be read correctly once it is done).
   The older list in `docs/HANDOFF.md` Part 15 ("Waiting on you") has not been checked again.
   At the OLD address: the ZONE typed on the one team whose GMO is named on teams of four zones.
   Until then that team reads NO ZONE SET, its code lists nobody on the advance desk, and its
