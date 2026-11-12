@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 12 November 2026** — portal `BUILD 2026-11-12-e` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 61**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 62**.
 
 ---
 
@@ -77,6 +77,24 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#685** — a trigram index for the Legal tab's name/ref search (handbook Part 62). "postgress
+  is unsettled", with the dashboard's own error graph and the exact query the New-notice drawer's
+  search box sends (`ref`/`full_name ILIKE '%term%'`, scoped by snapshot_type, snapshot_date and
+  team). That query is `legalFind` (`api/_lib/portal-core.js`), gated to the `legal` tab only —
+  confirmed absent from `api/upload.js` and `api/call.js`/`call-core.js`, so neither sacred path
+  reads it, whatever the cause of the spike. Its leading-wildcard `ILIKE` cannot use any of
+  `defaulter_snapshots`' six existing indexes for the text match itself; only `pg_trgm` can.
+  `db/RUN-ME-054-legal-find-trigram-index.sql` adds two GIN trigram indexes, on `full_name` and
+  on `ref`, built `CONCURRENTLY` so `/api/upload`'s own writes to that table are never blocked
+  while they build. Verified on a 2.27-million-row fixture sized like the live book (42 teams,
+  150 days, two snapshot_types), with `EXPLAIN (ANALYZE, BUFFERS)` before and after: a real name
+  or ref search drops from 151 ms to 23-79 ms, a ref search to under 3 ms — and, reported rather
+  than hidden, the one honest cost: a bare 3-character fragment common across many names (the
+  search box's own floor) can come back a little SLOWER with the index (19.6 ms → 41.8 ms) than
+  without it, since the old plan could stop early walking a date index backward and the new one
+  first gathers every trigram match. No code changed, no `BUILD` bump — a database-only change.
+  **Not done:** whether this exact query caused the dashboard's own spike is still open; a chat
+  has no access to Supabase's Postgres logs to confirm it either way.
 - **#684** — Clicking a name on Omba Likizo: the ask form's fields wired before they existed
   (handbook Part 61). "clicking name on omba likizo - Imeshindikana / Could not load. Cannot set
   properties of null (setting 'onchange')." `VIEWS.leavereq` wired `#lvReason`/`#lvStart`/
@@ -670,6 +688,14 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner**: run `db/RUN-ME-054-legal-find-trigram-index.sql` (handbook Part 62, section 4
+  #685) — two GIN trigram indexes behind the Legal tab's slow search, each statement in Sections
+  2 and 3 run ALONE (select just that one line, not the whole file): `CREATE INDEX CONCURRENTLY`
+  is refused outright inside a transaction block, and the SQL editor sends a whole selection as
+  one. Running the whole file at once fails safely — "cannot run inside a transaction block",
+  nothing half-built — but does not build the index either. If the owner can also open Supabase's
+  Postgres Logs around the time of the "postgress is unsettled" screenshot and paste the actual
+  failing query, that would confirm or rule out whether this was the spike's real cause.
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.

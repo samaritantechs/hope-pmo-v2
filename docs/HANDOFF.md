@@ -5171,6 +5171,56 @@ code, it fails on the first assertion.
 **Not done.** Nothing else on this screen was touched -- the desk and report tabs, already
 wired the correct way since they were built, needed no change.
 
+## Part 62 — A trigram index for legalFind's name/ref search
+
+> "postgress is unsettled" -- the owner, 12 November 2026, with a Supabase dashboard showing a
+> spike in Postgres errors and the exact query `legalFind`'s search box sends.
+
+`legalFind` (api/_lib/portal-core.js) is the Legal tab's "search by ref, phone no and names"
+box, behind the New-notice drawer. Its `ILIKE '%term%'` carries a leading wildcard, which no
+ordinary B-tree index can use for the text match itself -- none of `defaulter_snapshots`' six
+existing indexes (`schema.sql`, RUN-ME-011, RUN-ME-034) help with that part; they only narrow by
+`team`/`snapshot_type`/`snapshot_date`. As the table grows with every day's upload, a name
+search gets proportionally slower, however those other columns narrow it, because Postgres
+still has to check each remaining row's text by hand.
+
+Whether this exact query caused the dashboard's own error spike could not be confirmed from
+here -- a chat has no database access and cannot open Supabase's own Postgres logs, which would
+say what actually failed at that moment. What was confirmed, on a 2.27-million-row, 150-day
+fixture built to match the live book's own shape (42 teams, 180 customers each, two
+snapshot_types -- the same sizing logic as RUN-ME-034), with `EXPLAIN (ANALYZE, BUFFERS)` before
+and after a trigram index: a realistic search (a customer's actual name, or their ref -- enough
+to find one person, which is what the screen is for) drops from 151 ms to 23–79 ms depending on
+how specific the term is, and a ref search drops to under 3 ms. Said plainly, the one honest
+cost: `legalFind`'s own floor is 3 characters, and a bare 3-letter fragment common across many
+names can come back a little SLOWER with the index than without it (19.6 ms -> 41.8 ms,
+measured) for a team-scoped search, because the old plan could walk a date-ordered index
+backward and stop the moment it had enough matches, while the new one first gathers every row
+sharing a trigram with the term. Neither number is close to a timeout either way, and a real
+name or ref -- not three random letters -- is what this index is for.
+
+**The fix**, `db/RUN-ME-054-legal-find-trigram-index.sql`: two GIN trigram indexes, on
+`full_name` and on `ref`. No code change -- `legalFind`'s own query is untouched; Postgres's
+planner simply has a faster path once the index exists. Built `CONCURRENTLY`, because
+`defaulter_snapshots` is written by `/api/upload`: an ordinary `CREATE INDEX` takes a lock that
+blocks every write on the table until the build finishes, which on the live book is almost
+certainly minutes, not the thirteen and five seconds the two builds took on this file's own
+test table with no traffic -- exactly the thing this repository is built never to do.
+`CREATE INDEX CONCURRENTLY` is refused outright inside a transaction block, and the SQL editor
+sends everything selected together as one, so the file says plainly, twice, to run each of the
+two index-creating lines ALONE -- and if that is not followed, the failure is safe: Postgres
+simply refuses with "cannot run inside a transaction block" and changes nothing, never a
+half-built index or a blocked upload.
+
+**What it costs.** No code changed, so nothing on `/api/upload` or `/api/call` beyond the one
+honest cost above, which is on a portal-only path (`legalFind` is gated to the `legal` tab,
+never reachable from upload or the call app). No `BUILD` bump -- a database-only change.
+
+**Not done.** The migration is handed to the owner, not run by this chat (no database access).
+Whether this was actually the cause of the dashboard's error spike is still open; if the owner
+can open Postgres Logs around the time of that spike and paste the actual failing query, that
+would settle it either way.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
