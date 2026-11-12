@@ -91,12 +91,20 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   would have stayed blank even once uploaded, reading a column this book never fills. Fixed: a
   loan counts the same way it counts everywhere else (`SALES_STAGES`), dated by `disb_date`
   where a row really has one, else `approved_date` — the same fallback `loanTotalsByTeam`
-  already used a few lines above in the same file. Checked against the existing audit-report
-  test (unchanged, isolated from a shared fixture's stray loans that would otherwise have
-  joined the count) and a new one: three approved-only loans across two months, a rejected one
-  that must not count, and one with a real `disb_date` a month later that must be dated by it,
-  not by its approval. No code on `/api/upload` or `/api/call`; no read added beyond what `par`
-  already makes of the loans table. `npm test`: 1,494 pass.
+  already used a few lines above in the same file. **Read before it shipped:** the first cut
+  fetched by stage with NO date floor at all — a reviewer, on a synthetic book of years of
+  sales history, showed it pulled every sale the book had ever made, in full, again on every
+  distinct month viewed, since the report's own cache is keyed by month and that read was not.
+  Fixed with a floor on EITHER date, at the start of the two months being audited: nothing that
+  belongs to either cohort is older than that on at least one of its two dates, so nothing is
+  lost, and the read is back to what the function's own comment always promised — two months,
+  not the whole history. Checked against the existing audit-report test (unchanged, isolated
+  from a shared fixture's stray loans that would otherwise have joined the count) and a new
+  one: three approved-only loans across two months, a rejected one that must not count, one
+  with a real `disb_date` a month later dated by it and not by its approval, and one a year and
+  a half outside the floor that must stay outside it; and, directly, a 6,000-loan synthetic
+  book where the bounded read returns well under a tenth of it for one month. No code on
+  `/api/upload` or `/api/call`. `npm test`: 1,494 pass.
 - **#677** — a real defaulter is never silently absent from a leader's list (handbook Part 54).
   "some staff like managers have somedays not getting expected defaulters, something not
   reality... re-crosscheck expected defaulters being efficiently produced to everyone from
@@ -467,6 +475,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   answer shows the person (two names the same, the third a variant), the next script asks for
   them as the registry has them; nothing is re-spelt. Tell the owner which name was taken for
   which.
+- **"Only find more rows, never fewer" is not the same promise as "cost nothing more."** A
+  date-range filter dropped for fear of losing a row (Part 55) was dropped with no floor at
+  all, not a wider one — fetching a whole book's history, in full, on every month a cached
+  report is asked to look at, since the cache was keyed by month and the query no longer was.
+  Widen a filter to stop it from losing something; dropping it outright is a different, much
+  more expensive promise, and a cache keyed by a value a query no longer depends on buys
+  nothing on the second ask.
 - **A rescue keyed on the wrong thing can double what it was built to save from going
   missing.** The week's one-time catch for an undated customer (Part 54) was keyed by role and
   leader as well as the customer, assuming those stay put for the week; `days_elapsed` moves a

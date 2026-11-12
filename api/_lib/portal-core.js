@@ -4102,14 +4102,19 @@ async function auditReportCompute_(db, user, month, nowMs) {
     /* "i only upload approved/processed, use it everywhere necessary for loan approvals and
        disb dates" -- filtering on disb_date alone found nothing for a book that never carries
        one. Fetched by STAGE (SALES_STAGES: dashboard-core.js's own rule for "this is a sale"),
-       not by either date: a row the approval upload stamped carries approved_date and may
-       carry no disb_date at all, and a stray historic row could be the other way around, so a
-       range filter on just one column can only ever drop rows, never find more than reading by
-       stage already does. Which of the two dates a row belongs to is decided below, once, the
-       same way loanTotalsByTeam already decides it a few lines above. Not a bigger read than
-       that tab already makes of this same table. */
+       not by either date column alone: a row the approval upload stamped carries approved_date
+       and may carry no disb_date at all, and a stray historic row could be the other way
+       around. The floor below is on EITHER column, so it drops nothing that can belong to
+       either cohort month -- whichever of the two a row is actually dated by (decided once,
+       below, the same way loanTotalsByTeam already decides it a few lines above) is at or
+       after prevStart precisely because that is what makes it this month's or last month's.
+       READ BEFORE THIS SHIPPED: the first cut of this had no date bound at all, "not by
+       either date" taken too far -- a floorless read of every sale this book has ever made,
+       re-pulled in full on every distinct month viewed since the cache above is keyed by
+       month while the query was not. This is the fix: bounded like every other reader of
+       this table, so paging between months costs what paging between months should. */
     fetchAll(() => onTeams(db.from('loans').select('team, stage, disb_date, approved_date, principal_amt, loan_amt, interest_amt')
-      .in('stage', SALES_STAGES), user.teams)).catch(() => []),
+      .in('stage', SALES_STAGES).or(`disb_date.gte.${prevStart},approved_date.gte.${prevStart}`), user.teams)).catch(() => []),
     settingsMany(db, ['BONUS_SALES_PCT', 'BONUS_COL_PCT', 'BONUS_REC_PCT', 'RECOVERY_TARGET_MONTHLY']),
   ]);
   const thr = { sales: cfg.num('BONUS_SALES_PCT', 80), col: cfg.num('BONUS_COL_PCT', 92), rec: cfg.num('BONUS_REC_PCT', 120) };

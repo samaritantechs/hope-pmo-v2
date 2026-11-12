@@ -4746,18 +4746,28 @@ read from is one this book never fills.
 **The fix.** A loan counts here the same way it counts everywhere else — `SALES_STAGES`, not
 `disbursed` alone — and its own date is `disb_date` where a row genuinely carries one, else
 `approved_date`, the same fallback `loanTotalsByTeam` already uses a few lines above in this
-same file. Fetched by stage, not by either date's range: a range filter on one column can only
-drop rows a book like this one never had in it to begin with, never find more than reading by
-stage already does, and it costs no more than the read `par`'s own all-time total already makes
-of this table.
+same file.
+
+**Read before it shipped.** The first cut fetched by stage with no date floor at all — "a range
+filter on one column can only drop rows", taken past the point that held. A floor on either
+column alone is not the same as none: a reviewer, running the real code on a synthetic book of
+years of sales history, showed the floorless fetch pulled every sale this book had ever made,
+in full, and did it again on every distinct month viewed, since the report's own cache is keyed
+by month while that read was not — the Audit Report's prev/next-month arrows alone would have
+re-read the whole history four times over in one minute. Fixed by a floor on EITHER date, at
+`prevStart`: nothing that can belong to either cohort month is older than that on at least one
+of its two dates, so nothing is lost, and a two-month-old book now costs what the function's own
+long-standing comment already promised — one read of two months' loans, not the whole of it.
 
 **Checked** against the exact fixture the existing audit-report test already proves correct
 (disb_date set on every row, nothing changed there — isolated from `tables()`'s own stray
 loans, which would otherwise have joined the count once SALES_STAGES started reading them too),
 and a second fixture built the other way: three approved-only loans across two months, one
-rejected loan that must not count, and one loan with a real `disb_date` a month after its
-`approved_date`, which must be dated by the real one and not also picked up under its approval
-month. `npm test`: 1,494 pass.
+rejected loan that must not count, one loan with a real `disb_date` a month after its
+`approved_date` (dated by the real one, never picked up twice), and one loan a year and a half
+outside the floor, proving it stays outside. Separately, against a synthetic book of 6,000
+loans across 2.5 years: the bounded fetch returns well under a tenth of the book for one
+month's audit, not the floorless whole of it. `npm test`: 1,494 pass.
 
 **What it costs.** Nothing on `/api/upload` or `/api/call`. The audit report's own read of the
 loans table is no larger than `par`'s all-time total already makes of it; no page changed for

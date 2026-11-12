@@ -11791,16 +11791,21 @@ test('the audit report\'s disbursed cohort still counts a loan that only ever ca
     // a real disb_date, where there is one, is read in preference to approved_date -- it is
     // this one's July approved_date that must NOT also count it a second time.
     { team: 'KONGOWE', stage: 'disbursed', approved_date: '2026-07-11', disb_date: '2026-08-02', principal_amt: 400000, loan_amt: 544000 },
+    // read before this shipped: the cohort fetch's first cut had no date floor at all, so it
+    // re-pulled every sale this book had ever made on every month viewed. A loan a year and a
+    // half outside the window, on neither date, proves the floor is there and still finds it
+    // nowhere -- not a regression into reading the whole history again.
+    { team: 'KONGOWE', stage: 'approved', approved_date: '2025-01-05', principal_amt: 700000, loan_amt: 952000 },
   ];
   const d = await run('auditReport', { month: '2026-07' }, ADMIN, dbWithRpc(t));
   const c = d.cohorts[0];
-  assert.equal(c.disbursedLoans, 2, 'the two approved-only July loans, not the rejected one, and not the one really disbursed in August');
+  assert.equal(c.disbursedLoans, 2, 'the two approved-only July loans, not the rejected one, not the one really disbursed in August, not the 2025 one');
   assert.equal(c.disbursedTotal, 2040000, 'their principal + interest only');
   assert.equal(c.par30, 73.5, 'the same PAR > 30 as the fixture above, reached through approved_date instead of disb_date');
   const aug = await run('auditReport', { month: '2026-08' }, ADMIN, dbWithRpc(t));
   assert.equal(aug.cohorts[0].disbursedLoans, 1, 'the one loan with a real disb_date is dated by IT, in August, not by its July approval');
   const p = d.cohorts[1];
-  assert.equal(p.disbursedLoans, 1, 'June\'s one approved-only loan');
+  assert.equal(p.disbursedLoans, 1, 'June\'s one approved-only loan, not the 2025 one a year and a half outside the floor');
 });
 
 /* SALARY ADVANCE -- "I found the this file looks suspicious warning on the google sheet for
