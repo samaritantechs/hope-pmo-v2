@@ -6576,32 +6576,49 @@ test('the dashboard performance strip carries the three percentages, their avera
 });
 
 /* THE FOURTH ARROW -- "show the single rising and dropping arrow in each of loan apps, sales,
-   collection and recovery cards against last week's performance". The other three can go null
-   when the budget-limited read of last week comes back empty; apps never can, because myLoans
-   is read in full for the whole span unconditionally (see appsCount's own note in dashboardFull)
-   -- so a week with genuinely zero applications still prints a real zero, never "no previous
-   period". And it must never disagree with the "Loan applications" trend card right below the
-   strip, since both now read the one appsInRange_ rule. */
-test('the loan-apps arrow is a plain count against last week, and it agrees with the trend card', async () => {
+   collection and recovery cards against last week's performance", and then "not yet" on the
+   arrow's first real screenshot: last week read 741, this week 486, a steep-looking fall that
+   was an artifact, not a trend -- a chunk of what last week brought in had simply been assigned
+   or decided by the time this ran, days later, and so dropped out of a count that only ever
+   counted applications still WAITING. The strip now reads appsArrivedInRange_ (every
+   application that arrived, whatever stage it sits at now) rather than appsInRange_ (the trend
+   card's own current-backlog rule) -- so last week's figure is fixed once the week is over,
+   the same way a sale or a collection is, and the arrow answers the question it is meant to:
+   are more or fewer applications arriving, not how much of each week's own pile is still
+   unworked. The other three arrows can go null when the budget-limited read of last week
+   comes back empty; apps never can, because myLoans is read in full for the whole span
+   unconditionally -- so a week with genuinely zero applications still prints a real zero,
+   never "no previous period". */
+test('the loan-apps arrow counts every application that arrived, not just what is still waiting', async () => {
   const t = tables();
   t.loans = [
-    // THIS WEEK (Mon 2026-07-20 .. Sun 2026-07-26): three apps.
+    // THIS WEEK (Mon 2026-07-20 .. Sun 2026-07-26): three still waiting, one already decided.
     { id: 'w1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 500, upload_date: '2026-07-20' },
     { id: 'w2', team: 'KONGOWE', stage: 'assigned', requested_amt: 300, upload_date: '2026-07-22' },
     { id: 'w3', team: 'MBAGALA', stage: 'unassigned', requested_amt: 200, upload_date: TODAY },
-    // LAST WEEK (Mon 2026-07-13 .. Sun 2026-07-19): one app.
+    // Arrived this week, but already approved by the time this runs -- it still arrived this
+    // week, and the arrow must still count it, even though the trend card's own tile will not.
+    { id: 'a1', team: 'KONGOWE', stage: 'approved', requested_amt: 777, upload_date: '2026-07-21', approved_date: '2026-07-21' },
+    // LAST WEEK (Mon 2026-07-13 .. Sun 2026-07-19): one still waiting, one already processed on.
     { id: 'p1', team: 'KONGOWE', stage: 'assigned', requested_amt: 400, upload_date: '2026-07-15' },
+    /* THE EXACT CASE "not yet" FLAGGED: an application that arrived last week and has since
+       moved on (rejected here; approved or disbursed would make the same point) must still
+       count toward last week's own total -- it is a real arrival, not a current wait state. */
+    { id: 'p2', team: 'KONGOWE', stage: 'rejected', requested_amt: 600, upload_date: '2026-07-17' },
     // Outside either window: must count toward neither.
     { id: 'o1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 999, upload_date: '2026-06-01' },
-    // This week's window, but past the apps stages -- an approval, not an app.
-    { id: 'a1', team: 'KONGOWE', stage: 'approved', requested_amt: 777, upload_date: '2026-07-21', approved_date: '2026-07-21' },
   ];
   const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
-  assert.equal(d.perf.appsCount, 3, 'three apps this week');
-  assert.equal(d.perf.appsPrevCount, 1, 'one app last week');
-  assert.equal(d.perf.dApps, 2, 'a plain count difference (3 - 1), never a percentage');
+  assert.equal(d.perf.appsCount, 4, 'four applications arrived this week, including the one already decided');
+  assert.equal(d.perf.appsPrevCount, 2, "two arrived last week, including the one since rejected -- it still arrived");
+  assert.equal(d.perf.dApps, 2, 'a plain count difference (4 - 2), never a percentage');
+  /* THE DIVERGENCE IS DELIBERATE. appsTrend's own total still answers "how much of this week
+     is still waiting" -- it excludes a1 (already approved), so it reads 3, not 4, and that is
+     correct for what IT is for. The two numbers on this screen are now allowed to differ, and
+     this proves they do, for the reason the comment above names. */
   const weekTotal = d.appsTrend.reduce((s, x) => s + x.apps, 0);
-  assert.equal(d.perf.appsCount, weekTotal, "the strip's count must agree with the trend card's own total");
+  assert.equal(weekTotal, 3, "the trend card's own backlog total excludes the one already approved");
+  assert.equal(d.perf.appsCount, 4, "while the strip's arrival count still includes it");
 
   // A week with no apps at all last week is still a real, displayable zero.
   const t2 = tables();

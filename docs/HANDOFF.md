@@ -5270,6 +5270,57 @@ inline script in `app.html`, this one included, is parsed by `test/pages.test.mj
 today) would serve this arrow better than the card's own current-snapshot rule is a real,
 separate question, not decided here either way.
 
+## Part 64 — The open question from Part 63 answered: a false fall, fixed
+
+> "not yet" -- the owner, 13 November 2026, on a screenshot of the arrow's first real screen:
+> Loan apps 486, down from 741 the week before, a steep-looking drop circled alongside every
+> other arrow on the strip and the trend cards beneath it.
+
+Part 63 raised, and left open, exactly this: `appsInRange_` (unassigned/assigned stage, read
+right now) is a CURRENT snapshot, so a week that is a week old has had time for a real share
+of what it brought in to be assigned, approved or rejected -- and the moment it is, that
+application stops counting toward that week's own total. 741 was never the true count of what
+arrived last week; it was whatever was LEFT of it, read today, after six more days of being
+worked. 486, read the same instant for a week barely begun, had almost no such time to drain.
+The arrow compared a fresh number to a half-drained one and called the difference a fall.
+
+**Fixed by giving the strip's arrow its own, steadier rule**, `appsArrivedInRange_`: every
+loan whose upload date or creation date falls in the week counts, WHATEVER stage it sits at
+now -- the same kind of fixed-at-the-time fact `SALES_STAGES` already treats a sale as once
+it is approved, never retroactively undone by what happens to the loan afterward. The "Loan
+applications" trend card right below the strip is untouched and keeps `appsInRange_` exactly
+as it was: it answers a different, legitimate question -- how much of THIS week is still
+sitting unworked, which is rightly a figure that shrinks as the week gets processed, and which
+an admin genuinely needs for staffing. **The two numbers on this one screen are now allowed to
+disagree, on purpose**, and both the server comment (`api/_lib/portal-core.js`) and the
+client's own note above the strip (`public/app.html`) say so, so the gap is never mistaken for
+a bug a third time.
+
+Checked by rewriting the direct test from Part 63 with the exact case this surfaces: an
+application that arrived last week and has since been rejected must still count toward last
+week's own total (proving the fix), while the trend card's own weekly total still excludes an
+application that arrived this week and has since been approved (proving the trend card's own
+rule is genuinely untouched, not accidentally widened along with the arrow's).
+
+**What was checked against live data, and what could not be.** The screenshot that raised this
+was taken against `recovery-app.sync-book.net` -- the reserve server, which section 5 already
+says may still read a different, copied database from the one every phone and upload writes
+to. Checked again before touching anything: still DIFFERENT (`9372d032c6ca` against
+`79e363955e75`), unchanged since the morning's 8-hourly report, so the 486/741 figures
+themselves may not be live company data at all. The ARROW'S LOGIC is the same wherever it
+runs, though, and the distortion it describes is real on its own mathematical terms,
+independent of which database answered that screenshot -- which is why this is fixed now
+rather than waited on until the two sites agree.
+
+**What it costs.** No new read: `appsArrivedInRange_` reshapes the same `myLoans` the arrow
+already held. Nothing on `/api/upload` or `/api/call`. `BUILD 2026-11-13-b`.
+
+**Not done.** Whether the two different "apps" numbers now visible on one screen -- the
+strip's arrival count and the trend card's backlog count -- need a word on-screen explaining
+why they can differ (rather than only in code and this handbook) is not decided; the owner's
+own next look at the real, reconciled book is what will show whether the explanation already
+given is enough.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
