@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-e` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 69**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-f` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 70**.
 
 ---
 
@@ -78,6 +78,54 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#696** — the worklists keep a cleared customer too, sunk to the bottom, not off the list
+  (handbook Part 70). "So even in call app if they clear they go down with status cleared..
+  same for the rest defaulters lists if possible" -- the owner, right after confirming the
+  TABORA TOWN case (below) was the loan system's own gap, not this one's. #693's own worklist
+  exclusion ("nobody should be shown a call to make on an account that is already settled") is
+  reversed: `expdfMine` no longer excludes a cleared row, which now sinks to the bottom of the
+  phone's own list and the portal's on the arrears-descending sort it already had (0 sorts
+  last) -- no new sort, no new field. The status label is renamed `RECOVERED` -> `CLEARED`
+  everywhere (`buildRows_`), matching the owner's own word -- and, checked rather than assumed,
+  both `call.html`'s and `app.html`'s own shared status-chip classifiers already render
+  `CLEARED` green, and the phone's own Exp.Def list filters by role or day, never by status, so
+  the call app needed NO change at all; `CALL_BUILD` is untouched. `expectedDefaulters`
+  (portal-core.js, the "Expected Defaulters" tab -- the other worklist #693 named and
+  deliberately left alone) gets the identical relaxation `buildRows_` already has, word for
+  word the same condition -- one rule, read twice, which is not the same promise as "the two
+  can never disagree": `expectedDefaulters` resolves "today" through the latest deck of ANY
+  weekday, `buildRows_` through `expdfCore`'s own weekday-PINNED resolution (falls back to last
+  week's same weekday when today's has not landed), a deliberate pre-existing split this change
+  does not close -- on a morning the day's deck is late, the same customer can read CLEARED on
+  one tab and be entirely absent from the other three. The one front-end touch is `app.html`'s
+  own `defexp` screen: its screen-local status chip (CHRONIC/EXPIRED only, everything else flat
+  grey) gained a CLEARED branch, its status filter gained the option, and its "In the weekly
+  cycle" KPI's own words were corrected, since it now counts anyone cleared too.
+  `BUILD 2026-11-13-f`.
+  **Reviewed by two independent readers before this merged**, given it reverses a decision on
+  the sacred call path: one real bug. CLEARED was decided by status-TEXT elimination alone, no
+  check of `arrears` -- a blank or unrecognised status (the suite's own long-standing `'555'`
+  fixture: no status, partially paid, 350 still owed) came back CLEARED, rendered green, and
+  SORTED FIRST on an officer's list (plain arrears-descending sort; a mislabelled CLEARED row
+  with real arrears is promoted, not sunk) -- while genuinely owing money. This codebase already
+  has the one rule for "is this actually paid" (`api/_lib/settled.js`'s `isSettled`, written
+  after a real customer sat on a phone as a defaulter owing one shilling while the expected book
+  had her overpaid); this change had reinvented a wrong one instead of reading the right one.
+  Fixed: `isSettled(arrears)` gates CLEARED in both functions; anything else keeps its own
+  status text, or DEFAULTER with none, the same fallback `statusWithPaid` already uses. Two new
+  regression tests reproduce the review's own scenario directly. Checked with four tests in all
+  (two rewritten for #696's own claim flipping from exclusion to inclusion, two new for the
+  review's finding) across `test/portal.test.mjs` and `test/call.test.mjs` -- the latter also
+  proving SORT ORDER, a cleared customer sinking below a real defaulter sharing their bucket,
+  through the real call dispatch. One real fixture bug caught before any of them passed: two
+  customers of the same team/day given different `upload_batch` ids made one lose to the other
+  under `pickLatestBatch`'s own per-team rule (a real upload never does this); fixed by sharing
+  one batch id, the way an upload actually arrives. No new read anywhere. `npm test`: 1,525
+  pass. **Not done:** the weekday-pinned-vs-any-weekday split above, a separate and larger
+  question than this one status label; and the harder case #693 named, still not reached -- a
+  customer missing from a day's current deck entirely, which the TABORA TOWN case (below) turned
+  out to be the loan system's own gap, not a reason to build a backward-looking diff on a guess
+  about what it would cost the sacred call path.
 - **TABORA TOWN check, 13 Nov — closed, not this codebase.** Ref 4231948032 (Chronic, 15,500
   arrears, days_elapsed 149) sat on no Exp.Def list anywhere -- portal or call app -- for
   Thursday 12 Nov: the real-world instance of the one gap #693 named and left open, a customer

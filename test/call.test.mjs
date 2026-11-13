@@ -2731,40 +2731,97 @@ test('the phone\'s own Exp.Def list and daily-summary % see a customer\'s Sunday
 
 /* "they dessapear from the expected defaulters report, yet they should stay there as of
    recovery" (the owner, 13 Nov 2026) is answered in buildRows_ (api/_lib/expdf.js) for the
-   REPORT family -- but a worklist is not a report: expdfMine excludes a RECOVERED row on
-   purpose, and both of the phone's own entry points below call straight into expdfMine, never
-   into buildRows_/expdfCore directly, so this is the one place that guard has to hold. Checked
+   REPORT family. "So even in call app if they clear they go down with status cleared" (the
+   owner, same day) extends it to the phone's own worklist: expdfMine no longer excludes a
+   CLEARED row, and both of the phone's own entry points below call straight into expdfMine,
+   never into buildRows_/expdfCore directly, so this is the one place that has to hold. Checked
    here through the real call dispatch, not only through the portal's own expdfLeader/Report. */
-test('a customer who pays in full is off the phone\'s own Exp.Def list and daily-summary %, team scope included', async () => {
+test('a customer who pays in full sinks to the bottom of the phone\'s own Exp.Def list, status CLEARED, team scope included', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();
   const t = makeTables();
   t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
   t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
-  // Disbursed today, a Friday: Day 1 is today, Day 2 three days later is Monday -- today is
-  // genuinely this customer's own cycle day, days_elapsed 1 -> bucket 1 -> BIKE, the exact
-  // role BIKE BEE's handset is registered under. With no RECOVERED exclusion this row would
-  // be sitting right on the list asserted empty below.
+  // makeTables() already seeds its own '555' on KONGOWE for this exact day -- cleared so this
+  // fixture is just the two customers the test is actually about.
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
+  // Both disbursed today, a Friday, same bucket (days_elapsed 1 -> BIKE) -- the one still
+  // owing 500 and the one who paid in full. The list's own sort (arrears descending) has to
+  // put the real defaulter first and the cleared one last on its own, with no extra code.
+  // Both share ONE upload_batch per type, same as a real upload: the winning batch is decided
+  // per team, so two refs of the same team/day with DIFFERENT batch ids would make one of them
+  // lose to the other rather than both surviving together.
   t.defaulter_snapshots.push(
+    { ref: 'ACT1', full_name: 'C ACT1', contact: '0714000700', team: 'KONGOWE', arrears: 500, status: 'Defaulter', ds: '1/6', dc: 1,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'ACT1', full_name: 'C ACT1', contact: '0714000700', team: 'KONGOWE', arrears: 500, status: 'Defaulter', ds: '1/6', dc: 1,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' },
     { ref: 'PAID1', full_name: 'C PAID1', contact: '0714000800', team: 'KONGOWE', arrears: 800, status: 'Defaulter', ds: '2/6', dc: 2,
-      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi2', created_at: '2026-07-24T04:00:00Z' },
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
     { ref: 'PAID1', full_name: 'C PAID1', contact: '0714000800', team: 'KONGOWE', arrears: 0, status: 'PAID', ds: '2/6', dc: 2,
-      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc2', created_at: '2026-07-24T08:00:00Z' });
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' });
   const db = fakeDb(t);
   await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
 
   const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
   assert.equal(mine.ok, true);
-  assert.deepEqual(mine.rows, [], 'paid in full: nothing left to call them about today, on BIKE BEE\'s own list');
+  assert.deepEqual(mine.rows.map(r => r.ref), ['ACT1', 'PAID1'],
+    'the real defaulter first, the cleared one sunk to the bottom -- the list\'s own arrears-descending sort, no new code');
+  const paid = mine.rows.find(r => r.ref === 'PAID1');
+  assert.equal(paid.custStatus, 'CLEARED', 'status says the account is settled, not a guess about why it is gone');
+  assert.equal(paid.amt, 0); assert.equal(paid.recovered, 800); assert.equal(paid.initial, 800);
 
-  // The exclusion lives in expdfMine itself, read by both entry points -- not in a narrowing
-  // that only applies to a leader's own view, so the team-wide scope has to agree too.
+  // Not a narrowing that only applies to a leader's own view -- the team-wide scope agrees too.
   const team = await callApi(db, 'api_callList', ['dBEE', 'expdf', 'team'], NOW);
-  assert.deepEqual(team.rows, [], 'and off the whole team\'s list too, not only the one leader narrowed to');
+  assert.deepEqual(team.rows.map(r => r.ref), ['ACT1', 'PAID1']);
 
   const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
-  assert.equal(summary.expdf.customers, 0, 'the daily-summary % strip does not count a settled account either');
-  assert.equal(summary.expdf.num, 0); assert.equal(summary.expdf.den, 0);
+  assert.equal(summary.expdf.customers, 2, 'the daily-summary % strip now counts the settled account too, same as the list');
+  assert.equal(summary.expdf.num, 800, 'ACT1 has recovered nothing yet; PAID1\'s full 800 is the whole figure');
+  assert.equal(summary.expdf.den, 1300, '500 (ACT1) + 800 (PAID1), the same baseline the list itself carries');
+});
+
+/* A REAL BUG, caught by an independent review before this merged: CLEARED was being assigned to
+   ANY row whose status text did not literally contain Chronic/Expired/Defaulter -- including a
+   BLANK status, which is not evidence of payment (settled.js's own rule, written after a real
+   customer sat on an officer's phone as a defaulter owing one shilling while the expected book
+   had her overpaid: a stale or missing status is unknown, never "paid"). A customer who paid
+   PART of their arrears, with no status on their current row at all -- the exact shape of this
+   suite's own '555' fixture row, which the test above has to filter out for that reason -- was
+   coming back CLEARED, rendered green, and sorted ABOVE a genuine lower-arrears defaulter by
+   the list's own arrears-descending sort: not sunk to the bottom, promoted to the top, with a
+   chip telling the officer the account is clear while its own arrears column said otherwise. */
+test('a blank status is not evidence of payment -- only isSettled(arrears) earns CLEARED', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
+  t.defaulter_snapshots.push(
+    // LOW1: a genuine, still-owing defaulter, arrears 200 -- the lower of the two.
+    { ref: 'LOW1', full_name: 'C LOW1', contact: '0714000900', team: 'KONGOWE', arrears: 200, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'LOW1', full_name: 'C LOW1', contact: '0714000900', team: 'KONGOWE', arrears: 200, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' },
+    // PART1: paid PART of their arrears (900 -> 700, nowhere near settled), current row carries
+    // no status at all -- the '555' shape. Higher arrears than LOW1, so a mislabelled CLEARED
+    // sorting by raw arrears would put it first, ahead of the real defaulter.
+    { ref: 'PART1', full_name: 'C PART1', contact: '0714000901', team: 'KONGOWE', arrears: 900, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'PART1', full_name: 'C PART1', contact: '0714000901', team: 'KONGOWE', arrears: 700,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+
+  const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(mine.ok, true);
+  const part1 = mine.rows.find(r => r.ref === 'PART1');
+  assert.ok(part1, 'still on the list -- 700 owed is not settled, and not silently dropped either');
+  assert.notEqual(part1.custStatus, 'CLEARED', 'a blank status is not evidence of payment');
+  assert.equal(part1.custStatus, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
+  assert.equal(part1.amt, 700, 'the real arrears, not a figure invented by the mislabel');
+  assert.deepEqual(mine.rows.map(r => r.ref), ['PART1', 'LOW1'], 'sorted by their real arrears, same as always -- nothing about the sort itself was ever broken');
 });
 
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {

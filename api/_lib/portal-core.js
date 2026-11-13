@@ -50,6 +50,7 @@ import { fraudCases, fraudFind } from './fraud.js';
     stopped working must not become a data leak -- but by then there is little left to drop. */
 const onTeams = (q, teams) => (teams && teams.length ? q.in('team', teamMatchList(teams)) : q);
 import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } from './recovery.js';
+import { isSettled } from './settled.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
@@ -994,8 +995,13 @@ async function expectedDefaulters(db, user, _args, nowMs) {
   const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
+  /* "same for the rest defaulters lists if possible" -- the owner, 13 Nov 2026, extending the
+     Exp.Def Report's own fix (expdf.js, buildRows_) to this tab too: a customer still on
+     TODAY'S OWN INITIAL deck is kept even once their current status leaves
+     Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. */
   const rows = scoped(user, def.rows)
-    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
       const primary = raw;
@@ -1004,9 +1010,15 @@ async function expectedDefaulters(db, user, _args, nowMs) {
       const s = K(d.status);
       const team = teamBy[K(d.team)] || {};
       const { initial, recovered } = recoveryOf(baseBy, d.ref, num(d.arrears));
+      const arrears = num(d.arrears);
+      // CLEARED needs isSettled(arrears), not merely "the status text didn't match" -- a blank
+      // or unrecognised status is not evidence of payment (settled.js, written after a real
+      // customer sat on an officer's phone owing one shilling while the expected book had her
+      // overpaid). The same gate buildRows_ uses, read once, not two rules that could drift.
       return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
-        arrears: num(d.arrears), initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
-        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
+        arrears, initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
+        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+          : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER')))),
         disb_date: d.disb_date,
         primary, secondary,
         primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',

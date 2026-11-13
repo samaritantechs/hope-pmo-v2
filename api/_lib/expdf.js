@@ -4,6 +4,7 @@ import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey } from 
 import { latestSnapshot } from './snapshots.js';
 import { num } from './recovery.js';
 import { cachedAnswer } from './answer-cache.js';
+import { isSettled } from './settled.js';
 
 /* Shared by BOTH the portal and the calls app, so it lives in its own module: portal-core
    already imports call-core, and having call-core import portal-core back closed a cycle
@@ -70,10 +71,19 @@ async function monthFirstInitial_(db, user, from, to) {
    PAID or similar) was simply never looked at, so their recovery never reached ANY sum on this
    report family, not only its display. A customer whose CURRENT status does not match one of
    the three is not dropped if they were on this SAME day's initial deck (`baseBy`): they are
-   kept, status RECOVERED, with whatever their current row now shows. A customer with no
-   current row at all (genuinely absent from the file, not merely a different status) is the
-   one case this cannot reach -- the rotation's own role/phase needs fields (days_elapsed,
-   chronic_date, expire_date) that exist only on a current-deck row. */
+   kept, status CLEARED, with whatever their current row now shows.
+
+   "So even in call app if they clear they go down with status cleared.. same for the rest
+   defaulters lists if possible" -- the owner, 13 Nov 2026. CLEARED is not a worklist exclusion:
+   `expdfMine` (the phone's own list, and the portal's) and `expectedDefaulters` (the portal's
+   separate Expected Defaulters tab) both read this same row unfiltered by status, so a cleared
+   customer sinks to the bottom of either list on the arrears-descending sort they already had
+   (0 arrears sorts last) rather than vanishing -- confirmation that they cleared, not a gap
+   nobody can account for.
+
+   A customer with no current row at all (genuinely absent from the file, not merely a
+   different status) is the one case this cannot reach -- the rotation's own role/phase needs
+   fields (days_elapsed, chronic_date, expire_date) that exist only on a current-deck row. */
 function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
   const dayIdx = isoWeekday(ms);
   return scoped(user, curRows)
@@ -88,7 +98,16 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
       const arrears = num(d.arrears);
       const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
       const s = K(d.status);
-      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER' : 'RECOVERED'));
+      /* CLEARED is not "the status text didn't say Chronic/Expired/Defaulter" -- a blank or
+         unrecognised status is NOT evidence of payment (settled.js's own rule, written after a
+         real customer sat on an officer's phone as a defaulter owing one shilling while the
+         expected book had her overpaid: a stale or missing status is unknown, never "paid").
+         isSettled(arrears) is the one gate; a row that is neither a known defaulter status nor
+         actually settled keeps its own status text (or DEFAULTER if it has none), the same
+         fallback statusWithPaid uses elsewhere, so it stays visible as still needing a call
+         rather than being told it is clear when the arrears column says otherwise. */
+      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact,
         guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
         team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
@@ -97,7 +116,7 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
         rejesho: num(d.other_inst),
         ds: d.ds, dc: d.dc, disb_date: d.disb_date,
         status,
-        // role/phase/cycle/leader are UNCHANGED for a RECOVERED row -- still the rotation slot
+        // role/phase/cycle/leader are UNCHANGED for a CLEARED row -- still the rotation slot
         // this customer sits in, same as any other day. That is what lets periodRows_ and
         // expdfMine's own RECYCLE_ROLES.includes(r.role) filter keep the row at all, and what
         // credits the RIGHT officer for the recovery in byLeader/byCycle below -- the one the
@@ -341,13 +360,12 @@ const sumExpdf = list => ({
 export async function expdfMine(db, user, { all = false, weekly = false, scope = 'auto' } = {}, nowMs) {
   const core = await expdfCore(db, user, nowMs, { weekly });
   const me = K(user.name);
-  /* This is a WORKLIST, read by the phone (the sacred /api/call path) as much as the portal --
-     who still needs a call today. buildRows_ now keeps a customer who paid in full this same
-     day so the REPORT (expdfReport/expdfLeader, below) can credit the recovery; a worklist is
-     not a report, and nobody should be shown a call to make on an account that is already
-     settled, on the phone least of all. RECOVERED is excluded here and only here -- the report
-     family reads core.rows straight, through periodRows_, with no such filter. */
-  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && r.status !== 'RECOVERED');
+  /* "So even in call app if they clear they go down with status cleared" -- the owner, 13 Nov
+     2026. This is read by the phone (the sacred /api/call path) as much as the portal, and a
+     CLEARED row is kept here deliberately: an officer sees the customer sink to the bottom of
+     their own list (0 arrears already sorts last, below) with a status saying why, rather than
+     a customer silently missing with no way to tell a settled account from a data gap. */
+  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
   const own = assigned.filter(r => K(r.leader) === me);
   // Everyone follows up in this mode, so everyone can see the day's expected defaulters for
   // the teams they are allowed to see -- each row naming who is assigned. A recycling leader
