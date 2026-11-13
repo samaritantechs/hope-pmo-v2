@@ -55,7 +55,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_ } from './expdf.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
 
@@ -998,9 +998,17 @@ async function expectedDefaulters(db, user, _args, nowMs) {
   /* "same for the rest defaulters lists if possible" -- the owner, 13 Nov 2026, extending the
      Exp.Def Report's own fix (expdf.js, buildRows_) to this tab too: a customer still on
      TODAY'S OWN INITIAL deck is kept even once their current status leaves
-     Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. */
-  const rows = scoped(user, def.rows)
-    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+     Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. "should reflect
+     to alltime data past present and future" extends it further still: a customer gone from
+     TODAY'S deck entirely (ref 4231948032's own case, handbook Part 71) is found through
+     ghostRowsFor_ -- the identical helper expdfCore uses, no budget here, since this screen is
+     not the sacred call path and can wait out the rare slow read. An unrestricted admin
+     (user.teams null) gets every team already fetched above, not nothing -- the owner's own
+     sign-in is the likeliest admin case here. */
+  const ghostTeams = user.teams || teamRows.map(t => t.team);
+  const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), 0);
+  const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
+    .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
       || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
@@ -1017,8 +1025,10 @@ async function expectedDefaulters(db, user, _args, nowMs) {
       // overpaid). The same gate buildRows_ uses, read once, not two rules that could drift.
       return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
         arrears, initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
-        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
-          : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER')))),
+        // A ghost row (absent from today's deck entirely) is CLEARED unconditionally -- the
+        // same rule buildRows_ follows for the identical reason.
+        status: d._ghost ? 'CLEARED' : (s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+          : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))))),
         disb_date: d.disb_date,
         primary, secondary,
         primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',

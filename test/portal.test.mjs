@@ -9,7 +9,7 @@ import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
    and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
-import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC } from './snapshot-totals-rpc.mjs';
+import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
 /* A database that HAS the migrations -- which now includes the team-day totals function, because
    the defaulter book asks it which date each team's own latest deck is on. A plain fakeDb() is
    still the un-migrated world, and several tests use it deliberately. */
@@ -259,6 +259,31 @@ test('expected defaulters: a blank status is not evidence of payment -- only isS
   assert.notEqual(row.status, 'CLEARED', 'a blank status is not evidence of payment');
   assert.equal(row.status, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
   assert.equal(row.arrears, 700, 'the real arrears, not a figure invented by the mislabel');
+});
+
+/* THE ALL-TIME GHOST -- ref 4231948032's own real case. "Checked loan system -- customer not
+   there on thurrsday deck 12th nov 2026" ... "should reflect to alltime data past present and
+   future" ... "so status column of such customers automatic becomes cleared if no longer in
+   default list" -- the owner, 13 Nov 2026. 222 has no row at all for TODAY -- neither initial
+   nor current -- so the baseBy-presence check alone cannot reach them; only
+   db/RUN-ME-055's own all-time lookup (ghostRowsFor_, api/_lib/expdf.js) finds them, via their
+   real last-known row from ten days earlier. */
+test('expected defaulters: a customer missing from today\'s deck entirely still shows, status CLEARED, from their last known row', async () => {
+  const t = tables();
+  // 222's last real sighting: ten days before TODAY, Chronic, 15,500 still owed -- nothing
+  // since, of either type.
+  t.defaulter_snapshots.push({ ...D('222', 'KONGOWE', 15500, 'current', 1, '2026-07-14', 'TUE'), status: 'Chronic' });
+
+  const before = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  assert.ok(!before.rows.some(r => r.ref === '222'), 'no migration: 222 is simply not found, same as before this feature existed');
+
+  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  const row = d.rows.find(r => r.ref === '222');
+  assert.ok(row, 'found through the all-time lookup, not silently absent');
+  assert.equal(row.status, 'CLEARED');
+  assert.equal(row.arrears, 15500, 'their real last-known arrears, not a fabricated zero');
+  assert.equal(row.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
+  assert.equal(row.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
 });
 
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."

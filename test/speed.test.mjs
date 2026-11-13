@@ -348,7 +348,15 @@ const BUDGETS = [
      team and arrears are asked for, scoped at the database, by the same read and rule as
      Defaulters Followup. The database cannot hand the pairing over without a function that has to
      be pasted by hand, and this screen must work without one. */
-  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  7,  1100,  7, 1100],
+  /* 7 -> 8 trips (2026-11-13): "should reflect to alltime data past present and future" -- a
+     customer missing from today's deck entirely is found through ONE new round trip
+     (ghostRowsFor_, db.rpc('defaulter_ghost_rows'), db/RUN-ME-055), ALWAYS attempted, never
+     skipped for a cache miss alone -- the one call that exists to ask it covers every team in
+     one request, not one per team (an earlier draft of this did exactly that, and this test is
+     what caught it: 47 trips, not 8). Not asked for at all without a migration run: a database
+     without it answers the usual PGRST202 and this screen reads exactly as it did before,
+     same row count. */
+  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  8,  1100,  8, 1100],
   /* 10 -> 14 trips and 1,500 -> 2,000 rows (2026-11-02): every board row now carries the week's
      calls, talk and comments ("Add columns of No of calls + duration ... and no of comments"),
      by the card's own rule, for the whole report in FOUR reads whatever its size: the HOPE

@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 13 November 2026** — portal `BUILD 2026-11-13-f` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 70**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 71**.
 
 ---
 
@@ -78,6 +78,39 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#697** — the all-time ghost: a customer missing from every deck still shows, status CLEARED
+  (handbook Part 71). "Checked loan system -- customer not there on thurrsday deck 12th nov
+  2026" ... "should reflect to alltime data past present and future" ... "so status column of
+  such customers automatic becomes cleared if no longer in default list" -- the owner, on ref
+  4231948032, the real case #693/#696 could not reach: gone from BOTH the initial AND current
+  deck entirely, with nothing in today's own data pointing at them at all. `db/RUN-ME-055` adds
+  one function (`defaulter_ghost_rows`) answering "who has this team ever had as a defaulter,
+  whose newest row is not today's" -- a loose-index-scan recursive CTE PostgREST's own query
+  builder cannot express cheaply (1.6ms vs 67-134ms for a plain SELECT DISTINCT on a
+  2.27-million-row fixture), called via `db.rpc(...)`, asked rarely and cached the same shape
+  `adjustments.js` already uses for the Iliyonasia register on this same call path
+  (`GHOST_TTL_MS` 90s, `GHOST_MISSING_TTL_MS` 5 min, `GHOST_BUDGET_MS` 800ms honoured only by the
+  sacred path). Status CLEARED is unconditional for a ghost row -- the absence IS the signal --
+  but the numbers stay honest: their own last-known arrears, not a fabricated zero, recovered
+  reads 0 since nothing happened today. **Three real mistakes caught building this, before any
+  of it shipped:** (1) a first draft called the new function once PER TEAM, which
+  `test/speed.test.mjs` caught at 47 round trips against a 7-trip budget the moment an
+  unrestricted admin's full team list was looped -- fixed to one round trip per request,
+  however many teams; (2) the sort: a ghost's own last-known arrears can be large (15,500 for
+  this ref), so the EXISTING "0 sorts last" rule (#696) would have promoted a long-untracked
+  customer above one genuinely owing money today -- fixed to CLEARED-last, arrears-descending
+  within each group; (3) the feature first refused to run at all for an unrestricted admin
+  (`user.teams` null), which would have hidden it from the owner's own likeliest sign-in --
+  fixed to resolve the full team list already fetched for other reasons, with the per-request
+  round trip and the budget (not a team-count limit) carrying the real safety. Checked through
+  the real call dispatch and through `expectedDefaulters`, and separately confirmed absent (no
+  failed request) on a database without the migration run. `test/speed.test.mjs`:
+  `expectedDefaulters` moves 7 -> 8 trips, the one genuinely necessary new round trip, reason in
+  the same diff; every `expdfReport`/`expdfLeader`/`expdfMine` variant had headroom already and
+  needed no change. No front-end file touched; `BUILD`/`CALL_BUILD` untouched. `npm test`: 1,527
+  pass. **Not done:** `test/speed.test.mjs` has no dedicated budget for `api_callList(...,
+  'expdf')` itself (only `'today'`/`'defaulters'`) -- a pre-existing gap this change reaches but
+  does not close, flagged rather than expanding scope.
 - **#696** — the worklists keep a cleared customer too, sunk to the bottom, not off the list
   (handbook Part 70). "So even in call app if they clear they go down with status cleared..
   same for the rest defaulters lists if possible" -- the owner, right after confirming the

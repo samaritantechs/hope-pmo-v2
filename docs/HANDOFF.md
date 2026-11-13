@@ -5740,5 +5740,100 @@ asked for with that cost in view.
 
 ---
 
+## Part 71 — The all-time ghost: a customer missing from every deck still shows, status CLEARED
+
+> "Checked loan system -- customer not there on thurrsday deck 12th nov 2026" ... "tell me
+> latest date that customer was a defaulter of any status" ... "should reflect to alltime data
+> past present and future" ... "so status column of such customers automatic becomes cleared if
+> no longer in default list" -- the owner, 13 Nov 2026, on ref 4231948032: gone from BOTH the 12
+> Nov initial AND current deck entirely, and still gone every day since.
+
+Part 70's own "Not done" named exactly this case: `buildRows_`'s baseBy-presence check only ever
+sees a customer who is on TODAY'S OWN initial deck -- a customer missing from BOTH decks
+entirely leaves nothing in today's own data pointing at them at all. The only way to find one is
+to ask the whole history: "who has this team ever had as a defaulter, whose newest row is not
+today's" -- unbounded, "past present and future", not a recent-days window.
+
+**db/RUN-ME-055** adds one function, `defaulter_ghost_rows(p_teams, p_known_refs)`, for exactly
+that question. PostgREST's own query builder cannot express it cheaply: a plain `SELECT DISTINCT
+ref` still visits every one of a team's rows to de-duplicate them (measured: 67-134ms on a
+2.27-million-row fixture even with an index on `(team, ref)`, since Postgres has no built-in
+skip-scan for DISTINCT). A recursive CTE that walks that same index one distinct value at a time
+-- the loose-index-scan idiom -- answers the identical question as an Index Only Scan, no heap
+fetches: 1.6ms on the same fixture. The function loops this once per team in `p_teams` (each its
+own fast walk), then takes every surviving ref's own single latest `current` row.
+
+**One round trip, however many teams -- caught before it shipped, not assumed.** A first draft
+called the function once PER TEAM, cached per team; cheap for a single leader's own 1-2 teams,
+but an unrestricted admin resolves to every team in the book (see below), and
+`test/speed.test.mjs` -- which exists for precisely this -- caught it at 47 round trips against
+a 7-trip budget for `expectedDefaulters`, and similarly for every `expdfReport`/`expdfLeader`
+variant. The function already loops its own teams internally; the fix was to ask it for the
+whole list in ONE call, cached by that exact team set, not to walk the set ourselves.
+
+**Asked rarely, cached, and budgeted -- adjustments.js's own shape for the Iliyonasia register
+on this same call path, not a new one.** `ghostRowsFor_` (`api/_lib/expdf.js`) mirrors
+`readAdjustments`/`within_` precisely: a `WeakMap<db, Map<teamSetKey, {at, rows, pending,
+missingAt}>>` cache (`GHOST_TTL_MS` 90s for a good read, `GHOST_MISSING_TTL_MS` 5 minutes for "no
+migration run here" -- asked rarely, not re-logged as a Postgres error on every screen), in-flight
+sharing (two callers in the same moment share one round trip), and a `budgetMs` honoured only by
+the sacred path (`GHOST_BUDGET_MS` 800ms, passed by `expdfMine` alone; `expdfReport`/`expdfLeader`
+and `expectedDefaulters` take none, since a report can wait out the rare slow read and the phone
+cannot) -- and either way the read itself keeps running underneath and warms the cache for the
+next caller, never cancelled. The one real cost (a whole team's upload genuinely missing -- not a
+few customers, measured at 86-115ms with a disk spill) is paid once per cache window per team,
+never per request; `db/RUN-ME-055`'s own function additionally carries a `statement_timeout` of
+800ms as a second backstop. A database without the migration run gets the exact PGRST202 every
+other such function here returns, remembered, and shows no ghost rows at all -- never a failed
+request.
+
+**Status is CLEARED unconditionally for a ghost row -- their absence from today's deck IS the
+signal**, not a guess about whatever status text their last known row happened to carry (`isSettled`,
+Part 70, is the gate for a row still ON today's deck; it does not apply here at all). The
+NUMBERS stay honest: `arrears`/`initial` are the ghost's own last-known figure (15,500 for ref
+4231948032, not a fabricated zero), `recovered` reads 0 -- nothing happened today to recover, and
+a ghost is never credited with a guess. Role, leader and cycle come from `assignFor` reading that
+same last-known row's own `days_elapsed`/`chronic_date`/`disb_date`, exactly as any other row --
+the rotation's clock keeps turning on the calendar regardless of whether fresh data arrives, so
+the officer currently holding that slot is still who is credited and shown, not whoever held it
+the day the customer was last seen.
+
+**Two more real mistakes, caught building this, not after:**
+- The sort. `expdfMine`'s own "0 arrears sorts last" (#696) only holds for a customer CONFIRMED
+  paid in full. A ghost's last-known arrears can be large -- ref 4231948032's own 15,500 -- and a
+  plain arrears-descending sort would have put a customer nobody has tracked in months ABOVE one
+  genuinely owing money today. Fixed: the sort is now CLEARED-last, arrears-descending within
+  each group, not arrears alone.
+- The admin. `ghostRowsFor_` first refused to run at all for `user.teams === null` (an
+  unrestricted admin), on the reasoning that looping every team was a cost nobody asked for.
+  That would have hidden the whole feature from the owner's own likeliest sign-in -- the person
+  who asked for this the loudest. Fixed: `expdfCore` and `expectedDefaulters` both already fetch
+  the full team list for other reasons; an unrestricted caller now resolves to that list instead
+  of nothing, with the per-request-not-per-team round trip and `budgetMs` (not a team-count
+  limit) carrying the actual safety.
+
+**Checked.** `test/call.test.mjs` and `test/portal.test.mjs`: a customer with a real last-known
+row ten days old and nothing since is found through the real call dispatch and through
+`expectedDefaulters`, status CLEARED, their own last-known arrears shown, sunk below a real
+defaulter sharing their bucket -- and, separately, confirmed ABSENT on a database without
+`db/RUN-ME-055` run, exactly today's behaviour, no failed request. `test/speed.test.mjs`:
+every existing budget still holds except one, raised in this same commit with the reason beside
+it (below).
+
+**What it costs.** One new index (`idx_def_snap_team_ref`, `CONCURRENTLY`, the same reasoning as
+RUN-ME-054's own two) and one new database function, run by hand like every migration here --
+every code path works without it, showing no ghosts. One new round trip where it is genuinely
+needed: `expectedDefaulters`'s own speed budget moves 7 -> 8 trips (`test/speed.test.mjs`,
+reason in the diff beside it); every `expdfReport`/`expdfLeader`/`expdfMine` variant already had
+at least one trip of headroom and needed no change. No front-end file touched, so `BUILD` stays
+`2026-11-13-f`; `CALL_BUILD` is untouched. `npm test`: 1,527 pass.
+
+**Not done.** `test/speed.test.mjs` has no dedicated budget line for `api_callList(..., 'expdf')`
+itself (only `'today'` and `'defaulters'`) -- a pre-existing gap in that file's own coverage, not
+one this change introduced, but worth closing given this is the exact new code reaching that
+exact path. Flagged, not built here, to keep this change to what it set out to do.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*
