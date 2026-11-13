@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 13 November 2026** — portal `BUILD 2026-11-13-e` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 67**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 68**.
 
 ---
 
@@ -77,6 +77,17 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#692** — the annual leave allowance resets each calendar year (handbook Part 68). "26-day
+  annual leave allowance should reset each calendar year" -- answering the question Parts 58
+  and 59 flagged rather than guessed. `leaveBalance_` now sums only the current calendar
+  year's own requests (by `nowMs`, never whatever dates a report happens to be filtered to) --
+  a past year's Approved days are kept in the table and the report exactly as before, they
+  simply stop costing the new year's allowance. One more `gte`/`lte` on a query that already
+  ran; the returned shape is unchanged so no caller needed touching. Checked with a new test
+  alongside the fifteen existing ones: a past-year request leaves this year's balance full,
+  this year's own request still counts as before, and the past request still shows when a
+  report is asked for that year specifically. No new read, no front-end file touched: `BUILD`
+  stays `2026-11-13-e`. `npm test`: 1,520 pass.
 - **#691** — a name beside the percentage, Early Collection on the strip, Inactive staff
   sorted last (handbook Part 67). "Sales % [credit analyst] ... Performance · wastani
   [leading leader ... e.g Robert. Manager 80%] ... so add [name of the leading leader
@@ -838,10 +849,6 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   exact Teams & Staff spelling; and the TIN/NSSF numbers for Kassim Shabani Muhidini and
   Sylvester Erick Maundi, both "on process" and left out of the script, once issued.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
-- **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
-  should reset each calendar year — nothing resets it yet, the same running ledger the Google
-  Sheet's own formula kept, on purpose, until the owner says otherwise (it is now editable on
-  the Leave report itself, admin-only, Part 59, if the number alone needs changing).
 - **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
   form, new hire or existing staff with a gap (and if new, the role and team, or the zone
   directly for a head-office role; if existing, a staff ID or their filed team), and which one

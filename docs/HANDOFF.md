@@ -5498,6 +5498,41 @@ decided -- nobody asked either way. The card between the trend cards has no down
 button its neighbours carry, since a single figure has nothing a screenshot would add over the
 strip tile above it.
 
+## Part 68 — The annual leave allowance resets each calendar year
+
+> "26-day annual leave allowance should reset each calendar year." -- the owner, 13 November
+> 2026, answering the question Parts 58 and 59 flagged rather than guessed: "a reset of the
+> balance on a new year: nothing here resets it... whether it should is the owner's to decide."
+
+`leaveBalance_` (`api/_lib/portal-core.js`) used to sum every Approved (and shown-but-not-
+deducted Pending) request EVER, the one running ledger the Google Sheet's own `SUMIF` kept on
+purpose, left that way until the owner said otherwise. Now it sums only the requests whose
+`start_date` falls in the CURRENT calendar year -- by `nowMs`, the caller's own today, never
+whatever stretch of history a report happens to be filtered to, because "remaining" has always
+meant "what they have left to use, as of today", not "as of whichever dates this screen is
+showing". A request from a past year is untouched in the table and in the report -- it stays
+exactly as visible as it always was -- it simply stops costing the new year's allowance.
+
+Both callers (`leaveRequestPage`'s own ask-form balance, `leaveReport`'s per-person balance)
+already had `today` in hand; `leaveBalance_` takes it as a fifth argument (the year, as four
+digits) and adds one `gte`/`lte` on `start_date` to its one query. The returned shape
+(`{ annualDays, taken, pending, remaining }`) is unchanged on purpose, so a report or a screen
+reading it needs no change of its own -- only what counts toward the sum moved.
+
+Checked with a new test alongside the existing ones (`test/leave.test.mjs`): a staff with a
+past year's Approved request reads a full, untouched balance this year; this year's own request
+still counts exactly as it did before; and the past request is still there when the report is
+asked for that past year specifically, proving nothing was deleted, only excluded from a
+different year's own sum. Every existing leave test's own fixture dates sit inside one calendar
+year already, so none of them needed changing -- the one new test is the one that actually
+spans a year boundary.
+
+**What it costs.** No new read: one more `gte`/`lte` on a query that already ran. No front-end
+file touched, so `BUILD` stays `2026-11-13-e`. `npm test`: 1,520 pass.
+
+**Not done.** Nothing else about leave changed -- the day count, the overlap guard, the
+missing-table fallback, Expired-by-start-date, all stand exactly as Part 58 shipped them.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

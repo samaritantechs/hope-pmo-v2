@@ -2534,10 +2534,13 @@ async function advReopen(db, user, p, nowMs = Date.now()) {
      - the day count as a THIRD, separately-typed number the dates could disagree with --
        which is exactly what the sheet's own rows show happening (one request's dates span ten
        months; its typed day count says 14). Here days is always end_date - start_date + 1.
-     - a reset of the balance on a new year: nothing here resets it, exactly as the sheet's own
-       formula never did, one running ledger against LEAVE_ANNUAL_DAYS (a Setting, 26 unless
-       changed). Whether it should reset each calendar year is the owner's to decide -- flagged
-       in the pull request this shipped in, not guessed here.
+     - a reset of the balance on a new year: THE OWNER'S ANSWER CAME BACK "yes, each calendar
+       year" (13 Nov 2026) -- leaveBalance_ below sums only the requests whose start_date falls
+       in the CURRENT calendar year, by nowMs, never the one a report happens to be filtered to:
+       the balance is "what they have left to use, as of today", the same meaning it always had,
+       just no longer added up across every year that has ever existed. A request from a past
+       year is kept in the table and in history -- it stays visible, it simply stops costing the
+       new year's allowance.
    ===================================================================================== */
 const LEAVE_NOTE = 'Jedwali la likizo halipo bado: endesha db/RUN-ME-051-leave-requests.sql kwenye SQL editor. '
   + '/ The leave-request table is not there yet: run db/RUN-ME-051-leave-requests.sql in the SQL editor.';
@@ -2574,13 +2577,18 @@ async function leaveExpireOld_(db, today) {
     return true;
   } catch (e) { console.warn('[leave] expiring undecided past requests failed:', (e && e.message) || e); return false; }
 }
-/** This staff's leave standing: days taken (Approved, ever -- the sheet's own SUMIF, minus its
-    one flaw: only a decided, Approved request counts), days still pending a decision, and what
+/** This staff's leave standing: days taken (Approved, this calendar year only -- the sheet's
+    own SUMIF, minus its two flaws: only a decided, Approved request counts, and it no longer
+    adds up every year there has ever been), days still pending a decision this year, and what
     is left of LEAVE_ANNUAL_DAYS. Matched by staff_id when there is one, else by name under this
-    same role -- advRequest's own customer-service fallback, kept the same way here. */
-async function leaveBalance_(db, annualDays, staffId, staffName, role) {
+    same role -- advRequest's own customer-service fallback, kept the same way here. `year` is
+    always the CURRENT year (the caller's own today, by nowMs) -- "remaining" answers "as of
+    today", whatever stretch of history a report around it happens to be showing. */
+async function leaveBalance_(db, annualDays, staffId, staffName, role, year) {
+  const from = year + '-01-01', to = year + '-12-31';
   const rows = (await leaveRead_(() => {
-    const q = db.from('leave_requests').select('days, approval').in('approval', ['Approved', 'Pending']);
+    const q = db.from('leave_requests').select('days, approval').in('approval', ['Approved', 'Pending'])
+      .gte('start_date', from).lte('start_date', to);
     return staffId ? q.eq('staff_id', staffId) : q.ilike('staff_name', staffName).ilike('req_role', String(role || '~none~'));
   })) || [];
   const taken = rows.filter(r => K(r.approval) === 'APPROVED').reduce((s, r) => s + num(r.days), 0);
@@ -2639,7 +2647,7 @@ async function leaveRequestPage(db, user, { staffId, staffName } = {}, nowMs = D
   const wantId = K(staffId), wantName = K(staffName);
   if (wantId || wantName) {
     chosen = staff.find(s => (wantId && s.id && K(s.id) === wantId) || (wantName && K(s.name) === wantName)) || null;
-    if (chosen) balance = await leaveBalance_(db, Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT))), chosen.id || null, chosen.name, user.role);
+    if (chosen) balance = await leaveBalance_(db, Math.max(0, num(cfg.get(LEAVE_DAYS_KEY, LEAVE_DAYS_DEFAULT))), chosen.id || null, chosen.name, user.role, today.slice(0, 4));
   }
   return { on, note: on ? null : LEAVE_NOTE, zones: zones === null ? advZoneList_(teamRows, staff0, null) : zones, noZoneTeams,
     staff, count: staff.length, reasons: leaveReasons_(cfg), chosen, balance,
@@ -2817,7 +2825,7 @@ async function leaveReport(db, user, { from, to, approval, zone } = {}, nowMs = 
   const balKey = r => r.staff_id ? 'id:' + K(r.staff_id) : 'nm:' + K(r.staff_name) + '|' + K(r.req_role);
   const people = [...new Map(rows.map(r => [balKey(r), r])).values()];
   const balBy = new Map();
-  for (const p2 of people) balBy.set(balKey(p2), await leaveBalance_(db, annualDays, p2.staff_id || null, p2.staff_name, p2.req_role));
+  for (const p2 of people) balBy.set(balKey(p2), await leaveBalance_(db, annualDays, p2.staff_id || null, p2.staff_name, p2.req_role, today.slice(0, 4)));
   rows = rows.map(r => ({ ...r, balance: balBy.get(balKey(r)) || null }));
   const byZone = new Map();
   for (const r of rows) {
