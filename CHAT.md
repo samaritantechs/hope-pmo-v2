@@ -78,6 +78,16 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **TABORA TOWN check, 13 Nov — closed, not this codebase.** Ref 4231948032 (Chronic, 15,500
+  arrears, days_elapsed 149) sat on no Exp.Def list anywhere -- portal or call app -- for
+  Thursday 12 Nov: the real-world instance of the one gap #693 named and left open, a customer
+  absent from the day's own current deck entirely rather than present with a changed status.
+  The owner checked the loan system itself, not only this database, and confirmed: the customer
+  was already missing from the loan system's own 12 Nov deck. Nothing was lost between the loan
+  system and this one -- the upload wrote down exactly what it was sent, and `buildRows_` /
+  `expdfMine` / `expectedDefaulters` had nothing to find because there was nothing to find.
+  Whatever took the customer off that one day's export happened upstream, in the loan system,
+  for a reason outside what a chat can see or guess at from here. Not investigated further.
 - **Staff registry, 13 Nov (second)** — "Hajioni kwenye kuomba salary advance" ("From baiki
   recovery to Fo Chamwino"), for FRANK MICHAEL MWELUE, with his phone, CRDB account, 20-digit
   NIDA and TIN — the same flag as the four officers already filed that morning ("Staff
