@@ -5535,5 +5535,94 @@ missing-table fallback, Expired-by-start-date, all stand exactly as Part 58 ship
 
 ---
 
+## Part 69 — A customer who pays in full stays on the Exp.Def Report, not just on the worklist
+
+> "When a customer of expected defaulter pays full amount and no longer a defaulter, they
+> dessapear from the expected defaulters report, yet they should stay there as of recovery so
+> as to know recovery amount from difference of initial to current per each day by team or
+> staff." -- the owner, 13 November 2026. Asked whether a paid-off customer's row still exists
+> in the current deck (with a different status) or vanishes from the upload entirely, the
+> answer was: "of today are of today by cycle and we got them from defaulters list so initial
+> defaulter has initial of today accornding to their cycle appearance and latest report shows
+> the last amounts leaving the reports of each day clearly showing what was recovered per
+> expected defaulters b/se they cant run from when their initial file had them and their
+> initial cycle placed them when and the initial and final amounts" -- the row stays, with a
+> changed status; the harder case (gone from the upload altogether) was not in question.
+
+There are two unrelated places this system tracks recovery, and only one of them had the bug.
+The dashboard's own team-level figures (`recoveryByTeam`, `stand`) sum whatever rows exist per
+team and day with no per-customer status filter, so a customer's absence from today's current
+deck already reads as zero arrears -- full recovery -- by construction. The Exp.Def Report
+family is different: `buildRows_` (`api/_lib/expdf.js`), the one definition of "a day's Exp.Def
+row" shared by the portal's Exp.Def Report / leader cards (`expdfReport`, `expdfLeader`) and the
+phone's own worklist (`expdfMine`), built ONE ROW PER CUSTOMER and, until now, only for a row
+whose status contained CHRONIC/EXPIRED/DEFAULTER. A customer who paid in full carries none of
+those on today's current deck, so the row -- and with it the day's own record of what they had
+owed and what came back -- was dropped outright, from the report as much as the worklist, with
+no way to answer "what did team X or officer Y recover today" for that customer ever again.
+
+`buildRows_` now keeps a customer who is on TODAY'S OWN INITIAL deck (`baseBy`, the same
+`{ref: arrears}` map the row's own `initial` figure already came from) regardless of what the
+current deck now shows for them -- "they cant run from when their initial file had them." A
+row kept this way carries a fourth status, `RECOVERED`, alongside CHRONIC/EXPIRED/DEFAULTER.
+Everything else about the row -- `phase`/`role`/`cycle`/`leader`/`leaderPhone`/`opm`/`onToday`
+-- stays exactly as `assignFor` computes it from the row's own `days_elapsed`, unconditionally,
+the same as any other day: that is what the owner actually asked for ("by team or staff"), and
+it is also load-bearing -- `periodRows_` and `expdfMine` both gate on
+`RECYCLE_ROLES.includes(r.role)`, so a row with no role would have been silently filtered back
+out by both, which a first draft of this change did by mistake before it was ever tested. Only
+the `status` says the account is settled; nothing else about who owns it changes.
+
+A worklist is not a report, though, and `expdfMine` -- read by the phone as much as the portal,
+and the one function `/api/call`'s own `call-core.js` imports and calls (confirmed: its two
+call sites, the `expdf` list type and the daily-summary strip's own Exp.Def figure, both go
+straight into `expdfMine`, never into `buildRows_`/`expdfCore` directly) -- excludes a
+`RECOVERED` row by its own, separate, one-line filter: nobody should be shown a call to make on
+an account that is already settled, on the phone least of all. The report family reads
+`core.rows` straight through `periodRows_`, with no such filter, so the two now legitimately
+disagree on purpose: the Report counts a paid-off customer's recovery, the worklist stops
+showing them a reason to call.
+
+**Checked before settling on this, not assumed:** the portal has a SECOND, independently-
+written function with the identical pre-fix filter -- `expectedDefaulters` (`portal-core.js`),
+behind the "Expected Defaulters" tab, a name close enough to the owner's own words that it had
+to be read, not skipped. Its own doc comments ("the officer working this list needs to know who
+else is already on them"), its KPI label ("In the weekly cycle" = "chronic + expired +
+defaulters needing follow-up"), and its status filter (offering only DEFAULTER/EXPIRED/CHRONIC,
+no team or leader totals anywhere in the response) all say the same thing: this is the portal's
+own mirror of the phone's worklist, not the "by team or staff" breakdown the owner described --
+that breakdown is what `expdfReport`'s per-role sections and `expdfLeader`'s per-leader card
+already are. It is untouched, on purpose, and its own net effect on who it lists is unchanged:
+the broadened `buildRows_` filter plus `expdfMine`'s own narrowing back out reduces to exactly
+the same CHRONIC/EXPIRED/DEFAULTER set `expectedDefaulters` has always used, so the two
+worklists still agree with each other, one definition read twice rather than two that could
+drift.
+
+Checked with two tests, not one, given what calls `expdfMine`. In `test/portal.test.mjs`: a
+customer who pays in full stays on the BIKE section's own totals and on their leader's own
+`expdfLeader` card, credited for the full recovered amount, status `RECOVERED` -- and the SAME
+customer is confirmed absent from `expdfMine`'s own worklist rows, with its totals unaffected
+by a customer it no longer lists. In `test/call.test.mjs`, through the real call dispatch
+rather than by trust in the call graph alone: `api_callList(..., ['dev','expdf'])` (a leader's
+own list), the same call with `'team'` scope, and `api_callDailySummary`'s own `expdf` figure
+all agree the row is gone from the phone, built against a fixture where the row would otherwise
+have been sitting right on the list (today is genuinely this customer's own cycle day, and
+their bucket is the exact role the test device is registered under).
+
+**What it costs.** No new read: `buildRows_` already receives `curRows` and `baseBy`, both
+already fetched by `expdfCore` for the `initial` figure every row has always carried -- this is
+a filter and a status label on data already in memory, nothing added to `/api/upload` or
+`/api/call`. No front-end file touched, so `BUILD` stays `2026-11-13-e`. `npm test`: 1,522 pass.
+
+**Not done.** `expectedDefaulters` / the "Expected Defaulters" tab, as explained, matches
+`expdfMine`'s own worklist philosophy and was deliberately left as it was. The harder case the
+owner's own answer ruled out of scope -- a customer missing from the upload's current deck
+ENTIRELY, not merely present under a different status -- still cannot be safely credited to a
+specific leader: `assignFor` needs `days_elapsed`/`chronic_date`/`expire_date`, fields that live
+only on a current-deck row, and a reference with none to read is a reference with no cycle to
+place. Flagged for whenever it is asked about, not built on a guess.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

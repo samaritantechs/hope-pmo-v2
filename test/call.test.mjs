@@ -2729,6 +2729,44 @@ test('the phone\'s own Exp.Def list and daily-summary % see a customer\'s Sunday
   assert.equal(summaryMon.expdf.customers, 0); assert.equal(summaryMon.expdf.num, 0);
 });
 
+/* "they dessapear from the expected defaulters report, yet they should stay there as of
+   recovery" (the owner, 13 Nov 2026) is answered in buildRows_ (api/_lib/expdf.js) for the
+   REPORT family -- but a worklist is not a report: expdfMine excludes a RECOVERED row on
+   purpose, and both of the phone's own entry points below call straight into expdfMine, never
+   into buildRows_/expdfCore directly, so this is the one place that guard has to hold. Checked
+   here through the real call dispatch, not only through the portal's own expdfLeader/Report. */
+test('a customer who pays in full is off the phone\'s own Exp.Def list and daily-summary %, team scope included', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  // Disbursed today, a Friday: Day 1 is today, Day 2 three days later is Monday -- today is
+  // genuinely this customer's own cycle day, days_elapsed 1 -> bucket 1 -> BIKE, the exact
+  // role BIKE BEE's handset is registered under. With no RECOVERED exclusion this row would
+  // be sitting right on the list asserted empty below.
+  t.defaulter_snapshots.push(
+    { ref: 'PAID1', full_name: 'C PAID1', contact: '0714000800', team: 'KONGOWE', arrears: 800, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi2', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'PAID1', full_name: 'C PAID1', contact: '0714000800', team: 'KONGOWE', arrears: 0, status: 'PAID', ds: '2/6', dc: 2,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc2', created_at: '2026-07-24T08:00:00Z' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+
+  const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(mine.ok, true);
+  assert.deepEqual(mine.rows, [], 'paid in full: nothing left to call them about today, on BIKE BEE\'s own list');
+
+  // The exclusion lives in expdfMine itself, read by both entry points -- not in a narrowing
+  // that only applies to a leader's own view, so the team-wide scope has to agree too.
+  const team = await callApi(db, 'api_callList', ['dBEE', 'expdf', 'team'], NOW);
+  assert.deepEqual(team.rows, [], 'and off the whole team\'s list too, not only the one leader narrowed to');
+
+  const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
+  assert.equal(summary.expdf.customers, 0, 'the daily-summary % strip does not count a settled account either');
+  assert.equal(summary.expdf.num, 0); assert.equal(summary.expdf.den, 0);
+});
+
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();

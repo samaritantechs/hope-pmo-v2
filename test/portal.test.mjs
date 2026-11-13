@@ -4688,6 +4688,47 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
   assert.equal(pmon.totals.customers, 0, 'June has no decks in this fixture');
 });
 
+/* "When a customer of expected defaulter pays full amount and no longer a defaulter, they
+   dessapear from the expected defaulters report, yet they should stay there as of recovery so
+   as to know recovery amount from difference of initial to current per each day by team or
+   staff" -- the owner, 13 Nov 2026. A4 pays in full: today's current deck carries their row
+   with status PAID (not Chronic/Expired/Defaulter), same cycle day and BIKE bucket as A1. */
+test('a customer who pays in full stays on the report, credited to the right leader -- but drops off the worklist that still calls people', async () => {
+  const t = expdfTables();
+  const D4 = (arrears, type) => ({
+    ref: 'A4', full_name: 'C A4', contact: '0714000A4', team: 'KONGOWE', arrears,
+    status: type === 'current' ? 'PAID' : 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 1, disb_date: '2026-07-21',
+    snapshot_type: type, weekday: 'FRI', snapshot_date: TODAY,
+    upload_batch: 'b' + type + TODAY, created_at: TODAY + 'T04:00:00Z',
+  });
+  t.defaulter_snapshots.push(D4(800, 'initial'), D4(0, 'current'));
+  const db = fakeDb(t);
+
+  // THE REPORT: BIKE's own bucket now carries both A1 and A4, A4's full 800 credited to it.
+  const d = await portalApi(db, ADMIN, 'expdfReport', {}, NOW);
+  const bike = d.sections.find(s => s.role === 'BIKE');
+  assert.equal(bike.totals.customers, 2, 'A1 and A4, the same BIKE bucket');
+  assert.equal(bike.totals.recovered, 1200, "A1's 400 + A4's full 800 -- paid in full is not a silent drop");
+  assert.equal(d.totals.customers, 4);
+  assert.equal(d.totals.recovered, 1700, '900 (the three already-tested customers) + A4\'s 800');
+
+  // THE LEADER'S OWN CARD (tapping BIKE BEE's name): A4 is a real row, status RECOVERED, with
+  // its own initial/recovered -- the exact place "know recovery amount ... by staff" is read.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW);
+  const a4 = card.rows.find(r => r.ref === 'A4');
+  assert.ok(a4, 'A4 is on BIKE BEE\'s own card, not silently absent');
+  assert.equal(a4.status, 'RECOVERED');
+  assert.equal(a4.initial, 800); assert.equal(a4.arrears, 0); assert.equal(a4.recovered, 800);
+  assert.equal(card.totals.recovered, 1200);
+
+  // THE WORKLIST (expdfMine, what the phone's own Exp.Def list and the portal's "my list" both
+  // read): A4 does NOT appear -- nobody is called about an account that is already settled, on
+  // the sacred call path least of all. This is the one place RECOVERED is deliberately excluded.
+  const mine = await portalApi(db, { code: 'X', name: 'BIKE BEE', role: 'BIKE', teams: null, tabs: USER_TABS.slice() }, 'expdfMine', {}, NOW);
+  assert.deepEqual(mine.rows.map(r => r.ref), ['A1'], 'A4 paid in full: nothing left to call them about today');
+  assert.equal(mine.totals.recovered, 400, 'the worklist\'s own total is unaffected by a customer it no longer lists');
+});
+
 /* "The weekly expected def report ain't summing right by officer for what they added up during
    the days in the week." The week was Monday's initial deck against the latest current deck, every
    customer handed whole to whoever the rotation holds him with TODAY. The week is now the days

@@ -53,15 +53,32 @@ async function monthFirstInitial_(db, user, from, to) {
   } catch (e) { return NONE_; }
 }
 
-/* ONE DAY'S ROWS: the customers on a current deck still in default, each with the arrears the
-   same day's initial deck had for them (`baseBy`, by ref), who the rotation hands them to AT
-   `ms`, and whether it is their cycle day at `ms`. The one definition of a row -- the day's
-   report reads it for the day, the week's for every day it adds up -- so a week can never be
-   built on a rule the days are not. */
+/* ONE DAY'S ROWS: the customers still in default, PLUS anyone this same day's initial deck
+   placed as a defaulter who has since paid in full -- "they cant run from when their initial
+   file had them": once a customer is on a day's own initial deck, that day's report carries
+   them through to whatever the current deck now shows for them, recovered or not. Each row
+   carries the arrears the same day's initial deck had for them (`baseBy`, by ref), who the
+   rotation hands an ACTIVE one to AT `ms`, and whether it is their cycle day at `ms`. The one
+   definition of a row -- the day's report reads it for the day, the week's for every day it
+   adds up -- so a week can never be built on a rule the days are not.
+
+   "When a customer of expected defaulter pays full amount and no longer a defaulter, they
+   dessapear from the expected defaulters report, yet they should stay there as of recovery so
+   as to know recovery amount from difference of initial to current per each day by team or
+   staff" -- the owner, 13 Nov 2026. Before this, a customer's current-deck row was read only
+   if its own status still read Chronic/Expired/Defaulter -- paid in full, their row (status
+   PAID or similar) was simply never looked at, so their recovery never reached ANY sum on this
+   report family, not only its display. A customer whose CURRENT status does not match one of
+   the three is not dropped if they were on this SAME day's initial deck (`baseBy`): they are
+   kept, status RECOVERED, with whatever their current row now shows. A customer with no
+   current row at all (genuinely absent from the file, not merely a different status) is the
+   one case this cannot reach -- the rotation's own role/phase needs fields (days_elapsed,
+   chronic_date, expire_date) that exist only on a current-deck row. */
 function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
   const dayIdx = isoWeekday(ms);
   return scoped(user, curRows)
-    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
       const primary = raw;
@@ -70,6 +87,8 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
       const team = teamBy[K(d.team)] || {};
       const arrears = num(d.arrears);
       const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
+      const s = K(d.status);
+      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER' : 'RECOVERED'));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact,
         guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
         team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
@@ -77,7 +96,13 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
         // distinct from what has been recovered.
         rejesho: num(d.other_inst),
         ds: d.ds, dc: d.dc, disb_date: d.disb_date,
-        status: K(d.status).includes('CHRON') ? 'CHRONIC' : (K(d.status).includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
+        status,
+        // role/phase/cycle/leader are UNCHANGED for a RECOVERED row -- still the rotation slot
+        // this customer sits in, same as any other day. That is what lets periodRows_ and
+        // expdfMine's own RECYCLE_ROLES.includes(r.role) filter keep the row at all, and what
+        // credits the RIGHT officer for the recovery in byLeader/byCycle below -- the one the
+        // owner actually asked for ("know recovery amount ... by team or staff"). Only the
+        // STATUS says the account is settled, not whose book it sits in.
         phase: a.phase, role: a.role, cycle: a.label,
         primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
         onToday: primary === dayIdx || secondary === dayIdx,
@@ -316,7 +341,13 @@ const sumExpdf = list => ({
 export async function expdfMine(db, user, { all = false, weekly = false, scope = 'auto' } = {}, nowMs) {
   const core = await expdfCore(db, user, nowMs, { weekly });
   const me = K(user.name);
-  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
+  /* This is a WORKLIST, read by the phone (the sacred /api/call path) as much as the portal --
+     who still needs a call today. buildRows_ now keeps a customer who paid in full this same
+     day so the REPORT (expdfReport/expdfLeader, below) can credit the recovery; a worklist is
+     not a report, and nobody should be shown a call to make on an account that is already
+     settled, on the phone least of all. RECOVERED is excluded here and only here -- the report
+     family reads core.rows straight, through periodRows_, with no such filter. */
+  const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role) && r.status !== 'RECOVERED');
   const own = assigned.filter(r => K(r.leader) === me);
   // Everyone follows up in this mode, so everyone can see the day's expected defaulters for
   // the teams they are allowed to see -- each row naming who is assigned. A recycling leader
