@@ -1004,8 +1004,10 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      ghostRowsFor_ -- the identical helper expdfCore uses, no budget here, since this screen is
      not the sacred call path and can wait out the rare slow read. An unrestricted admin
      (user.teams null) gets every team already fetched above, not nothing -- the owner's own
-     sign-in is the likeliest admin case here. */
-  const ghostTeams = user.teams || teamRows.map(t => t.team);
+     sign-in is the likeliest admin case here. Deduplicated: found on review, access_codes.teams
+     is a hand-typed array with no uniqueness constraint, and a repeated team name made the RPC
+     return that team's ghosts twice, double-counting this screen's own totals. */
+  const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
   const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), 0);
   const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
     .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')

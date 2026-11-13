@@ -587,7 +587,11 @@ test('speed: the Exp.Def week with all five days filed stays within 14 trips and
   const c = counting(t, undefined);
   const d = await portalApi(c.db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
   assert.equal(d.days.filter(x => x.measured).length, 5, 'all five days were read');
-  const { trips, rows } = c.stat();            // measured 12 trips, 5,040 rows: ten deck reads of 500 and the small tables
+  const { trips, rows } = c.stat();            // measured 13 trips, 5,040 rows: ten deck reads of 500, the small tables, and
+    // one ghost-row lookup attempt on the live week's own TODAY iteration (expdfWeekCompute_,
+    // #697's own review fix) -- the same one round trip expdfCore's day/month views already
+    // pay, here on an unmigrated database where it fails fast and is remembered rather than
+    // asked again. Was 12 before that fix; still well inside the 14-trip budget.
   assert.ok(trips <= 14, `the Exp.Def week took ${trips} round trips (budget 14).`);
   assert.ok(rows <= 5500, `the Exp.Def week read ${rows.toLocaleString()} rows (budget 5,500) in ${trips} trips.`);
   // The same week again inside the minute -- the card behind a leader's name, say -- reads no deck at all: the roster and the

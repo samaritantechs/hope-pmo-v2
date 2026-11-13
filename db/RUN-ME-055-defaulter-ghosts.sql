@@ -49,6 +49,12 @@
 -- call this function; until it exists, they ask for it, get an error, and show no ghost rows
 -- at all -- the exact behaviour before this PR, never a failed request.
 --
+-- REVISED ON AN ADVERSARIAL REVIEW BEFORE THIS EVER RAN ON A REAL DATABASE: the function's
+-- own column list gained `balance` (expectedDefaulters reads it off every row and would
+-- otherwise have shown a fabricated 0 for a ghost's), and it is now STABLE with the 800ms
+-- bound as a function-level SET clause rather than VOLATILE with an in-body one -- see the
+-- comments directly above the function for both. Neither changes what the function answers.
+--
 -- CONCURRENTLY, BECAUSE defaulter_snapshots IS WRITTEN BY /api/upload (RUN-ME-054's own
 -- reasoning, unchanged: an ordinary CREATE INDEX would lock out every upload until it finished
 -- building on the live table).
@@ -74,18 +80,34 @@ create index concurrently if not exists idx_def_snap_team_ref on defaulter_snaps
 -- which the technique does not extend to cleanly. p_known_refs is whatever the caller already
 -- resolved from today's own deck -- computed there, not re-derived here, because the caller
 -- already has it in hand from the same request.
+-- balance -- added on review, before this ever ran on a real database: expectedDefaulters
+-- (portal-core.js) reads d.balance off every row it shows, ghost or not, and this function's
+-- own first cut left it out of the column list entirely. That is not a column nobody asked
+-- for -- docs/REPORT-PAYLOADS.md already documents `balance` as part of this screen's row
+-- shape -- so without it a ghost's balance read as a fabricated 0 instead of their real
+-- last-known one, silently, in the one place that already has the real rule for this
+-- ("a figure that is not known is never invented", portal-core.js).
 create or replace function defaulter_ghost_rows(p_teams text[], p_known_refs text[])
 returns table(ref text, full_name text, contact text, guarantor_name text, guarantor_contact text,
-              team text, arrears numeric, status text, ds text, dc int, days_elapsed int,
-              disb_date date, chronic_date date, expire_date date, other_inst numeric, snapshot_date date)
-language plpgsql as $$   -- not STABLE: it sets statement_timeout, which Postgres refuses inside a STABLE function
+              team text, arrears numeric, balance numeric, status text, ds text, dc int,
+              days_elapsed int, disb_date date, chronic_date date, expire_date date,
+              other_inst numeric, snapshot_date date)
+-- STABLE, with the 800ms bound as a function-level SET clause -- found on review, before this
+-- ever ran: the first cut gave up STABLE for an in-body `set local statement_timeout`, which
+-- Postgres genuinely refuses inside a STABLE function, but a function-level SET clause works
+-- under STABLE with byte-identical output (verified side by side on the same fixture), and this
+-- function only ever reads, never writes. (A separate thing the review found while checking
+-- this: neither form of SET actually re-arms Postgres's statement-timeout clock for the single
+-- top-level RPC call that invokes it -- a statement's timeout is latched once, at the start of
+-- the top-level statement, before this function's own body runs. That does not weaken the real
+-- defence here, which has always been api/_lib/expdf.js's own JS-side race (withinMs_,
+-- GHOST_BUDGET_MS): the request is never held up past its budget, whether or not the
+-- underlying read is still running underneath. This SET clause is kept as the second,
+-- database-side half of that same belt-and-suspenders, not the one guarantee either half relies on alone.)
+language plpgsql stable set statement_timeout = '800ms' as $$
 declare
   v_team text;
 begin
-  -- Belt and suspenders beside api/_lib/expdf.js's own time-boxed call: a whole team's
-  -- upload genuinely missing (the one costly case measured above) is abandoned here too,
-  -- never left to run to completion on the sacred call path.
-  set local statement_timeout = '800ms';
   foreach v_team in array p_teams loop
     return query
       with recursive walk as (
@@ -100,7 +122,7 @@ begin
         select wk.ref from walk wk where wk.ref is not null and wk.ref <> all (p_known_refs)
       )
       select distinct on (d.ref) d.ref, d.full_name, d.contact, d.guarantor_name, d.guarantor_contact,
-             d.team, d.arrears, d.status, d.ds, d.dc, d.days_elapsed, d.disb_date, d.chronic_date,
+             d.team, d.arrears, d.balance, d.status, d.ds, d.dc, d.days_elapsed, d.disb_date, d.chronic_date,
              d.expire_date, d.other_inst, d.snapshot_date
       from candidates c
       join defaulter_snapshots d on d.ref = c.ref and d.team = v_team and d.snapshot_type = 'current'

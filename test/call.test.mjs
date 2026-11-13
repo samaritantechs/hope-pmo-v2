@@ -2835,8 +2835,17 @@ test('a customer missing from today\'s deck entirely still shows, status CLEARED
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();
   const t = makeTables();
-  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
-  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  // BOTH role columns point at the one signed-in officer: GHOST1's role has to be able to
+  // read GMO (below) without moving GHOST1 off BIKE BEE's own worklist, which is the thing
+  // under test here, not team structure.
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE', gmo: 'BIKE BEE' };
+  // ASSIGN_CHRONIC's first bucket (GMO) is deliberately NOT ASSIGN_ACTIVE's (BIKE) -- found on
+  // review, before this shipped: with both strategies starting on BIKE, GHOST1's correct role
+  // (assignFor reading its real status, Chronic) and the role a regression would produce (if
+  // assignFor were ever fed the post-override CLEARED status instead, falling through to the
+  // ACTIVE branch) land on the identical value, so the test could not tell the two apart.
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' },
+    { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
   t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
   // A real, still-active defaulter for today -- the contrast GHOST1 has to sink below.
   t.defaulter_snapshots.push(
@@ -2869,6 +2878,11 @@ test('a customer missing from today\'s deck entirely still shows, status CLEARED
   assert.equal(ghost.amt, 15500, 'their real last-known arrears, not a fabricated zero');
   assert.equal(ghost.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
   assert.equal(ghost.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
+  // assignFor must read the ghost's own real status (Chronic), never the display override
+  // (CLEARED) buildRows_ computes afterwards -- found on review: with ASSIGN_CHRONIC's first
+  // bucket now distinct from ASSIGN_ACTIVE's, these two values can only agree if assignFor saw
+  // the real status.
+  assert.equal(ghost.fuStatus, 'C-W1', 'the rotation read the real status (Chronic), not the CLEARED display override');
 
   const summary = await callApi(dbMigrated, 'api_callDailySummary', ['dBEE'], NOW);
   assert.equal(summary.expdf.customers, 2, 'the daily-summary strip counts the ghost too');

@@ -173,8 +173,24 @@ function withinMs_(p, ms, fallback) {
    book, resolved above for exactly that viewer -- turned one screen's load into one round trip
    PER TEAM: 47 trips against a budget of 7. The SQL function already loops its own teams
    internally (db/RUN-ME-055); the fix is to ask it for the whole list in ONE call and cache
-   the answer keyed by that exact team set, not by walking the set ourselves. */
-async function readGhosts_(db, teams, atMs) {
+   the answer keyed by that exact team set, not by walking the set ourselves.
+
+   `knownRefs` IS SENT TO THE RPC, NOT JUST USED TO FILTER THE ANSWER -- found on an adversarial
+   review before this shipped: the first version of this cache called the RPC with
+   `p_known_refs: []` always, applying the real known refs only afterwards, in JS. The SQL
+   function's own exclusion (`candidates as (... wk.ref <> all(p_known_refs))`, db/RUN-ME-055)
+   exists so the expensive half of the query -- sorting a team's entire history to find each
+   ref's latest row -- never runs on a ref that was going to be thrown away anyway. Sending `[]`
+   defeated that on every single call: measured, this forces the function's own documented
+   WORST case (a disk spill, ~7x slower) on every real cache refresh, not only on the one case
+   it was written for (a whole team's upload genuinely missing). The cache below stays keyed by
+   team set alone, not by `knownRefs` too -- re-keying on it would mean a fresh RPC call almost
+   every time (today's deck is never the same list twice), defeating the cache entirely for no
+   correctness gain: ghostRowsFor_'s own JS-side filter (below) already excludes a known ref from
+   the final answer regardless of which request's knownRefs happened to fill the cache, so the
+   SQL-side exclusion only ever needs to be a good-enough performance accelerant, never the
+   source of truth. */
+async function readGhosts_(db, teams, knownRefs, atMs) {
   let byKey = ghostCache.get(db);
   if (!byKey) { byKey = new Map(); ghostCache.set(db, byKey); }
   const key = teams.slice().sort().join('\u0001');
@@ -186,7 +202,7 @@ async function readGhosts_(db, teams, atMs) {
   }
   const pending = (async () => {
     try {
-      const { data, error } = await db.rpc('defaulter_ghost_rows', { p_teams: teams, p_known_refs: [] });
+      const { data, error } = await db.rpc('defaulter_ghost_rows', { p_teams: teams, p_known_refs: knownRefs });
       if (error) throw error;
       const rows = data || [];
       byKey.set(key, { at: Date.now(), rows });
@@ -218,10 +234,11 @@ async function readGhosts_(db, teams, atMs) {
     resolve (no team at all), not "this caller is unrestricted". */
 export async function ghostRowsFor_(db, teams, knownRefs, budgetMs = 0) {
   if (!teams || !teams.length || typeof db.rpc !== 'function') return [];
-  const known = new Set((knownRefs || []).map(K));
+  const normalized = (knownRefs || []).map(K);
+  const known = new Set(normalized);
   const atMs = Date.now();
-  const rows = budgetMs > 0 ? await withinMs_(readGhosts_(db, teams, atMs), budgetMs, [])
-                             : await readGhosts_(db, teams, atMs);
+  const rows = budgetMs > 0 ? await withinMs_(readGhosts_(db, teams, normalized, atMs), budgetMs, [])
+                             : await readGhosts_(db, teams, normalized, atMs);
   return rows.filter(r => !known.has(K(r.ref))).map(r => ({ ...r, _ghost: true }));
 }
 
@@ -250,7 +267,11 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   // above, not nothing: the owner's own sign-in is the likeliest admin case, and skipping the
   // whole feature for it would hide a ghost from the one person who asked for this the loudest.
   // GHOST_BUDGET_MS (the call path's own bound, not a team-count one) is what keeps this safe.
-  const ghostTeams = user.teams || teamRows.map(t => t.team);
+  // Deduplicated: found on review, access_codes.teams is a hand-typed array with no uniqueness
+  // constraint (unlike teams.team, a primary key) -- a repeated entry made defaulter_ghost_rows'
+  // own per-team loop return that team's ghosts twice, double-counting sumExpdf's plain-reduce
+  // arrears/initial/recovered totals (its customer count stays right, since that one is a Set).
+  const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
   const ghosts = await ghostRowsFor_(db, ghostTeams, knownRefs, ghostBudgetMs);
   const curRowsAll = ghosts.length ? curSnap.rows.concat(ghosts) : curSnap.rows;
 
@@ -330,6 +351,17 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   // (Found on review, before this shipped: proved with a customer whose days_elapsed crosses a
   // bucket boundary mid-week, counted on both the BIKE and the MANAGER board for one week.)
   const undatedSeen = new Map(), seenAsDated = new Set();
+  /* THE GHOST IS TODAY'S OWN FACT, NOT THE WEEK'S -- found on review, before this shipped: the
+     week's per-day loop below never merged ghost rows at all, so a customer gone from the deck
+     entirely (ghostRowsFor_, above) was visible on the Exp.Def Report's day and month views but
+     silently absent on week, with no note. db/RUN-ME-055's own function answers "missing from
+     the TEAM'S LATEST data right now" -- it has no concept of a past day at all, so asking it
+     for a closed week (one that has already ended) would mean judging history by a fact that
+     is only true today, which this codebase's own rule never does ("a figure that is not known
+     is never invented"). So ghosts reach the week only through its own TODAY iteration, when
+     the week being viewed is the live one -- the same today-anchored reach expdfCore already
+     gives day and month. A closed past week asks for none. */
+  const ghostTeams = last === today ? [...new Set(user.teams || teamRows.map(t => t.team))] : null;
   for (let d = mon; d <= last; d = addDaysKey(d, 1)) {
     const at = d === today ? nowMs : Date.parse(d + 'T09:00:00Z');
     const wd = WD_[isoWeekday(at)];
@@ -340,7 +372,15 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
     const baseBy = {};
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
-    const built = buildRows_(user, cur.rows, baseBy, teamBy, strat, at);
+    let curRows = cur.rows;
+    if (d === today && ghostTeams) {
+      // No budget: this is the portal's own report, never the sacred call path (call-core.js
+      // reads only expdfMine), so it can wait out the rare slow read the way expectedDefaulters
+      // already does.
+      const ghosts = await ghostRowsFor_(db, ghostTeams, cur.rows.map(r => r.ref), 0);
+      if (ghosts.length) curRows = cur.rows.concat(ghosts);
+    }
+    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at);
     const list = periodRows_({ rows: built }, { daily: true, day: null, keepUndated: false });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);

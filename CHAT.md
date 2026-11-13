@@ -161,10 +161,31 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   failed request) on a database without the migration run. `test/speed.test.mjs`:
   `expectedDefaulters` moves 7 -> 8 trips, the one genuinely necessary new round trip, reason in
   the same diff; every `expdfReport`/`expdfLeader`/`expdfMine` variant had headroom already and
-  needed no change. No front-end file touched; `BUILD`/`CALL_BUILD` untouched. `npm test`: 1,527
-  pass. **Not done:** `test/speed.test.mjs` has no dedicated budget for `api_callList(...,
+  needed no change. No front-end file touched; `BUILD`/`CALL_BUILD` untouched. **Not done, at
+  that point:** `test/speed.test.mjs` had no dedicated budget for `api_callList(...,
   'expdf')` itself (only `'today'`/`'defaulters'`) -- a pre-existing gap this change reaches but
   does not close, flagged rather than expanding scope.
+  **Reviewed by an adversarial pipeline before this merged** -- eleven candidate findings,
+  each independently re-verified against the real files and a real local Postgres; eight real,
+  three refuted. Fixed: `p_known_refs` was being sent as `[]` always (the SQL function's own
+  exclusion never ran, so every cache refresh paid its documented worst case -- a disk spill,
+  ~7x slower -- not only the rare case it names); `balance` was missing from the function's own
+  column list entirely, so a ghost's balance silently read as a fabricated 0 in production, a
+  documented field (`docs/REPORT-PAYLOADS.md`) nobody had tested because the test suite's own
+  mock was looser than real Postgres and spread the whole fixture row instead of projecting to
+  it; the Exp.Def week's own per-day loop never called the ghost lookup at all, so the feature
+  vanished with no note switching from day/month to week -- fixed to reach the week only through
+  its own live-today iteration, never a closed week (today's gap is not a fact about a week that
+  already ended); `ghostTeams` was never deduplicated (a hand-typed access-code team list
+  repeating one team double-counted that team's ghosts); and nothing exercised the budget race's
+  own timeout-abandonment, the one property the sacred path's safety depends on (confirmed: a
+  regression that drops it passes every other test). All fixed, each with a new or corrected
+  test that fails on the regression. Refuted: an exact-team-match concern (the function never
+  sees a raw, user-typed team name), a cache-key separator concern (not practically reachable),
+  and a second team-case-normalization concern at the same line as the dedup fix (a
+  normalization layer upstream the finding had not traced back to). Full writeup, including the
+  one true nit taken alongside (STABLE instead of VOLATILE, zero behaviour change), is
+  handbook Part 71. `npm test`: 1,529 pass (two new tests). `BUILD`/`CALL_BUILD` still untouched.
 - **#696** — the worklists keep a cleared customer too, sunk to the bottom, not off the list
   (handbook Part 70). "So even in call app if they clear they go down with status cleared..
   same for the rest defaulters lists if possible" -- the owner, right after confirming the
