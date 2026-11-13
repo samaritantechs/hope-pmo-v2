@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 64**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-c` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 65**.
 
 ---
 
@@ -77,6 +77,19 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#689** — the arrows moved onto the four cards themselves (handbook Part 65). "i meant
+  arrows on cards of: Loan applications (Mon-Sun) ... Sales trend (Mon-Sat) ... Weekly expected
+  trend (Mon-Fri) ... Weekly recovery trend (Mon-Sun)" -- #687/#688 had put the arrow on a
+  separate performance-strip tile instead of on the named cards. Moved, not rebuilt: every
+  delta (`dSales`/`dCol`/`dRec`/`dApps`) was already computed by #687/#688, so this is a
+  client-only change -- `trendGrid` (`public/app.html`) now takes an optional sixth argument,
+  the arrow's own HTML, rendered beside the card's title; the "Loan apps" strip tile is
+  removed (its number now lives on the Loan Applications card itself); Sales %, Collection %,
+  Recovery % and the average stay on the strip exactly as they were before any of this started
+  -- nothing asked for their removal. No server change, no new read: `BUILD 2026-11-13-c`.
+  **Not done:** whether the strip should shrink now that three of its four deltas also sit on
+  their own cards is not decided -- nothing was asked to be removed beyond the one tile that
+  was this change's own recent addition.
 - **#688** — the loan-apps arrow's false fall, fixed (handbook Part 64). "not yet", with a
   screenshot: Loan apps 486, down from 741 -- a steep drop that was an artifact, not a trend.
   #685's own "unassigned/assigned, read right now" rule is a CURRENT snapshot: by the time a
