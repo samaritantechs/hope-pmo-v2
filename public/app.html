@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-12-e';
+var BUILD = '2026-11-13-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2957,6 +2957,15 @@ function avgSub(dv, on, label){
     ? (s + ' · wastani wa ' + on + ' kati ya 3 / average of the ' + on + ' measured')
     : s;
 }
+/* Loan apps move by a COUNT, not a percentage -- trendSub always prints a trailing "%", which
+   would turn "+5 apps" into the wrong claim "+5%". prevCount is never null in practice (see
+   appsCount's own note in dashboardFull), but the fallback costs nothing and matches the
+   other tiles' own defensiveness. */
+function appsSub(dv, prevCount){
+  return prevCount == null ? 'hakuna kipindi kilichopita / no previous period'
+    : ((dv > 0 ? '+' : '') + dv + ' maombi dhidi ya wiki iliyopita (' + money(prevCount)
+        + ') / vs last week’s ' + money(prevCount));
+}
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
@@ -3803,10 +3812,15 @@ VIEWS.dashboard = function(){
       + '</div>'
       /* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance
          where in each one and the average have the rising constant or dropping arrow symbol
-         to know progress". This week's three percentages and their average, each carrying
-         last week's movement: ▲ rising, ▬ constant, ▼ dropping, nothing when there was no
-         last week to compare against. */
+         to know progress", later joined by "show the single rising and dropping arrow in
+         each of loan apps, sales, collection and recovery cards against last week's
+         performance". This week's loan-apps count, three percentages and their average, each
+         carrying last week's movement: ▲ rising, ▬ constant, ▼ dropping, nothing when there
+         was no last week to compare against. Loan apps reads the SAME unassigned/assigned
+         rule the "Loan applications" trend card below already uses (appsInRange_ in
+         dashboardFull), so the two never disagree about this week's own total. */
       + (function(){ var p = d.perf || {}; return '<div class="kpis sm" style="margin-top:8px">'
+          + kpi('Loan apps', money(p.appsCount) + trendArrow(p.dApps), appsSub(p.dApps, p.appsPrevCount))
           + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), trendSub(p.dSales))
           + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), trendSub(p.dCol))
           + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), trendSub(p.dRec))

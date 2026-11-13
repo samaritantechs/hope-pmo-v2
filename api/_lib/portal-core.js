@@ -12355,14 +12355,21 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      re-uploads: the SAME loan re-uploaded under a corrected date simply moves (one row, one
      id -- no duplicate to make), while created_at keeps its first-insert moment forever.
      Rows from before the stamp existed fall back to created_at, as before. */
+  /* Loan applications (unassigned/assigned stage) created or uploaded within [from,to] -- the
+     one filter appsTrend and the performance strip's "Loan apps" arrow below both read, so a
+     week's total and the seven days that make it up can never disagree about which loans count. */
+  const appsInRange_ = (loans, from, to) => loans.filter(l => {
+    if (l.stage !== 'unassigned' && l.stage !== 'assigned') return false;
+    const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
+    return d0 >= from && d0 <= to;
+  });
   const appsTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
-    const on = myLoans.filter(l => String(l.upload_date || l.created_at || '').slice(0, 10) === d);
+    const on = appsInRange_(myLoans, d, d);
     const u = on.filter(l => l.stage === 'unassigned').length;
     const a = on.filter(l => l.stage === 'assigned').length;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
-      amount: on.filter(l => l.stage === 'unassigned' || l.stage === 'assigned')
-        .reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
+      amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
   });
 
   /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
@@ -12525,6 +12532,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       const d0 = String(l.approved_date || '').slice(0, 10);
       return (d0 >= from && d0 <= to) ? s + (num(l.principal_amt) || num(l.loan_amt)) : s;
     }, 0);
+    /* LOAN APPS, FOR THE STRIP'S FOURTH ARROW -- "show the rising or dropping arrow in loan
+       apps, sales, collection and recovery cards against last week's performance". Unlike the
+       other three, this needs no budget guard: it reads myLoans, which this function already
+       holds unconditionally for the whole floor back to last Monday (see loanFloor above), so
+       last week's count is never the "could not be read in time" null the others can be -- it
+       is always a real figure, possibly zero. */
+    const appsRows_ = appsInRange_(myLoans, from, to);
+    const appsCount = appsRows_.length;
+    const appsAmount = appsRows_.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0);
     for (let i = 0; i < 5; i++) {
       /* Corrected the same way as every other collection figure on this screen -- and note
          that LAST week goes through it too, because an arrow that compares a corrected week
@@ -12554,7 +12570,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     /* Averaged over the percentages that were MEASURED -- see perfOf in monthReport for why a
        null must leave the divisor as well as the sum. */
     const meas = [salesPct, colPct, recPct].filter(v => v != null);
-    return { salesPct, colPct, recPct,
+    return { salesPct, colPct, recPct, appsCount, appsAmount,
       avgPct: meas.length ? Math.round((meas.reduce((s, v) => s + v, 0) / meas.length) * 10) / 10 : null,
       avgOn: meas.length,
       hasData: e > 0 || u > 0 || salesAmt > 0 };
@@ -12573,6 +12589,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        could not be read is a different thing from an arrow that is missing because last week
        was flat, and the screen should not present them as the same. */
     prevRead: !!(myExpPrev.length || myDefPrev.length),
+    // The fourth arrow: a plain count difference, never null -- see appsCount's own note above.
+    appsCount: wkNow.appsCount, appsAmount: wkNow.appsAmount, appsPrevCount: wkPrev.appsCount,
+    dApps: wkNow.appsCount - wkPrev.appsCount,
   };
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */

@@ -6575,6 +6575,43 @@ test('the dashboard performance strip carries the three percentages, their avera
   assert.equal(p2.avgOn, 2, 'and the strip is told it covered two of the three');
 });
 
+/* THE FOURTH ARROW -- "show the single rising and dropping arrow in each of loan apps, sales,
+   collection and recovery cards against last week's performance". The other three can go null
+   when the budget-limited read of last week comes back empty; apps never can, because myLoans
+   is read in full for the whole span unconditionally (see appsCount's own note in dashboardFull)
+   -- so a week with genuinely zero applications still prints a real zero, never "no previous
+   period". And it must never disagree with the "Loan applications" trend card right below the
+   strip, since both now read the one appsInRange_ rule. */
+test('the loan-apps arrow is a plain count against last week, and it agrees with the trend card', async () => {
+  const t = tables();
+  t.loans = [
+    // THIS WEEK (Mon 2026-07-20 .. Sun 2026-07-26): three apps.
+    { id: 'w1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 500, upload_date: '2026-07-20' },
+    { id: 'w2', team: 'KONGOWE', stage: 'assigned', requested_amt: 300, upload_date: '2026-07-22' },
+    { id: 'w3', team: 'MBAGALA', stage: 'unassigned', requested_amt: 200, upload_date: TODAY },
+    // LAST WEEK (Mon 2026-07-13 .. Sun 2026-07-19): one app.
+    { id: 'p1', team: 'KONGOWE', stage: 'assigned', requested_amt: 400, upload_date: '2026-07-15' },
+    // Outside either window: must count toward neither.
+    { id: 'o1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 999, upload_date: '2026-06-01' },
+    // This week's window, but past the apps stages -- an approval, not an app.
+    { id: 'a1', team: 'KONGOWE', stage: 'approved', requested_amt: 777, upload_date: '2026-07-21', approved_date: '2026-07-21' },
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+  assert.equal(d.perf.appsCount, 3, 'three apps this week');
+  assert.equal(d.perf.appsPrevCount, 1, 'one app last week');
+  assert.equal(d.perf.dApps, 2, 'a plain count difference (3 - 1), never a percentage');
+  const weekTotal = d.appsTrend.reduce((s, x) => s + x.apps, 0);
+  assert.equal(d.perf.appsCount, weekTotal, "the strip's count must agree with the trend card's own total");
+
+  // A week with no apps at all last week is still a real, displayable zero.
+  const t2 = tables();
+  t2.loans = [{ id: 'w1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 500, upload_date: TODAY }];
+  const d2 = await run('dashboardFull', {}, ADMIN, dbWithRpc(t2));
+  assert.equal(d2.perf.appsCount, 1);
+  assert.equal(d2.perf.appsPrevCount, 0, 'zero last week is a real reading, not "could not be read"');
+  assert.equal(d2.perf.dApps, 1);
+});
+
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
    progress and summary". The three month cards opened up into their weeks: calendar weeks
    CLIPPED to the month ("some months happen to start or end in the same month with the
