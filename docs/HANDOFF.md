@@ -5414,6 +5414,90 @@ updated to match, since the SHAPE it exists to pin genuinely changed).
 that every day beneath it has one too is not decided -- nobody asked for it to be removed, so
 it stays.
 
+## Part 67 — A name beside the percentage, Early Collection on the strip, Inactive staff sorted last
+
+> "Sales % [credit analyst] ... Collection % [todays collection officer] ... Recovery % [pmo
+> rec officer] ... Performance · wastani [leading leader throughout the system with the best
+> weekly average e.g Robert. Manager 80%] ... so add [name of the leading leader infornt of
+> percentage like Amina 76%]" ... "add ealy col widget btn sales and col" ... "add ealy col
+> cards between" Sales trend and Weekly expected trend -- the owner, 13 November 2026.
+
+Two questions were costed and asked before anything was built, since guessing the shape of a
+dashboard feature cost three redos earlier the same day (Parts 63-66): whether the
+leading-leader ranking should be company-wide or scoped to the teams the viewer already sees,
+and whether Early Collection should be week-over-week (matching its three neighbours) or
+month-to-date (free, since the figure already exists). The owner chose the cheaper of each:
+**scoped to the viewer**, and **month-to-date**.
+
+**The leading leader, one name per strip tile.** Sales % names the best Credit Analyst this
+week, Collection % the best PMO collection officer, Recovery % the best PMO Recovery officer --
+each the one role the owner named. Performance · wastani reads EVERY role a team carries (the
+same nine `ROLE_LABEL` roles the month report ranks on, now hoisted to module scope so the two
+screens can never read two different lists of roles) -- "e.g Robert. Manager 80%" is a real
+case: a Manager can lead that one tile on his own team's average with no sales, collection or
+recovery role of his own. Scoped to the teams `teamAllowed` already lets this viewer see, never
+the whole company -- that ranking is the month report's own leaders board, and that board's own
+comment calls it "already the most expensive answer in the system"; this is the most-opened
+screen, so it stays cheap.
+
+**No new read, and no `weekPcts_` call per leader either.** The obvious shape -- call
+`weekPcts_` once per candidate name -- would re-walk the whole scope's `myLoans`/`myExpWeek`
+once per leader, which on an admin's company-wide view could mean dozens of full passes. Instead
+one pass buckets the same three sources `weekPcts_` already reads (`myLoans`, the Mon-Fri
+`colDay_` rows, `stand`/`recoveryByTeam`) by TEAM instead of summing them to one total; ranking
+a leader then costs summing a handful of Map lookups over the teams they hold, not re-reading
+the dataset. `weekPcts_` itself is untouched -- the strip's own `wkNow`/`wkPrev` read exactly
+the code they did before Part 67, so nothing already shipped was put at risk to build this.
+Wrapped in a `try`/`catch`: a mistake in the new arithmetic costs five fields, never the four
+tiles that already worked.
+
+**Collection's own precedence is read once, not twice.** The PMO-collection-officer-by-team map
+(`colByTeam`, "the code wins over the sheet") used to be built right before the Orodha reads it;
+it is now built earlier, before the performance strip, and both the Orodha and the new ranking
+read the one copy -- not two independently-built maps of the same rule that could drift the way
+CLAUDE.md section 2 warns about.
+
+**Early Collection, month-to-date.** `perf.ecolPct`/`ecolExp`/`ecolCol` sum the same
+`monthByTeam` the Orodha's own M. columns already read (ie/ic, the month ledger's early-col
+cells), over the teams this viewer sees -- new arithmetic on data already fetched for every
+dashboard load, not a new read. It is the one month-scoped figure on an otherwise
+week-over-week strip, so the client labels it "· MTD" rather than mixing it in unmarked. A new
+card sits between Sales trend and Weekly expected trend -- not a Mon-Sat grid like its
+neighbours, since the month ledger keeps no day beside its own sum, and the card says so rather
+than fake a daily map.
+
+**Found by the estate-wide parity test, not guessed.** `test/snapshot-totals.test.mjs` runs
+every dashboard-shaped screen twice -- once with the database doing the aggregate sums, once
+with the same rows added up in memory -- and asserts the two answers are identical, since the
+migration that installs the aggregate functions is run by hand and both paths are live at once
+across real deployments. The new `perf.ecolPct`/`ecolExp`/`ecolCol` are exactly as
+ledger-dependent as the Orodha's own `mEColPct` (one sanctioned, already-documented divergence:
+without the migration the ledger never fills, so those fields read null on one side and a real
+number on the other) -- but they sit under `perf`, a sibling of `teamPerf`, not a row inside it,
+so the existing `withoutLedger()` helper's strip-list did not reach them and the comparison
+caught four failures. Fixed by extending that helper, not by weakening what it checks: `perf`'s
+own three new fields are now stripped from the comparison the same documented way, and a direct
+assertion (`inMemory.perf.ecolPct === null`) proves what the stripping allows, the same way the
+existing per-team loop already does for `mEColPct`.
+
+**Inactive sorts last, everywhere the staff registry is listed.** "auto default deactivated
+staff to be below on the staff list" -- `advStaff`'s one query (`api/_lib/portal-core.js`)
+reads `staff_registry` ordered by `status` ascending, then `name`. 'Active' sorts before
+'Inactive' in plain alphabetical order (A before I) -- the only two spellings
+`advStaffSave`/`advStaffStatus` ever write -- so this needed no second column and no CASE
+expression (PostgREST's own `.order()` cannot take one): the database does it in the one pass
+it already made, at no extra cost.
+
+**What it costs.** No new read anywhere, on any screen; the dashboard's existing reads are
+unchanged, `weekPcts_` is unchanged, and the staff-list query already ran once. `BUILD
+2026-11-13-e`. `npm test`: 1,519 pass.
+
+**Not done.** Whether a leader who wins more than one tile (the same name under Sales % and
+Performance · wastani, say) should be called out as such, or left to be noticed, is not
+decided -- nobody asked either way. The card between the trend cards has no download/JPG
+button its neighbours carry, since a single figure has nothing a screenshot would add over the
+strip tile above it.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

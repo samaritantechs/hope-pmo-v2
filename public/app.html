@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-13-d';
+var BUILD = '2026-11-13-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2957,6 +2957,12 @@ function avgSub(dv, on, label){
     ? (s + ' · wastani wa ' + on + ' kati ya 3 / average of the ' + on + ' measured')
     : s;
 }
+/* "so add [name of the leading leader infornt of percentage like Amina 76%]" -- the best
+   this week among the teams this viewer sees, appended beside the tile's own movement text.
+   null (nobody named a role, or nobody was measured) leaves the sub exactly as it was. */
+function leaderSub_(sub, top){
+  return top ? (sub + ' · ' + top.name + ' ' + Math.round(top.pct) + '%') : sub;
+}
 
 /* `head` is redrawn on every paint, `rows`/`cols` drive the table. */
 var HEAD = '', ONROW = null;
@@ -3821,10 +3827,16 @@ VIEWS.dashboard = function(){
          last week's movement: ▲ rising, ▬ constant, ▼ dropping, nothing when there was no
          last week to compare against. */
       + (function(){ var p = d.perf || {}; return '<div class="kpis sm" style="margin-top:8px">'
-          + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), trendSub(p.dSales))
-          + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), trendSub(p.dCol))
-          + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), trendSub(p.dRec))
-          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), avgSub(p.dAvg, p.avgOn))
+          + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), leaderSub_(trendSub(p.dSales), p.topSales))
+          /* "add ealy col widget btn sales and col" -- Early Collection sits between Sales %
+             and Collection %, month-to-date (the owner's own choice, costed first: the figure
+             already exists for every load; a week-by-day version does not). No arrow -- there
+             is no "last week" for a month-to-date number -- and MTD is said outright, since
+             every other tile on this strip is week-over-week. */
+          + kpi('Early Collection % · MTD', pct(p.ecolPct), 'mwezi hadi sasa / month to date')
+          + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), leaderSub_(trendSub(p.dCol), p.topCol))
+          + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), leaderSub_(trendSub(p.dRec), p.topRec))
+          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), leaderSub_(avgSub(p.dAvg, p.avgOn), p.topAvg))
           + '</div>'; })()
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
       + (d.recoveryNote && d.recoveryNote !== rec.note ? '<div class="note">'+esc(d.recoveryNote)+'</div>' : '')
@@ -3859,6 +3871,16 @@ VIEWS.dashboard = function(){
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'),
           trendArrow((d.perf||{}).dSales) + headDelta_((d.perf||{}).dSales))
+      /* "add ealy col cards between" Sales trend and Weekly expected trend -- a card of its
+         own, not a Mon-Sat grid like its neighbours: the month-to-date figure the strip's own
+         tile carries has no day kept beside it (the month ledger keeps only the sum), so there
+         is no day-by-day map to draw here, and the card says so rather than fake one. */
+      + '<div class="card"><div class="card-h">Early Collection'
+        + '<span style="font-weight:400;color:var(--mut);font-size:12px">mwezi hadi sasa, si kwa siku / month to date, not by day</span></div>'
+        + '<div class="kpis sm" style="margin:0 14px 14px">'
+        + kpi('Early Collection %', pct((d.perf||{}).ecolPct),
+            'TZS '+money((d.perf||{}).ecolCol||0)+' ya '+money((d.perf||{}).ecolExp||0)+' / of')
+        + '</div></div>'
       /* THE HEADLINE IS THE DAY'S EXPECTED, not what came in.
            "i wanted them to show expected, uncollected and % -- replace collection with
             total expected"

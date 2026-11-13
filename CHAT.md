@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-d` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 66**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-e` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 67**.
 
 ---
 
@@ -77,6 +77,35 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#691** — a name beside the percentage, Early Collection on the strip, Inactive staff
+  sorted last (handbook Part 67). "Sales % [credit analyst] ... Performance · wastani
+  [leading leader ... e.g Robert. Manager 80%] ... so add [name of the leading leader
+  infornt of percentage like Amina 76%]" ... "add ealy col widget... add ealy col cards" ...
+  "auto default deactivated staff to be below on the staff list". Two scope questions were
+  costed and asked before building anything (company-wide vs the viewer's own teams for the
+  leader ranking; week-over-week vs month-to-date for Early Collection) — the owner chose the
+  cheaper of each. Each of the four strip tiles now names the best this week among the teams
+  the viewer sees (Sales → Credit Analyst, Collection → PMO collection officer, Recovery →
+  PMO Recovery officer, Performance · wastani → any of the nine roles a team carries, so a
+  Manager can lead it on his own average). No new read and no `weekPcts_` call per leader: one
+  pass buckets the same sources `weekPcts_` already reads by team, so ranking costs summing a
+  few Map lookups, not re-walking the dataset once per name; `weekPcts_` itself is untouched.
+  Early Collection (`perf.ecolPct`) reads the same month ledger the Orodha's own M. columns
+  already fetch — zero new reads — labelled "· MTD" since it is the one month-scoped tile on
+  an otherwise week-over-week strip; its own card (between Sales trend and Weekly expected
+  trend) says plainly it carries no day-by-day map, since the ledger keeps none. **Caught by
+  the estate-wide parity test** (`test/snapshot-totals.test.mjs`, runs every dashboard-shaped
+  screen twice — database sums vs. rows added up in memory — and asserts they agree): the three
+  new `perf.ecol*` fields are exactly as ledger-dependent as the Orodha's own `mEColPct` (one
+  already-sanctioned divergence without the migration), but sit under `perf`, a sibling of
+  `teamPerf` the existing `withoutLedger()` helper's strip-list did not reach — fixed by
+  extending that helper the documented way, not by weakening the check. Inactive staff now
+  sort below Active ones on the HR staff list (`advStaff`'s one query, ordered by status then
+  name — 'Active' sorts before 'Inactive' in plain alphabetical order, so this needed no
+  second column and no CASE PostgREST's own `.order()` cannot take). No read on `/api/upload`
+  or `/api/call`. `npm test`: 1,519 pass. `BUILD 2026-11-13-e`. **Not done:** whether a leader
+  who wins more than one tile should be called out as such is undecided — nobody asked either
+  way.
 - **Staff registry, 13 Nov** — a WhatsApp thread mixing several teams' changes in one paste:
   Team Masasi (two OFF), Team Njombe (one PLACE with a bank account, three OFF), a Zone
   South East correction (Iringa Area Bike Recovery, one PLACE with a bank account), and four

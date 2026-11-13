@@ -2019,7 +2019,14 @@ async function advStaff(db, user, { q, zone, status } = {}, nowMs = Date.now()) 
   const [teamRows, roleRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), fetchAll(() => db.from('roles').select('role')), settingsMany(db, [ADV_STAFF_EDIT_KEY])]);
   const canEdit = advStaffCanEdit_(user, cfg);
   const { zones, noZoneTeams } = advZones_(user, teamRows);
-  const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*').order('name', { ascending: true }), zones));
+  /* ACTIVE FIRST, INACTIVE LAST -- "auto default deactivated staff to be below on the staff
+     list". Sorted by status ascending, then by name: 'Active' sorts before 'Inactive' in
+     plain alphabetical order (A before I), the only two spellings advStaffSave and
+     advStaffStatus ever write, so this needs no second column and no CASE expression --
+     PostgREST's own .order() cannot take one anyway -- the database does it in the one pass
+     it already makes, at no extra cost. */
+  const rows0 = await advRead_(() => onZones_(db.from('staff_registry').select('*')
+    .order('status', { ascending: true }).order('name', { ascending: true }), zones));
   const on = Array.isArray(rows0);
   let rows = (rows0 || []).filter(r => advZoneOk_(zones, r.zone));
   if (zone) rows = rows.filter(r => K(r.zone) === K(zone));
@@ -11379,6 +11386,14 @@ function ledgerByTeam_(days, from, to, adj = null) {
    collection and recovery come from the ledger, and while it is still filling (or the totals
    functions are not installed) those columns say null -- "not yet", never a month of zeros.
    A week that has not started yet is null across the board. */
+/* EVERY ROLE A TEAM CARRIES, AND THE WORD FOR IT -- the month report's own leaders board and
+   the dashboard's leading-leader names (perf.topSales etc.) read the same nine columns off
+   Teams & Staff the same way, so a name beside Sales % and a name on the month report's own
+   leaders board can never mean two different roles under one word. One definition, in one
+   place: see teamsZoned in api/_lib/zone.js for the other rule this file keeps alike on
+   purpose. */
+const ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection (PMO)',
+  recovery: 'Recovery', gmo: 'GMO', manager: 'Manager', opm: 'OPM', bike: 'Bike', legal: 'Legal' };
 async function monthReport(db, user, args, nowMs) {
   const asOf = asOfWeek(nowMs, args && args.weekOf);
   // The dashboard's pick rides into its month report (the dot carries it), same narrowing.
@@ -11564,9 +11579,8 @@ async function monthReportCompute_(db, user, asOf, realNowMs) {
      month's sales against weekly x 4 per team, and the ledger's month-to-date early col,
      col and rec summed over those teams. The average is of what was measured, and the list
      is best first. One person in two roles is two rows, because the two are judged on
-     different teams. */
-  const ROLE_LABEL = { credit: 'Credit Analyst', expected: 'Early Collection', collection: 'Collection (PMO)',
-    recovery: 'Recovery', gmo: 'GMO', manager: 'Manager', opm: 'OPM', bike: 'Bike', legal: 'Legal' };
+     different teams. ROLE_LABEL is module-level now -- the dashboard's leading-leader names
+     read the same one. */
   const monthByTeam = days ? ledgerByTeam_(days, monthStart, today, adj) : null;
   const salesByTeam = {};
   for (const l of sales) salesByTeam[K(l.team)] = (salesByTeam[K(l.team)] || 0) + amtOf(l);
@@ -12588,6 +12602,24 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       pct: uncollected > 0 ? Math.round((recovered / uncollected) * 1000) / 10 : null };
   })();
 
+  /* The PMO collection officers, by the teams on their codes -- the code wins over the
+     sheet, because the code is where these people are actually maintained (Teams & Staff
+     writes it). Two officers on one team are both named, so a handover shows as such. Built
+     here, before the strip, because the leading-leader names (further down) need it too --
+     the Orodha's own Col column reads this same colByTeam further below, unchanged. */
+  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
+  const colByTeam = new Map();
+  for (const cd of codeRows) {
+    if (!isPmoRole(cd.role, pmoRoleName) || !cd.teams || !cd.teams.length) continue;
+    const name = String(cd.name || cd.code || '').trim();
+    if (!name) continue;
+    for (const tm of cd.teams) {
+      const k = K(tm);
+      if (!colByTeam.has(k)) colByTeam.set(k, []);
+      if (!colByTeam.get(k).includes(name)) colByTeam.get(k).push(name);
+    }
+  }
+
   /* ---- THE PERFORMANCE STRIP: three percentages, their average, and which way each moves.
      "weekly and monthly dashboard should all show average of sales%, col% and recovery%
       performance where in each one and the average have the rising constant or dropping
@@ -12672,6 +12704,123 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     dApps: wkNow.appsCount - wkPrev.appsCount,
   };
 
+  /* ---- THE LEADING LEADER, PER TILE, THIS WEEK, AMONG THE TEAMS THIS VIEWER SEES.
+     "Sales % [credit analyst] ... Collection % [todays collection officer] ... Recovery %
+      [pmo rec officer] ... Performance · wastani [leading leader throughout the system with
+      the best weekly average e.g Robert. Manager 80%] ... so add [name of the leading leader
+      infornt of percentage like Amina 76%]"
+     One name beside each of the four strip percentages -- never the whole company. That
+     ranking is the month report's own leaders board (ROLE_LABEL, above), and that function's
+     own comment calls it already the most expensive answer in the system; this screen is the
+     most-opened one, so it stays to the teams THIS viewer already sees.
+     Sales / Collection / Recovery each read the one role the owner named; Performance ·
+     wastani reads EVERY role a team carries, the same roles the month report ranks on --
+     a Manager can lead it, exactly the example given, because that tile was never any one
+     specialism's alone.
+     ONE PASS over the same three sources weekPcts_ already reads (myLoans, myExpWeek,
+     stand/myDefWeek), bucketed by TEAM instead of summed to one total, so ranking every
+     leader costs one more walk of data already in memory -- not one weekPcts_ call per
+     leader, which would re-walk the whole scope once per name. Wrapped so a mistake here
+     costs these five fields, never the four tiles above that already worked. */
+  try {
+    const bump_ = (map, team, v) => { const k = K(team); map.set(k, (map.get(k) || 0) + v); };
+    const salesWkByTeam = new Map(), expWkByTeam = new Map(), colWkByTeam = new Map(),
+          uncolWkByTeam = new Map(), recWkByTeam = new Map();
+    for (const l of myLoans) {
+      if (!SALES_STAGES.includes(l.stage)) continue;
+      const d0 = String(l.approved_date || '').slice(0, 10);
+      if (d0 >= mon && d0 <= sun) bump_(salesWkByTeam, l.team, num(l.principal_amt) || num(l.loan_amt));
+    }
+    for (let i = 0; i < 5; i++) {
+      for (const r of colDay_(myExpWeek, addDaysKey(mon, i))) {
+        bump_(expWkByTeam, r.team, num(r.expected_amt));
+        bump_(colWkByTeam, r.team, num(r.collected_amt));
+        bump_(uncolWkByTeam, r.team, num(r.uncollected_amt));
+      }
+    }
+    let recMeasured = false;
+    if (stand) {
+      const end = sun < realToday ? sun : realToday;
+      const m = sumRangeStand_(stand, mon, end);
+      if (m && m.size) { recMeasured = true; for (const [tm, v] of m) bump_(recWkByTeam, tm, v.recovered); }
+    } else for (let i = 0; i < 7; i++) {
+      const byTeam = recoveryByTeam(myDefWeek, addDaysKey(mon, i), WD7[i], adj);
+      if (!byTeam.size) continue;
+      recMeasured = true;
+      for (const [tm, t] of byTeam) bump_(recWkByTeam, tm, t.recovered);
+    }
+    const pctOf_ = (n, d) => (d > 0 ? Math.round((n / d) * 1000) / 10 : null);
+    const leaderPcts_ = teamSet => {
+      let sales = 0, exp = 0, col = 0, rec = 0, uncol = 0;
+      for (const tm of teamSet) {
+        sales += salesWkByTeam.get(tm) || 0;
+        exp += expWkByTeam.get(tm) || 0; col += colWkByTeam.get(tm) || 0;
+        rec += recWkByTeam.get(tm) || 0; uncol += uncolWkByTeam.get(tm) || 0;
+      }
+      const salesPct = pctOf_(sales, weeklyTarget * teamSet.size);
+      const colPct = pctOf_(col, exp);
+      const recPct = recMeasured ? pctOf_(rec, uncol) : null;
+      const meas = [salesPct, colPct, recPct].filter(v => v != null);
+      return { salesPct, colPct, recPct,
+        avgPct: meas.length ? Math.round((meas.reduce((s, v) => s + v, 0) / meas.length) * 10) / 10 : null };
+    };
+    // Who holds which role, team by team -- 'collection' follows the Orodha's own rule (the
+    // PMO code wins over the sheet); every other role is read straight off Teams & Staff.
+    const teamsOfRole_ = role => {
+      const by = new Map();
+      const add = (name, team) => {
+        const nm = String(name || '').trim();
+        if (!nm) return;
+        if (!by.has(nm)) by.set(nm, new Set());
+        by.get(nm).add(K(team));
+      };
+      if (role === 'collection') {
+        for (const t of myTeams) {
+          const held = colByTeam.get(K(t.team));
+          if (held && held.length) for (const nm of held) add(nm, t.team);
+          else add(t.collection, t.team);
+        }
+      } else for (const t of myTeams) add(t[role], t.team);
+      return by;
+    };
+    const bestInRole_ = (role, pick) => {
+      let best = null;
+      for (const [name, teamSet] of teamsOfRole_(role)) {
+        const v = pick(leaderPcts_(teamSet));
+        if (v != null && (!best || v > best.pct)) best = { name, pct: v };
+      }
+      return best;
+    };
+    perf.topSales = bestInRole_('credit', w => w.salesPct);
+    perf.topCol = bestInRole_('collection', w => w.colPct);
+    perf.topRec = bestInRole_('recovery', w => w.recPct);
+    perf.topAvg = (() => {
+      let best = null;
+      for (const role in ROLE_LABEL) for (const [name, teamSet] of teamsOfRole_(role)) {
+        const v = leaderPcts_(teamSet).avgPct;
+        if (v != null && (!best || v > best.pct)) best = { name, pct: v };
+      }
+      return best;
+    })();
+  } catch (e) { /* the four tiles above still draw; only the names beside them are missing */ }
+
+  /* ---- EARLY COLLECTION, MONTH-TO-DATE, AMONG THE TEAMS THIS VIEWER SEES.
+     "add ealy col widget btn sales and col" / "add ealy col cards between" Sales trend and
+     Weekly expected trend -- a fifth strip tile. Chosen month-to-date rather than
+     week-over-week (the owner's call, both costed first): monthByTeam, above, is already
+     read on every dashboard load for the Orodha's own M. columns, so this is new arithmetic
+     on data already in hand, not a new read. It is the one MTD figure on an otherwise
+     week-over-week strip, so the client labels it MTD rather than mixing it in unmarked --
+     and there is no day-by-day card to match Sales trend / Weekly expected trend this way,
+     since the month ledger keeps no day beside its own sum (see monthDayCell_'s own note). */
+  let ecolExp = 0, ecolCol = 0;
+  if (monthByTeam) for (const t of myTeams) {
+    const m = monthByTeam[K(t.team)];
+    if (m) { ecolExp += m.ie; ecolCol += m.ic; }
+  }
+  perf.ecolPct = monthByTeam ? (ecolExp > 0 ? Math.round((ecolCol / ecolExp) * 1000) / 10 : null) : null;
+  perf.ecolExp = ecolExp; perf.ecolCol = ecolCol;
+
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
 
@@ -12720,21 +12869,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     s.opm = t.opm || null; s.bike = t.bike || null; s.branch = t.branch || null;
     s.credit = t.credit || null; s.expected = t.expected || null; s.collection = t.collection || null;
   }
-  /* The PMO collection officers, by the teams on their codes -- the code wins over the
-     sheet, because the code is where these people are actually maintained (Teams & Staff
-     writes it). Two officers on one team are both named, so a handover shows as such. */
-  const pmoRoleName = pmoCfg.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
-  const colByTeam = new Map();
-  for (const cd of codeRows) {
-    if (!isPmoRole(cd.role, pmoRoleName) || !cd.teams || !cd.teams.length) continue;
-    const name = String(cd.name || cd.code || '').trim();
-    if (!name) continue;
-    for (const tm of cd.teams) {
-      const k = K(tm);
-      if (!colByTeam.has(k)) colByTeam.set(k, []);
-      if (!colByTeam.get(k).includes(name)) colByTeam.get(k).push(name);
-    }
-  }
+  /* colByTeam (the PMO collection officers, by the teams on their codes) is built further up,
+     before the performance strip, because the leading-leader names need it too -- "the code
+     wins over the sheet" is still the one rule, just read from one place for both screens. */
   for (const t of myTeams) {
     const held = colByTeam.get(K(t.team));
     if (held && held.length) slot(t.team).collection = held.join(' / ');
