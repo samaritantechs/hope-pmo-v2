@@ -77,6 +77,22 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 13 Nov** — a WhatsApp thread mixing several teams' changes in one paste:
+  Team Masasi (two OFF), Team Njombe (one PLACE with a bank account, three OFF), a Zone
+  South East correction (Iringa Area Bike Recovery, one PLACE with a bank account), and four
+  officers the P.M.O Supervisor flagged as missing from the Advance Salary request list in
+  the Call app (Team Chamwino, Bike Recovery Moro Center x2, the Kihonda Area manager — each
+  PLACE: moved to their team and their empty details filled in, exactly what that flag
+  means). The Chamwino/Moro Center/Kihonda block was sent to the group twice (tagged once
+  to the P.M.O Supervisor, once to the owner): read as one message, not eight more people.
+  Left as ASK, not guessed: a transfer named by one name only, with no surname and no
+  destination team ("Nyenje kahamia kutoka bunda"). Not filed at all, for lack of a surname
+  or team: a confirmation that somebody already has a month of work and has been paid. Two
+  of the PLACE rows carry a TIN and an NSSF number still "on process" — left out of the
+  script rather than written as that literal text; worth a follow-up once issued. The filled
+  copy went to the owner directly (never committed); it changes nothing by itself. Team-name
+  spelling for two rows (Kihonda Area, and the Zone South East wording) is a best guess with
+  more than one candidate given — the script says so itself if none match.
 - **#690** — each day's own arrow, against the same weekday last week (handbook Part 66). "i
   now need comparison of this Friday to that of last week" ... "arrows inside each day's card"
   -- #689 put one arrow on each card comparing the WEEK's total; every one of the 28 weekday
@@ -787,6 +803,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
+- **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and
+  destination team (only a first name and "moved from Bunda" was given); once the script is
+  run, whether the Kihonda Area team and the "South East" zone wording resolved or need their
+  exact Teams & Staff spelling; and the TIN/NSSF numbers for Kassim Shabani Muhidini and
+  Sylvester Erick Maundi, both "on process" and left out of the script, once issued.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
   should reset each calendar year — nothing resets it yet, the same running ledger the Google
