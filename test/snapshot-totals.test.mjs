@@ -225,9 +225,17 @@ const SCREENS = [
    exactly the same way and diverge in exactly the same place. */
 const LEDGER_KEYS = ['mEColPct', 'mColPct', 'mRecPct', 'mAvg',
   'mCol', 'mExp', 'mEcol', 'mEexp', 'mRec', 'mUncol'];
+/* The strip's own Early Collection tile (perf.ecolPct/ecolExp/ecolCol) reads the exact same
+   month ledger as the Orodha's mEColPct -- the SAME sanctioned divergence, one level up: a
+   sibling of teamPerf under perf, not a row inside it, so it needs its own strip. */
+const PERF_LEDGER_KEYS = ['ecolPct', 'ecolExp', 'ecolCol'];
 function withoutLedger(d) {
   if (!d || !Array.isArray(d.teamPerf)) return d;
   const { monthReady, ...rest } = d;
+  if (rest.perf) {
+    rest.perf = { ...rest.perf };
+    for (const k of PERF_LEDGER_KEYS) delete rest.perf[k];
+  }
   return { ...rest, teamPerf: d.teamPerf.map(t => {
     const c = { ...t };
     for (const k of LEDGER_KEYS) delete c[k];
@@ -258,6 +266,7 @@ for (const [label, fn, args] of SCREENS) {
               assert.equal(t[k], null, `${t.team}.${k}: null means "not yet", never a figure`);
             }
           }
+          assert.equal(inMemory.perf.ecolPct, null, 'perf.ecolPct: null means "not yet", never a figure');
         }
         assert.deepEqual(withoutLedger(fromDb), withoutLedger(inMemory),
           `${label} answered differently when the database did the adding up.\n` +

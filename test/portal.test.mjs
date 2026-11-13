@@ -6679,6 +6679,85 @@ test('each trend card carries its own day-by-day arrow against the same weekday 
   }
 });
 
+/* "Sales % [credit analyst] ... Collection % [todays collection officer] ... Recovery %
+   [pmo rec officer] ... Performance · wastani [leading leader throughout the system with the
+   best weekly average e.g Robert. Manager 80%] ... so add [name of the leading leader
+   infornt of percentage like Amina 76%]" -- one name beside each of the four strip
+   percentages, the best THIS WEEK among the teams this viewer sees (the owner's own choice,
+   not the whole company -- that ranking is the month report's own leaders board, costed
+   first and found to be "already the most expensive answer in the system"). */
+test('the strip names the leading leader per tile, among the teams this viewer sees', async () => {
+  const t = tables();
+  // A second team, PANDA, with its own (weaker) credit analyst -- so topSales has to pick
+  // the better one, not just report whoever happens to exist.
+  t.teams.push({ team: 'PANDA', opm: null, recovery: null, gmo: null, manager: null, credit: 'WEAK W', expected: null, bike: null });
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    { id: 's1', team: 'KONGOWE', stage: 'approved', principal_amt: 900, approved_date: TODAY, created_by: 'ANALYST A' },
+    { id: 's2', team: 'PANDA', stage: 'approved', principal_amt: 100, approved_date: TODAY, created_by: 'WEAK W' },
+  ];
+  t.repayment_snapshots = [
+    E('a1', 'KONGOWE', 1000, 'PAID', 0),      // KONGOWE: 1000 of 1000 -- 100% collected
+    E('a2', 'PANDA', 1000, 'UNPAID', 0),      // PANDA: 0 of 1000 -- 0% collected
+  ];
+  // A PMO collection code holding KONGOWE only -- proves topCol attributes to the CODE, the
+  // same precedence the Orodha's own Col column already gives it over an empty sheet column.
+  t.access_codes.push({ code: 'C1', name: 'COLLECTOR C', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+
+  assert.equal(d.perf.topSales.name, 'ANALYST A', 'KONGOWE (900) outsold PANDA (100) this week');
+  assert.equal(d.perf.topSales.pct, 90, '900 of a 1000 weekly target, one team');
+  assert.equal(d.perf.topCol.name, 'COLLECTOR C', 'the PMO code names the collection officer, not an empty sheet cell');
+  assert.equal(d.perf.topCol.pct, 100);
+  // PANDA has no collection officer at all (no code, no sheet cell) -- its 0% never competes.
+  assert.ok(d.perf.topAvg, 'somebody is named for the average tile');
+  // "e.g Robert. Manager 80%" -- every role on a team counts for this one tile, not only the
+  // four specialist roles, so KONGOWE's manager (BOSS) is a real candidate even with no sales,
+  // collection or recovery role of his own.
+  assert.ok(['ANALYST A', 'JUMA G', 'COLLECTOR C', 'BOSS', 'EARLY E'].includes(d.perf.topAvg.name));
+
+  // Nobody at all: a viewer whose own teams name no role gets null, never a crash or a guess.
+  const t2 = tables();
+  t2.teams = [{ team: 'LONE', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null }];
+  t2.loans = []; t2.repayment_snapshots = []; t2.defaulter_snapshots = [];
+  const d2 = await run('dashboardFull', {}, ADMIN, dbWithRpc(t2));
+  assert.equal(d2.perf.topSales, null);
+  assert.equal(d2.perf.topCol, null);
+  assert.equal(d2.perf.topAvg, null);
+});
+
+/* "add ealy col widget... add ealy col cards" -- Early Collection, month-to-date, the owner's
+   own choice over week-by-week (costed first: the MTD figure is already read on every load
+   for the Orodha's own M. columns; a daily version is not, and was not asked for once that
+   was known). perf.ecolPct reads the exact same monthByTeam the Orodha and the month report
+   already trust -- "no initial sheet this month" behaves exactly as it already does there. */
+test('the strip\'s Early Collection tile is month-to-date, among the teams this viewer sees, and null when unmeasured', async () => {
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc());
+  assert.equal(d.perf.ecolPct, null, 'the base fixture carries no initial sheet this month');
+  assert.equal(d.perf.ecolExp, 0);
+  assert.equal(d.perf.ecolCol, 0);
+
+  const t = tables();
+  // An early-collection ("initial") sheet this month, same shape the month report's own
+  // ecolPct test uses -- 'initial' is the early-collection list, not defaulter_snapshots'
+  // own same-named "initial"/"current" deck pair.
+  t.repayment_snapshots.push(
+    E('e1', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('e2', 'MBAGALA', 1000, 'UNPAID', 0, TODAY, 'initial'));
+  /* A COLD MONTH FILLS ACROSS LOADS (see "the Orodha's own officers and the month-to-date
+     percentages" above): the first dashboard load on a ledger nobody has filled says "not
+     yet", never a guessed number. The month report fills the rest under its own, bigger
+     budget; a second dashboard load, past the answer cache, then reads the whole month. */
+  const db = dbWithRpc(t);
+  const cold = await run('dashboardFull', {}, ADMIN, db);
+  assert.equal(cold.perf.ecolPct, null, 'still filling: not yet, never a wrong number');
+  await run('monthReport', {}, ADMIN, db);
+  const d2 = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW + 61000);
+  assert.equal(d2.perf.ecolExp, 2000);
+  assert.equal(d2.perf.ecolCol, 1000, 'KONGOWE PAID (1000) + MBAGALA UNPAID (0)');
+  assert.equal(d2.perf.ecolPct, 50);
+});
+
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
    progress and summary". The three month cards opened up into their weeks: calendar weeks
    CLIPPED to the month ("some months happen to start or end in the same month with the
@@ -12211,6 +12290,14 @@ test('salary advance: the registry, the ask on a team code, the GMO\'s decision 
   const off = await portalApi(db, hr, 'advStaffStatus', { id: 'JMM/004/2026', status: 'Inactive' }, NOW);
   assert.equal(off.status, 'Inactive');
   assert.ok(!(await portalApi(db, FO, 'advRequestPage', {}, NOW)).staff.find(s => s.id === 'JMM/004/2026'), 'off the request list');
+  // "auto default deactivated staff to be below on the staff list": Active first, Inactive
+  // last, so a long registry does not bury who is actually being asked for under everyone
+  // who has already left -- whatever each one's name happens to start with.
+  const sorted = await portalApi(db, hr, 'advStaff', {}, NOW);
+  const inactiveFrom = sorted.rows.findIndex(r => String(r.status || '').toUpperCase() === 'INACTIVE');
+  assert.ok(inactiveFrom > 0, 'at least one Active and one Inactive row, to prove the ordering');
+  assert.ok(sorted.rows.slice(0, inactiveFrom).every(r => String(r.status || '').toUpperCase() !== 'INACTIVE'), 'nothing Inactive sits above the first Inactive row');
+  assert.ok(sorted.rows.slice(inactiveFrom).every(r => String(r.status || '').toUpperCase() === 'INACTIVE'), 'nothing Active sits below it either');
   // A GMO WITH THE TAB SEES ONLY THEIR ZONES' STAFF, READ-ONLY -- "grant gmos the staff db, so they see only staff of their
   // zones/teams ... they cant open staff card = read only list": no save, no switch, even in their own zone; a team with no
   // zone is named to them. A zone-scoped MANAGEMENT holder still cannot write into another zone.

@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-d` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 66**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-e` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 67**.
 
 ---
 
@@ -77,6 +77,51 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#691** — a name beside the percentage, Early Collection on the strip, Inactive staff
+  sorted last (handbook Part 67). "Sales % [credit analyst] ... Performance · wastani
+  [leading leader ... e.g Robert. Manager 80%] ... so add [name of the leading leader
+  infornt of percentage like Amina 76%]" ... "add ealy col widget... add ealy col cards" ...
+  "auto default deactivated staff to be below on the staff list". Two scope questions were
+  costed and asked before building anything (company-wide vs the viewer's own teams for the
+  leader ranking; week-over-week vs month-to-date for Early Collection) — the owner chose the
+  cheaper of each. Each of the four strip tiles now names the best this week among the teams
+  the viewer sees (Sales → Credit Analyst, Collection → PMO collection officer, Recovery →
+  PMO Recovery officer, Performance · wastani → any of the nine roles a team carries, so a
+  Manager can lead it on his own average). No new read and no `weekPcts_` call per leader: one
+  pass buckets the same sources `weekPcts_` already reads by team, so ranking costs summing a
+  few Map lookups, not re-walking the dataset once per name; `weekPcts_` itself is untouched.
+  Early Collection (`perf.ecolPct`) reads the same month ledger the Orodha's own M. columns
+  already fetch — zero new reads — labelled "· MTD" since it is the one month-scoped tile on
+  an otherwise week-over-week strip; its own card (between Sales trend and Weekly expected
+  trend) says plainly it carries no day-by-day map, since the ledger keeps none. **Caught by
+  the estate-wide parity test** (`test/snapshot-totals.test.mjs`, runs every dashboard-shaped
+  screen twice — database sums vs. rows added up in memory — and asserts they agree): the three
+  new `perf.ecol*` fields are exactly as ledger-dependent as the Orodha's own `mEColPct` (one
+  already-sanctioned divergence without the migration), but sit under `perf`, a sibling of
+  `teamPerf` the existing `withoutLedger()` helper's strip-list did not reach — fixed by
+  extending that helper the documented way, not by weakening the check. Inactive staff now
+  sort below Active ones on the HR staff list (`advStaff`'s one query, ordered by status then
+  name — 'Active' sorts before 'Inactive' in plain alphabetical order, so this needed no
+  second column and no CASE PostgREST's own `.order()` cannot take). No read on `/api/upload`
+  or `/api/call`. `npm test`: 1,519 pass. `BUILD 2026-11-13-e`. **Not done:** whether a leader
+  who wins more than one tile should be called out as such is undecided — nobody asked either
+  way.
+- **Staff registry, 13 Nov** — a WhatsApp thread mixing several teams' changes in one paste:
+  Team Masasi (two OFF), Team Njombe (one PLACE with a bank account, three OFF), a Zone
+  South East correction (Iringa Area Bike Recovery, one PLACE with a bank account), and four
+  officers the P.M.O Supervisor flagged as missing from the Advance Salary request list in
+  the Call app (Team Chamwino, Bike Recovery Moro Center x2, the Kihonda Area manager — each
+  PLACE: moved to their team and their empty details filled in, exactly what that flag
+  means). The Chamwino/Moro Center/Kihonda block was sent to the group twice (tagged once
+  to the P.M.O Supervisor, once to the owner): read as one message, not eight more people.
+  Left as ASK, not guessed: a transfer named by one name only, with no surname and no
+  destination team ("Nyenje kahamia kutoka bunda"). Not filed at all, for lack of a surname
+  or team: a confirmation that somebody already has a month of work and has been paid. Two
+  of the PLACE rows carry a TIN and an NSSF number still "on process" — left out of the
+  script rather than written as that literal text; worth a follow-up once issued. The filled
+  copy went to the owner directly (never committed); it changes nothing by itself. Team-name
+  spelling for two rows (Kihonda Area, and the Zone South East wording) is a best guess with
+  more than one candidate given — the script says so itself if none match.
 - **#690** — each day's own arrow, against the same weekday last week (handbook Part 66). "i
   now need comparison of this Friday to that of last week" ... "arrows inside each day's card"
   -- #689 put one arrow on each card comparing the WEEK's total; every one of the 28 weekday
@@ -787,6 +832,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
+- **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and
+  destination team (only a first name and "moved from Bunda" was given); once the script is
+  run, whether the Kihonda Area team and the "South East" zone wording resolved or need their
+  exact Teams & Staff spelling; and the TIN/NSSF numbers for Kassim Shabani Muhidini and
+  Sylvester Erick Maundi, both "on process" and left out of the script, once issued.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: whether the 26-day annual leave allowance (handbook Part 58, Leave & Holiday)
   should reset each calendar year — nothing resets it yet, the same running ledger the Google
