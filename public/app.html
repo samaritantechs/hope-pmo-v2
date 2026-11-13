@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-13-c';
+var BUILD = '2026-11-13-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3518,8 +3518,11 @@ function headDelta_(dv, unit){
   return dv == null ? '' : '<span style="font-size:11px;color:var(--mut);font-weight:400">'
     + (dv > 0 ? '+' : '') + Math.round(dv) + (unit == null ? '%' : unit) + ' wiki iliyopita</span>';
 }
-function tcell(head, lines, cls, attrs){
-  return '<div class="tcell'+(cls?' '+cls:'')+'"'+(attrs ? ' ' + attrs : '')+'><div class="th">'+esc(head)+'</div>'
+/* headArrow, like trendGrid's own: raw HTML (unescaped), beside the day's own label -- "i now
+   need comparison of this Friday to that of last week ... arrows inside each day's card".
+   Optional, so the other eleven callers of tcell are untouched. */
+function tcell(head, lines, cls, attrs, headArrow){
+  return '<div class="tcell'+(cls?' '+cls:'')+'"'+(attrs ? ' ' + attrs : '')+'><div class="th">'+esc(head)+(headArrow||'')+'</div>'
     + lines.map(function(l){ return '<div class="tl '+(l[1]||'')+'">'+l[0]+'</div>'; }).join('') + '</div>';
 }
 
@@ -3828,13 +3831,21 @@ VIEWS.dashboard = function(){
       /* "i meant arrows on cards of: Loan applications (Mon-Sun) ... Sales trend (Mon-Sat) ...
          Weekly expected trend (Mon-Fri) ... Weekly recovery trend (Mon-Sun)" -- the single
          rising/dropping arrow asked for lives on the card itself, beside its own title, not
-         on a separate strip. Each reuses the exact delta the percentage strip above already
-         computed for the same week (d.perf) -- one number, shown in two places, never two
-         different answers to the same question. Loan apps alone reads a steadier count than
-         its own card's day-tiles do: see appsCount's own note in dashboardFull for why. */
+         on a separate strip. Each card header reuses the exact delta the percentage strip
+         above already computed for the same week (d.perf) -- one number, shown in two places,
+         never two different answers to the same question. Loan apps alone reads a steadier
+         count than its own card's day-tiles do: see appsCount's own note in dashboardFull for
+         why.
+           THEN "i now need comparison of this Friday to that of last week ... arrows inside
+         each day's card": every weekday tile below carries its OWN arrow too, each day against
+         the same weekday last week (dApps/dSales/dCol/dRec, computed per day in dashboardFull,
+         no new read -- see each trend's own note there). The TOTAL tile keeps the card header's
+         own week-level arrow; the day tiles get their own, day-sized one beside the weekday
+         label. */
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
           d.appsTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
-            ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']]); }),
+            ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']],
+            '', '', trendArrow(x.dApps)); }),
           tcell('TOTAL', [
             ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
             ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
@@ -3842,7 +3853,8 @@ VIEWS.dashboard = function(){
           trendArrow((d.perf||{}).dApps) + headDelta_((d.perf||{}).dApps, ' maombi'))
       + trendGrid('Sales trend (Mon–Sat)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
           d.salesTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
-            ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']]); }),
+            ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']],
+            '', '', trendArrow(x.dSales)); }),
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'),
@@ -3859,7 +3871,8 @@ VIEWS.dashboard = function(){
           d.colTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
-            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']]); }),
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']],
+            '', '', trendArrow(x.dCol)); }),
           tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.colTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'),
@@ -3883,7 +3896,7 @@ VIEWS.dashboard = function(){
               ? tcell(wdLabel(x.weekday), [
                   ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
                   ['no col', 'mutl'],
-                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']], '', press)
+                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']], '', press, trendArrow(x.dRec))
               : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
@@ -3893,7 +3906,7 @@ VIEWS.dashboard = function(){
             ['Unrecovered TZS '+money(x.unrecovered)+adjTag_(x.dayAdjusted), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
-              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']], '', press)); }),
+              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']], '', press, trendArrow(x.dRec))); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot', recTileAttrs_('week')),

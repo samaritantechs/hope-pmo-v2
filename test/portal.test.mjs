@@ -6629,6 +6629,56 @@ test('the loan-apps arrow counts every application that arrived, not just what i
   assert.equal(d2.perf.dApps, 1);
 });
 
+/* "i now need comparison of this Friday to that of last week ... arrows inside each day's
+   card." TODAY (2026-07-24) is a Friday; last Friday is 2026-07-17 -- the owner's own named
+   example. Each of the four trend cards now carries its own day-level delta, every day against
+   the SAME weekday the week before, not the week before's total. */
+test('each trend card carries its own day-by-day arrow against the same weekday last week', async () => {
+  const t = tables();
+  t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
+  t.loans = [
+    // THIS Friday (2026-07-24 = TODAY): two apps, one sale.
+    { id: 'f1', team: 'KONGOWE', stage: 'unassigned', requested_amt: 100, upload_date: TODAY },
+    { id: 'f2', team: 'KONGOWE', stage: 'assigned', requested_amt: 100, upload_date: TODAY },
+    { id: 'fs', team: 'KONGOWE', stage: 'approved', principal_amt: 300, approved_date: TODAY },
+    // LAST Friday (2026-07-17): one app that has SINCE been approved (must still count --
+    // the same steady rule the week-level arrow already proved), one sale.
+    { id: 'p1', team: 'KONGOWE', stage: 'approved', requested_amt: 100, upload_date: '2026-07-17', approved_date: '2026-07-17' },
+    { id: 'ps', team: 'KONGOWE', stage: 'approved', principal_amt: 100, approved_date: '2026-07-17' },
+  ];
+  // "Expected Repayment" rows -- Col% for this Friday and last Friday.
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'PAID', 0),                    // today (TODAY): 1000 exp, 1000 col -> 100%
+    E('222', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'),     // last Friday: 1000 exp, 0 col -> 0%
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+  const fri = d.appsTrend.find(x => x.date === TODAY);
+  assert.equal(fri.dApps, 1, 'this Friday (2 arrived) minus last Friday (1 arrived, now approved) = 1');
+
+  /* Exact % arithmetic (dailyTarget) depends on how many teams tables() seeds overall, already
+     proven elsewhere -- this only needs to show the NEW field is real and points the right way:
+     this Friday sold 300, last Friday sold 100, so the % of target must have risen. */
+  const salesFri = d.salesTrend.find(x => x.date === TODAY);
+  assert.ok(salesFri.pct != null, 'a real % of daily target');
+  assert.ok(salesFri.dSales != null, 'a real delta, not null -- both Fridays had a sale');
+  assert.ok(salesFri.dSales > 0, "this Friday's 300 outsold last Friday's 100 -- a real rise");
+
+  const colFri = d.colTrend.find(x => x.date === TODAY);
+  assert.equal(colFri.pct, 100);
+  assert.equal(colFri.dCol, 100, "today's 100% minus last Friday's 0% is a full +100 point swing");
+
+  // A day genuinely not uploaded this week yet must carry no arrow -- never a fabricated one.
+  const notUploaded = d.colTrend.find(x => x.uploaded === false);
+  if (notUploaded) assert.equal(notUploaded.dCol, null, 'nothing to compare for a day with no sheet');
+
+  // Recovery: Mon-Fri carry a real number or null (never NaN/undefined); the weekend tiles,
+  // which carry no percentage at all, carry no arrow either -- by design, not an oversight.
+  for (const x of d.recTrend) {
+    if (x.weekday === 'SAT' || x.weekday === 'SUN') assert.equal(x.dRec, null, 'weekend tiles have no % to move');
+    else assert.ok(x.dRec === null || typeof x.dRec === 'number', x.weekday + ': dRec is a real number or null, never NaN');
+  }
+});
+
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries
    progress and summary". The three month cards opened up into their weeks: calendar weeks
    CLIPPED to the month ("some months happen to start or end in the same month with the

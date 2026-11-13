@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 65**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-d` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 66**.
 
 ---
 
@@ -77,6 +77,24 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#690** — each day's own arrow, against the same weekday last week (handbook Part 66). "i
+  now need comparison of this Friday to that of last week" ... "arrows inside each day's card"
+  -- #689 put one arrow on each card comparing the WEEK's total; every one of the 28 weekday
+  tiles across the four cards now carries its own, each day against the same weekday the week
+  before. No new read: every figure needed was already in memory for the week-level arrow
+  (`myLoans` for apps/sales, `myExpPrev`/`myDefPrev` for collection, `stand` already spanning
+  both weeks for recovery); apps reuses #688's own steadier, stage-agnostic rule for the same
+  reason the week-level arrow needs it (a day a week old has drained, a fresh day has not);
+  recovery's two weekend tiles, which already carry no percentage, carry no arrow either. `tcell`
+  (`public/app.html`) takes a new optional fifth argument, mirroring `trendGrid`'s own sixth.
+  **Caught before it shipped:** the first draft defined the apps helper AFTER the loop that now
+  needs it inside itself -- a `const` used before its own line throws, and 61 tests failed with
+  it; moved the definition earlier, `npm test` back to one real failure (a source-pattern test
+  pinned to the old four-argument shape of the recovery card's `tcell` calls, updated to match
+  the five-argument one, since the shape it pins genuinely changed). `npm test`: 1,517 pass. No
+  read on `/api/upload` or `/api/call`. `BUILD 2026-11-13-d`. **Not done:** whether the
+  week-level arrow still earns its place on each card's own title now that every day beneath it
+  has one too is not decided -- nobody asked for it to be removed.
 - **#689** — the arrows moved onto the four cards themselves (handbook Part 65). "i meant
   arrows on cards of: Loan applications (Mon-Sun) ... Sales trend (Mon-Sat) ... Weekly expected
   trend (Mon-Fri) ... Weekly recovery trend (Mon-Sun)" -- #687/#688 had put the arrow on a

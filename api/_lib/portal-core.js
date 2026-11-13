@@ -12365,33 +12365,42 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
     return d0 >= from && d0 <= to;
   });
+  /* EVERY APPLICATION CREATED WITHIN [from,to], WHATEVER STAGE IT SITS AT NOW -- the second,
+     STEADIER rule both the card header's own week-level arrow and each day tile's own arrow
+     need, not appsInRange_ above.
+
+       "not yet" -- the owner, 13 November 2026, on the arrow's first real screenshot.
+
+     appsInRange_ answers "how many are STILL waiting" as of this instant -- right for a daily
+     backlog tile, wrong for any arrow that compares two different moments: by the time a week
+     (or a single day a week ago) is that old, a real share of what it brought in has already
+     been assigned, approved or rejected and so no longer counts under that rule, while the
+     CURRENT period's own count (read the same instant) has had no such time to drain. The
+     arrow then reads as a sharp fall that is really just the earlier cohort being WORKED, not
+     fewer applications arriving -- precisely the caveat this change's own PR raised as an open
+     question, now seen for real. Every application ever created is counted here, by the day it
+     arrived, never retroactively dropped as it moves through the pipeline -- the same kind of
+     fixed-at-the-time fact SALES_STAGES counts a sale by. The trend card's own day-tile figures
+     below answer a different, legitimate question (today's own unworked backlog) and keep
+     their own rule unchanged; the two numbers are allowed to differ, on purpose. */
+  const appsArrivedInRange_ = (loans, from, to) => loans.filter(l => {
+    const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
+    return d0 >= from && d0 <= to;
+  });
   const appsTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
     const on = appsInRange_(myLoans, d, d);
     const u = on.filter(l => l.stage === 'unassigned').length;
     const a = on.filter(l => l.stage === 'assigned').length;
+    /* THE DAY'S OWN ARROW -- "i now need comparison of this Friday to that of last week ...
+       arrows inside each day's card." Reads appsArrivedInRange_ (every application that
+       ARRIVED that day, whatever stage it sits at now), the same steadier rule the week-level
+       arrow already uses and for the same reason: the backlog count above (u+a) would compare
+       this Friday's still-fresh pile against a week-old Friday's already-worked one. */
+    const pd = addDaysKey(prevMon, i);
+    const dApps = appsArrivedInRange_(myLoans, d, d).length - appsArrivedInRange_(myLoans, pd, pd).length;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
-      amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
-  });
-  /* EVERY APPLICATION CREATED WITHIN [from,to], WHATEVER STAGE IT SITS AT NOW -- the strip's
-     "Loan apps" arrow needs this SECOND, STEADIER rule, not appsInRange_ above.
-
-       "not yet" -- the owner, 13 November 2026, on the arrow's first real screenshot.
-
-     appsInRange_ answers "how many are STILL waiting" as of this instant -- right for a daily
-     backlog tile, wrong for a week-over-week comparison: by the time a week is a week old, a
-     real share of what it brought in has already been assigned, approved or rejected and so no
-     longer counts under that rule, while THIS week's own count (read the same instant) has had
-     no such time to drain. The arrow then reads as a sharp fall that is really just last week's
-     cohort being WORKED, not fewer applications arriving -- precisely the caveat this change's
-     own PR raised as an open question, now seen for real. Every application ever created is
-     counted here, by the day it arrived, never retroactively dropped as it moves through the
-     pipeline -- the same kind of fixed-at-the-time fact SALES_STAGES counts a sale by. The
-     trend card above answers a different, legitimate question (today's own unworked backlog)
-     and keeps its own rule unchanged; the two numbers are allowed to differ, on purpose. */
-  const appsArrivedInRange_ = (loans, from, to) => loans.filter(l => {
-    const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
-    return d0 >= from && d0 <= to;
+      amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0), dApps };
   });
 
   /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
@@ -12401,12 +12410,25 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      total -- "there happen to be approved sales on saturdays, so add its widget at dashboard
      too". */
   const dailyTarget = Math.round(weeklyTarget * Math.max(myTeams.length, 1) / 5);
+  /* Approved principal on one date -- shared by this week's own loop and the previous week's
+     same weekday a day's arrow compares against, so the two sides are never two different
+     readings of "a sale". approved_date is fixed once a loan is approved, so neither side
+     drains the way an apps-by-stage count would. */
+  const salesOnDay_ = d => myLoans.reduce((s, l) =>
+    (SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) === d)
+      ? s + (num(l.principal_amt) || num(l.loan_amt)) : s, 0);
   const salesTrend = WD6.map((wd, i) => {
     const d = addDaysKey(mon, i);
     const on = myLoans.filter(l => SALES_STAGES.includes(l.stage) && String(l.approved_date || '').slice(0, 10) === d);
     const amt = on.reduce((s, l) => s + (num(l.principal_amt) || num(l.loan_amt)), 0);
-    return { weekday: wd, date: d, amount: amt, loans: on.length,
-      pct: dailyTarget > 0 ? Math.round((amt / dailyTarget) * 1000) / 10 : null };
+    const pct = dailyTarget > 0 ? Math.round((amt / dailyTarget) * 1000) / 10 : null;
+    /* "i now need comparison of this Friday to that of last week ... arrows inside each
+       day's card." A point delta of the same %-of-daily-target the tile already shows,
+       so the arrow and the figure beside it are reading the same question. */
+    const prevAmt = salesOnDay_(addDaysKey(prevMon, i));
+    const prevPct = dailyTarget > 0 ? Math.round((prevAmt / dailyTarget) * 1000) / 10 : null;
+    return { weekday: wd, date: d, amount: amt, loans: on.length, pct,
+      dSales: (pct != null && prevPct != null) ? Math.round((pct - prevPct) * 10) / 10 : null };
   });
 
   /* ---- collection trend Mon-Fri: collected + uncollected per weekday ---- */
@@ -12415,19 +12437,28 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const rows = colDay_(myExpWeek, d);
     const exp = tExpected(rows);
     const col = tCollected(rows);
+    const pct = exp > 0 ? Math.round((col / exp) * 1000) / 10 : null;
     /* A DAY NOBODY HAS UPLOADED IS NOT A DAY OF ZERO COLLECTION.
        Thursday showing "TZS 0 / Col 0%" on Wednesday afternoon makes the week look like a
        disaster when nothing has happened yet at all. The totals were always right -- an empty
        day adds nothing to either side of the sum -- but the tile was not, so this says which
        days actually have a sheet behind them and the screen stops guessing. */
+    const uploaded = rows.length > 0;
+    /* "i now need comparison of this Friday to that of last week ... arrows inside each
+       day's card." myExpPrev is already held in full (the week-level arrow needs it too), so
+       this reads no new data -- the SAME colDay_ rule, over last week's own rows. Null, never
+       a fake 0%, when either side has no sheet at all: an undisclosed day cannot be MOVING. */
+    const prows = colDay_(myExpPrev, addDaysKey(prevMon, i));
+    const pexp = tExpected(prows);
+    const ppct = pexp > 0 ? Math.round((tCollected(prows) / pexp) * 1000) / 10 : null;
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
       /* THE NUMBER, NOT A NOTE. "put no extra note, include the amount" -- an Iliyonasia moves
          Uncol by exactly this much (clamped at zero, same as the figure beside it), and the
          tile says so as a figure rather than a sentence, the same way `adjusted_amt` already
          rides beside every other corrected total in this system. */
       adjusted: tAdjusted(rows),
-      uploaded: rows.length > 0,
-      pct: exp > 0 ? Math.round((col / exp) * 1000) / 10 : null };
+      uploaded, pct,
+      dCol: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
   });
 
   /* ---- recovery trend Mon-Sun: each day's own initial - current, over that day's uncollected.
@@ -12486,6 +12517,28 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const weekend = i >= 5;
     const basis = weekend ? { kind: 'none', den: 0, dates: [] } : { kind: 'today', den: own, dates: [d] };
     const unc = basis.den;
+    const uploaded = !!(ini.length || cur.length);
+    /* THE DAY'S OWN ARROW -- "i now need comparison of this Friday to that of last week ...
+       arrows inside each day's card." `stand` already spans both weeks (see its own fetch
+       above), so this reads no new data; the fallback mirrors the main loop's own
+       recoveryByTeam call, against last week's rows. Monday-Friday only, the same Rec% the
+       tile itself shows -- the weekend tiles carry no percentage at all (see the note above),
+       so they carry no arrow either, rather than inventing a third kind of delta for them. */
+    let dRec = null;
+    if (!weekend) {
+      const pd = addDaysKey(prevMon, i);
+      let prec = 0;
+      const pstD = dayStand_(stand, pd);
+      if (stand) { if (pstD) for (const t of pstD.values()) prec += t.recovered; }
+      else for (const t of recoveryByTeam(myDefPrev, pd, dwd, adj).values()) prec += t.recovered;
+      const pIni = defDay_(myDefPrev, pd, 'initial', dwd);
+      const pCur = defDay_(myDefPrev, pd, 'current', dwd);
+      const pUploaded = !!(pIni.length || pCur.length);
+      const pOwn = tUncollected(colDay_(myExpPrev, pd));
+      const ppct = pOwn > 0 ? Math.round((prec / pOwn) * 1000) / 10 : null;
+      const pct0 = unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null;
+      dRec = (uploaded && pUploaded && pct0 != null && ppct != null) ? Math.round((pct0 - ppct) * 10) / 10 : null;
+    }
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
       dayAdjusted: ownAdjusted,
@@ -12519,9 +12572,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
          after the first ever upload onward, so gating on it never actually fired. ini/cur are
          filtered to this exact snapshot_date above, so they are the one honest answer to "was
          a deck uploaded today", independent of whether the standing RPC is installed. */
-      uploaded: !!(ini.length || cur.length),
+      uploaded,
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
-      full: i >= 5 && rec > 0 };
+      full: i >= 5 && rec > 0, dRec };
   });
   /* THE WEEK'S OWN TOTAL, worked out beside the tiles it sums. Recovered is every tile's;
      uncollected is Monday to Friday's OWN sheets, once each -- the weekend branch of the same

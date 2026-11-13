@@ -5363,6 +5363,57 @@ that is now redundant and the strip should shrink back to the average alone, is 
 nothing was asked to be removed from the strip beyond the Loan apps tile that was this change's
 own, recent addition.
 
+## Part 66 — Each day's own arrow, against the same weekday last week
+
+> "i now need comparison of this Friday to that of last week" ... "arrows inside each day's
+> card" -- the owner, 13 November 2026.
+
+Part 65 put one arrow on each of the four cards, comparing the WEEK's total to last week's.
+That was not what was asked: every one of the 28 weekday tiles across the four cards (Loan
+applications, Sales trend, Weekly expected trend, Weekly recovery trend) now carries its own
+arrow, each day compared against the SAME weekday the week before -- this Friday against last
+Friday, not this week against last week.
+
+**No new read.** Every figure needed for "last week's same weekday" was already sitting in
+memory for the week-level arrow: `myLoans` (apps, sales) is read for the whole span back to
+last Monday already; `myExpPrev`/`myDefPrev` (collection, recovery) are the same rows the
+week-level arrow's own `weekPcts_` already holds; `stand` (recovery standing) already spans
+both weeks in one call. Each trend's own day-loop just reads the matching day of `prevMon`
+alongside the day it was already computing, using the exact same rule as that day's own figure:
+
+- **Loan applications** -- `appsArrivedInRange_` (Part 64's steadier, stage-agnostic rule), for
+  the same reason the week-level arrow needs it: a day a week old has had time to drain, a
+  fresh day has not, and comparing the card's own backlog count (`appsInRange_`) across that
+  gap would reproduce the exact false fall Part 64 fixed, just at the day level instead of the
+  week level.
+- **Sales** -- a point delta of the same %-of-daily-target the tile already shows, from
+  `approved_date`, a fixed fact that never drains.
+- **Collection** -- a point delta of Col%, from `colDay_` over `myExpWeek`/`myExpPrev` -- null,
+  never a fabricated 0%, when either day has no sheet behind it at all.
+- **Recovery** -- a point delta of Rec%, Monday-Friday only (`stand`/`recoveryByTeam`, the same
+  rule the tile's own figure uses); the two weekend tiles, which already carry no percentage at
+  all ("WE HAVE NO COL IN SAT AND SUN!"), carry no arrow either rather than inventing a third
+  kind of delta for them.
+
+**Client-side**, `tcell` (`public/app.html`) takes a new, optional fifth argument -- raw HTML,
+unescaped like `trendGrid`'s own sixth -- rendered beside the day's own weekday label. The
+other eleven callers of `tcell` are untouched; only the four day-tile loops pass it.
+
+**Caught before it shipped:** the first draft defined `appsArrivedInRange_` (now needed inside
+`appsTrend`'s own loop, not only afterward) in its old position, AFTER `appsTrend` -- a
+`const` used before its own declaration line throws, and every test touching `dashboardFull`
+failed with it (61 of them). Moved the definition ahead of its first use; `npm test` went from
+61 failures to one real one (a source-pattern test in `test/pages.test.mjs` pinned to the
+exact old four-argument `tcell(...)` call for the recovery card's weekday tiles, now five --
+updated to match, since the SHAPE it exists to pin genuinely changed).
+
+**What it costs.** No new read, no change to `/api/upload` or `/api/call`. `BUILD
+2026-11-13-d`.
+
+**Not done.** Whether the week-level arrow still earns its place on each card's own title now
+that every day beneath it has one too is not decided -- nobody asked for it to be removed, so
+it stays.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
