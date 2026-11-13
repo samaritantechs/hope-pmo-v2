@@ -994,8 +994,13 @@ async function expectedDefaulters(db, user, _args, nowMs) {
   const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
+  /* "same for the rest defaulters lists if possible" -- the owner, 13 Nov 2026, extending the
+     Exp.Def Report's own fix (expdf.js, buildRows_) to this tab too: a customer still on
+     TODAY'S OWN INITIAL deck is kept even once their current status leaves
+     Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. */
   const rows = scoped(user, def.rows)
-    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT'); })
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
     .map(d => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
       const primary = raw;
@@ -1006,7 +1011,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
       const { initial, recovered } = recoveryOf(baseBy, d.ref, num(d.arrears));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
         arrears: num(d.arrears), initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
-        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : 'DEFAULTER'),
+        status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER' : 'CLEARED')),
         disb_date: d.disb_date,
         primary, secondary,
         primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',

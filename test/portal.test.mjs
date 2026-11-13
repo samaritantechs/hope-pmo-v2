@@ -220,6 +220,27 @@ test('expected defaulters with no initial deck read recovered 0, never an invent
   for (const r of d.rows) { assert.equal(r.recovered, 0); assert.equal(r.initial, r.arrears); }
 });
 
+/* "same for the rest defaulters lists if possible" -- the owner, 13 Nov 2026, extending the
+   Exp.Def Report's own fix (buildRows_, expdf.js) to this tab too: a customer still on today's
+   own initial deck is kept even once paid in full, status CLEARED, rather than dropped the
+   moment their current row leaves Chronic/Expired/Defaulter. */
+test('expected defaulters keeps a customer who pays in full, status CLEARED, credited and not dropped', async () => {
+  const t = tables();
+  // Same days_elapsed/disb_date default as 111 -- the same rotation bucket, so a shared leader
+  // proves status alone decides CLEARED, nothing about who still owns the customer.
+  t.defaulter_snapshots.push(D('444', 'KONGOWE', 600, 'initial'),
+    { ...D('444', 'KONGOWE', 0, 'current'), status: 'PAID' });
+  const d = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  const by = Object.fromEntries(d.rows.map(r => [r.ref, r]));
+  assert.ok(by['444'], '444 is on the list, not silently dropped');
+  assert.equal(by['444'].status, 'CLEARED');
+  assert.equal(by['444'].initial, 600); assert.equal(by['444'].arrears, 0); assert.equal(by['444'].recovered, 600);
+  assert.equal(by['444'].leader, by['111'].leader, 'credited to the same leader KONGOWE already assigns 111 to');
+  // The whole-book totals now include it too -- the same credit the report already gives.
+  assert.equal(d.initial, 2100 + 600); assert.equal(d.recovered, 400 + 600, "111's 200 + 555's 100 + 999's 100 + 444's full 600");
+  assert.equal(d.arrears, 300 + 600 + 800 + 0);
+});
+
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."
    The tab has to tell the screen WHO is looking and whether the rotation gives them a list of
    their own -- without that it can only ever show everybody's book. */
@@ -4692,8 +4713,12 @@ test('the expdf report splits GMO / MANAGER / BIKE and totals the whole book', a
    dessapear from the expected defaulters report, yet they should stay there as of recovery so
    as to know recovery amount from difference of initial to current per each day by team or
    staff" -- the owner, 13 Nov 2026. A4 pays in full: today's current deck carries their row
-   with status PAID (not Chronic/Expired/Defaulter), same cycle day and BIKE bucket as A1. */
-test('a customer who pays in full stays on the report, credited to the right leader -- but drops off the worklist that still calls people', async () => {
+   with status PAID (not Chronic/Expired/Defaulter), same cycle day and BIKE bucket as A1.
+   "So even in call app if they clear they go down with status cleared.. same for the rest
+   defaulters lists if possible" -- the owner, same day: expdfMine (the phone's own list, and
+   the portal's) keeps the row too, sunk to the bottom by the arrears-descending sort it
+   already had, rather than excluding it. */
+test('a customer who pays in full stays on the report, credited to the right leader -- and sinks to the bottom of the worklist, not off it', async () => {
   const t = expdfTables();
   const D4 = (arrears, type) => ({
     ref: 'A4', full_name: 'C A4', contact: '0714000A4', team: 'KONGOWE', arrears,
@@ -4712,21 +4737,23 @@ test('a customer who pays in full stays on the report, credited to the right lea
   assert.equal(d.totals.customers, 4);
   assert.equal(d.totals.recovered, 1700, '900 (the three already-tested customers) + A4\'s 800');
 
-  // THE LEADER'S OWN CARD (tapping BIKE BEE's name): A4 is a real row, status RECOVERED, with
+  // THE LEADER'S OWN CARD (tapping BIKE BEE's name): A4 is a real row, status CLEARED, with
   // its own initial/recovered -- the exact place "know recovery amount ... by staff" is read.
   const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW);
   const a4 = card.rows.find(r => r.ref === 'A4');
   assert.ok(a4, 'A4 is on BIKE BEE\'s own card, not silently absent');
-  assert.equal(a4.status, 'RECOVERED');
+  assert.equal(a4.status, 'CLEARED');
   assert.equal(a4.initial, 800); assert.equal(a4.arrears, 0); assert.equal(a4.recovered, 800);
   assert.equal(card.totals.recovered, 1200);
 
   // THE WORKLIST (expdfMine, what the phone's own Exp.Def list and the portal's "my list" both
-  // read): A4 does NOT appear -- nobody is called about an account that is already settled, on
-  // the sacred call path least of all. This is the one place RECOVERED is deliberately excluded.
+  // read): A4 is kept too, sunk below A1 (600 arrears beats 0) by the sort it already had --
+  // confirmation that the account cleared, not a gap nobody can account for.
   const mine = await portalApi(db, { code: 'X', name: 'BIKE BEE', role: 'BIKE', teams: null, tabs: USER_TABS.slice() }, 'expdfMine', {}, NOW);
-  assert.deepEqual(mine.rows.map(r => r.ref), ['A1'], 'A4 paid in full: nothing left to call them about today');
-  assert.equal(mine.totals.recovered, 400, 'the worklist\'s own total is unaffected by a customer it no longer lists');
+  assert.deepEqual(mine.rows.map(r => r.ref), ['A1', 'A4'], 'A1 still owing comes first; A4, cleared, sinks to the bottom');
+  assert.equal(mine.rows.find(r => r.ref === 'A4').status, 'CLEARED');
+  assert.equal(mine.totals.customers, 2);
+  assert.equal(mine.totals.recovered, 1200, "A1's 400 + A4's full 800 -- the worklist now credits the same recovery the report does");
 });
 
 /* "The weekly expected def report ain't summing right by officer for what they added up during

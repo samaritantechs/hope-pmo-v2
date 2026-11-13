@@ -5624,5 +5624,85 @@ place. Flagged for whenever it is asked about, not built on a guess.
 
 ---
 
+## Part 70 — The worklists keep a cleared customer too, sunk to the bottom, not off the list
+
+> "So even in call app if they clear they go down with status cleared.. same for the rest
+> defaulters lists if possible." -- the owner, 13 Nov 2026, straight after confirming on a real
+> customer (handbook Part 69's own open case, closed that same day: the loan system's own 12 Nov
+> deck had already dropped them, nothing lost on this side) that a customer silently missing
+> from a list is indistinguishable from one this system quietly lost.
+
+Part 69 deliberately excluded a cleared customer from `expdfMine` -- "a worklist is not a
+report... nobody should be shown a call to make on an account that is already settled." That
+reasoning does not survive this follow-up: being shown a customer WITH a status saying they are
+settled is not the same thing as being asked to call them, and the first is worth more to an
+officer than silence. The exclusion is gone. `expdfMine`'s own filter is back to
+`RECYCLE_ROLES.includes(r.role)` alone, so a cleared row flows through untouched -- and sinks to
+the bottom of the list on the sort it already had (`arrears` descending; a cleared row's own
+arrears is 0, the lowest value there is), with no new sort, no new field, nothing extra to get
+wrong. The status label is renamed `RECOVERED` -> `CLEARED` everywhere it is set
+(`buildRows_`), matching the owner's own word for it -- and, checked rather than assumed, both
+`public/call.html`'s and `public/app.html`'s own shared status-chip classifiers already
+recognise the literal string `CLEARED` as the green/"ok" bucket (`PAID|OVERPAID|CLEARED|...`),
+alongside `public/app.html`'s own, separate, pre-existing use of exactly this word for a
+customer who has "left the defaulter deck entirely" on the Promises screen. One word, read the
+same way everywhere it already appears; this change did not invent it.
+
+"Same for the rest defaulters lists" reaches `expectedDefaulters` (`portal-core.js`), the
+portal's own "Expected Defaulters" tab -- the one worklist Part 69 checked and deliberately left
+untouched, on the reasoning that it mirrored `expdfMine`'s own philosophy. That reasoning now
+points the other way: it gets the IDENTICAL relaxation `buildRows_` already has (kept if still
+Chronic/Expired/Defaulter, OR present on today's own initial deck regardless of current status,
+status `CLEARED`), word for word the same condition, so the two stay one rule read twice rather
+than two that could drift apart again. `assignFor`'s own role/leader computation in this
+function was already unconditional (nothing to change there), and `recoveryOf` -- the shared
+helper this function already called for `initial`/`recovered` -- already handles a cleared
+customer's figures correctly; the only edits are the filter's own `||` clause and the status
+label's own branch.
+
+**Checked before any of this, not assumed:** whether a front-end change was even needed, and
+where. The phone's own `statusChip()` already renders `CLEARED` correctly (confirmed above), and
+the `'expdf'` list view's own filter (`filterForView_`) narrows by role or by day for that view,
+never by status -- so the call app needed NOTHING changed, and `CALL_BUILD` is untouched. The
+Exp.Def Report's own per-customer status column (the leader's day-card, `xdDayBody_`) is plain
+text, no chip, so it too needed nothing. Only the portal's "Expected Defaulters" screen
+(`public/app.html`, `VIEWS.defexp`) rendered status with its OWN, screen-local chip function
+(CHRONIC/EXPIRED special-cased, everything else a flat grey) rather than the shared classifier --
+given a `CLEARED` branch there too, so it reads green like everywhere else; its status filter
+dropdown gained the one missing option; and its "In the weekly cycle" KPI's own sub-label was
+reworded, since it now also counts anyone cleared, not only who still needs a call.
+
+Checked with two tests, rewritten rather than only renamed, since the claim they prove flipped
+from exclusion to inclusion. `test/portal.test.mjs`: the same pays-in-full customer (`buildRows_`
+Part 69 already covers) is now ALSO confirmed present on `expdfMine`'s own worklist, status
+`CLEARED`, sunk below the real defaulter sharing their bucket, with the worklist's own totals
+now crediting the same recovery the report does; a second, new test proves the identical thing
+for `expectedDefaulters` directly, against the suite's own base fixture. `test/call.test.mjs`:
+rewritten through the real call dispatch -- a cleared customer and a real defaulter in the SAME
+bucket, so the sort order itself is under test, not only presence -- `api_callList('expdf')`
+(leader-scoped and team-scoped) and `api_callDailySummary`'s own `expdf` figure all agree the
+cleared customer is there, last, status `CLEARED`, and counted in the daily total. One real
+fixture bug was caught and fixed before either test passed: two customers of the same team and
+day given DIFFERENT `upload_batch` ids made one of them lose to the other under
+`pickLatestBatch`'s own per-team rule (a real upload never does this -- one batch covers a whole
+team's deck) -- fixed by giving both rows of the same type one shared batch id, the way a real
+upload actually arrives.
+
+**What it costs.** No new read anywhere: every field a cleared row needs was already being
+fetched for the rows that were never excluded. One front-end file touched for one screen's own
+local styling and filter list, so `BUILD` moves to `2026-11-13-f`; `CALL_BUILD` is untouched,
+confirmed by checking what the call app actually does with a status string before assuming it
+needed a build at all. `npm test`: 1,523 pass.
+
+**Not done.** The one case Part 69 named and this one does not reach either: a customer missing
+from a day's current deck ENTIRELY, not merely present under a different status -- the real
+example of this, found and closed the same day (above), was confirmed by the owner against the
+loan system itself to be a gap in that day's export, not in this codebase, and nothing here was
+built to surface such a customer on a guess about what a backward-looking diff against an
+earlier day's roster should cost on the sacred call path. Still flagged, not built, until it is
+asked for with that cost in view.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*
