@@ -9,7 +9,7 @@ import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
    and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
-import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC } from './snapshot-totals-rpc.mjs';
+import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
 /* A database that HAS the migrations -- which now includes the team-day totals function, because
    the defaulter book asks it which date each team's own latest deck is on. A plain fakeDb() is
    still the un-migrated world, and several tests use it deliberately. */
@@ -18,6 +18,7 @@ const dbWithRpc = t => fakeDb(t || tables(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ..
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
+const { ghostRowsFor_, GHOST_BUDGET_MS } = await import('../api/_lib/expdf.js');
 const { sameName } = await import('../api/_lib/expdf.js');
 // The announcement is READ without an access code -- it has to reach the sign-in screen -- so
 // it lives on the calls door beside the brand. Both sides are checked here, together, because
@@ -259,6 +260,117 @@ test('expected defaulters: a blank status is not evidence of payment -- only isS
   assert.notEqual(row.status, 'CLEARED', 'a blank status is not evidence of payment');
   assert.equal(row.status, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
   assert.equal(row.arrears, 700, 'the real arrears, not a figure invented by the mislabel');
+});
+
+/* THE ALL-TIME GHOST -- ref 4231948032's own real case. "Checked loan system -- customer not
+   there on thurrsday deck 12th nov 2026" ... "should reflect to alltime data past present and
+   future" ... "so status column of such customers automatic becomes cleared if no longer in
+   default list" -- the owner, 13 Nov 2026. 222 has no row at all for TODAY -- neither initial
+   nor current -- so the baseBy-presence check alone cannot reach them; only
+   db/RUN-ME-055's own all-time lookup (ghostRowsFor_, api/_lib/expdf.js) finds them, via their
+   real last-known row from ten days earlier. */
+test('expected defaulters: a customer missing from today\'s deck entirely still shows, status CLEARED, from their last known row', async () => {
+  const t = tables();
+  // ASSIGN_CHRONIC's first bucket (GMO) deliberately differs from ASSIGN_ACTIVE's default
+  // first (BIKE) -- found on review: both default to BIKE first, so this test could not have
+  // told "assignFor read 222's real status (Chronic)" apart from "assignFor was fed the
+  // CLEARED display override instead" -- expectedDefaulters keeps its own, separately-written
+  // copy of this same assignFor-then-override logic, so it needs the same guard call.test.mjs's
+  // parallel GHOST1 test does.
+  t.settings.push({ key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' });
+  // 222's last real sighting: ten days before TODAY, Chronic, 15,500 still owed -- nothing
+  // since, of either type.
+  t.defaulter_snapshots.push({ ...D('222', 'KONGOWE', 15500, 'current', 1, '2026-07-14', 'TUE'), status: 'Chronic' });
+
+  const before = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  assert.ok(!before.rows.some(r => r.ref === '222'), 'no migration: 222 is simply not found, same as before this feature existed');
+
+  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  const row = d.rows.find(r => r.ref === '222');
+  assert.ok(row, 'found through the all-time lookup, not silently absent');
+  assert.equal(row.status, 'CLEARED');
+  assert.equal(row.arrears, 15500, 'their real last-known arrears, not a fabricated zero');
+  assert.equal(row.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
+  assert.equal(row.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
+  // Found on review, before this shipped: defaulter_ghost_rows' own RETURNS TABLE first left
+  // balance out entirely, so this read a fabricated 0 for every ghost row in production,
+  // silently, while the test's own looser RPC mock spread the whole fixture row and never
+  // caught it. Both are fixed; this is the regression test for the real RPC's column list.
+  assert.equal(row.balance, 500000, 'their real last-known balance, not a fabricated zero');
+  assert.equal(row.cycle, 'C-W1', 'assignFor read the real status (Chronic), not the CLEARED display override');
+});
+
+/* THE WEEK, NOT JUST THE DAY -- found on review, before this shipped: expdfWeekCompute_'s own
+   per-day loop never called ghostRowsFor_ at all, so a ghost (above) was visible on the Exp.Def
+   Report's day and month views but silently absent switching to week, with no note. A ghost is
+   a fact about TODAY only -- db/RUN-ME-055's own function answers "missing from the team's
+   latest data right now", nothing about a past day -- so it now reaches the week only through
+   the week's own TODAY iteration, and only when the week being asked about is the live one. A
+   closed week that has already ended never asks for it: today's gap is not a fact about a week
+   that ended before today existed. */
+test('the Exp.Def week carries the all-time ghost too, but only for the live week, never a closed one', async () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  // A1: a real, measured defaulter every day Mon-Fri (disb_date = that day's own date, so its
+  // cycle lands on every day of this five-day fixture -- the point is a measured week with a
+  // real customer in it, not A1's own cycle math) so each day has a genuine deck to compare
+  // the ghost against, not an empty week that would prove nothing either way.
+  const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
+  t.defaulter_snapshots = WK.flatMap(([wd, date]) => [
+    { ref: 'A1', full_name: 'C A1', team: 'KONGOWE', arrears: 1000, status: 'Defaulter', days_elapsed: 1, disb_date: date,
+      snapshot_type: 'initial', weekday: wd, snapshot_date: date, upload_batch: 'bi' + date, created_at: date + 'T04:00:00Z' },
+    { ref: 'A1', full_name: 'C A1', team: 'KONGOWE', arrears: 1000, status: 'Defaulter', days_elapsed: 1, disb_date: date,
+      snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
+  ]);
+  // GHOST1's last real sighting: ten days before TODAY (2026-07-24), nothing since.
+  t.defaulter_snapshots.push({ ref: 'GHOST1', full_name: 'C GHOST1', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
+    days_elapsed: 1, disb_date: '2026-07-14', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14',
+    upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' });
+  const db = fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
+
+  // THE LIVE WEEK (the one containing NOW, 2026-07-24): the ghost reaches it through today.
+  const live = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
+  const ghostLive = live.rows.find(r => r.ref === 'GHOST1');
+  assert.ok(ghostLive, 'the live week carries the ghost -- it has not silently vanished switching from day to week');
+  assert.equal(ghostLive.status, 'CLEARED');
+  assert.equal(ghostLive.arrears, 15500, 'their real last-known arrears, not a fabricated zero');
+  assert.equal(ghostLive.recovered, 0, 'nothing happened today to recover');
+  const liveReport = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.equal(liveReport.totals.customers, 2, 'A1 and the ghost, both counted in the week grand total');
+
+  // A CLOSED WEEK -- the very same week, asked about from a week later: today's gap is not a
+  // fact about a week that has already ended, so the ghost does not reach it.
+  const LATER = Date.parse('2026-07-31T09:00:00Z');
+  const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-20' }, LATER);
+  assert.ok(!past.rows.some(r => r.ref === 'GHOST1'), 'a closed week never asks for today\'s ghost state');
+  assert.ok(past.rows.some(r => r.ref === 'A1'), 'the real customer is still there -- only the ghost lookup is skipped, nothing else about the closed week');
+});
+
+/* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
+   this shipped: nothing in the suite exercised GHOST_BUDGET_MS/withinMs_'s own timeout-
+   abandonment at all (test/speed.test.mjs counts round trips and rows, never wall-clock), the
+   one property the whole budgeted-read design exists for. Modelled on the identical check
+   zone.test.mjs already has for ZONE_BUDGET_MS/zoneOfSignIn (a delayed and a never-resolving
+   RPC, both abandoned inside the budget; a fast one still answered for real). */
+test('a hung or slow ghost lookup is abandoned within its budget, never held for', async () => {
+  assert.ok(GHOST_BUDGET_MS > 0 && GHOST_BUDGET_MS <= 2000, 'the budget is a ceiling on the sacred call path, not a wait: ' + GHOST_BUDGET_MS);
+  const row = { ref: 'GHOST1', team: 'KONGOWE', arrears: 15500, status: 'Chronic' };
+  const after = (ms, rows) => ({ rpc: () => new Promise(r => setTimeout(() => r({ data: rows, error: null }), ms)) });
+  const never = { rpc: () => new Promise(() => {}) };
+
+  let t0 = Date.now();
+  assert.deepEqual(await ghostRowsFor_(after(400, [row]), ['KONGOWE'], [], 25), [], 'the read was still out when the budget ended');
+  assert.ok(Date.now() - t0 < 300, 'and the caller was not kept for it: ' + (Date.now() - t0) + ' ms');
+
+  t0 = Date.now();
+  assert.deepEqual(await ghostRowsFor_(never, ['KONGOWE'], [], 25), [], 'a read that never answers at all');
+  assert.ok(Date.now() - t0 < 300);
+
+  t0 = Date.now();
+  const real = await ghostRowsFor_(after(5, [row]), ['KONGOWE'], [], 500);
+  assert.equal(real.length, 1, 'inside the budget it is read for real');
+  assert.equal(real[0].ref, 'GHOST1'); assert.equal(real[0]._ghost, true);
 });
 
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."

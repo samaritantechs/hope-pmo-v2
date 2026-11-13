@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC, SNAPSHOT_TOTALS_RPC } from './snapshot-totals-rpc.mjs';
+import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC, SNAPSHOT_TOTALS_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -2822,6 +2822,70 @@ test('a blank status is not evidence of payment -- only isSettled(arrears) earns
   assert.equal(part1.custStatus, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
   assert.equal(part1.amt, 700, 'the real arrears, not a figure invented by the mislabel');
   assert.deepEqual(mine.rows.map(r => r.ref), ['PART1', 'LOW1'], 'sorted by their real arrears, same as always -- nothing about the sort itself was ever broken');
+});
+
+/* THE ALL-TIME GHOST -- ref 4231948032's own real case. "Checked loan system -- customer not
+   there on thurrsday deck 12th nov 2026" ... "should reflect to alltime data past present and
+   future" ... "so status column of such customers automatic becomes cleared if no longer in
+   default list" -- the owner, 13 Nov 2026. GHOST1 has no row at all for NOW, today -- neither
+   initial nor current -- so neither #693's nor #696's own baseBy-presence check can reach
+   them; only db/RUN-ME-055's own all-time lookup (db.rpc('defaulter_ghost_rows')) finds them,
+   via their real last-known row from ten days earlier. */
+test('a customer missing from today\'s deck entirely still shows, status CLEARED, from their last known row', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  // BOTH role columns point at the one signed-in officer: GHOST1's role has to be able to
+  // read GMO (below) without moving GHOST1 off BIKE BEE's own worklist, which is the thing
+  // under test here, not team structure.
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE', gmo: 'BIKE BEE' };
+  // ASSIGN_CHRONIC's first bucket (GMO) is deliberately NOT ASSIGN_ACTIVE's (BIKE) -- found on
+  // review, before this shipped: with both strategies starting on BIKE, GHOST1's correct role
+  // (assignFor reading its real status, Chronic) and the role a regression would produce (if
+  // assignFor were ever fed the post-override CLEARED status instead, falling through to the
+  // ACTIVE branch) land on the identical value, so the test could not tell the two apart.
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' },
+    { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
+  // A real, still-active defaulter for today -- the contrast GHOST1 has to sink below.
+  t.defaulter_snapshots.push(
+    { ref: 'ACT2', full_name: 'C ACT2', contact: '0714000902', team: 'KONGOWE', arrears: 300, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'ACT2', full_name: 'C ACT2', contact: '0714000902', team: 'KONGOWE', arrears: 300, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' },
+    // GHOST1's last real sighting: ten days before NOW, Chronic, 15,500 still owed -- nothing
+    // since, of either type. The real ref's own numbers, for the same reason the rest of this
+    // handbook keeps using them.
+    { ref: 'GHOST1', full_name: 'C GHOST1', contact: '0714000903', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
+      days_elapsed: 1, disb_date: '2026-07-14', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14', upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' });
+  const dbNoMigration = fakeDb(t);
+  const dbMigrated = fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
+
+  // WITHOUT db/RUN-ME-055 run: exactly today's behaviour, no ghost, no failed request.
+  await callApi(dbNoMigration, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+  const before = await callApi(dbNoMigration, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(before.ok, true);
+  assert.deepEqual(before.rows.map(r => r.ref), ['ACT2'], 'no migration: GHOST1 is simply not found, same as before this feature existed');
+
+  // WITH it: GHOST1 is found, sunk below the real defaulter, status CLEARED, their own last
+  // known arrears shown (not invented as zero).
+  await callApi(dbMigrated, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+  const after = await callApi(dbMigrated, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(after.ok, true);
+  assert.deepEqual(after.rows.map(r => r.ref), ['ACT2', 'GHOST1'], 'ACT2 still owing 300 comes first; GHOST1, last seen owing 15,500, sinks -- 300 beats 0, not 15,500');
+  const ghost = after.rows.find(r => r.ref === 'GHOST1');
+  assert.equal(ghost.custStatus, 'CLEARED');
+  assert.equal(ghost.amt, 15500, 'their real last-known arrears, not a fabricated zero');
+  assert.equal(ghost.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
+  assert.equal(ghost.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
+  // assignFor must read the ghost's own real status (Chronic), never the display override
+  // (CLEARED) buildRows_ computes afterwards -- found on review: with ASSIGN_CHRONIC's first
+  // bucket now distinct from ASSIGN_ACTIVE's, these two values can only agree if assignFor saw
+  // the real status.
+  assert.equal(ghost.fuStatus, 'C-W1', 'the rotation read the real status (Chronic), not the CLEARED display override');
+
+  const summary = await callApi(dbMigrated, 'api_callDailySummary', ['dBEE'], NOW);
+  assert.equal(summary.expdf.customers, 2, 'the daily-summary strip counts the ghost too');
 });
 
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {

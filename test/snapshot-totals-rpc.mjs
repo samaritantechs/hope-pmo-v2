@@ -447,3 +447,42 @@ export const LOAN_MONTH_RPC = {
     return [...by.values()];
   },
 };
+
+/* defaulter_ghost_rows(p_teams, p_known_refs) -- db/RUN-ME-055, clause for clause: per team,
+   every distinct ref's own latest 'current' row, minus whatever is already in p_known_refs.
+   There is no JS-side fallback to compare this against (unlike the totals functions above) --
+   a database without RUN-ME-055 shows no ghost rows at all, which is the behaviour
+   fakeDb(tables) with no rpc option already gives for free. Use it:
+   fakeDb(tables, { rpc: DEFAULTER_GHOST_ROWS_RPC }). */
+export const DEFAULTER_GHOST_ROWS_RPC = {
+  defaulter_ghost_rows: (store, a) => {
+    const teams = a.p_teams || [];
+    const known = new Set((a.p_known_refs || []).map(r => String(r).trim().toUpperCase()));
+    const rows = (store.defaulter_snapshots && store.defaulter_snapshots.rows) || [];
+    const out = [];
+    for (const team of teams) {
+      const latest = new Map();
+      for (const r of rows) {
+        if (String(r.team) !== team || r.snapshot_type !== 'current') continue;
+        if (known.has(String(r.ref).trim().toUpperCase())) continue;
+        const key = String(r.snapshot_date || '') + '|' + String(r.created_at || '');
+        const cur = latest.get(r.ref);
+        if (!cur || key > cur.key) latest.set(r.ref, { key, row: r });
+      }
+      // Projected to exactly the real function's RETURNS TABLE columns (db/RUN-ME-055), not
+      // the whole fixture row -- found on review, before this shipped: spreading the whole row
+      // let a field the real function does not return (balance, before it was added to the
+      // column list) leak through from the fixture into a test, silently hiding a real bug
+      // that production would not have. Keep this list in step with the SQL file's own.
+      for (const { row } of latest.values()) out.push({
+        ref: row.ref, full_name: row.full_name, contact: row.contact,
+        guarantor_name: row.guarantor_name, guarantor_contact: row.guarantor_contact,
+        team: row.team, arrears: row.arrears, balance: row.balance, status: row.status,
+        ds: row.ds, dc: row.dc, days_elapsed: row.days_elapsed, disb_date: row.disb_date,
+        chronic_date: row.chronic_date, expire_date: row.expire_date,
+        other_inst: row.other_inst, snapshot_date: row.snapshot_date,
+      });
+    }
+    return out;
+  },
+};

@@ -5740,5 +5740,180 @@ asked for with that cost in view.
 
 ---
 
+## Part 71 — The all-time ghost: a customer missing from every deck still shows, status CLEARED
+
+> "Checked loan system -- customer not there on thurrsday deck 12th nov 2026" ... "tell me
+> latest date that customer was a defaulter of any status" ... "should reflect to alltime data
+> past present and future" ... "so status column of such customers automatic becomes cleared if
+> no longer in default list" -- the owner, 13 Nov 2026, on ref 4231948032: gone from BOTH the 12
+> Nov initial AND current deck entirely, and still gone every day since.
+
+Part 70's own "Not done" named exactly this case: `buildRows_`'s baseBy-presence check only ever
+sees a customer who is on TODAY'S OWN initial deck -- a customer missing from BOTH decks
+entirely leaves nothing in today's own data pointing at them at all. The only way to find one is
+to ask the whole history: "who has this team ever had as a defaulter, whose newest row is not
+today's" -- unbounded, "past present and future", not a recent-days window.
+
+**db/RUN-ME-055** adds one function, `defaulter_ghost_rows(p_teams, p_known_refs)`, for exactly
+that question. PostgREST's own query builder cannot express it cheaply: a plain `SELECT DISTINCT
+ref` still visits every one of a team's rows to de-duplicate them (measured: 67-134ms on a
+2.27-million-row fixture even with an index on `(team, ref)`, since Postgres has no built-in
+skip-scan for DISTINCT). A recursive CTE that walks that same index one distinct value at a time
+-- the loose-index-scan idiom -- answers the identical question as an Index Only Scan, no heap
+fetches: 1.6ms on the same fixture. The function loops this once per team in `p_teams` (each its
+own fast walk), then takes every surviving ref's own single latest `current` row.
+
+**One round trip, however many teams -- caught before it shipped, not assumed.** A first draft
+called the function once PER TEAM, cached per team; cheap for a single leader's own 1-2 teams,
+but an unrestricted admin resolves to every team in the book (see below), and
+`test/speed.test.mjs` -- which exists for precisely this -- caught it at 47 round trips against
+a 7-trip budget for `expectedDefaulters`, and similarly for every `expdfReport`/`expdfLeader`
+variant. The function already loops its own teams internally; the fix was to ask it for the
+whole list in ONE call, cached by that exact team set, not to walk the set ourselves.
+
+**Asked rarely, cached, and budgeted -- adjustments.js's own shape for the Iliyonasia register
+on this same call path, not a new one.** `ghostRowsFor_` (`api/_lib/expdf.js`) mirrors
+`readAdjustments`/`within_` precisely: a `WeakMap<db, Map<teamSetKey, {at, rows, pending,
+missingAt}>>` cache (`GHOST_TTL_MS` 90s for a good read, `GHOST_MISSING_TTL_MS` 5 minutes for "no
+migration run here" -- asked rarely, not re-logged as a Postgres error on every screen), in-flight
+sharing (two callers in the same moment share one round trip), and a `budgetMs` honoured only by
+the sacred path (`GHOST_BUDGET_MS` 800ms, passed by `expdfMine` alone; `expdfReport`/`expdfLeader`
+and `expectedDefaulters` take none, since a report can wait out the rare slow read and the phone
+cannot) -- and either way the read itself keeps running underneath and warms the cache for the
+next caller, never cancelled. The one real cost (a whole team's upload genuinely missing -- not a
+few customers, measured at 86-115ms with a disk spill) is paid once per cache window per team,
+never per request; `db/RUN-ME-055`'s own function additionally carries a `statement_timeout` of
+800ms as a second backstop. A database without the migration run gets the exact PGRST202 every
+other such function here returns, remembered, and shows no ghost rows at all -- never a failed
+request.
+
+**Status is CLEARED unconditionally for a ghost row -- their absence from today's deck IS the
+signal**, not a guess about whatever status text their last known row happened to carry (`isSettled`,
+Part 70, is the gate for a row still ON today's deck; it does not apply here at all). The
+NUMBERS stay honest: `arrears`/`initial` are the ghost's own last-known figure (15,500 for ref
+4231948032, not a fabricated zero), `recovered` reads 0 -- nothing happened today to recover, and
+a ghost is never credited with a guess. Role, leader and cycle come from `assignFor` reading that
+same last-known row's own `days_elapsed`/`chronic_date`/`disb_date`, exactly as any other row --
+the rotation's clock keeps turning on the calendar regardless of whether fresh data arrives, so
+the officer currently holding that slot is still who is credited and shown, not whoever held it
+the day the customer was last seen.
+
+**Two more real mistakes, caught building this, not after:**
+- The sort. `expdfMine`'s own "0 arrears sorts last" (#696) only holds for a customer CONFIRMED
+  paid in full. A ghost's last-known arrears can be large -- ref 4231948032's own 15,500 -- and a
+  plain arrears-descending sort would have put a customer nobody has tracked in months ABOVE one
+  genuinely owing money today. Fixed: the sort is now CLEARED-last, arrears-descending within
+  each group, not arrears alone.
+- The admin. `ghostRowsFor_` first refused to run at all for `user.teams === null` (an
+  unrestricted admin), on the reasoning that looping every team was a cost nobody asked for.
+  That would have hidden the whole feature from the owner's own likeliest sign-in -- the person
+  who asked for this the loudest. Fixed: `expdfCore` and `expectedDefaulters` both already fetch
+  the full team list for other reasons; an unrestricted caller now resolves to that list instead
+  of nothing, with the per-request-not-per-team round trip and `budgetMs` (not a team-count
+  limit) carrying the actual safety.
+
+**Checked.** `test/call.test.mjs` and `test/portal.test.mjs`: a customer with a real last-known
+row ten days old and nothing since is found through the real call dispatch and through
+`expectedDefaulters`, status CLEARED, their own last-known arrears shown, sunk below a real
+defaulter sharing their bucket -- and, separately, confirmed ABSENT on a database without
+`db/RUN-ME-055` run, exactly today's behaviour, no failed request. `test/speed.test.mjs`:
+every existing budget still holds except one, raised in this same commit with the reason beside
+it (below).
+
+**What it costs.** One new index (`idx_def_snap_team_ref`, `CONCURRENTLY`, the same reasoning as
+RUN-ME-054's own two) and one new database function, run by hand like every migration here --
+every code path works without it, showing no ghosts. One new round trip where it is genuinely
+needed: `expectedDefaulters`'s own speed budget moves 7 -> 8 trips (`test/speed.test.mjs`,
+reason in the diff beside it); every `expdfReport`/`expdfLeader`/`expdfMine` variant already had
+at least one trip of headroom and needed no change. No front-end file touched, so `BUILD` stays
+`2026-11-13-f`; `CALL_BUILD` is untouched. `npm test`: 1,527 pass.
+
+**Not done.** `test/speed.test.mjs` has no dedicated budget line for `api_callList(..., 'expdf')`
+itself (only `'today'` and `'defaulters'`) -- a pre-existing gap in that file's own coverage, not
+one this change introduced, but worth closing given this is the exact new code reaching that
+exact path. Flagged, not built here, to keep this change to what it set out to do.
+
+**Reviewed by an adversarial pipeline before this merged** -- a genuinely new query reaching
+`/api/call` earns at least as much scrutiny as #696's own relabeling, arguably more. Eleven
+candidate findings, each independently re-verified against the real files and a real local
+Postgres rather than taken on the first reviewer's word; eight held up, three did not.
+
+*Confirmed, and fixed:*
+- **The one that mattered most: `p_known_refs` was sent as `[]`, always.** `readGhosts_` took
+  the caller's real known-refs (today's own deck) and applied them only AFTERWARDS, in JS,
+  never forwarding them into the RPC call itself. The SQL function's own exclusion
+  (`candidates as (... <> all(p_known_refs))`) exists so its expensive half -- sorting a team's
+  entire history to find each ref's latest row -- never runs on a ref about to be thrown away
+  anyway; sending `[]` defeated that on every single call. Measured on the review's own fixture:
+  1251 rows read, with a disk spill, instead of 100 -- a ~7x slowdown, paid on every real cache
+  refresh (every `GHOST_TTL_MS`), not only the rare case the function's own comments describe.
+  Fixed: `knownRefs` now reaches the RPC. The cache stays keyed by team set alone, not by
+  `knownRefs` too -- re-keying on it would mean a fresh call almost every time, since today's
+  deck is never the same list twice, defeating the cache for no correctness gain:
+  `ghostRowsFor_`'s own JS-side filter already excludes a known ref from the final answer
+  regardless of which request's `knownRefs` happened to fill the cache, so the SQL-side
+  exclusion only ever needed to be a good accelerant, never the source of truth.
+- **`balance` was never in the function's column list at all.** `expectedDefaulters` reads
+  `d.balance` off every row it shows, ghost or not, and `balance` is a documented field
+  (`docs/REPORT-PAYLOADS.md`) -- so a ghost's balance silently read as a fabricated 0 in
+  production, contradicting this codebase's own rule for exactly this ("a figure that is not
+  known is never invented"). The test suite's own looser mock (below) is why nothing caught it.
+  Fixed: `balance numeric` added to the function's `RETURNS TABLE` and its `SELECT`.
+- **The week was blind to the whole feature.** `expdfWeekCompute_`'s own per-day loop never
+  called `ghostRowsFor_` at all, so a ghost that showed correctly on day and month vanished with
+  no note the moment the Exp.Def Report or a leader's card was switched to week -- exactly the
+  owner's own "same for the rest defaulters lists if possible," not actually kept for this one.
+  Fixed, but deliberately narrow: a ghost reaches the week only through the week's own TODAY
+  iteration, and only when the week being viewed is the live one. `db/RUN-ME-055`'s function
+  answers "missing from the team's latest data right now" -- it has no concept of a past day at
+  all, so asking it for a CLOSED week would mean judging history by a fact that is only true
+  today, which is the one thing this feature's own design refuses to do anywhere else.
+- **Two test-mock gaps that let the above pass silently.** `test/snapshot-totals-rpc.mjs`'s own
+  ghost mock spread the whole fixture row (`{...row}`) instead of projecting to the real
+  function's columns -- the one mock in that file not built "clause for clause... as Postgres
+  will answer," which is why the missing `balance` column never showed up as a failure. And the
+  GHOST1/ref-'222' tests' own fixture gave `ASSIGN_ACTIVE` and `ASSIGN_CHRONIC` the same first
+  bucket, so a regression that fed `assignFor` the CLEARED display status instead of the row's
+  real one would have landed on the identical role either way, unnoticed. Both fixed, with new
+  assertions (`row.balance`, `row.cycle`/`ghost.fuStatus`) that fail if either regresses.
+- **Two minor, real findings, fixed alongside:** `ghostTeams` was never deduplicated before
+  being sent to the RPC -- a hand-typed, non-unique `access_codes.teams` array repeating one
+  team made that team's ghosts count twice, double-counting `sumExpdf`'s plain-reduce totals
+  (never its Set-deduped customer count). And nothing in the suite exercised
+  `withinMs_`/`GHOST_BUDGET_MS`'s own timeout-abandonment -- the one property this whole
+  budgeted-read design depends on for the sacred path's safety -- so a future refactor that
+  quietly broke the race (confirmed: replacing it with a plain `.catch()` passes every existing
+  test) would have gone unnoticed. Both fixed: the former with a one-line `[...new Set(...)]` in
+  every place `ghostTeams` is built; the latter with a new test modelled on the identical check
+  `test/zone.test.mjs` already has for `zoneOfSignIn`.
+- **A nit taken too, being free:** the function gave up `STABLE` for an in-body `set local
+  statement_timeout`, which Postgres genuinely refuses inside a `STABLE` function -- but a
+  function-level `SET` clause works under `STABLE` with byte-identical output (verified side by
+  side), and this function only ever reads. Changed for accuracy, not behaviour. One real thing
+  the checking of this nit turned up: neither form of `SET` actually re-arms Postgres's own
+  statement-timeout clock for the single top-level call that invokes the function -- a
+  statement's timeout latches once, before the function body runs. This does not weaken the
+  actual defence here, which has always been the JS-side race (`withinMs_`); it is noted in the
+  function's own comment so nobody mistakes the database-side `SET` for the one guarantee.
+
+*Checked and refuted, not acted on* (an adversarial pipeline cuts both ways): the function's
+exact-match `d.team = v_team` looked like the exact team-name-drift bug class that has already
+caused two blackouts here (CLAUDE.md section 2) -- refuted, because `p_teams` is never a raw,
+user-typed list; both call sites resolve it from `user.teams` or the `teams` table's own
+canonical rows first. The cache key's `\u0001` join looked unescaped against a team name that
+itself contained that separator -- technically true, but not practically exploitable (the same
+idiom is already used elsewhere in this codebase for similar data, and no team name reachably
+contains a control character). A second, separate team-case-normalization claim at the same
+line as the dedup fix -- refuted, on tracing a normalization layer upstream of both real call
+sites that the finding had not followed back to.
+
+`npm test`: 1,529 pass (two new tests; existing ones adjusted where the fix itself changed what
+they were asserting). `test/speed.test.mjs`: the live week's own ghost lookup measured as one
+more round trip where it now genuinely runs (12 -> 13 trips on the dedicated five-day week
+check, comment updated in the diff beside it); every other existing budget held unchanged. No
+front-end file touched; `BUILD`/`CALL_BUILD` still untouched.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

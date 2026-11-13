@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 13 November 2026** — portal `BUILD 2026-11-13-f` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 70**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 71**.
 
 ---
 
@@ -78,6 +78,114 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 13 Nov (sixth)** — three officers of Team Buzwagi A and B the P.M.O
+  Supervisor flagged as not seeing themselves on their own team's list ("SIWAONI") -- the same
+  flag, and the same PLACE handling, as the four Chamwino/Moro Center/Kihonda officers of 12
+  Nov. Zone Lake Coast was given directly for the whole message; neither team is on Teams &
+  Staff yet, so the sender's word is what settled it, the same as both South West batches
+  needed the same day (below). No phone, account, NIDA or NSSF was sent for any of the three,
+  and none is invented in their place. Tested against a synthetic registry with one of the
+  three already filed elsewhere with no team at all, confirmed moved correctly with the sparse
+  data given, and confirmed idempotent.
+- **Staff registry, 13 Nov (fifth)** — the PLACE follow-up to the South West batch below: of
+  the nineteen, the first NEW run found ten already in the registry rather than new -- the
+  house rule for exactly this ("A NEW that comes back ALREADY IN THE REGISTRY is asked again as
+  PLACE") was followed at once, without waiting to be asked. Eight were filed with the team
+  written straight into the role, without "Team" in front of it ("Manager - LINDI") or, for two
+  of them, with no team at all ("MANAGER"); all eight move onto "Team Lindi" / "Team Ruangwa" /
+  "Team Newala" / "Team Nachingwea," the way every other team in the registry is named, zone
+  unchanged (SOUTH WEST, already right). The ninth was found not by name at all but by his bank
+  account number -- the registry already holds him as "Anorld Onesfolo Ntongani," two letters
+  off his own name in each of two words; PLACE does not touch that spelling, the same as the
+  first run did not, and nothing here decides for the owner whether the two spellings are one
+  person -- they plainly are, by the account number alone, but a script still never corrects a
+  filed name on its own say. Tested against a synthetic registry built to match exactly what the
+  real run reported (the same role strings, the same account-only match), confirmed idempotent.
+- **Staff registry, 13 Nov (fourth)** — nineteen new staff across five new teams (Lindi,
+  Ruangwa, Tandahimba, Newala, Nachingwea), sent to the group as "NAOMBA U ADD HAWA STUFF NA
+  TEAM ZAO." The owner gave the zone for the whole batch directly ("zone south west"), the same
+  fallback the Kigoma hire (below) needed the same day: none of the five teams are on Teams &
+  Staff yet, so every row's own team lookup found nothing and the sender's word settled it,
+  since South West is already a filed zone elsewhere. One account is at NMB (the Tandahimba
+  manager); every other account given is CRDB, including one written with two letters in it,
+  kept exactly as given. Thirteen NIDA or NSSF numbers were sent as "PROCESSING"/"ON PROCESS"
+  (a number is coming) and three NSSF numbers as "NILL" (not the same thing -- nothing is
+  coming); all left blank in the script rather than written as that literal text. None of the
+  nineteen gave a TIN at all. Every field was checked against the original message by an
+  independent pass before the script was built, then the whole batch was tested twice against
+  a synthetic registry sharing the real schema (added once; a second run changes nothing and
+  says so) before it was handed over. The names are in no file of the repository.
+- **Staff registry, 13 Nov (third)** — a new-hire form for a Kigoma team, forwarded by its
+  manager more than two months after it was dated (prepared 2 Sept, sent 13 Nov). Filed as NEW.
+  The form's own "Zone" line named a team, not a zone, as every earlier batch has had
+  (docs/HANDOFF.md Parts 50, 52) -- but this time the team itself was not on Teams & Staff at
+  all: the first script came back honest, "NOT ADDED: no zone could be found for them," rather
+  than guess. The owner then gave the zone directly ("zone tanganyika"), and the script's own
+  sender's-word fallback took it from there, since Tanganyika is already a zone filed elsewhere
+  -- re-run and confirmed added, with the row itself saying where the zone came from. No NIDA
+  was sent, so the birth date is the form's own, with nothing to check it against. TIN is blank
+  and NSSF is "on process," both left out of the script rather than written as that literal
+  text. Three people were named for the registry's two kin slots (a mother, a sister, and an
+  aunt given only as "Mama Mdogo," with no name of her own); the two with a name were filed, in
+  the order the form gave them -- the aunt's own name and number are not in the registry, kept
+  for the owner's record rather than dropped. Tested against a synthetic registry sharing the
+  real schema, reproducing the exact "team not on Teams & Staff" gap before the fix, then clean
+  (added once; a second run changes nothing and says so) after it. The name is in no file of
+  the repository.
+- **#697** — the all-time ghost: a customer missing from every deck still shows, status CLEARED
+  (handbook Part 71). "Checked loan system -- customer not there on thurrsday deck 12th nov
+  2026" ... "should reflect to alltime data past present and future" ... "so status column of
+  such customers automatic becomes cleared if no longer in default list" -- the owner, on ref
+  4231948032, the real case #693/#696 could not reach: gone from BOTH the initial AND current
+  deck entirely, with nothing in today's own data pointing at them at all. `db/RUN-ME-055` adds
+  one function (`defaulter_ghost_rows`) answering "who has this team ever had as a defaulter,
+  whose newest row is not today's" -- a loose-index-scan recursive CTE PostgREST's own query
+  builder cannot express cheaply (1.6ms vs 67-134ms for a plain SELECT DISTINCT on a
+  2.27-million-row fixture), called via `db.rpc(...)`, asked rarely and cached the same shape
+  `adjustments.js` already uses for the Iliyonasia register on this same call path
+  (`GHOST_TTL_MS` 90s, `GHOST_MISSING_TTL_MS` 5 min, `GHOST_BUDGET_MS` 800ms honoured only by the
+  sacred path). Status CLEARED is unconditional for a ghost row -- the absence IS the signal --
+  but the numbers stay honest: their own last-known arrears, not a fabricated zero, recovered
+  reads 0 since nothing happened today. **Three real mistakes caught building this, before any
+  of it shipped:** (1) a first draft called the new function once PER TEAM, which
+  `test/speed.test.mjs` caught at 47 round trips against a 7-trip budget the moment an
+  unrestricted admin's full team list was looped -- fixed to one round trip per request,
+  however many teams; (2) the sort: a ghost's own last-known arrears can be large (15,500 for
+  this ref), so the EXISTING "0 sorts last" rule (#696) would have promoted a long-untracked
+  customer above one genuinely owing money today -- fixed to CLEARED-last, arrears-descending
+  within each group; (3) the feature first refused to run at all for an unrestricted admin
+  (`user.teams` null), which would have hidden it from the owner's own likeliest sign-in --
+  fixed to resolve the full team list already fetched for other reasons, with the per-request
+  round trip and the budget (not a team-count limit) carrying the real safety. Checked through
+  the real call dispatch and through `expectedDefaulters`, and separately confirmed absent (no
+  failed request) on a database without the migration run. `test/speed.test.mjs`:
+  `expectedDefaulters` moves 7 -> 8 trips, the one genuinely necessary new round trip, reason in
+  the same diff; every `expdfReport`/`expdfLeader`/`expdfMine` variant had headroom already and
+  needed no change. No front-end file touched; `BUILD`/`CALL_BUILD` untouched. **Not done, at
+  that point:** `test/speed.test.mjs` had no dedicated budget for `api_callList(...,
+  'expdf')` itself (only `'today'`/`'defaulters'`) -- a pre-existing gap this change reaches but
+  does not close, flagged rather than expanding scope.
+  **Reviewed by an adversarial pipeline before this merged** -- eleven candidate findings,
+  each independently re-verified against the real files and a real local Postgres; eight real,
+  three refuted. Fixed: `p_known_refs` was being sent as `[]` always (the SQL function's own
+  exclusion never ran, so every cache refresh paid its documented worst case -- a disk spill,
+  ~7x slower -- not only the rare case it names); `balance` was missing from the function's own
+  column list entirely, so a ghost's balance silently read as a fabricated 0 in production, a
+  documented field (`docs/REPORT-PAYLOADS.md`) nobody had tested because the test suite's own
+  mock was looser than real Postgres and spread the whole fixture row instead of projecting to
+  it; the Exp.Def week's own per-day loop never called the ghost lookup at all, so the feature
+  vanished with no note switching from day/month to week -- fixed to reach the week only through
+  its own live-today iteration, never a closed week (today's gap is not a fact about a week that
+  already ended); `ghostTeams` was never deduplicated (a hand-typed access-code team list
+  repeating one team double-counted that team's ghosts); and nothing exercised the budget race's
+  own timeout-abandonment, the one property the sacred path's safety depends on (confirmed: a
+  regression that drops it passes every other test). All fixed, each with a new or corrected
+  test that fails on the regression. Refuted: an exact-team-match concern (the function never
+  sees a raw, user-typed team name), a cache-key separator concern (not practically reachable),
+  and a second team-case-normalization concern at the same line as the dedup fix (a
+  normalization layer upstream the finding had not traced back to). Full writeup, including the
+  one true nit taken alongside (STABLE instead of VOLATILE, zero behaviour change), is
+  handbook Part 71. `npm test`: 1,529 pass (two new tests). `BUILD`/`CALL_BUILD` still untouched.
 - **#696** — the worklists keep a cleared customer too, sunk to the bottom, not off the list
   (handbook Part 70). "So even in call app if they clear they go down with status cleared..
   same for the rest defaulters lists if possible" -- the owner, right after confirming the
@@ -960,7 +1068,20 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   run, whether the Kihonda Area team and the "South East" zone wording resolved or need their
   exact Teams & Staff spelling; the TIN/NSSF numbers for Kassim Shabani Muhidini and
   Sylvester Erick Maundi, both "on process" and left out of the script, once issued; and the
-  NSSF number for Frank Michael Mwelue (also "on process"), from the same day's second batch.
+  NSSF number for Frank Michael Mwelue (also "on process"), from the same day's second batch;
+  and the NSSF number for the new Kigoma-team hire (also "on process"), from the same day's
+  third batch.
+- **The owner**: the NSSF numbers for thirteen of the nineteen South West staff (13 Nov, fourth
+  batch), sent as "PROCESSING"/"ON PROCESS," once issued (the other three, sent as "NILL," are
+  not expecting one). And whether the seven new teams named 13 Nov (Lindi, Ruangwa, Tandahimba,
+  Newala, Nachingwea, and Lake Coast's Buzwagi A and Buzwagi B) need adding to Teams & Staff,
+  with their own GMO and ZONE -- the staff are filed and zoned (South West or Lake Coast, by the
+  owner's own word), but none of the seven teams are yet rows there at all, so anything that
+  reads that sheet directly for a team, the advance desk's own routing chief among them, does
+  not yet recognize them. Also from the South West PLACE follow-up (fifth batch): whether
+  "Anorld Onesfolo Ntongani," already in the registry under his bank account number, and
+  "Anold Onesphoro Ntongani," the spelling this round's message gave, are the one person a
+  script would not decide on its own -- if so, which spelling to keep.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
   form, new hire or existing staff with a gap (and if new, the role and team, or the zone
