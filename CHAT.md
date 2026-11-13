@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 63**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 64**.
 
 ---
 
@@ -77,6 +77,28 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#688** — the loan-apps arrow's false fall, fixed (handbook Part 64). "not yet", with a
+  screenshot: Loan apps 486, down from 741 -- a steep drop that was an artifact, not a trend.
+  #685's own "unassigned/assigned, read right now" rule is a CURRENT snapshot: by the time a
+  week is a week old, a real share of what it brought in has already been assigned, approved
+  or rejected and so no longer counted -- 741 was whatever was LEFT of last week's intake, not
+  what actually arrived. Fixed with a second, steadier rule, `appsArrivedInRange_`: every
+  application that arrived that week counts, whatever stage it sits at now -- the trend card
+  right below the strip is untouched, keeps answering "how much of this week is still
+  unworked," and the two numbers on this one screen are now allowed to disagree, on purpose,
+  with both the server and client code saying so. **Also checked first, per section 5:** the
+  screenshot was from `recovery-app.sync-book.net`; the two sites are still reading different
+  databases (checked fresh, unchanged since the morning's 8-hourly report), so those exact
+  figures may not be live company data -- but the arrow's logic is the same wherever it runs,
+  and the distortion is real on its own terms either way. Checked by rewriting the direct test
+  from #687 with the exact case: an application that arrived last week and has since been
+  rejected still counts toward last week's total; one that arrived this week and has since
+  been approved still counts toward the strip's arrival total but correctly drops out of the
+  trend card's own backlog total. `npm test`: 1,516 pass (same count: one test rewritten, not
+  added). No read on `/api/upload` or `/api/call`; no new read at all. `BUILD 2026-11-13-b`.
+  **Not done:** whether the screen needs its own on-screen word explaining why the strip's
+  count and the trend card's count can now differ, beyond what the code comments and this
+  handbook say, is not decided.
 - **#687** — a fourth arrow on the dashboard: loan apps joins sales, collection and recovery
   (handbook Part 63). "Also Show the single rising and droping arrow in each of loan apps,
   sales, collection and recovery cards at dashbord against last weeks perfomancve." The

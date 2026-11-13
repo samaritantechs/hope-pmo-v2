@@ -12355,9 +12355,11 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      re-uploads: the SAME loan re-uploaded under a corrected date simply moves (one row, one
      id -- no duplicate to make), while created_at keeps its first-insert moment forever.
      Rows from before the stamp existed fall back to created_at, as before. */
-  /* Loan applications (unassigned/assigned stage) created or uploaded within [from,to] -- the
-     one filter appsTrend and the performance strip's "Loan apps" arrow below both read, so a
-     week's total and the seven days that make it up can never disagree about which loans count. */
+  /* Loan applications still at unassigned/assigned stage, created or uploaded within
+     [from,to] -- appsTrend's own rule, read by every day's own tile below: TODAY'S backlog
+     still waiting to be worked, which is exactly what the admin needs the card for ("the day i
+     started uploading friday started taking them"). It is deliberately a CURRENT snapshot, not
+     a frozen one: a day's own tile shrinks as that day's applications get assigned and moved on. */
   const appsInRange_ = (loans, from, to) => loans.filter(l => {
     if (l.stage !== 'unassigned' && l.stage !== 'assigned') return false;
     const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
@@ -12370,6 +12372,26 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const a = on.filter(l => l.stage === 'assigned').length;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
       amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0) };
+  });
+  /* EVERY APPLICATION CREATED WITHIN [from,to], WHATEVER STAGE IT SITS AT NOW -- the strip's
+     "Loan apps" arrow needs this SECOND, STEADIER rule, not appsInRange_ above.
+
+       "not yet" -- the owner, 13 November 2026, on the arrow's first real screenshot.
+
+     appsInRange_ answers "how many are STILL waiting" as of this instant -- right for a daily
+     backlog tile, wrong for a week-over-week comparison: by the time a week is a week old, a
+     real share of what it brought in has already been assigned, approved or rejected and so no
+     longer counts under that rule, while THIS week's own count (read the same instant) has had
+     no such time to drain. The arrow then reads as a sharp fall that is really just last week's
+     cohort being WORKED, not fewer applications arriving -- precisely the caveat this change's
+     own PR raised as an open question, now seen for real. Every application ever created is
+     counted here, by the day it arrived, never retroactively dropped as it moves through the
+     pipeline -- the same kind of fixed-at-the-time fact SALES_STAGES counts a sale by. The
+     trend card above answers a different, legitimate question (today's own unworked backlog)
+     and keeps its own rule unchanged; the two numbers are allowed to differ, on purpose. */
+  const appsArrivedInRange_ = (loans, from, to) => loans.filter(l => {
+    const d0 = String(l.upload_date || l.created_at || '').slice(0, 10);
+    return d0 >= from && d0 <= to;
   });
 
   /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
@@ -12533,12 +12555,15 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       return (d0 >= from && d0 <= to) ? s + (num(l.principal_amt) || num(l.loan_amt)) : s;
     }, 0);
     /* LOAN APPS, FOR THE STRIP'S FOURTH ARROW -- "show the rising or dropping arrow in loan
-       apps, sales, collection and recovery cards against last week's performance". Unlike the
-       other three, this needs no budget guard: it reads myLoans, which this function already
-       holds unconditionally for the whole floor back to last Monday (see loanFloor above), so
-       last week's count is never the "could not be read in time" null the others can be -- it
-       is always a real figure, possibly zero. */
-    const appsRows_ = appsInRange_(myLoans, from, to);
+       apps, sales, collection and recovery cards against last week's performance". Reads
+       appsArrivedInRange_ (every application that ARRIVED, stage-agnostic), never
+       appsInRange_ (appsTrend's own current-backlog rule) -- see that function's own note on
+       why a week-over-week arrow needs the steadier of the two. No budget guard either way: it
+       reads myLoans, which this function already holds unconditionally for the whole floor
+       back to last Monday (see loanFloor above), so last week's count is never the "could not
+       be read in time" null the other three arrows can be -- it is always a real figure,
+       possibly zero. */
+    const appsRows_ = appsArrivedInRange_(myLoans, from, to);
     const appsCount = appsRows_.length;
     const appsAmount = appsRows_.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0);
     for (let i = 0; i < 5; i++) {
