@@ -4,6 +4,7 @@ import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey } from 
 import { latestSnapshot } from './snapshots.js';
 import { num } from './recovery.js';
 import { cachedAnswer } from './answer-cache.js';
+import { isSettled } from './settled.js';
 
 /* Shared by BOTH the portal and the calls app, so it lives in its own module: portal-core
    already imports call-core, and having call-core import portal-core back closed a cycle
@@ -97,7 +98,16 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
       const arrears = num(d.arrears);
       const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
       const s = K(d.status);
-      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER' : 'CLEARED'));
+      /* CLEARED is not "the status text didn't say Chronic/Expired/Defaulter" -- a blank or
+         unrecognised status is NOT evidence of payment (settled.js's own rule, written after a
+         real customer sat on an officer's phone as a defaulter owing one shilling while the
+         expected book had her overpaid: a stale or missing status is unknown, never "paid").
+         isSettled(arrears) is the one gate; a row that is neither a known defaulter status nor
+         actually settled keeps its own status text (or DEFAULTER if it has none), the same
+         fallback statusWithPaid uses elsewhere, so it stays visible as still needing a call
+         rather than being told it is clear when the arrears column says otherwise. */
+      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact,
         guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
         team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),

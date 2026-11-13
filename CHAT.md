@@ -92,21 +92,40 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   the call app needed NO change at all; `CALL_BUILD` is untouched. `expectedDefaulters`
   (portal-core.js, the "Expected Defaulters" tab -- the other worklist #693 named and
   deliberately left alone) gets the identical relaxation `buildRows_` already has, word for
-  word the same condition, so the two keep reading one rule rather than two that could drift.
-  The one front-end touch is `app.html`'s own `defexp` screen: its screen-local status chip
-  (CHRONIC/EXPIRED only, everything else flat grey) gained a CLEARED branch, its status filter
-  gained the option, and its "In the weekly cycle" KPI's own words were corrected, since it now
-  counts anyone cleared too. `BUILD 2026-11-13-f`. Checked with two tests rewritten (not only
-  renamed, since the claim flipped from exclusion to inclusion) in `test/portal.test.mjs` and
-  `test/call.test.mjs` -- the latter now proving SORT ORDER too, a cleared customer sinking
-  below a real defaulter sharing their bucket, through the real call dispatch. One real fixture
-  bug caught before either passed: two customers of the same team/day given different
-  `upload_batch` ids made one lose to the other under `pickLatestBatch`'s own per-team rule (a
-  real upload never does this); fixed by sharing one batch id, the way an upload actually
-  arrives. No new read anywhere. `npm test`: 1,523 pass. **Not done:** the harder case #693
-  named is still not reached -- a customer missing from a day's current deck entirely, which
-  the TABORA TOWN case (below) turned out to be the loan system's own gap, not a reason to
-  build a backward-looking diff on a guess about what it would cost the sacred call path.
+  word the same condition -- one rule, read twice, which is not the same promise as "the two
+  can never disagree": `expectedDefaulters` resolves "today" through the latest deck of ANY
+  weekday, `buildRows_` through `expdfCore`'s own weekday-PINNED resolution (falls back to last
+  week's same weekday when today's has not landed), a deliberate pre-existing split this change
+  does not close -- on a morning the day's deck is late, the same customer can read CLEARED on
+  one tab and be entirely absent from the other three. The one front-end touch is `app.html`'s
+  own `defexp` screen: its screen-local status chip (CHRONIC/EXPIRED only, everything else flat
+  grey) gained a CLEARED branch, its status filter gained the option, and its "In the weekly
+  cycle" KPI's own words were corrected, since it now counts anyone cleared too.
+  `BUILD 2026-11-13-f`.
+  **Reviewed by two independent readers before this merged**, given it reverses a decision on
+  the sacred call path: one real bug. CLEARED was decided by status-TEXT elimination alone, no
+  check of `arrears` -- a blank or unrecognised status (the suite's own long-standing `'555'`
+  fixture: no status, partially paid, 350 still owed) came back CLEARED, rendered green, and
+  SORTED FIRST on an officer's list (plain arrears-descending sort; a mislabelled CLEARED row
+  with real arrears is promoted, not sunk) -- while genuinely owing money. This codebase already
+  has the one rule for "is this actually paid" (`api/_lib/settled.js`'s `isSettled`, written
+  after a real customer sat on a phone as a defaulter owing one shilling while the expected book
+  had her overpaid); this change had reinvented a wrong one instead of reading the right one.
+  Fixed: `isSettled(arrears)` gates CLEARED in both functions; anything else keeps its own
+  status text, or DEFAULTER with none, the same fallback `statusWithPaid` already uses. Two new
+  regression tests reproduce the review's own scenario directly. Checked with four tests in all
+  (two rewritten for #696's own claim flipping from exclusion to inclusion, two new for the
+  review's finding) across `test/portal.test.mjs` and `test/call.test.mjs` -- the latter also
+  proving SORT ORDER, a cleared customer sinking below a real defaulter sharing their bucket,
+  through the real call dispatch. One real fixture bug caught before any of them passed: two
+  customers of the same team/day given different `upload_batch` ids made one lose to the other
+  under `pickLatestBatch`'s own per-team rule (a real upload never does this); fixed by sharing
+  one batch id, the way an upload actually arrives. No new read anywhere. `npm test`: 1,525
+  pass. **Not done:** the weekday-pinned-vs-any-weekday split above, a separate and larger
+  question than this one status label; and the harder case #693 named, still not reached -- a
+  customer missing from a day's current deck entirely, which the TABORA TOWN case (below) turned
+  out to be the loan system's own gap, not a reason to build a backward-looking diff on a guess
+  about what it would cost the sacred call path.
 - **TABORA TOWN check, 13 Nov — closed, not this codebase.** Ref 4231948032 (Chronic, 15,500
   arrears, days_elapsed 149) sat on no Exp.Def list anywhere -- portal or call app -- for
   Thursday 12 Nov: the real-world instance of the one gap #693 named and left open, a customer

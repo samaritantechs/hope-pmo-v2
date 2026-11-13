@@ -2781,6 +2781,49 @@ test('a customer who pays in full sinks to the bottom of the phone\'s own Exp.De
   assert.equal(summary.expdf.den, 1300, '500 (ACT1) + 800 (PAID1), the same baseline the list itself carries');
 });
 
+/* A REAL BUG, caught by an independent review before this merged: CLEARED was being assigned to
+   ANY row whose status text did not literally contain Chronic/Expired/Defaulter -- including a
+   BLANK status, which is not evidence of payment (settled.js's own rule, written after a real
+   customer sat on an officer's phone as a defaulter owing one shilling while the expected book
+   had her overpaid: a stale or missing status is unknown, never "paid"). A customer who paid
+   PART of their arrears, with no status on their current row at all -- the exact shape of this
+   suite's own '555' fixture row, which the test above has to filter out for that reason -- was
+   coming back CLEARED, rendered green, and sorted ABOVE a genuine lower-arrears defaulter by
+   the list's own arrears-descending sort: not sunk to the bottom, promoted to the top, with a
+   chip telling the officer the account is clear while its own arrears column said otherwise. */
+test('a blank status is not evidence of payment -- only isSettled(arrears) earns CLEARED', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
+  t.defaulter_snapshots.push(
+    // LOW1: a genuine, still-owing defaulter, arrears 200 -- the lower of the two.
+    { ref: 'LOW1', full_name: 'C LOW1', contact: '0714000900', team: 'KONGOWE', arrears: 200, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'LOW1', full_name: 'C LOW1', contact: '0714000900', team: 'KONGOWE', arrears: 200, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' },
+    // PART1: paid PART of their arrears (900 -> 700, nowhere near settled), current row carries
+    // no status at all -- the '555' shape. Higher arrears than LOW1, so a mislabelled CLEARED
+    // sorting by raw arrears would put it first, ahead of the real defaulter.
+    { ref: 'PART1', full_name: 'C PART1', contact: '0714000901', team: 'KONGOWE', arrears: 900, status: 'Defaulter',
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
+    { ref: 'PART1', full_name: 'C PART1', contact: '0714000901', team: 'KONGOWE', arrears: 700,
+      days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' });
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+
+  const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(mine.ok, true);
+  const part1 = mine.rows.find(r => r.ref === 'PART1');
+  assert.ok(part1, 'still on the list -- 700 owed is not settled, and not silently dropped either');
+  assert.notEqual(part1.custStatus, 'CLEARED', 'a blank status is not evidence of payment');
+  assert.equal(part1.custStatus, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
+  assert.equal(part1.amt, 700, 'the real arrears, not a figure invented by the mislabel');
+  assert.deepEqual(mine.rows.map(r => r.ref), ['PART1', 'LOW1'], 'sorted by their real arrears, same as always -- nothing about the sort itself was ever broken');
+});
+
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();

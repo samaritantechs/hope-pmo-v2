@@ -5653,12 +5653,26 @@ portal's own "Expected Defaulters" tab -- the one worklist Part 69 checked and d
 untouched, on the reasoning that it mirrored `expdfMine`'s own philosophy. That reasoning now
 points the other way: it gets the IDENTICAL relaxation `buildRows_` already has (kept if still
 Chronic/Expired/Defaulter, OR present on today's own initial deck regardless of current status,
-status `CLEARED`), word for word the same condition, so the two stay one rule read twice rather
-than two that could drift apart again. `assignFor`'s own role/leader computation in this
-function was already unconditional (nothing to change there), and `recoveryOf` -- the shared
-helper this function already called for `initial`/`recovered` -- already handles a cleared
-customer's figures correctly; the only edits are the filter's own `||` clause and the status
-label's own branch.
+status `CLEARED`), word for word the same condition. `assignFor`'s own role/leader computation
+in this function was already unconditional (nothing to change there), and `recoveryOf` -- the
+shared helper this function already called for `initial`/`recovered` -- already handles a
+cleared customer's figures correctly; the only edits are the filter's own `||` clause and the
+status label's own branch.
+
+**One rule, read twice, is not the same promise as "the two can never disagree."** Caught by
+review, not written down first and only found later: `expectedDefaulters` resolves "today's
+deck" through `defaulterBook` -> `latestDeckAnyWeekday` -- the latest date of ANY weekday.
+`buildRows_`'s own `curRows`/`baseBy` come from `expdfCore`, which is pinned to TODAY'S OWN
+WEEKDAY and falls back to last week's same weekday when today's has not landed yet (a
+deliberate, pre-existing, documented split -- `snapshots.js` itself contrasts
+weekday-pinned-for-rotation against any-weekday-for-everything-else). On a morning when the
+day's own deck is late, the two functions can resolve to DIFFERENT calendar days -- so the same
+customer can read `CLEARED` on the portal's Expected Defaulters tab (which found them on a more
+recent any-weekday deck) and be completely absent from `expdfMine`, the Exp.Def Report and the
+phone's own list (still reading last week's same-weekday deck, which never had that customer at
+all). The predicate text is one rule; the data under it is not, and this change does not close
+that gap -- fixing the weekday-pinned-vs-any-weekday split itself is a separate, larger question
+that reaches far more than this one status label, and is not attempted here on a guess.
 
 **Checked before any of this, not assumed:** whether a front-end change was even needed, and
 where. The phone's own `statusChip()` already renders `CLEARED` correctly (confirmed above), and
@@ -5688,11 +5702,33 @@ day given DIFFERENT `upload_batch` ids made one of them lose to the other under
 team's deck) -- fixed by giving both rows of the same type one shared batch id, the way a real
 upload actually arrives.
 
+**Reviewed by two independent readers before this merged, given exactly what it reaches** --
+the sacred `/api/call` worklist, on a diff that reverses a decision shipped the same day. One
+real, serious bug: `CLEARED` was being decided by eliminating substrings of the free-text
+`status` column alone -- anything not literally containing Chronic/Expired/Defaulter fell
+through to `CLEARED`, with no check of `arrears` at all. A blank status is not evidence of
+payment, and this codebase already has the one rule for that exact question
+(`api/_lib/settled.js`'s `isSettled`, built after a real customer sat on an officer's phone as a
+defaulter owing one shilling while the expected book had her overpaid -- a stale or missing
+status is unknown, never "paid"); this change reinvented a wrong one instead of reading the
+right one. Proved, not merely argued: the suite's own long-standing `'555'` fixture (no status,
+partially paid, 350 still owed) -- which the new call-app test already had to filter out "to
+keep the fixture just the two customers it's about," without noticing why -- came back
+`CLEARED`, rendered green by both front-end files' own chip classifiers, and SORTED FIRST on an
+officer's own list (the sort is plain `arrears` descending; a mislabelled `CLEARED` row with
+real, unpaid arrears is promoted, not sunk). Fixed: `isSettled(arrears)` is the one gate for
+`CLEARED` in both `buildRows_` and `expectedDefaulters`; a row that is neither a recognised
+defaulter status nor actually settled keeps its own status text, or `DEFAULTER` where it has
+none -- the same fallback `statusWithPaid` already uses elsewhere, so it stays visible as still
+needing a call rather than being told it is clear while it owes real money. Two new regression
+tests reproduce the review's own scenario directly, through the real call dispatch and through
+`expectedDefaulters`, rather than merely asserting the fixed line.
+
 **What it costs.** No new read anywhere: every field a cleared row needs was already being
 fetched for the rows that were never excluded. One front-end file touched for one screen's own
 local styling and filter list, so `BUILD` moves to `2026-11-13-f`; `CALL_BUILD` is untouched,
 confirmed by checking what the call app actually does with a status string before assuming it
-needed a build at all. `npm test`: 1,523 pass.
+needed a build at all. `npm test`: 1,525 pass.
 
 **Not done.** The one case Part 69 named and this one does not reach either: a customer missing
 from a day's current deck ENTIRELY, not merely present under a different status -- the real

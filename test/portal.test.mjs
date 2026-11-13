@@ -241,6 +241,26 @@ test('expected defaulters keeps a customer who pays in full, status CLEARED, cre
   assert.equal(d.arrears, 300 + 600 + 800 + 0);
 });
 
+/* A REAL BUG, caught by an independent review before #696 merged: CLEARED was being assigned to
+   ANY row whose status text did not literally contain Chronic/Expired/Defaulter -- including a
+   BLANK status, which is not evidence of payment (settled.js's own rule, written after a real
+   customer sat on an officer's phone as a defaulter owing one shilling while the expected book
+   had her overpaid: a stale or missing status is unknown, never "paid"). A customer who paid
+   PART of their arrears, with no status on their current row at all, was coming back CLEARED. */
+test('expected defaulters: a blank status is not evidence of payment -- only isSettled(arrears) earns CLEARED', async () => {
+  const t = tables();
+  // 333: paid PART of their arrears (900 -> 700, nowhere near settled); no status at all on
+  // the current row -- the exact shape that was silently read as "paid".
+  t.defaulter_snapshots.push(D('333', 'KONGOWE', 900, 'initial'),
+    { ...D('333', 'KONGOWE', 700, 'current'), status: undefined });
+  const d = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  const row = d.rows.find(r => r.ref === '333');
+  assert.ok(row, 'still on the list -- 700 owed is not settled, and not silently dropped either');
+  assert.notEqual(row.status, 'CLEARED', 'a blank status is not evidence of payment');
+  assert.equal(row.status, 'DEFAULTER', 'no status of its own and not settled -- the same fallback statusWithPaid uses elsewhere');
+  assert.equal(row.arrears, 700, 'the real arrears, not a figure invented by the mislabel');
+});
+
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."
    The tab has to tell the screen WHO is looking and whether the rotation gives them a list of
    their own -- without that it can only ever show everybody's book. */
