@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 13 November 2026** — portal `BUILD 2026-11-13-e` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 68**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 69**.
 
 ---
 
@@ -54,6 +54,7 @@ Given since, and written nowhere else:
 
 | 11 Nov 2026 | "Ill be comming with staff db updates simce GMOs comfirm of changes in my whatsapp group" · "dont correct names using the gmo data i bring unless its new staff" · "so provide sql to add staff as we always did" | Staff changes come pasted from the WhatsApp group: who left, who was transferred where and as what, who is new (with phone, account, NIDA, TIN, NSSF), who a GMO cannot see. Answer with a filled copy of `db/TEMPLATE-staff-changes-from-gmo.sql` (one row a person: OFF, MOVE, PLACE, NEW, ASK); a name already in the staff registry is never re-spelt; a GMO's spelling is taken for a new staff only; the ones that come back NOT FOUND are settled by staff ID (`db/TEMPLATE-staff-changes-by-id.sql`). No staff name is committed. Handbook Parts 48 and 49. |
 | 11 Nov 2026 | "If an officer has team - zone is automatic of the GMO's" · "to the respective team's gmo" · "So even manager - must have gmo of one of his team and auto match gmo and zone" | **A team's zone is its GMO's.** A team whose ZONE cell on Teams & Staff is empty sits in the zone its GMO's other teams carry, when they all carry the same one; what is typed on the team stands. **The rule never chooses:** a GMO named on teams of several zones gives none. The name line, the advance desk and the staff scripts read that one rule (`teamsZoned` in `api/_lib/zone.js`; `tz` in the template). Never ask the owner to fill a ZONE cell so that a staff can be filed: read the team's GMO, and ask only when the team has neither a ZONE nor a GMO whose teams all carry one zone. Handbook Parts 50 and 52. |
+| 13 Nov 2026 | "remove that reminder of key rotations - i dont wanty to keep hearing that from you bro" | **Never raise the Supabase key rotation again, unprompted.** It is still true and still the owner's to do whenever they choose, but a chat does not repeat it -- not on its own initiative, not folded into another answer. If the owner ever asks directly, answer it; otherwise it stays unsaid. |
 | 12 Nov 2026 | "always Auto default grant all tabs to admin role. i dont have to go manually grant all new tabs i create" | Admin's own access to a screen was never actually gated on a hand-typed list in the first place — `allowed()` in `app.html` and `tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either one ever looks at a tabs list, and that stays true for every tab this system has or will have, with no step of any kind. What a new tab's id still has to be named in, once, is `EXTRA_TABS` (`api/_lib/auth.js`) — not for admin's sake, but because that is the one list the Roles & access screen reads to offer a checkbox for granting the tab to a *different* role; `ADMIN_TABS` is now computed from it rather than carrying a second, separately-typed copy, so the two can no longer drift apart the way they did the day this order was given (`leave`/`leaverep` named in one and not the other). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
@@ -77,6 +78,44 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#693** — a customer who pays in full stays on the Exp.Def Report, not just on the worklist
+  (handbook Part 69). "When a customer of expected defaulter pays full amount and no longer a
+  defaulter, they dessapear from the expected defaulters report, yet they should stay there as
+  of recovery so as to know recovery amount from difference of initial to current per each day
+  by team or staff" — and, asked whether the row still exists with a changed status or vanishes
+  from the upload entirely: "of today are of today by cycle ... they cant run from when their
+  initial file had them and their initial cycle placed them when and the initial and final
+  amounts." The dashboard's own team-level recovery figures were never affected (a customer's
+  absence already reads as zero arrears there, by construction); the real gap was `buildRows_`
+  (`api/_lib/expdf.js`), the one shared definition of "a day's Exp.Def row" behind both the
+  portal's Exp.Def Report / leader cards and the phone's own worklist (`expdfMine`) — it kept a
+  row only while its status read Chronic/Expired/Defaulter, so a customer who paid in full
+  dropped out of the day's own record entirely, report and worklist alike. Now it also keeps
+  anyone on TODAY'S OWN INITIAL deck regardless of current status, labelled `RECOVERED`, with
+  `role`/`leader`/`cycle` left exactly as `assignFor` computes them — unconditionally, the same
+  as any other day, which is both what credits the right officer and what keeps the two
+  rotation-gated filters (`periodRows_`, `expdfMine`) from silently dropping the row the way a
+  first, reverted draft of this did by nulling them out. `expdfMine` alone then excludes a
+  `RECOVERED` row with its own one-line filter: a worklist read by the phone — `/api/call`'s own
+  `call-core.js` calls nothing but `expdfMine`, confirmed by its two call sites — should never
+  show a call to make on a settled account. Checked, not assumed, against a second, separately
+  written function with the same old filter (`expectedDefaulters`, the portal's own "Expected
+  Defaulters" tab): its own doc comments, its KPI ("needing follow-up") and its status dropdown
+  (DEFAULTER/EXPIRED/CHRONIC only, no team or leader totals) all say it is a worklist like
+  `expdfMine`, not the "by team or staff" report the owner described — so it is untouched, and
+  its own net effect on who it lists is confirmed unchanged against the broadened-then-narrowed
+  `expdfMine`. Checked with two tests: a new one in `test/portal.test.mjs` (the right section
+  and the right leader's own card both credit the recovery; `expdfMine`'s own worklist drops the
+  row) and a new one in `test/call.test.mjs`, through the real call dispatch rather than the
+  call graph alone (`api_callList('expdf')`, both leader-scoped and team-scoped, and
+  `api_callDailySummary`'s own Exp.Def %, against a fixture where the row would otherwise have
+  been sitting right on the list). No new read (the data was already fetched for the `initial`
+  figure every row has always carried); no front-end file touched, so `BUILD` stays
+  `2026-11-13-e`. `npm test`: 1,522 pass. **Not done:** the harder case the owner's own answer
+  ruled out of scope — a customer missing from the upload's current deck entirely, not merely
+  present under a different status — still cannot be credited to a specific leader, since
+  `assignFor` needs fields that live only on a current-deck row; flagged for if it is ever asked
+  about, not built on a guess.
 - **#692** — the annual leave allowance resets each calendar year (handbook Part 68). "26-day
   annual leave allowance should reset each calendar year" -- answering the question Parts 58
   and 59 flagged rather than guessed. `leaveBalance_` now sums only the current calendar
@@ -855,8 +894,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   of the five named guarantors to keep in the registry's second slot; for the other, who they
   are (a staff ID, or their team/zone) and which bank the account is at. Nothing is filed until
   the answer comes back — the script sent changes nothing by itself.
-- **The owner**: rotating the keys shared in November (`docs/SECURITY.md` section 1); whether the
-  e-mailed reports arrive. **The Audit Report's whole-portfolio PAR (handbook Part 55):** the
+- **The owner**: whether the e-mailed reports arrive. **The Audit Report's whole-portfolio PAR
+  (handbook Part 55):** the
   blank `par30` was never only the historic upload — the figure was read off `disb_date` alone,
   a column this book never fills, so it would have stayed blank even once uploaded. Fixed
   (`approved_date` now counts, the same as everywhere else). Whether the 2024-to-July-2026
