@@ -1331,7 +1331,7 @@ test('the dashboard draws a team pick after the dot, sends it, remembers it, and
 test('every measured recovery tile is pressable and opens the customers behind it with a grand total', () => {
   const app = appSrc();
   const grid = app.slice(app.indexOf("trendGrid('Weekly recovery trend (Mon–Sun)'"), app.indexOf("Loan pipeline</div>"));
-  assert.equal((grid.match(/, '', press\)/g) || []).length, 2, 'weekday tiles (weekend and Mon-Fri shapes) carry the press');
+  assert.equal((grid.match(/, '', press, trendArrow\(x\.dRec\)\)/g) || []).length, 2, 'weekday tiles (weekend and Mon-Fri shapes) carry the press and their own day arrow');
   assert.ok(/'tot', recTileAttrs_\('week'\)\)/.test(grid), 'the TOTAL tile opens the week');
   assert.ok(/var press = recTileAttrs_\(x\.date\)/.test(grid), 'each tile carries its own date');
   assert.ok(/data-reccust="' \+ esc\(date \|\| ''\)/.test(app), 'the attribute names the date');
