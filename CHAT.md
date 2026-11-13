@@ -78,6 +78,21 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 13 Nov (second)** — "Hajioni kwenye kuomba salary advance" ("From baiki
+  recovery to Fo Chamwino"), for FRANK MICHAEL MWELUE, with his phone, CRDB account, 20-digit
+  NIDA and TIN — the same flag as the four officers already filed that morning ("Staff
+  registry, 13 Nov" below), sent as its own message. PLACE, run by the owner: MOVED
+  (`FMM/4044/2026`). The result shows his zone was never wrong (MORO-DOM, both before and
+  after) and he was already on Team Chamwino — what actually changed is the ROLE WORD,
+  `Bike Recovery - Team Chamwino` to `Field Officer - CHAMWINO`, confirmed against the code
+  rather than assumed (`advRoleWords_` / `advRoleSame_`, `api/_lib/portal-core.js`): the
+  request tab lists a name only under the viewer's own role, first words compared after
+  `ADV_ROLE_ALIAS` ('TEAM'/'TEAMS'/'FO'/'OFFICER' alias to FIELD OFFICER) — 'BIKE' and
+  'RECOVERY' alias to nothing, so a Field-Officer-signed-in code could never see a staff filed
+  under that exact wording, whatever zone or team the row carried. NSSF, sent as "On Process",
+  is left out of the script as always — one more number waiting on section 8, beside Kassim
+  Shabani Muhidini's and Sylvester Erick Maundi's. Tested twice against a synthetic registry
+  before it was handed over. The name is in no file of the repository.
 - **#693** — a customer who pays in full stays on the Exp.Def Report, not just on the worklist
   (handbook Part 69). "When a customer of expected defaulter pays full amount and no longer a
   defaulter, they dessapear from the expected defaulters report, yet they should stay there as
@@ -885,8 +900,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and
   destination team (only a first name and "moved from Bunda" was given); once the script is
   run, whether the Kihonda Area team and the "South East" zone wording resolved or need their
-  exact Teams & Staff spelling; and the TIN/NSSF numbers for Kassim Shabani Muhidini and
-  Sylvester Erick Maundi, both "on process" and left out of the script, once issued.
+  exact Teams & Staff spelling; the TIN/NSSF numbers for Kassim Shabani Muhidini and
+  Sylvester Erick Maundi, both "on process" and left out of the script, once issued; and the
+  NSSF number for Frank Michael Mwelue (also "on process"), from the same day's second batch.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
   form, new hire or existing staff with a gap (and if new, the role and team, or the zone
