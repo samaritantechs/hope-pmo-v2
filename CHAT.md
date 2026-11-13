@@ -79,18 +79,22 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
 - **Staff registry, 13 Nov (third)** — a new-hire form for a Kigoma team, forwarded by its
-  manager more than two months after it was dated (prepared 2 Sept, sent 13 Nov). Filed as NEW:
-  the team came with it, so the zone was read off Teams & Staff's own GMO rule rather than the
-  form's own "Zone" line, which actually names a team, not a zone -- the same mismatch every
-  earlier batch has had (docs/HANDOFF.md Parts 50, 52). No NIDA was sent this time, so the birth
-  date is the form's own, with nothing to check it against. TIN is blank and NSSF is "on
-  process," both left out of the script rather than written as that literal text. Three people
-  were named for the registry's two kin slots (a mother, a sister, and an aunt given only as
-  "Mama Mdogo," with no name of her own); the two with a name were filed, in the order the form
-  gave them -- the aunt's own name and number are not in the registry, kept for the owner's
-  record rather than dropped. Tested twice against a synthetic registry sharing the real
-  schema (added once; a second run changes nothing and says so) before it was handed over. The
-  name is in no file of the repository.
+  manager more than two months after it was dated (prepared 2 Sept, sent 13 Nov). Filed as NEW.
+  The form's own "Zone" line named a team, not a zone, as every earlier batch has had
+  (docs/HANDOFF.md Parts 50, 52) -- but this time the team itself was not on Teams & Staff at
+  all: the first script came back honest, "NOT ADDED: no zone could be found for them," rather
+  than guess. The owner then gave the zone directly ("zone tanganyika"), and the script's own
+  sender's-word fallback took it from there, since Tanganyika is already a zone filed elsewhere
+  -- re-run and confirmed added, with the row itself saying where the zone came from. No NIDA
+  was sent, so the birth date is the form's own, with nothing to check it against. TIN is blank
+  and NSSF is "on process," both left out of the script rather than written as that literal
+  text. Three people were named for the registry's two kin slots (a mother, a sister, and an
+  aunt given only as "Mama Mdogo," with no name of her own); the two with a name were filed, in
+  the order the form gave them -- the aunt's own name and number are not in the registry, kept
+  for the owner's record rather than dropped. Tested against a synthetic registry sharing the
+  real schema, reproducing the exact "team not on Teams & Staff" gap before the fix, then clean
+  (added once; a second run changes nothing and says so) after it. The name is in no file of
+  the repository.
 - **#697** — the all-time ghost: a customer missing from every deck still shows, status CLEARED
   (handbook Part 71). "Checked loan system -- customer not there on thurrsday deck 12th nov
   2026" ... "should reflect to alltime data past present and future" ... "so status column of
