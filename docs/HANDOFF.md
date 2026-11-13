@@ -5221,6 +5221,55 @@ Whether this was actually the cause of the dashboard's error spike is still open
 can open Postgres Logs around the time of that spike and paste the actual failing query, that
 would settle it either way.
 
+## Part 63 — A fourth arrow: loan apps joins sales, collection and recovery
+
+> "Also Show the single rising and droping arrow in each of loan apps, sales, collection and
+> recovery cards at dashbord against last weeks perfomancve" -- the owner, 13 November 2026.
+
+The dashboard's own performance strip -- built earlier for "show average of sales%, col% and
+recovery% performance... have the rising constant or dropping arrow symbol" -- already carried
+this for three of the four: Sales %, Collection %, Recovery %, and their average, each with
+`trendArrow` -- ▲ risen, ▼ dropped, ▬ flat, nothing when there was no prior week to compare.
+Loan apps was the one left out.
+
+It now carries a fourth tile, first in the row to match the order the owner named: **Loan
+apps**, the week's count with the same arrow, and a sub-line naming last week's count for
+comparison ("+5 maombi dhidi ya wiki iliyopita (24)"). It reads the SAME rule the "Loan
+applications (Mon-Sun)" trend card directly below the strip already uses -- unassigned or
+assigned stage, by the day the admin uploaded or the row was created (`appsInRange_`,
+factored out of `appsTrend` in `dashboardFull`, `api/_lib/portal-core.js`, so the two can never
+disagree about this week's own total) -- rather than inventing a second rule for what "an
+application" counts as. Two other, different "apps" counts already exist on other screens
+(the Call Agents board's bonus-driving count, deduped by track number and the CS roster; the
+month report's intake count, which also counts stages past assigned) -- each answers a
+different question for a different screen, and this change does not touch either.
+
+**The one honest caveat, said plainly rather than hidden.** "Unassigned or assigned" is a
+CURRENT snapshot, not a frozen one: an application that was unassigned last Monday and has
+since been processed into approved or rejected no longer counts in last week's own total,
+read today. The arrow can therefore move for a reason that has nothing to do with how many
+applications actually arrived last week, only with how many of them are still unprocessed as
+of right now. This is not a new property this change introduces -- the dashboard's own
+"Loan applications" trend card beside it has always read the same way, and the point of
+reusing its exact rule rather than a steadier one (every application created that week,
+whatever its stage now) is that the strip's new number and the card's own total, on the same
+screen, can never read two different things.
+
+**What it costs.** No new read: `appsInRange_` only re-shapes `myLoans`, which `dashboardFull`
+already holds in full back to last Monday for the sales-percentage arrow (`loanFloor`) -- the
+apps comparison rides the same data already in memory. Nothing on `/api/upload` or `/api/call`
+either way: this function serves neither. `BUILD 2026-11-13-a`.
+
+**Not done.** No tip added to the `hints` table -- the new tile sits beside three others
+already on the screen, labelled the same way, and needs no separate explanation. No real-
+browser visual check (a chat has no database access to sign in and load a live dashboard) --
+the number itself is proven by a direct unit test against `dashboardFullCompute_`, and every
+inline script in `app.html`, this one included, is parsed by `test/pages.test.mjs` as part of
+`npm test`, so the new markup is at least known to run without throwing. Whether the
+"steadier" apps definition (every application created that week, regardless of its stage
+today) would serve this arrow better than the card's own current-snapshot rule is a real,
+separate question, not decided here either way.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

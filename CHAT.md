@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 12 November 2026** — portal `BUILD 2026-11-12-e` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 62**.
+**As of 13 November 2026** — portal `BUILD 2026-11-13-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 63**.
 
 ---
 
@@ -77,6 +77,31 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#687** — a fourth arrow on the dashboard: loan apps joins sales, collection and recovery
+  (handbook Part 63). "Also Show the single rising and droping arrow in each of loan apps,
+  sales, collection and recovery cards at dashbord against last weeks perfomancve." The
+  performance strip already carried this for three of the four (Sales %, Collection %,
+  Recovery %, and their average, each with `trendArrow`); **Loan apps** now joins them, first
+  in the row, with the week's count and the same ▲/▼/▬ arrow against last week's count. It
+  reads the exact rule the "Loan applications" trend card right below the strip already uses
+  (unassigned/assigned stage, by upload day -- `appsInRange_`, factored out of `appsTrend` in
+  `dashboardFull` so the two totals can never disagree), rather than a second definition of
+  "an application." **The one honest caveat:** that rule is a CURRENT snapshot, not a frozen
+  one -- an application unassigned last Monday that has since been approved no longer counts
+  in last week's own total read today, so the arrow can move for a reason that has nothing to
+  do with how many applications actually arrived. This is not new: the trend card beside it
+  has always read the same way, and reusing its exact rule is what keeps the two numbers on
+  one screen from disagreeing. Checked with a new, direct test proving the arrow is a plain
+  count difference (never a fake "%"), is never null (myLoans is read for the whole span
+  unconditionally, no budget risk the other three arrows carry), and agrees with
+  `appsTrend`'s own weekly total to the row. `npm test`: 1,516 pass. No read on `/api/upload`
+  or `/api/call` -- this function serves neither; no new read at all, `appsInRange_` only
+  reshapes data `dashboardFull` already held for the sales-percentage arrow. `BUILD
+  2026-11-13-a`. **Not done:** no `hints` table tip (the tile sits beside three others already
+  labelled the same way); no real-browser check (no database access to sign in and load a
+  live dashboard -- every inline script in `app.html` is still parsed by `test/pages.test.mjs`,
+  part of `npm test`); whether a steadier, current-stage-independent apps definition would
+  serve this arrow better is a separate, open question.
 - **#685** — a trigram index for the Legal tab's name/ref search (handbook Part 62). "postgress
   is unsettled", with the dashboard's own error graph and the exact query the New-notice drawer's
   search box sends (`ref`/`full_name ILIKE '%term%'`, scoped by snapshot_type, snapshot_date and
