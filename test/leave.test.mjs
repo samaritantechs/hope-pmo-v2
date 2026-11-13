@@ -98,6 +98,31 @@ test('the balance: Approved days are deducted, Pending days are shown but not de
   assert.deepEqual(after.balance, { annualDays: 26, taken: 5, pending: 0, remaining: 21 });
 });
 
+/* "26-day annual leave allowance should reset each calendar year" -- the owner, 13 Nov 2026,
+   answering the question Part 58/59 flagged rather than guessed. The balance now sums only
+   the current calendar year's own requests; a past year's Approved days are kept in the table
+   and in the report -- nothing is deleted or hidden -- they simply stop costing the new
+   year's allowance. */
+test('the balance resets each calendar year: a past year\'s approved days are kept in the report but no longer cost the new year\'s allowance', async () => {
+  const t = tables();
+  t.leave_requests.push({ id: 'old1', staff_id: 'S1', staff_name: 'ASHA K', zone: 'LAKE ZONE', req_role: 'FIELD OFFICER',
+    start_date: '2025-11-16', end_date: '2025-11-20', days: 5, reason: 'LIKIZO', approval: 'Approved',
+    submitted_at: '2025-11-01T08:00:00Z' });
+  const db = fakeDb(t);
+  const pick = await portalApi(db, FO, 'leaveRequestPage', { staffId: 'S1' }, NOW);
+  assert.deepEqual(pick.balance, { annualDays: 26, taken: 0, pending: 0, remaining: 26 },
+    "2025's 5 approved days do not touch 2026's balance");
+  // This year's own request still counts, exactly as it always did.
+  const a = await portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-18', reason: 'LIKIZO' }, NOW);
+  await portalApi(db, GMO, 'leaveDecide', { updates: [{ id: a.id, approval: 'Approved', comment: '' }] }, NOW);
+  const after = await portalApi(db, FO, 'leaveRequestPage', { staffId: 'S1' }, NOW);
+  assert.deepEqual(after.balance, { annualDays: 26, taken: 3, pending: 0, remaining: 23 });
+  // The past request is still there, still reportable -- only the balance's own arithmetic
+  // changed, not the history.
+  const rep = await portalApi(db, GMO, 'leaveReport', { from: '2025-01-01', to: '2025-12-31', approval: 'ALL' }, NOW);
+  assert.ok(rep.rows.some(r => r.id === 'old1'), "2025's request is still visible in the report, never deleted");
+});
+
 test('the desk: the GMO sees the field officer\'s pending request by role routing, decides it, and it leaves pending', async () => {
   const db = fakeDb(tables());
   const r = await portalApi(db, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-18', reason: 'LIKIZO' }, NOW);
