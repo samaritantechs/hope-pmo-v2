@@ -5321,6 +5321,48 @@ why they can differ (rather than only in code and this handbook) is not decided;
 own next look at the real, reconciled book is what will show whether the explanation already
 given is enough.
 
+## Part 65 — The arrows asked for were on the cards themselves, not a separate strip
+
+> "i meant arrows on cards of: Loan applications (Mon-Sun) ... Sales trend (Mon-Sat) ... Weekly
+> expected trend (Mon-Fri) ... Weekly recovery trend (Mon-Sun)" -- the owner, 13 November 2026,
+> naming the four cards by their exact on-screen titles.
+
+Parts 63 and 64 built the arrow as a fourth tile on the small performance strip above these
+cards. That was the wrong placement: the owner meant the arrow on the card itself, beside its
+own title -- "Loan applications (Mon-Sun)", not a separate "Loan apps" tile elsewhere on the
+page answering the same question in a different spot.
+
+**Moved, not rebuilt.** Every delta the four cards now carry was already computed -- `dSales`,
+`dCol`, `dRec` by Part 63's own performance strip, `dApps` by Part 64's fix to it -- so this is
+a client-only change: `trendGrid` (`public/app.html`) takes an optional sixth argument, raw
+HTML (unescaped, unlike its title and sub, which still run through `esc()`) rendered beside the
+card's own title. Each of the four `trendGrid` calls now passes `trendArrow(...)` plus a short
+delta note (`headDelta_`, a terser sibling of the strip's own `trendSub` -- the card's own
+subtitle already says what the figures are, so the note stays to a single short line rather
+than repeating a full sentence). The "Loan apps" tile is removed from the strip entirely, since
+its own number now lives on the actual Loan Applications card; Sales %, Collection %,
+Recovery % and the average stay on the strip exactly as they were before any of this started --
+nothing asked for their removal, and the cards now carrying the same delta as a second,
+consistent reading is an ordinary dashboard pattern, not a conflict.
+
+**The Loan Applications card still carries two different apps numbers, on purpose, and now on
+the one card.** Its own day-tiles and TOTAL read `appsInRange_` (unassigned/assigned stage,
+right now -- "how much of this week is still unworked"); the arrow beside its title reads
+`appsArrivedInRange_` (every application that arrived, whatever stage it sits at now -- the
+steadier figure Part 64 built). Both sit on the same card now, which makes the divergence more
+visible than when the arrow lived elsewhere, not less honest -- the arrow's own note (Rec/Sales/
+Col cards: percentage points; Apps: a plain count, worded "maombi", never printed as a "%")
+makes clear which question each number is answering.
+
+**What it costs.** No new read, no server-side change at all -- every number was already
+computed for the strip; this only changes where `app.html` draws it. `BUILD 2026-11-13-c`.
+
+**Not done.** Whether the small performance strip should keep showing Sales %/Collection %/
+Recovery %/the average now that the same three deltas also sit on their own cards, or whether
+that is now redundant and the strip should shrink back to the average alone, is not decided --
+nothing was asked to be removed from the strip beyond the Loan apps tile that was this change's
+own, recent addition.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
