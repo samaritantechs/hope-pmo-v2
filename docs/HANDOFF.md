@@ -5984,6 +5984,97 @@ still parsed source-side by `test/pages.test.mjs`, part of `npm test`, which is 
 run here. `BUILD 2026-11-14-a`; `CALL_BUILD` untouched, since nothing on the call app's own
 screens changed.
 
+## Part 73 — The Loan pipeline widget leaves; Expected Defaulters recovery, Monday to Sunday, arrives
+
+> "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
+> cards Monday to Sunday with rising and falling arrows as usual" ... asked whether this meant
+> the per-officer figure the Exp.Def Report itself shows, or a team-wide tile: "Am talking of
+> the days performance Monday to Sunday like the cards showing summary of sales and collection
+> per day" -- the owner, 14 Nov 2026.
+
+The all-time, eight-stage pipeline funnel is gone from the dashboard, replaced by a sixth
+weekday trend card -- team-wide, day by day, the identical `trendGrid` shape as the five
+beside it -- plus a strip-free title arrow, never the per-officer breakdown the dedicated
+Exp.Def Report shows (`buildRows_`/`expdfWeekCore`, `api/_lib/expdf.js`). Costed and asked
+before anything was built: the dashboard holds no per-customer rows at all, so a true
+per-officer figure would have meant either reading the whole week's raw decks the way
+`expdfWeekCore` does for the Exp.Def Report (about 13 more round trips, nearly doubling this
+screen's own budget) or re-deriving the rotation that decides WHO owns a customer
+(`assign.js`'s configurable `assignFor`) a second time, in SQL -- exactly the "two
+implementations that can disagree" CLAUDE.md section 2 already names two real blackouts for.
+The owner's answer, once asked, ruled both out: team-wide, no officer breakdown.
+
+**`db/RUN-ME-056`** adds one function, `expdf_recovery_totals(p_dates, p_weekdays, p_teams)`,
+answering the one question this needed: of the customers that count as Expected Defaulters --
+Chronic, Expired or (Partial) Defaulter by status text, OR present on that SAME day's own
+initial deck at all (`buildRows_`'s exact membership test, ported, never the rotation on top
+of it) -- what was recovered, per team, per day. **The one real arithmetic difference from
+"Weekly recovery trend" beside it, kept on purpose:** `recovered` here is a SUM OF
+PER-CUSTOMER, CLAMPED differences (`buildRows_`'s own `Math.max(0, initial - arrears)`), never
+the team-total subtraction `recoveryByTeam`/`recovery_standing` use -- a customer whose arrears
+GREW contributes nothing (never a negative), while the team-total figure nets that loss
+against a stranger's gain on the exact same rows. **The two cards are allowed to disagree on
+the same day, on purpose**, the same way #688 let the dashboard's own loan-apps arrival count
+and backlog count disagree rather than force a wrong agreement -- proved directly in
+`test/portal.test.mjs`: two customers on one team, one recovering 60,000 and one losing
+50,000 to 80,000, read 60,000 recovered here and 30,000 on "Weekly recovery trend", off the
+identical two decks.
+
+**Measured on a 2,268,000-row fixture** sized like RUN-ME-054/055's own (42 teams, 150 days,
+two snapshot_types, ~180 customers a team a day), built and queried directly against a real
+local PostgreSQL before this shipped, not assumed: a full week, every team, the worst case an
+unrestricted admin's own dashboard asks for, reads 294 rows in ~210ms; the common case -- one
+team's own week -- in ~43ms. One round trip either way, however many teams. `set
+enable_bitmapscan = off set enable_seqscan = off` is copied from `recovery_standing`'s own
+proven defensive planner hint, reading the same table the same way; `set statement_timeout =
+'2000ms'` is a backstop at about four times the measured worst case. **A real mistake caught
+building this, before any of it was trusted:** the first synthetic fixture gave every team's
+customers the SAME short reference strings ('CUST-7-1' on both TEAM1 and TEAM2); `ref` is this
+system's own global customer key everywhere else it is used (`idx_def_snap_ref`, the ghost-row
+feature's own ref-keyed rescue, #697), so a team-colliding fixture is not a realistic one --
+with it, the function's own `distinct on (ref)` collapsed forty-two teams' worth of rows into
+one, which a team-prefixed fixture (the realistic shape) immediately cleared. Nothing in the
+shipped function changed; the fixture was wrong, not the SQL -- but it is why this entry says
+"measured," not "written and assumed."
+
+`api/_lib/snapshot-totals.js`'s `expdfRecoveryTotals` calls the new function the way every
+other optional aggregate here does: a missing function (RUN-ME-056 not yet run) is remembered
+for five minutes and answered `null`, never a failed request -- and `null`, not `[]`, on
+purpose, so a budget timeout and a database without the migration read identically downstream
+(no arrow, no guess), the same distinction `within_`'s other callers on this screen already
+rely on. **This week is read unbounded** (the card's own headline figures); **last week is
+read under `dashPrevBudget_`**, the identical asymmetry `expWeek`/`expPrev`/`ecolWeek`/
+`ecolPrev` already carry, for the reason written beside them (a real production morning once
+saturated this database; a "last week" read exists only to feed an arrow and must never hold
+up the page).
+
+**What it costs.** `stageCounts`'s own dashboard read (the pipeline funnel's eight-counts-or-
+one-grouped-call) leaves with the widget it existed for; two new reads take its place. Net
+`test/speed.test.mjs` change: **+1 round trip** on the migrated-world dashboard budget (37 ->
+39 for Early Collection earlier the same day, -> 40 here: +2 for the new reads, -1 for the one
+removed), 0 new rows. The unmigrated-world columns already had headroom and needed no change
+-- in that world `expdf_recovery_totals` is equally unavailable, so the two new reads cost the
+same one failed call each there too, while the eight-call `stageCounts` loop they replace is
+gone; the net there is cheaper, not costed into the ceiling since nothing failed by leaving it
+be. No read on `/api/upload` or `/api/call` -- this function serves neither. `stageCounts` the
+FUNCTION stays; only the dashboard's own call to it is gone -- the diagnosis screen's probe
+still uses it.
+
+**Checked.** A new mock, `EXPDF_RECOVERY_RPC` (`test/snapshot-totals-rpc.mjs`), mirrors
+`db/RUN-ME-056` clause for clause (the same idiom `recoveryStandingMirror_`/
+`DEFAULTER_GHOST_ROWS_RPC` already use, projected to the real function's exact column list,
+not the whole fixture row -- #697's own review caught a real bug that shape of mistake causes).
+Added to the "team-day totals" migrated world in `test/speed.test.mjs`. A dedicated test in
+`test/portal.test.mjs` proves the per-customer clamp against `recTrend`'s own team-total figure
+on shared rows, team scoping, the day-by-day and week-total arrows, an unmeasured day, and the
+no-migration fallback. `npm test`: 1,530 pass (one new test). `BUILD 2026-11-14-b`;
+`CALL_BUILD` untouched -- nothing on the call app's own screens changed. **Not done:** no
+`hints` table tip (the card sits among five others already carrying the same shape, needing no
+separate introduction); no real-browser check -- no database to sign into from here;
+`public/app.html`'s inline script is still parsed source-side by `test/pages.test.mjs`, part of
+`npm test`. Whether the card should be clickable to open its own customer list, the way "Weekly
+recovery trend" is, was not asked for and is not built.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

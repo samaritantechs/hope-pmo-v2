@@ -9,7 +9,7 @@ import { fakeDb } from './fake-db.mjs';
 /* The two aggregates from db/migrations/2026-08-10-upload-status.sql. They replaced four
    unbounded whole-table reads on the upload page; `db()` below is a database that HAS them,
    and a plain fakeDb(tables()) is one that does not -- both states are exercised. */
-import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
+import { UPLOAD_STATUS_RPC, SNAPSHOT_TOTALS_RPC, LOAN_MONTH_RPC, DEFAULTER_GHOST_ROWS_RPC, EXPDF_RECOVERY_RPC } from './snapshot-totals-rpc.mjs';
 /* A database that HAS the migrations -- which now includes the team-day totals function, because
    the defaulter book asks it which date each team's own latest deck is on. A plain fakeDb() is
    still the un-migrated world, and several tests use it deliberately. */
@@ -6969,6 +6969,67 @@ test('the strip\'s Early Collection tile is the week, among the teams this viewe
   // the whole-company 50% the admin above reads -- the same scoping every sibling tile has.
   const d3 = await run('dashboardFull', {}, GMO, db);
   assert.equal(d3.perf.ecolPct, 100, "KONGOWE's own early-collection sheet, not the company's");
+});
+
+/* THE LOAN PIPELINE WIDGET'S REPLACEMENT -- "Remove the Loan pipeline widget at dashboard
+   replace with expected defaulters recovery cards Monday to Sunday with rising and falling
+   arrows as usual" ... "Am talking of the days performance Monday to Sunday like the cards
+   showing summary of sales and collection per day" -- the owner, 14 Nov 2026. The headline
+   property to prove is the one that makes this a DIFFERENT card from "Weekly recovery
+   trend", not a renamed copy of it: recovered here is a SUM OF PER-CUSTOMER, CLAMPED
+   differences, never a team-total subtraction -- so a customer whose arrears grew contributes
+   nothing (never a negative), while recTrend's own team-total figure nets that loss against
+   a stranger's gain on the exact same underlying rows. */
+test('Expected Defaulters recovery is a sum of per-customer clamped differences, never recTrend\'s team-total subtraction', async () => {
+  const t = tables();
+  t.defaulter_snapshots = [
+    // X1: a real recovery, 100,000 -> 40,000.
+    D('X1', 'KONGOWE', 100000, 'initial'), D('X1', 'KONGOWE', 40000, 'current'),
+    // X2: arrears GREW, 50,000 -> 80,000. Per-customer clamp: contributes 0, never negative.
+    D('X2', 'KONGOWE', 50000, 'initial'), D('X2', 'KONGOWE', 80000, 'current'),
+    // Last Friday, so the arrow has something to compare against: one customer, 100,000 -> 90,000.
+    D('X1', 'KONGOWE', 100000, 'initial', 45, '2026-07-17'), D('X1', 'KONGOWE', 90000, 'current', 45, '2026-07-17'),
+  ];
+  const db = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } });
+  const d = await run('dashboardFull', {}, ADMIN, db);
+
+  const fri = d.edrTrend.find(x => x.date === TODAY);
+  assert.equal(fri.uploaded, true);
+  assert.equal(fri.initial, 150000, 'X1 100,000 + X2 50,000');
+  assert.equal(fri.current, 120000, 'X1 40,000 + X2 80,000');
+  assert.equal(fri.recovered, 60000, "X1's 60,000 recovered -- X2's own loss clamped to 0, never netted against it");
+  assert.equal(fri.pct, 40, '60,000 of 150,000');
+  assert.equal(fri.dEdr, 30, '40.0 this Friday vs 10.0 last Friday (10,000 of 100,000)');
+
+  // THE SAME UNDERLYING ROWS, READ recTrend's OWN way (team-total subtraction), disagree --
+  // on purpose, documented, the same as #688 let two figures on one screen disagree rather
+  // than force a wrong agreement.
+  const friRec = d.recTrend.find(x => x.date === TODAY);
+  assert.equal(friRec.from, 150000, 'the same two decks');
+  assert.equal(friRec.to, 120000);
+  assert.notEqual(friRec.recovered, fri.recovered, "recTrend nets X2's loss against X1's gain -- 30,000, not 60,000");
+
+  // A day with nothing uploaded (Monday of the same week) is unmeasured, never a guessed zero.
+  const mon = d.edrTrend.find(x => x.date === MON);
+  assert.equal(mon.uploaded, false);
+  assert.equal(mon.pct, null);
+  assert.equal(mon.dEdr, null);
+
+  // The week's own total, worked out beside the tiles it sums.
+  assert.equal(d.edrTrendTotal.initial, 150000);
+  assert.equal(d.edrTrendTotal.recovered, 60000);
+  assert.equal(d.edrTrendTotal.pct, 40);
+
+  // Team-scoped at the database -- a GMO who can only see KONGOWE reads the same figures (the
+  // whole fixture is one team here), the same scoping every sibling card has.
+  const dGmo = await run('dashboardFull', {}, GMO, db);
+  assert.equal(dGmo.edrTrend.find(x => x.date === TODAY).recovered, 60000);
+
+  // A database without db/RUN-ME-056 run (the EXPDF_RECOVERY_RPC mock left out) reads "not
+  // yet filed" on every day, never a failed dashboard load.
+  const dNoMigration = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
+  assert.equal(dNoMigration.edrTrend.every(x => x.uploaded === false), true);
+  assert.equal(dNoMigration.edrTrendTotal.pct, null);
 });
 
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries

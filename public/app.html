@@ -186,12 +186,6 @@
   .syncdot{width:13px;height:13px;border-radius:50%;border:0;padding:0;margin-left:10px;
     background:var(--b700);cursor:pointer;flex:0 0 auto;animation:syncpulse 1.5s ease-in-out infinite}
   @keyframes syncpulse{0%,100%{opacity:.25}50%{opacity:1}}
-  /* pipeline funnel */
-  .fun{display:flex;align-items:center;gap:10px;margin:6px 0;font-size:12.5px}
-  .fun .fl{width:150px;color:var(--mut);text-transform:capitalize}
-  .fun .fv{width:60px;text-align:right;font-weight:700}
-  .fun .fb{flex:1;height:8px;background:var(--b50);border-radius:99px;overflow:hidden}
-  .fun .fb i{display:block;height:100%;background:var(--b500)}
   /* weekday pills + filters */
   .pills{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
   .pills .pill{padding:7px 13px;border-radius:9px;border:1.5px solid var(--line);background:#fff;color:var(--mut);
@@ -785,7 +779,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-14-a';
+var BUILD = '2026-11-14-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3938,13 +3932,26 @@ VIEWS.dashboard = function(){
             ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot', recTileAttrs_('week')),
           trendArrow((d.perf||{}).dRec) + headDelta_((d.perf||{}).dRec))
-      + '<div class="card"><div class="card-h">Loan pipeline</div><div style="padding:12px 14px">'
-      + d.funnel.map(function(f){
-          var max = Math.max.apply(null, d.funnel.map(function(x){ return x.count; }).concat([1]));
-          return '<div class="fun"><span class="fl">'+esc(f.stage.replace(/_/g,' '))+'</span>'
-            + '<span class="fv">'+money(f.count)+'</span>'
-            + '<span class="fb"><i style="width:'+Math.round(100*f.count/max)+'%"></i></span></div>';
-        }).join('') + '</div></div>';
+      /* THE LOAN PIPELINE WIDGET'S REPLACEMENT -- "Remove the Loan pipeline widget at
+         dashboard replace with expected defaulters recovery cards Monday to Sunday with
+         rising and falling arrows as usual" -- the owner, 14 Nov 2026. Team-wide, day by
+         day, the same trendGrid shape as the four cards above -- never the per-officer
+         figure the dedicated Exp.Def Report shows. `recovered` here is a sum of
+         per-customer, never-negative differences (api/_lib/snapshot-totals.js's own note on
+         expdfRecoveryTotals), which is why it can read differently from the "Weekly recovery
+         trend" card above on the same day, on purpose. */
+      + trendGrid('Expected Defaulters recovery (Mon–Sun)', 'Chronic · Expired · Defaulter, today’s own initial deck included · recovered = initial − current per customer, never negative', 'gEdr',
+          d.edrTrend.map(function(x){ return x.uploaded === false
+            ? tcell(wdLabel(x.weekday), [['—', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
+            : tcell(wdLabel(x.weekday), [
+            ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
+            ['Owing TZS '+money(x.current), 'badl'],
+            [x.pct != null ? 'Rec '+pct(x.pct) : 'Rec —', 'good']],
+            '', '', trendArrow(x.dEdr)); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.recovered : d.edrTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
+            ['Owing TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.current : 0), 'badl'],
+            ['Rec '+pct(d.edrTrendTotal ? d.edrTrendTotal.pct : null), 'good']], 'tot'),
+          trendArrow((d.edrTrendTotal||{}).dEdr) + headDelta_((d.edrTrendTotal||{}).dEdr));
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.
     /* ONE FAILURE USED TO TAKE ALL OF THEM. callAgents and recoveryByCredit each caught their

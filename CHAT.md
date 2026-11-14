@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 14 November 2026** — portal `BUILD 2026-11-14-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 72**.
+**As of 14 November 2026** — portal `BUILD 2026-11-14-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 73**.
 
 ---
 
@@ -78,6 +78,29 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **The Loan pipeline widget leaves; Expected Defaulters recovery, Mon–Sun, arrives, 14 Nov**
+  — "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
+  cards Monday to Sunday with rising and falling arrows as usual"; asked whether that meant
+  the per-officer figure the Exp.Def Report shows or a team-wide tile, the owner answered "Am
+  talking of the days performance Monday to Sunday like the cards showing summary of sales
+  and collection per day" — team-wide, confirmed. A new database function
+  (`db/RUN-ME-056`, `expdf_recovery_totals`) answers, per team per day, who counts as an
+  Expected Defaulter (`buildRows_`'s own membership test, ported, never the rotation that
+  decides WHO owns a customer — re-deriving that in SQL would be a second, driftable copy of
+  a rule CLAUDE.md section 2 already names two blackouts for) and what they recovered — a sum
+  of per-customer, never-negative differences, which is why this card can read a different
+  number from "Weekly recovery trend" beside it on the same day, on purpose, proved directly
+  in a new test. Measured on a 2.27-million-row fixture before it shipped (42 teams, 150 days,
+  matching RUN-ME-054/055's own scale): ~210ms worst case, ~43ms the common one-team case, one
+  round trip either way — a first fixture with team-colliding customer references understated
+  this badly (collapsed 42 teams into 1) until it was rebuilt with globally-unique ones, the
+  realistic shape this system's own `ref` column always has. Costs **net +1 round trip**
+  (+2 new reads, -1 removed: the pipeline funnel's own `stageCounts` call leaves with the
+  widget it existed for), 0 new rows, on the migrated-world dashboard budget
+  (`test/speed.test.mjs`, reason beside the changed rows); no read on `/api/upload` or
+  `/api/call`. `npm test`: 1,530 pass (one new test, mirroring the SQL clause for clause in a
+  new `EXPDF_RECOVERY_RPC` mock, the same idiom the ghost-rows mock already uses). `BUILD
+  2026-11-14-b`; `CALL_BUILD` untouched. Handbook Part 73.
 - **Early Collection joins the week, 14 Nov** — the strip tile is week-over-week with the same
   rise/fall arrow every other tile carries, reversing #691's own month-to-date choice in the
   owner's own words ("Early Collection % · MTD should be of week and showing rise or fall as the

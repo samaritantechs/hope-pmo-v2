@@ -11,7 +11,7 @@ import { zonesOfTeams, teamsZoned } from './zone.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
-  recoveryByTeam } from './snapshot-totals.js';
+  recoveryByTeam, expdfRecoveryTotals } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
@@ -10883,10 +10883,11 @@ export const PORTAL_FUNCTIONS = Object.keys(FN);
    THE v1 DASHBOARD, rebuilt on v2 data.
 
    The generic KPI+table dashboard was not what the operation actually reads. The real one
-   is: five headline cards, four weekday trend grids (loan applications Mon-Sun, sales
-   Mon-Fri, collection Mon-Fri, recovery Mon-Sun), the loan pipeline funnel, and a team
-   performance table carrying the leader names beside the numbers -- because the meeting
-   asks "whose team is this?" before it asks "how much?".
+   is: five headline cards, six weekday trend grids (loan applications Mon-Sun, sales
+   Mon-Fri, early collection Mon-Fri, collection Mon-Fri, recovery Mon-Sun, Expected
+   Defaulters recovery Mon-Sun -- the last replacing the loan pipeline funnel, 14 Nov 2026),
+   and a team performance table carrying the leader names beside the numbers -- because the
+   meeting asks "whose team is this?" before it asks "how much?".
    ======================================================================================= */
 
 const WD5 = ['MON', 'TUE', 'WED', 'THU', 'FRI'];
@@ -12214,19 +12215,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const wdToday = currentWeekday(nowMs);
   const base = await buildDashboard(db, user, nowMs);
 
-  /* THE LOANS TABLE, READ TWICE ON PURPOSE, AND NEITHER READ IS THE WHOLE OF IT.
+  /* THE LOANS TABLE, READ ONCE, AND IT IS NOT THE WHOLE OF IT.
      One read used to carry every loan the company has ever written, with ten columns each, so
-     that four figures could be worked out. Two figures actually need every loan, and they need
-     two columns; the rest need this week and this month.
-
-       funnel      every loan, but not one row of it. The pipeline funnel is eight COUNTS --
-                   how many applications sit at each stage -- and that is an all-time question
-                   by definition. Eight requests that each answer with a number and no body at
-                   all, instead of thirty thousand rows carried here to be counted. Counting is
-                   the database's job; that is the first question the speed guard asks.
-       loansAll    the trends and the team board: applications by the day they were created,
-                   sales by the day they were approved. Bounded to this week and this month,
-                   which is the furthest either one looks.
+     that four figures could be worked out. `loansAll` is the trends and the team board:
+     applications by the day they were created, sales by the day they were approved. Bounded
+     to this week and this month, which is the furthest either one looks -- the dashboard's own
+     all-time "pipeline funnel" count-per-stage read (`stageCounts`, eight counts and no rows
+     at all) left with the Loan pipeline widget it existed for (14 Nov 2026); `stageCounts`
+     itself stays, read only by the diagnosis screen's own probe now.
 
      `or` rather than two reads, because a loan qualifies on EITHER date -- an application
      created this week whose approval is older, or an approval this month on an application
@@ -12252,7 +12248,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
-  const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, edrWeek, edrPrev, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
@@ -12285,7 +12281,23 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     expectedTotalsInRange(db, { type: 'initial', from: mon, to: sun, teams: user.teams }),
     within_(expectedTotalsInRange(db, { type: 'initial', from: prevMon, to: prevSun, teams: user.teams }),
       dashPrevBudget_(), []),
-    stageCounts(db, user.teams),
+    /* THE LOAN PIPELINE WIDGET'S REPLACEMENT -- "Remove the Loan pipeline widget at dashboard
+       replace with expected defaulters recovery cards Monday to Sunday with rising and falling
+       arrows as usual" ... "Am talking of the days performance Monday to Sunday like the cards
+       showing summary of sales and collection per day" -- the owner, 14 Nov 2026, confirming
+       these are team-wide day tiles, never the per-officer figure the dedicated Exp.Def Report
+       shows. See db/RUN-ME-056 and snapshot-totals.js's own long note on expdfRecoveryTotals
+       for why this reads the ONE existing rule that decides who COUNTS as an Expected
+       Defaulter (buildRows_, expdf.js) rather than either re-reading the whole week's raw
+       decks (expdfWeekCore's own shape: ~13 more round trips) or re-deriving the rotation that
+       decides WHO owns a customer a second time, in SQL. THIS week unbounded (the cards' own
+       headline figures), LAST week budgeted exactly like expPrev/defPrev/ecolPrev above, for
+       the identical reason: it exists only to feed the day tiles' own arrows. `null` (not `[]`)
+       is this function's own way of saying "no answer yet" -- a budget timeout and a database
+       without RUN-ME-056 run read identically downstream: no arrow, no guess. */
+    expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(mon, i)), weekdays: WD7, teams: user.teams }),
+    within_(expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(prevMon, i)), weekdays: WD7, teams: user.teams }),
+      dashPrevBudget_(), null),
     fetchAll(() => onTeams(db.from('loans')
       /* upload_date rides along because it is the day the admin CHOSE for the report, and a
          re-uploaded loan keeps its original created_at -- windowing on created_at alone would
@@ -12369,6 +12381,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
   const myEcolWeek = scoped(user, ecolWeek), myEcolPrev = scoped(user, ecolPrev);
+  // expdfRecoveryTotals answers null, never [], when it has nothing -- a budget timeout or a
+  // database without RUN-ME-056 run -- so edrTrend/edrTrendTotal below can tell "unmeasured"
+  // from "measured, zero" the same way every other null-capable read on this screen does.
+  const myEdrWeek = scoped(user, edrWeek || []), myEdrPrev = scoped(user, edrPrev || []);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -12896,8 +12912,45 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   perf.dEcol = (ecolPctNow != null && ecolPctPrev != null && myEcolPrev.length > 0)
     ? Math.round((ecolPctNow - ecolPctPrev) * 10) / 10 : null;
 
-  /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
-  const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
+  /* ---- "EXPECTED DEFAULTERS RECOVERY" trend Mon-Sun: the Loan pipeline widget's replacement.
+     "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
+      cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
+      days performance Monday to Sunday like the cards showing summary of sales and collection
+      per day" -- the owner, 14 Nov 2026. Team-wide, day by day, the same shape as the four
+      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows (see
+      snapshot-totals.js's own long note on expdfRecoveryTotals for why, and for why
+      `recovered` here is a sum of per-customer CLAMPED differences, never the team-total
+      subtraction recTrend above uses -- the two are allowed to disagree on the same day, on
+      purpose, the same way #688 let two figures on one screen disagree rather than force a
+      wrong agreement). Each day's own arrow is against the SAME WEEKDAY last week (#690's own
+      rule), the identical shape ecolTrend/colTrend/recTrend already carry. `edrWeek`/`edrPrev`
+      are null, never [], when there is no answer (budget timeout or RUN-ME-056 not run) --
+      myEdrWeek/myEdrPrev fold that to [] above, so every day here reads `uploaded: false`
+      exactly as an unmeasured day already does everywhere else on this screen. */
+  const edrSum_ = rows => rows.reduce((s, r) => ({ initial: s.initial + num(r.initial),
+    current: s.current + num(r.current), recovered: s.recovered + num(r.recovered) }),
+    { initial: 0, current: 0, recovered: 0 });
+  const edrDay_ = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
+  const edrTrend = WD7.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const rows = edrDay_(myEdrWeek, d);
+    const uploaded = rows.length > 0;
+    const { initial, current, recovered } = edrSum_(rows);
+    const pct = initial > 0 ? Math.round((recovered / initial) * 1000) / 10 : null;
+    const prows = edrDay_(myEdrPrev, addDaysKey(prevMon, i));
+    const pSum = edrSum_(prows);
+    const ppct = pSum.initial > 0 ? Math.round((pSum.recovered / pSum.initial) * 1000) / 10 : null;
+    return { weekday: wd, date: d, initial, current, recovered, uploaded, pct,
+      dEdr: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+  });
+  const edrTrendTotal = (() => {
+    const { initial, current, recovered } = edrSum_(edrTrend);
+    const pct = initial > 0 ? Math.round((recovered / initial) * 1000) / 10 : null;
+    const pSum = edrSum_(myEdrPrev);
+    const ppct = pSum.initial > 0 ? Math.round((pSum.recovered / pSum.initial) * 1000) / 10 : null;
+    return { initial, current, recovered, pct,
+      dEdr: (edrTrend.some(x => x.uploaded) && myEdrPrev.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+  })();
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
   const todayExp = colDay_(myExpWeek, today);
@@ -13146,7 +13199,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     /* Legal recovery: what the noticed customers in scope paid today and this week against
        what their letters demanded, with `on` false and a note when the ledger is not there. */
     legal: legalTotals_(scoped(user, notices), legalLedger, today, mon, sun),
-    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, funnel, ...recoveryRuleOf_(stand, db),
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, edrTrend, edrTrendTotal, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
     // False = no defaulter deck was filed today, so the today figures above are honest zeros.
