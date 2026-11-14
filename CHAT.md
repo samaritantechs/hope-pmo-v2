@@ -78,6 +78,22 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **"Orodha / List of expected defaulters not yet having the cleared customers", 14 Nov —
+  checked, no code fault found; most likely the ghost migration, not yet confirmed run.** "Orodha
+  / List" is not its own screen -- it is the generic table header this system's own code
+  (`paintNow_`) puts on top of several screens, and the owner's own established shorthand
+  ("orodha/list at par" in an earlier message, docs/HANDOFF.md) means "the table on
+  screen X" -- here, the Expected Defaulters screen (`expectedDefaulters`). Read directly
+  (not from this file's own narration): that function already keeps both kinds of cleared
+  customer #693/#696/#697 built -- settled-while-still-on-the-deck, and missing from the deck
+  entirely (a "ghost," RUN-ME-055) -- and the status dropdown, the default filter and the
+  status-chip colour (checked in both app.html and call.html) all already handle CLEARED
+  correctly. The one thing a chat cannot check from here: **`db/RUN-ME-055` has no "run and
+  confirmed" note anywhere in this file**, unlike every other recent migration -- without it,
+  a GHOST customer (gone from the deck entirely) reads as simply absent, not CLEARED, which
+  would look exactly like this report. Asked the owner to confirm whether it has been run
+  (safe to re-run if so), and which exact customer/tab they were looking at, in case it is
+  something this reading missed.
 - **Staff registry, 14 Nov** — a new-hire form for a Dar es Salaam employee, forwarded twice
   (the same message, not two people), tagged "@Mark2" (this system) and "Naomba afisa awekwe
   kwenye Mfumo wa sarery advance" (please have the officer placed in the Salary Advance
@@ -1117,6 +1133,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner**: whether `db/RUN-ME-055` (the ghost-rows migration, #697) has actually been
+  run — nothing in this file confirms it, unlike every other recent migration — and, if the
+  "Orodha / List of expected defaulters" cleared-customer report (section 4, 14 Nov) is still
+  wrong once it has, which exact customer and tab, since a careful code-level check found
+  nothing else that would hide one.
 - **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
   new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
   line was mistaken for a role; and, worth confirming with the sender rather than guessing,
