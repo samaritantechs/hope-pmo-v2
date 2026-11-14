@@ -55,7 +55,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_ } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostReportBudgetMs_ } from './expdf.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
 
@@ -1001,14 +1001,23 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. "should reflect
      to alltime data past present and future" extends it further still: a customer gone from
      TODAY'S deck entirely (ref 4231948032's own case, handbook Part 71) is found through
-     ghostRowsFor_ -- the identical helper expdfCore uses, no budget here, since this screen is
-     not the sacred call path and can wait out the rare slow read. An unrestricted admin
-     (user.teams null) gets every team already fetched above, not nothing -- the owner's own
-     sign-in is the likeliest admin case here. Deduplicated: found on review, access_codes.teams
-     is a hand-typed array with no uniqueness constraint, and a repeated team name made the RPC
-     return that team's ghosts twice, double-counting this screen's own totals. */
+     ghostRowsFor_ -- the identical helper expdfCore uses. An unrestricted admin (user.teams
+     null) gets every team already fetched above, not nothing -- the owner's own sign-in is the
+     likeliest admin case here. Deduplicated: found on review, access_codes.teams is a
+     hand-typed array with no uniqueness constraint, and a repeated team name made the RPC
+     return that team's ghosts twice, double-counting this screen's own totals.
+
+     GHOST_REPORT_BUDGET_MS, not 0 -- 14 Nov 2026, "Imeshindikana / Could not load, Seva
+     haijibu ndani ya sekunde 45." This screen used to pass 0 (no limit at all) on the theory
+     that "this is not the sacred call path, it can wait out the rare slow read." It had never
+     actually been asked to: db/RUN-ME-055 had sat unrun since #697, so every call here hit the
+     fast, documented "function does not exist" error, not a real query. The owner ran it today;
+     the first real `defaulter_ghost_rows()` call against the live book -- not the 2.27-million-
+     row test fixture it was measured against -- ran past the client's own 45-second fetch
+     timeout, and the whole screen failed to load. "Can wait longer than the phone" was always
+     the intent; "can wait forever" never was. */
   const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
-  const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), 0);
+  const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), ghostReportBudgetMs_());
   const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
     .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
       || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })

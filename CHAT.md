@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 75**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 76**.
 
 ---
 
@@ -56,6 +56,7 @@ Given since, and written nowhere else:
 | 11 Nov 2026 | "If an officer has team - zone is automatic of the GMO's" · "to the respective team's gmo" · "So even manager - must have gmo of one of his team and auto match gmo and zone" | **A team's zone is its GMO's.** A team whose ZONE cell on Teams & Staff is empty sits in the zone its GMO's other teams carry, when they all carry the same one; what is typed on the team stands. **The rule never chooses:** a GMO named on teams of several zones gives none. The name line, the advance desk and the staff scripts read that one rule (`teamsZoned` in `api/_lib/zone.js`; `tz` in the template). Never ask the owner to fill a ZONE cell so that a staff can be filed: read the team's GMO, and ask only when the team has neither a ZONE nor a GMO whose teams all carry one zone. Handbook Parts 50 and 52. |
 | 13 Nov 2026 | "remove that reminder of key rotations - i dont wanty to keep hearing that from you bro" | **Never raise the Supabase key rotation again, unprompted.** It is still true and still the owner's to do whenever they choose, but a chat does not repeat it -- not on its own initiative, not folded into another answer. If the owner ever asks directly, answer it; otherwise it stays unsaid. |
 | 12 Nov 2026 | "always Auto default grant all tabs to admin role. i dont have to go manually grant all new tabs i create" | Admin's own access to a screen was never actually gated on a hand-typed list in the first place — `allowed()` in `app.html` and `tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either one ever looks at a tabs list, and that stays true for every tab this system has or will have, with no step of any kind. What a new tab's id still has to be named in, once, is `EXTRA_TABS` (`api/_lib/auth.js`) — not for admin's sake, but because that is the one list the Roles & access screen reads to offer a checkbox for granting the tab to a *different* role; `ADMIN_TABS` is now computed from it rather than carrying a second, separately-typed copy, so the two can no longer drift apart the way they did the day this order was given (`leave`/`leaverep` named in one and not the other). |
+| 14 Nov 2026 | "if there is sql text to run always provide it right away not waiting me to dream bro" | **Any SQL waiting to be run is pasted in full, in the chat, the moment it comes up — never just named by file.** Said after a chat pointed at `db/RUN-ME-055` by name (twice) without ever pasting its text. Applies to a migration already sitting in the repo waiting on the owner (RUN-ME-05x and the like) the same as a freshly filled staff-change script: if the owner would have to go find or ask for the text, that is the failure this order is against. |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -78,6 +79,26 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **A production incident, 14 Nov: Expected Defaulters hung past 45 seconds, "Imeshindikana /
+  Could not load"** (handbook Part 76) — triggered by the owner's own first-ever real run of
+  `db/RUN-ME-055`: every earlier call to `defaulter_ghost_rows()` had failed fast with "function
+  does not exist," so the one design choice behind this — pass `ghostRowsFor_` NO time budget on
+  a report screen, "it can wait out the rare slow read" — had never actually been tested against
+  a lookup that genuinely runs long. It was wrong: the live book's first real query burst through
+  the portal's own 45-second client timeout. **Not just `expectedDefaulters`** — the identical
+  "no budget" choice, the same words copied into a second comment, was also sitting in
+  `expdfReport`, `expdfLeader` and the week view (`expdfWeekCompute_`), so all four are fixed
+  together, in the one change, rather than only the one the owner happened to hit
+  (`GHOST_REPORT_BUDGET_MS`, 5000ms, env-overridable the same way the dashboard's own report
+  budgets already are). `expdfMine` — the phone's own sacred-path worklist — already had its own,
+  tighter budget and needed no change. A real test-writing trap found and avoided along the way:
+  a mock that simulates "the lookup never answers" with a promise that truly never settles
+  crashes node's own test runner and cascades to fail every later test in the file; the fix
+  mirrors an existing, already-safe pattern in this same test file (a mock that answers late
+  instead of never). No new read, no change to round-trip counts either way (`test/speed.test.mjs`
+  unaffected); no read on `/api/upload` or `/api/call`. `npm test`: 1,532 pass (one new test,
+  confirmed to fail on a deliberate revert before being kept). Server-only — `BUILD`/`CALL_BUILD`
+  unchanged.
 - **Staff registry, 14 Nov (third)** — a WhatsApp report of one officer who left the company
   (Team Kijichi, Zone Dar Center), tagged to this system. Phone number given alongside the
   name, so OFF had two ways to confirm the one person meant, not the name alone. The filled
@@ -1200,10 +1221,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner**: **`db/RUN-ME-055` (the ghost-rows migration, #697), confirmed 14 Nov not yet
-  run** — the Expected Defaulters weekday pills check-in (section 4, same day) read as the
-  answer to this. Run it to move the seven weekday numbers themselves (section 4 traces
-  exactly why #700's own fix, merged the same day, cannot).
+- **The owner**: whether the weekday pills (Mon 3888 … Sun 2493, section 4) actually moved once
+  Expected Defaulters could load again — `db/RUN-ME-055` is now run (confirmed 14 Nov: the index,
+  the function, and `db/RUN-ME-056`'s own function all read back) and the screen's 45-second hang
+  is fixed (section 4, Part 76), so both blockers that stood between those seven numbers and a
+  real answer are now cleared from this end; whether the numbers themselves came up the way the
+  owner expected is still theirs to look at and say.
 - **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
   new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
   line was mistaken for a role; and, worth confirming with the sender rather than guessing,

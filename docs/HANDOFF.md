@@ -6184,6 +6184,88 @@ phone's own worklist, and the leader-tap view all remain exactly as they were --
 with no real current-row data genuinely has no leader to be credited to, and inventing one
 would be a worse defect than the invisibility it replaced.
 
+## Part 76 — A production incident: Expected Defaulters hung past 45 seconds, "Imeshindikana / Could not load"
+
+> "expected defaulters - Imeshindikana / Could not load. Seva haijibu ndani ya sekunde 45 / the
+> server did not answer within 45 seconds" -- the owner, 14 Nov 2026, minutes after confirming
+> `db/RUN-ME-055` (Part 71's ghost-rows migration) had just been run for the first time.
+
+That was the real trigger, confirmed rather than guessed: the owner pasted back the three
+read-only confirmations (`idx_def_snap_team_ref`, `defaulter_ghost_rows`, and Part 74's
+`expdf_recovery_totals`) moments before reporting the hang. Until that run, every call to
+`defaulter_ghost_rows()` on the live book had always failed fast with Postgres's own "function
+does not exist" (`readGhosts_`'s documented, graceful fallback) -- never a real query. The
+owner's run was the FIRST time this function ever actually executed against the live book
+rather than the 2.27-million-row synthetic fixture Part 71 measured it against, and the real
+query ran long enough to burst straight through the portal's own 45-second client-side fetch
+timeout (the same ceiling `DASH_PREV_BUDGET_MS`'s own comment in `portal-core.js` already names:
+"well inside the client's 45 seconds").
+
+**The root cause, traced rather than assumed:** `ghostRowsFor_`'s `budgetMs` parameter is
+honoured through `withinMs_` -- a real `Promise.race` against a `setTimeout`, abandoning a slow
+read without cancelling it (it keeps running underneath and warms the cache for the next
+caller). `expdfMine` (the phone's own sacred-path worklist) has always passed `GHOST_BUDGET_MS`
+(800ms) into this. **Four other callers passed `0` -- no ceiling at all** -- on the explicit,
+documented theory that "this is not the sacred call path, it can wait out the rare slow read":
+`expectedDefaulters` (`portal-core.js`, the exact screen reported), `expdfReport` and
+`expdfLeader` (both via `expdfCore`'s own default parameter), and `expdfWeekCompute_`'s own
+direct call for the week view. That theory was never actually exercised against a lookup that
+genuinely runs long, because until today every one of those four calls hit the fast,
+error-fast path instead. "Can wait longer than the phone" was always the real intent -- the
+dashboard's own `DASH_PREV_BUDGET_MS`/`DASH_FLOORS_BUDGET_MS` (6000/8000ms) already do exactly
+that, safely, for the same reason -- but "wait out the rare slow read" had been read, in these
+four places, as "wait forever," and the live book's first real run proved that reading wrong.
+
+**The fix.** One new constant, `GHOST_REPORT_BUDGET_MS` (5000ms, `api/_lib/expdf.js`) -- sized a
+little tighter than the dashboard's own report-side budgets since these four screens stack this
+read alongside several others in the same request -- with an env-var override
+(`ghostReportBudgetMs_()`) mirroring `DASH_MONTH_BUDGET_MS`'s own existing idiom exactly, so a
+test can shrink it instead of genuinely waiting several seconds out. All four call sites now
+pass it: `expdfCore`'s own default parameter (fixing `expdfReport` and `expdfLeader`'s day/month
+case for both at once, from the one shared default), `expdfWeekCompute_`'s direct call (fixing
+the week view for both), and `expectedDefaulters`'s own direct call. `expdfMine` is untouched --
+it already had its own, tighter, phone-safe budget.
+
+**One rule, not four separately-reasoned exceptions to it.** This was never only
+`expectedDefaulters`'s bug -- the identical "no budget here" comment, word for word, was copied
+into `expdfWeekCompute_` ("the way `expectedDefaulters` already does"), and `expdfCore`'s own
+default parameter silently carried the same `0` into both `expdfReport` and `expdfLeader`. The
+house's own standing lesson from #671/#673 ("look for the OTHER places that pick") applied here
+without having to be asked: all four were fixed in this one change, not just the one the owner
+happened to hit first.
+
+**A real test-writing hazard, found while building the regression test, worth keeping in mind
+for the next one.** The first draft of the new test simulated the hang with a literal
+`new Promise(() => {})` -- a promise that truly never settles, ever -- passed through the real
+`fakeDb`/`FakeRpc` stack rather than a hand-rolled stub. `Promise.race` abandons it correctly, as
+designed, but the abandoned promise itself is left permanently dangling, and node's own test
+runner notices: that test failed with `cancelledByParent`/"Promise resolution is still pending
+but the event loop has already resolved," and -- more seriously -- **took every later test in the
+same file down with it** (confirmed directly: running the file standalone showed dozens of
+unrelated, otherwise-passing tests cascade-fail the same way once that one test ran). The
+codebase already had the safe answer to this, in `DASH_MONTH_BUDGET_MS`'s own existing test: a
+mock that resolves LATE (a real `setTimeout`, here 250ms, well past the test's own shrunk 20ms
+budget) rather than one that never resolves at all. Rewritten that way, the same assertions pass
+cleanly, in well under a second, and a deliberate regression (reverting one call site back to
+`0`) was confirmed to make the rewritten test fail for the right reason before this shipped.
+
+**What it costs.** Nothing new: no new read, no change to round-trip count on any screen
+(`test/speed.test.mjs` unaffected -- a budget bounds how long an existing call is waited for,
+not how many calls are made). No read on `/api/upload` or `/api/call` either way.
+
+**Checked.** One new test (`test/portal.test.mjs`) drives `expectedDefaulters`, `expdfLeader`
+(day) and `expdfReport` (week) through the real `portalApi` dispatch with a slow ghost RPC and a
+shrunk budget, proving each returns well inside it; confirmed to fail on a deliberate revert of
+one call site before being kept. `npm test`: 1,532 pass. No front-end file touched, so
+`BUILD`/`CALL_BUILD` stay as Part 75 left them -- this is a server-only fix.
+
+**Not done:** whether the live book's own `defaulter_ghost_rows()` timing should be measured
+directly (the synthetic fixture's own worst case was 86-115ms; the live book clearly runs
+longer, by how much is not known from here, since a chat has no database access) is left open --
+the budget makes the symptom impossible regardless of the real number, but the real number
+itself would still be worth knowing, from the owner's own side, the next time the SQL editor is
+open.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

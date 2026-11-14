@@ -18,7 +18,7 @@ const dbWithRpc = t => fakeDb(t || tables(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ..
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
-const { ghostRowsFor_, GHOST_BUDGET_MS } = await import('../api/_lib/expdf.js');
+const { ghostRowsFor_, GHOST_BUDGET_MS, GHOST_REPORT_BUDGET_MS } = await import('../api/_lib/expdf.js');
 const { sameName } = await import('../api/_lib/expdf.js');
 // The announcement is READ without an access code -- it has to reach the sign-in screen -- so
 // it lives on the calls door beside the brand. Both sides are checked here, together, because
@@ -404,6 +404,44 @@ test('a hung or slow ghost lookup is abandoned within its budget, never held for
   const real = await ghostRowsFor_(after(5, [row]), ['KONGOWE'], [], 500);
   assert.equal(real.length, 1, 'inside the budget it is read for real');
   assert.equal(real[0].ref, 'GHOST1'); assert.equal(real[0]._ghost, true);
+});
+
+/* THE FULL SCREEN DOES NOT HANG WHEN THE GHOST LOOKUP DOES -- the 14 Nov 2026 production
+   incident. The test above proves the primitive (ghostRowsFor_) honours whatever budget it is
+   given; it does not prove any real caller actually gives it one. expectedDefaulters,
+   expdfReport, expdfLeader (day/month, via expdfCore's own default) and the week view
+   (expdfWeekCore, via both report and leader) all passed 0 -- no ceiling at all -- on the
+   theory that a report "can wait out the rare slow read." That was never exercised against a
+   lookup that genuinely hangs, because until db/RUN-ME-055 was run, every call errored out
+   fast with "function does not exist" instead. The day it was run for real, Expected
+   Defaulters hung past the client's own 45-second fetch timeout: "Imeshindikana / Could not
+   load." Through the real portalApi dispatch. GHOST_REPORT_BUDGET_MS shrunk via its own env
+   override (ghostReportBudgetMs_, the identical idiom DASH_MONTH_BUDGET_MS's own test already
+   uses) so this answers in well under a second rather than genuinely waiting several out --
+   and a DELAYED mock, never a `new Promise(() => {})` that literally never settles: that shape
+   answers the application's own question just as well and was tried first here, but a promise
+   that truly never resolves, even one correctly abandoned by Promise.race, is left dangling
+   forever and trips node's own test-runner leak detection (`cancelledByParent`, "Promise
+   resolution is still pending"), taking every later test in the file down with it -- found
+   while writing this very test, not guessed. */
+test('expectedDefaulters, expdfReport (day and week) and expdfLeader (week) all return within their budget when the ghost lookup is slow, never held for it', async () => {
+  const slow = { defaulter_ghost_rows: () => new Promise(r => setTimeout(() => r([]), 250)) };
+  const db = fakeDb(tables(), { rpc: slow });
+  process.env.GHOST_REPORT_BUDGET_MS = '20';
+  try {
+    const withinBudget = async (label, p) => {
+      const t0 = Date.now();
+      await p;
+      const took = Date.now() - t0;
+      assert.ok(took < 220, label + ' held the caller for ' + took + ' ms against a 20ms budget');
+    };
+    await withinBudget('expectedDefaulters', portalApi(db, ADMIN, 'expectedDefaulters', {}, NOW));
+    await withinBudget('expdfLeader (day)', portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW));
+    // expdfWeekCore caches by (name, user, nowMs) -- expdfReport and expdfLeader share a cache
+    // entry for the identical week, so only the FIRST week call below exercises the hang fresh;
+    // that is still the real fix (expdfWeekCompute_'s own direct call), not a weaker proxy for it.
+    await withinBudget('expdfReport (week)', portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW));
+  } finally { delete process.env.GHOST_REPORT_BUDGET_MS; }
 });
 
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."
