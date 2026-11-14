@@ -12286,10 +12286,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        arrows as usual" ... "Am talking of the days performance Monday to Sunday like the cards
        showing summary of sales and collection per day" -- the owner, 14 Nov 2026, confirming
        these are team-wide day tiles, never the per-officer figure the dedicated Exp.Def Report
-       shows. See db/RUN-ME-056 and snapshot-totals.js's own long note on expdfRecoveryTotals
-       for why this reads the ONE existing rule that decides who COUNTS as an Expected
-       Defaulter (buildRows_, expdf.js) rather than either re-reading the whole week's raw
-       decks (expdfWeekCore's own shape: ~13 more round trips) or re-deriving the rotation that
+       shows -- and, the same day, read and corrected before it was ever run: "i want the
+       weekly cycle to be facts of the no of defaulters we really had, not who remained so the
+       lists per day must come from initial files." Every ref on a day's own INITIAL deck
+       counts, full stop; the current deck is only looked up for that ref, never iterated on
+       its own, so a customer missing from today's current deck entirely reads as fully
+       recovered, never invisible. See db/RUN-ME-056 and snapshot-totals.js's own long note on
+       expdfRecoveryTotals for the rest, and for why this never re-reads the whole week's raw
+       decks (expdfWeekCore's own shape: ~13 more round trips) or re-derives the rotation that
        decides WHO owns a customer a second time, in SQL. THIS week unbounded (the cards' own
        headline figures), LAST week budgeted exactly like expPrev/defPrev/ecolPrev above, for
        the identical reason: it exists only to feed the day tiles' own arrows. `null` (not `[]`)
@@ -12917,7 +12921,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
       days performance Monday to Sunday like the cards showing summary of sales and collection
       per day" -- the owner, 14 Nov 2026. Team-wide, day by day, the same shape as the four
-      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows (see
+      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows, and
+      driven by the INITIAL deck ("the lists per day must come from initial files," the same
+      day, read and corrected before this was ever run) so a customer missing from today's
+      current deck entirely is fully recovered here, never invisible (see
       snapshot-totals.js's own long note on expdfRecoveryTotals for why, and for why
       `recovered` here is a sum of per-customer CLAMPED differences, never the team-total
       subtraction recTrend above uses -- the two are allowed to disagree on the same day, on

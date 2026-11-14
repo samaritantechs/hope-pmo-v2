@@ -6075,6 +6075,56 @@ separate introduction); no real-browser check -- no database to sign into from h
 `npm test`. Whether the card should be clickable to open its own customer list, the way "Weekly
 recovery trend" is, was not asked for and is not built.
 
+## Part 74 — Expected Defaulters recovery, corrected before it was ever run: driven by the initial deck
+
+> "not yet, i want the weekly cyle to be facts of the no of defaulters we really had, not who
+> remained so the lists per day must come from initial files i think" -- the owner, 14 Nov
+> 2026, having read Part 73's own `db/RUN-ME-056` text but not yet run it.
+
+Part 73's own first cut drove the day's population from the CURRENT deck: a row counted when
+its current status read Chronic, Expired or (Partial) Defaulter, OR it matched that day's
+initial deck. That is "who remained" -- a customer on day D's own INITIAL deck who had vanished
+from day D's CURRENT deck ENTIRELY was never reached at all, because the function never
+iterated the initial deck on its own, only used it as a side check against rows the current
+deck happened to still have. The owner's own correction inverts the whole shape: **the initial
+deck is now the sole driving table.** Every ref on a day's own initial deck IS a defaulter that
+day, full stop, no status check at all (the initial deck carries no status column to check);
+the current deck is only ever looked UP for that ref, never iterated by itself. A ref with no
+matching current row that day reads as fully recovered -- current 0, recovered the whole
+initial amount -- the way #697's own order already reads an absence everywhere else on this
+system ("status column of such customers automatic becomes cleared if no longer in default
+list"), applied here per day instead of only to "today." The old current-only branch (a
+defaulter-ish status with no matching initial row that day) is gone outright: under "the lists
+per day must come from initial files," a ref that day's own initial file never named is not
+that day's to count, whatever its current status says.
+
+**`db/RUN-ME-056` is revised in place, not renumbered** -- the owner had read it but had not
+yet run it anywhere, so there is nothing live to migrate away from; the file's own "safe to
+re-run" already covers this. Re-measured on the identical 2,268,000-row fixture Part 73 used:
+294 rows, ~210ms the worst case (every team, a full week), ~50ms the common one-team case --
+unchanged within noise, since driving from initial instead of current changes WHICH rows are
+kept, not how many decks are read or how they are batch-resolved.
+
+**Checked** with two new customers added directly to the dedicated test from Part 73, proving
+the two cases that flipped: a customer on the initial deck with no matching current row at all
+(now fully recovered, where the old version excluded them completely) and a customer on the
+current deck with a Chronic status and no matching initial row (now excluded outright, where
+the old version counted them as a wash). The existing matched-row cases (a real recovery, an
+arrears increase clamped to zero) are unchanged, since both rows were always on both decks.
+`EXPDF_RECOVERY_RPC` (`test/snapshot-totals-rpc.mjs`) is rewritten to drive from `ini` the same
+way, never visiting a current-only row at all. `npm test`: 1,530 pass (same test rewritten with
+a longer, more precise name, not a new one added). `BUILD 2026-11-14-c` (the card's own
+subtitle text changed to describe the new rule); `CALL_BUILD` untouched.
+
+**Flagged, not changed:** the dedicated Exp.Def Report's own week (`buildRows_`/
+`expdfWeekCore`, `api/_lib/expdf.js`) has the IDENTICAL structural gap this correction just
+closed on the dashboard -- its own code comment already says so plainly ("A customer with no
+current row at all ... is the one case this cannot reach"). That function feeds the phone's own
+sacred call path (`expdfMine`, read by `/api/call`) as well as the portal's report, so changing
+its own driving table is a materially bigger, riskier change than this one (a brand-new,
+not-yet-run dashboard function) was -- not undertaken here, not without being asked. Whether
+"the lists per day must come from initial files" should extend there too is the owner's to say.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

@@ -17,43 +17,52 @@
 -- table) a second time, in SQL -- exactly the "two implementations that can disagree" CLAUDE.md
 -- section 2 already names two real blackouts for. The owner confirmed, once asked, that these
 -- cards are team-wide day tiles, the same shape as the sales and collection cards beside them,
--- with no officer breakdown -- so neither expensive path is needed: this reads only the ONE
--- existing rule that decides who COUNTS as an Expected Defaulter (buildRows_, api/_lib/expdf.js)
--- and stops there, in SQL, never the assignment on top of it.
+-- with no officer breakdown -- so neither expensive path is needed.
 --
--- A CUSTOMER COUNTS FOR A DAY when that day's own CURRENT-deck row is Chronic, Expired or
--- (Partial) Defaulter by status text, OR was on that SAME day's own INITIAL deck at all --
--- buildRows_'s exact filter (a row on both decks always satisfies the second half). A
--- current-only row that is neither is not this population and is excluded, the same as
--- buildRows_ excludes it. RECOVERED is a SUM OF PER-CUSTOMER, CLAMPED DIFFERENCES --
--- buildRows_'s own `Math.max(0, initial - arrears)` -- NOT the deck-total subtraction
--- recovery_standing (RUN-ME-032) and the dashboard's own "Weekly recovery trend" tile use. The
--- two are different questions and are ALLOWED TO DISAGREE on the same day, on purpose: a
--- customer whose arrears GREW between decks contributes nothing here (never a negative --
--- Exp.Def's own rule, since #693's "they cant run from when their initial file had them" was
--- never about netting one customer's loss against a stranger's gain), while the deck-total
--- figure nets the whole book against itself. Kept exactly as buildRows_ already has it, not a
--- stricter cousin invented new for this card.
+-- REVISED BEFORE THE OWNER EVER RAN THIS -- "i want the weekly cycle to be facts of the no of
+-- defaulters we really had, not who remained so the lists per day must come from initial files
+-- i think" -- the owner, 14 Nov 2026, the same day, having read this file but not yet run it.
+-- The FIRST version of this function drove from the CURRENT deck (kept a row if its current
+-- status read Chronic/Expired/(Partial) Defaulter, OR it matched that day's initial deck) --
+-- which is exactly "who remained" rather than "who we really had": a customer on day D's own
+-- INITIAL deck who is missing from day D's CURRENT deck ENTIRELY was never reached at all,
+-- because nothing drove from initial. THIS VERSION DRIVES FROM THE INITIAL DECK, UNCONDITIONALLY
+-- -- every ref on that day's own initial deck IS a defaulter that day, by definition (the
+-- initial deck carries no status column to filter on at all; being on it is the only test).
+-- A ref found on the SAME day's current deck too keeps its ordinary clamped recovery
+-- (max(0, initial - current)); a ref NOT found there at all is read the way #697's own order
+-- already reads an absence everywhere else on this system ("status column of such customers
+-- automatic becomes cleared if no longer in default list") -- CURRENT taken as 0, RECOVERED
+-- taken as the WHOLE initial amount: fully recovered, not invisible. The old current-only
+-- branch (a status-defaulter-ish row with no matching initial row that day) is gone outright --
+-- under "the lists must come from initial files," a ref day D's own initial file never named is
+-- not day D's to count, whatever its current status says; it is some OTHER day's, or no day's,
+-- the same as a day with no initial deck at all is already "not measured" everywhere else here.
 --
--- A customer who drops off the current deck ENTIRELY (a "ghost", RUN-ME-055/#697) is NOT
--- reached here -- ghosts are a live-day, portal-report-only feature; nobody has asked a
--- company-wide dashboard tile to carry them, so this is flagged, not built, rather than
--- silently widening what the owner asked for.
+-- RECOVERED IS STILL A SUM OF PER-CUSTOMER, CLAMPED DIFFERENCES, never the team-total
+-- subtraction recovery_standing (RUN-ME-032) and the dashboard's own "Weekly recovery trend"
+-- tile use -- the two are different questions and are ALLOWED TO DISAGREE on the same day, on
+-- purpose: a customer whose arrears GREW between decks still contributes nothing here (never a
+-- negative), while the deck-total figure nets the whole book against itself.
 --
 -- EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the identical
 -- day-pairing rule recoveryByTeam (api/_lib/snapshot-totals.js) and the dashboard's own
 -- recTrend already use: pairing two different weekdays' decks reports the gap between two
 -- different populations as recovery.
 --
--- MEASURED on a 2,268,000-row fixture sized like RUN-ME-054/055's own (42 teams, 150 days,
--- two snapshot_types, ~180 customers a team a day): a full week, every team, the worst case an
--- unrestricted admin's own dashboard asks for, reads 294 rows in ~210ms; the common case -- one
--- team's own week, a GMO or manager's sign-in -- in ~43ms. One round trip either way, however
--- many teams, the same discipline RUN-ME-055's own review insisted on. `set enable_bitmapscan
--- = off set enable_seqscan = off` is copied from RUN-ME-032's own recovery_standing, which reads
--- the same table the same way, as a defensive planner hint, not a guess invented fresh here;
--- `set statement_timeout = '2000ms'` is a backstop, about four times the measured worst case,
--- matching the live table RUN-ME-054 found several times bigger than this same fixture size.
+-- MEASURED on the identical 2,268,000-row fixture RUN-ME-054/055 used (42 teams, 150 days, two
+-- snapshot_types, ~180 customers a team a day), after this revision: a full week, every team,
+-- the worst case an unrestricted admin's own dashboard asks for, still reads 294 rows in
+-- ~210ms; the common case -- one team's own week -- in ~50ms. Driving from initial instead of
+-- current changes WHICH rows are kept, not how many decks are read, so the cost is unchanged.
+-- `set enable_bitmapscan = off set enable_seqscan = off` is copied from RUN-ME-032's own
+-- recovery_standing, which reads the same table the same way, as a defensive planner hint;
+-- `set statement_timeout = '2000ms'` is a backstop, about four times the measured worst case.
+--
+-- STILL NOT REACHED HERE: a customer whose team's INITIAL deck itself never landed for a given
+-- day at all -- a day with no initial deck is "not measured," the same as every other week-sized
+-- read on this screen already treats a day nobody filed. That is a missing upload, not a
+-- recovered customer, and this function does not guess otherwise.
 --
 -- SAFE TO RE-RUN. Until this is run, api/_lib/snapshot-totals.js's expdfRecoveryTotals returns
 -- null and the two new dashboard cards read "not yet filed" -- the same behaviour every other
@@ -77,9 +86,9 @@ with p as materialized (
   from unnest(p_dates, p_weekdays) as u(d, wd)
   where u.d is not null and u.wd is not null
 ),
--- The day's own INITIAL deck, batch-resolved: the winning upload per team on this exact date
--- (first_value() over created_at/upload_batch, the identical idiom recovery_standing already
--- uses and already proved on the live book -- not reinvented here).
+-- THE DRIVING TABLE. Every ref on this exact day's own initial deck is a defaulter we really
+-- had that day, full stop -- batch-resolved the same way recovery_standing already is (the
+-- winning upload per team on this exact date, first_value() over created_at/upload_batch).
 ini as materialized (
   select p.snapshot_date, x.ref, x.team, x.arrears
   from p
@@ -97,14 +106,16 @@ ini as materialized (
     order by y.ref, y.created_at desc nulls last
   ) x
 ),
--- The day's own CURRENT deck, the same way, carrying status (the membership test below).
+-- The day's own CURRENT deck, looked UP by the driving table above, never iterated on its own
+-- -- a current-only row (no matching ref on that day's initial deck) is not this function's
+-- population, whatever its status says.
 cur as materialized (
-  select p.snapshot_date, x.ref, x.team, x.arrears, x.status
+  select p.snapshot_date, x.ref, x.arrears
   from p
   cross join lateral (
-    select distinct on (y.ref) y.ref, y.team, y.arrears, y.status
+    select distinct on (y.ref) y.ref, y.arrears
     from (
-      select s.ref, s.team, s.arrears, s.status, s.upload_batch, s.created_at,
+      select s.ref, s.team, s.arrears, s.upload_batch, s.created_at,
              first_value(s.upload_batch) over (partition by s.team
                order by s.created_at desc nulls last, s.upload_batch desc nulls last) as win_batch
       from public.defaulter_snapshots s
@@ -114,32 +125,19 @@ cur as materialized (
     where y.upload_batch is not distinct from y.win_batch
     order by y.ref, y.created_at desc nulls last
   ) x
-),
--- buildRows_'s own membership test, ported: kept if matched to the day's own initial deck at
--- all (ref_initial is that day's real baseline), OR the current status reads Chronic/Expired/
--- (Partial) Defaulter (ref_initial falls back to the CURRENT row's own arrears -- a wash,
--- exactly as buildRows_'s `const initial = hasOwnProperty(baseBy, ref) ? baseBy[ref] : arrears`
--- reads for a current-only row: it costs nothing to either side and contributes no recovery).
-kept as materialized (
-  select c.snapshot_date, c.team,
-         coalesce(i.arrears, c.arrears) as ref_initial,
-         c.arrears as ref_current
-  from cur c
-  left join ini i on i.snapshot_date = c.snapshot_date and i.ref = c.ref
-  where i.ref is not null
-     or upper(coalesce(c.status, '')) like '%CHRON%'
-     or upper(coalesce(c.status, '')) like '%EXPIR%'
-     or upper(coalesce(c.status, '')) like '%DEFAULT%'
 )
-select snapshot_date, team,
-       sum(ref_initial)::numeric as initial,
-       sum(ref_current)::numeric as current,
+-- A ref with no matching current row (coalesce to 0) is read as FULLY RECOVERED, never
+-- invisible -- #697's own rule, applied per day instead of only to "today."
+select i.snapshot_date, i.team,
+       sum(i.arrears)::numeric as initial,
+       sum(coalesce(c.arrears, 0))::numeric as current,
        -- PER-CUSTOMER CLAMP, THEN SUM -- not sum-then-subtract. See the header note: this is
        -- the one real arithmetic difference from recovery_standing/recoveryByTeam, kept on
        -- purpose because it is Exp.Def's own existing rule (buildRows_), not a new one.
-       sum(greatest(ref_initial - ref_current, 0))::numeric as recovered
-from kept
-group by snapshot_date, team;
+       sum(greatest(i.arrears - coalesce(c.arrears, 0), 0))::numeric as recovered
+from ini i
+left join cur c on c.snapshot_date = i.snapshot_date and c.ref = i.ref
+group by i.snapshot_date, i.team;
 $$;
 
 -- Confirms the function exists. Read-only.

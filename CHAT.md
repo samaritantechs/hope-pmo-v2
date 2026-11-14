@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 14 November 2026** — portal `BUILD 2026-11-14-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 73**.
+**As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 74**.
 
 ---
 
@@ -78,6 +78,26 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Expected Defaulters recovery, corrected before it was ever run, 14 Nov** — "not yet, i
+  want the weekly cyle to be facts of the no of defaulters we really had, not who remained so
+  the lists per day must come from initial files i think," read against `db/RUN-ME-056`'s own
+  text before the owner had run it anywhere. The first cut drove from the CURRENT deck (a row
+  counted by its current status, or by matching that day's initial deck) -- "who remained,"
+  not "who we really had": a customer gone from the current deck ENTIRELY was never reached.
+  Inverted to drive from the INITIAL deck alone: every ref on a day's own initial deck counts,
+  full stop; a ref with no matching current row that day is read as fully recovered, the way
+  #697's own order already reads an absence everywhere else, now applied per day rather than
+  only to "today." A current-only defaulter-ish row with no matching initial row is excluded
+  outright -- the opposite of the first cut's own treatment of it. `db/RUN-ME-056` is revised
+  in place (the owner had read it, not run it, so nothing live needed migrating away from);
+  re-measured on the same 2.27-million-row fixture, unchanged within noise (~210ms worst case,
+  ~50ms the common case) since the row count read is the same, only which rows are kept
+  changed. **Flagged, not changed:** the dedicated Exp.Def Report's own week
+  (`buildRows_`/`expdfWeekCore`) has the identical gap in its own code today -- its own
+  comment already says so -- but it feeds the phone's sacred call path too, so extending this
+  same fix there is a separate, bigger decision, not made here without being asked. `npm test`:
+  1,530 pass (the dedicated test from the same day rewritten with the two flipped cases, not a
+  new one added). `BUILD 2026-11-14-c`; `CALL_BUILD` untouched. Handbook Part 74.
 - **"Orodha / List of expected defaulters not yet having the cleared customers", 14 Nov —
   checked, no code fault found; most likely the ghost migration, not yet confirmed run.** "Orodha
   / List" is not its own screen -- it is the generic table header this system's own code

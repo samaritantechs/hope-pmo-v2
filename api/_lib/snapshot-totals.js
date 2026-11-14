@@ -839,9 +839,19 @@ function resolved(agg, date) {
    customer is assigned to today, only whether that customer counts as an Expected Defaulter
    at all. Re-deriving the rotation's own configurable strategy a second time, in SQL, is
    exactly the "two implementations that can disagree" CLAUDE.md section 2 already names two
-   real blackouts for -- so this reads the ONE existing filter that decides membership
-   (buildRows_'s own: Chronic/Expired/Defaulter by status text, OR present on that day's own
-   initial deck at all) and stops there, ported to SQL, never the assignment on top of it.
+   real blackouts for -- so this never touches the assignment at all.
+
+   DRIVEN BY THE INITIAL DECK, NOT THE CURRENT ONE -- "i want the weekly cycle to be facts of
+   the no of defaulters we really had, not who remained so the lists per day must come from
+   initial files" -- the owner, 14 Nov 2026, read and corrected before this was ever run. Every
+   ref on a given day's own INITIAL deck is a defaulter that day, by definition; the current
+   deck is looked UP for that ref, never iterated on its own. A ref not found on the current
+   deck that day is not invisible -- it is read the same way #697's own order already reads an
+   absence everywhere else on this system ("status column ... automatic becomes cleared if no
+   longer in default list"): CURRENT taken as 0, fully recovered, applied per day rather than
+   only to "today." A ref on the CURRENT deck that never appeared on that SAME day's own
+   initial deck is not counted at all, whatever its status says -- "the lists per day must come
+   from initial files" means initial is the only door in.
 
    RECOVERED HERE IS A SUM OF PER-CUSTOMER, CLAMPED DIFFERENCES -- buildRows_'s own
    `Math.max(0, initial - arrears)`, summed over the day's Expected-Defaulter population --
@@ -850,21 +860,12 @@ function resolved(agg, date) {
    are ALLOWED TO DISAGREE on the same day, on purpose (the same way #688 let the dashboard's
    loan-apps arrival count and backlog count disagree, documented rather than hidden): a
    customer whose arrears GREW between decks contributes nothing to this figure (never a
-   negative -- Exp.Def's own rule, since #693's "they cant run from when their initial file
-   had them" was never about netting one customer's loss against a stranger's gain), while
-   the deck-total figure nets the whole book against itself and can read lower on a day where
-   this one reads higher. That is Exp.Def's own long-standing arithmetic, kept exactly as
-   buildRows_ already has it -- not a stricter cousin invented new for this card.
+   negative), while the deck-total figure nets the whole book against itself and can read
+   lower on a day where this one reads higher.
 
-   A customer counts for a day when that SAME day's own current-deck row is Chronic, Expired
-   or (Partial) Defaulter by status text, OR was on that exact day's own initial deck at all
-   (buildRows_'s `baseBy` match, which a row on both decks always satisfies) -- db/RUN-ME-056's
-   own `kept` CTE. A current-only row that is neither is not Exp.Def's population and is
-   excluded, the same as buildRows_ excludes it. A customer who drops off the current deck
-   ENTIRELY (a "ghost", #697/db/RUN-ME-055) is NOT reached here at all -- ghosts are a
-   live-day, portal-report-only feature (expdf.js's own ghostRowsFor_), and nobody has asked
-   a company-wide dashboard tile to carry them; flagged, not built, rather than silently
-   widening what this change set out to do.
+   db/RUN-ME-056's own header has the full before/after and the measured cost, which did not
+   change: driving from initial instead of current changes which rows are kept, not how many
+   decks are read.
 
    EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the identical
    day-pairing rule recoveryByTeam (below) and recTrend already use, for the identical reason
