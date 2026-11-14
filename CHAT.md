@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-f` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 71**.
+**As of 14 November 2026** — portal `BUILD 2026-11-14-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 73**.
 
 ---
 
@@ -78,6 +78,62 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 14 Nov** — a new-hire form for a Dar es Salaam employee, forwarded twice
+  (the same message, not two people), tagged "@Mark2" (this system) and "Naomba afisa awekwe
+  kwenye Mfumo wa sarery advance" (please have the officer placed in the Salary Advance
+  system). The owner was asked for the zone, since the form names none and the one it would
+  imply is not yet known to be a filed team's own: answered directly, **Dar Center**. **Left
+  as ASK, not filed, for what the form still does not give:** no role and no team at all — a
+  name and phone appearing after the form's own fields read as the WhatsApp sender's own
+  signature (a different person, a driver, not the new hire), not a role for the person this
+  form is actually about. Two more flags, for the owner to settle with the sender rather than
+  a script guessing: the form's own birth date and its own start-of-employment date are the
+  identical day, which nobody can really have both happened on; and no NIDA was given at all,
+  a Tanzanian voter's registration number standing in its place, a different ID entirely. Both
+  guarantors given (a mother, a sister) fit the registry's two kin slots and need no choice
+  between them. Account, TIN and NSSF are all "on process" and so left out, as always. Nothing
+  is filed until the role and team come back. The name is in no file of the repository.
+- **The Loan pipeline widget leaves; Expected Defaulters recovery, Mon–Sun, arrives, 14 Nov**
+  — "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
+  cards Monday to Sunday with rising and falling arrows as usual"; asked whether that meant
+  the per-officer figure the Exp.Def Report shows or a team-wide tile, the owner answered "Am
+  talking of the days performance Monday to Sunday like the cards showing summary of sales
+  and collection per day" — team-wide, confirmed. A new database function
+  (`db/RUN-ME-056`, `expdf_recovery_totals`) answers, per team per day, who counts as an
+  Expected Defaulter (`buildRows_`'s own membership test, ported, never the rotation that
+  decides WHO owns a customer — re-deriving that in SQL would be a second, driftable copy of
+  a rule CLAUDE.md section 2 already names two blackouts for) and what they recovered — a sum
+  of per-customer, never-negative differences, which is why this card can read a different
+  number from "Weekly recovery trend" beside it on the same day, on purpose, proved directly
+  in a new test. Measured on a 2.27-million-row fixture before it shipped (42 teams, 150 days,
+  matching RUN-ME-054/055's own scale): ~210ms worst case, ~43ms the common one-team case, one
+  round trip either way — a first fixture with team-colliding customer references understated
+  this badly (collapsed 42 teams into 1) until it was rebuilt with globally-unique ones, the
+  realistic shape this system's own `ref` column always has. Costs **net +1 round trip**
+  (+2 new reads, -1 removed: the pipeline funnel's own `stageCounts` call leaves with the
+  widget it existed for), 0 new rows, on the migrated-world dashboard budget
+  (`test/speed.test.mjs`, reason beside the changed rows); no read on `/api/upload` or
+  `/api/call`. `npm test`: 1,530 pass (one new test, mirroring the SQL clause for clause in a
+  new `EXPDF_RECOVERY_RPC` mock, the same idiom the ghost-rows mock already uses). `BUILD
+  2026-11-14-b`; `CALL_BUILD` untouched. Handbook Part 73.
+- **Early Collection joins the week, 14 Nov** — the strip tile is week-over-week with the same
+  rise/fall arrow every other tile carries, reversing #691's own month-to-date choice in the
+  owner's own words ("Early Collection % · MTD should be of week and showing rise or fall as the
+  other widgets"); the standalone card is now a five-day Monday–Friday grid, built to the exact
+  pattern "loan apps, sales, col and rec" already share, each day its own arrow against the same
+  weekday a week earlier (#690's own rule). Built by reading one more pair of weeks through
+  `expectedTotalsInRange`, the same function `expWeek`/`expPrev`/`colTrend` already call — this
+  week unbounded, last week budgeted under `dashPrevBudget_`, the identical asymmetry those two
+  already carry and for the same reason written beside them. The new figures are no longer read
+  off the month ledger, so they are no more migration-sensitive than the three strip deltas they
+  now sit beside — `test/snapshot-totals.test.mjs`'s own parity check verifies them for free, and
+  the list that used to carve them out of it is removed outright. **Costs +2 round trips, 0 new
+  rows**, on the migrated-world dashboard budget only (`test/speed.test.mjs`, reason beside each
+  changed row); no read on `/api/upload` or `/api/call`. Checked: `test/portal.test.mjs`'s
+  per-day-arrow test and the strip's own team-scoping test, both extended/rewritten rather than
+  added, so `npm test` holds at 1,529. No real-browser check — no database to sign into from
+  here; `app.html`'s inline script is still parsed by `test/pages.test.mjs`, part of `npm test`.
+  `BUILD 2026-11-14-a`; `CALL_BUILD` untouched. Handbook Part 72.
 - **Staff registry, 13 Nov (sixth)** — three officers of Team Buzwagi A and B the P.M.O
   Supervisor flagged as not seeing themselves on their own team's list ("SIWAONI") -- the same
   flag, and the same PLACE handling, as the four Chamwino/Moro Center/Kihonda officers of 12
@@ -1061,6 +1117,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
+  new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
+  line was mistaken for a role; and, worth confirming with the sender rather than guessing,
+  the matching birth/start date and the voter's-registration number standing in for a NIDA.
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and

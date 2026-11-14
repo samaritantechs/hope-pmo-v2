@@ -486,3 +486,72 @@ export const DEFAULTER_GHOST_ROWS_RPC = {
     return out;
   },
 };
+
+/* expdf_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-056, clause for clause: the
+   dashboard's own team-wide "Expected Defaulters recovery" cards. buildRows_'s membership test
+   (api/_lib/expdf.js), ported -- a current row counts when it is Chronic/Expired/(Partial)
+   Defaulter by status, OR matched by ref to that SAME day's own initial deck -- and recovered
+   is a SUM OF PER-CUSTOMER CLAMPED DIFFERENCES, never a team-total subtraction (that is
+   recovery_standing's own question, above, a different one on purpose -- see the SQL file's
+   header for why the two are allowed to disagree). Exact date+weekday match on both decks,
+   never "the latest upload on or before" -- recovery_standing's own carry-forward rule would
+   be wrong here, for the identical reason recoveryByTeam's own note gives. */
+export const EXPDF_RECOVERY_RPC = {
+  expdf_recovery_totals(store, a = {}) {
+    const src = (store.defaulter_snapshots && store.defaulter_snapshots.rows) || [];
+    const teams = a.p_teams ? a.p_teams.map(String) : null;
+    const dk = v => String(v == null ? '' : v).slice(0, 10);
+    const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');
+    const inScope = r => !teams || teams.includes(String(r.team));
+    // One winning row per ref, for this EXACT (date, weekday, type): the latest upload per
+    // team on it (newest created_at, then batch id) -- the same idiom recoveryStandingMirror_
+    // uses, with the date given directly rather than resolved as "the latest on or before".
+    const readDeck = (type, date, weekday) => {
+      const wins = new Map();                                // team -> winning batch
+      for (const r of src) {
+        if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || String(r.weekday) !== weekday || !inScope(r)) continue;
+        const k = String(r.team);
+        const e = wins.get(k);
+        if (!e || rank(r) > e.rank) wins.set(k, { rank: rank(r), batch: (r.upload_batch == null ? null : r.upload_batch) });
+      }
+      const m = new Map();                                    // ref -> row
+      for (const r of src) {
+        if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || String(r.weekday) !== weekday || !inScope(r)) continue;
+        const e = wins.get(String(r.team));
+        if (!e || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
+        const ref = String(r.ref);
+        const c = m.get(ref);
+        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref, arrears: n0(r.arrears), status: r.status });
+      }
+      return m;
+    };
+    const pairs = [];
+    const seen = new Set();
+    for (let i = 0; i < (a.p_dates || []).length; i++) {
+      const d = dk(a.p_dates[i]), wd = String((a.p_weekdays || [])[i] || '').toUpperCase();
+      if (!d || !wd || seen.has(d + '|' + wd)) continue;
+      seen.add(d + '|' + wd); pairs.push({ d, wd });
+    }
+    const out = [];
+    for (const { d, wd } of pairs) {
+      const ini = readDeck('initial', d, wd);
+      const cur = readDeck('current', d, wd);
+      const byTeam = new Map();
+      const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, recovered: 0 }).get(String(t));
+      for (const c of cur.values()) {
+        const i = ini.get(c.ref);
+        const s = String(c.status == null ? '' : c.status).toUpperCase();
+        const defaulterish = s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT');
+        if (!i && !defaulterish) continue;                    // not Exp.Def's population: excluded
+        const refInitial = i ? i.arrears : c.arrears;          // current-only, defaulter-ish: a wash
+        const e = cell(c.team);
+        e.initial += refInitial; e.current += c.arrears;
+        e.recovered += Math.max(0, refInitial - c.arrears);    // per-customer clamp, THEN summed
+      }
+      for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
+        out.push({ snapshot_date: d, team: e.team, initial: e.initial, current: e.current, recovered: e.recovered });
+      }
+    }
+    return out;
+  },
+};

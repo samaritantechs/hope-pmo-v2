@@ -823,6 +823,71 @@ function resolved(agg, date) {
   return { rows, date, batch: rows[0].upload_batch || 'legacy' };
 }
 
+/* =====================================================================================
+   THE DASHBOARD'S OWN "EXPECTED DEFAULTERS" CARDS -- team-wide, day by day.
+
+     "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
+      cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
+      days performance Monday to Sunday like the cards showing summary of sales and collection
+      per day" -- the owner, 14 Nov 2026, confirming these are team-wide day tiles, not a
+      per-officer breakdown.
+
+   NEVER THE PER-OFFICER FIGURE THE EXP.DEF REPORT ITSELF SHOWS (buildRows_, expdfWeekCore,
+   api/_lib/expdf.js), and never a second copy of the rotation that decides WHO owns which
+   customer (assign.js's own assignFor, configurable live from the settings table) -- a
+   company-wide dashboard tile does not need to know which GMO, Manager or Bike officer a
+   customer is assigned to today, only whether that customer counts as an Expected Defaulter
+   at all. Re-deriving the rotation's own configurable strategy a second time, in SQL, is
+   exactly the "two implementations that can disagree" CLAUDE.md section 2 already names two
+   real blackouts for -- so this reads the ONE existing filter that decides membership
+   (buildRows_'s own: Chronic/Expired/Defaulter by status text, OR present on that day's own
+   initial deck at all) and stops there, ported to SQL, never the assignment on top of it.
+
+   RECOVERED HERE IS A SUM OF PER-CUSTOMER, CLAMPED DIFFERENCES -- buildRows_'s own
+   `Math.max(0, initial - arrears)`, summed over the day's Expected-Defaulter population --
+   NOT the deck-total subtraction recoveryByTeam/recovery_standing use for "Weekly recovery
+   trend" a few tiles along (the note above this one). The two are different questions and
+   are ALLOWED TO DISAGREE on the same day, on purpose (the same way #688 let the dashboard's
+   loan-apps arrival count and backlog count disagree, documented rather than hidden): a
+   customer whose arrears GREW between decks contributes nothing to this figure (never a
+   negative -- Exp.Def's own rule, since #693's "they cant run from when their initial file
+   had them" was never about netting one customer's loss against a stranger's gain), while
+   the deck-total figure nets the whole book against itself and can read lower on a day where
+   this one reads higher. That is Exp.Def's own long-standing arithmetic, kept exactly as
+   buildRows_ already has it -- not a stricter cousin invented new for this card.
+
+   A customer counts for a day when that SAME day's own current-deck row is Chronic, Expired
+   or (Partial) Defaulter by status text, OR was on that exact day's own initial deck at all
+   (buildRows_'s `baseBy` match, which a row on both decks always satisfies) -- db/RUN-ME-056's
+   own `kept` CTE. A current-only row that is neither is not Exp.Def's population and is
+   excluded, the same as buildRows_ excludes it. A customer who drops off the current deck
+   ENTIRELY (a "ghost", #697/db/RUN-ME-055) is NOT reached here at all -- ghosts are a
+   live-day, portal-report-only feature (expdf.js's own ghostRowsFor_), and nobody has asked
+   a company-wide dashboard tile to carry them; flagged, not built, rather than silently
+   widening what this change set out to do.
+
+   EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the identical
+   day-pairing rule recoveryByTeam (below) and recTrend already use, for the identical reason
+   recoveryByTeam's own note gives: pairing two different weekdays' decks reports the gap
+   between two different populations as recovery.
+
+   WITHOUT db/RUN-ME-056 run, every call here returns null and the two new cards read "not
+   yet filed", the exact behaviour the rest of this screen already gives an unmeasured day --
+   never a failed request, and never the raw-row read this was built specifically to avoid
+   (db/RUN-ME-056's own comment has the ~13-round-trip estimate for that alternative). */
+export const EXPDF_RECOVERY_TOTALS_FN = 'expdf_recovery_totals';
+const expdfRecoveryMissing = new WeakMap();        // db -> when it was last found missing
+const EXPDF_RECOVERY_MISSING_TTL_MS = 5 * 60 * 1000;
+export async function expdfRecoveryTotals(db, { dates, weekdays, teams = null } = {}) {
+  if (!db || typeof db.rpc !== 'function' || !dates || !dates.length) return null;
+  const missedAt = expdfRecoveryMissing.get(db);
+  if (missedAt && (Date.now() - missedAt) < EXPDF_RECOVERY_MISSING_TTL_MS) return null;
+  const { data, error } = await rpcAll(db, EXPDF_RECOVERY_TOTALS_FN,
+    { p_dates: dates, p_weekdays: weekdays, p_teams: teamsArg(teams) });
+  if (error) { expdfRecoveryMissing.set(db, Date.now()); return null; }
+  return Array.isArray(data) ? data : [];
+}
+
 /* ------------------------------------------------------------------------------ the adders
 
    Named so that a figure reads as what it is. Every screen's sums go through these, so

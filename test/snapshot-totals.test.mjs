@@ -225,17 +225,16 @@ const SCREENS = [
    exactly the same way and diverge in exactly the same place. */
 const LEDGER_KEYS = ['mEColPct', 'mColPct', 'mRecPct', 'mAvg',
   'mCol', 'mExp', 'mEcol', 'mEexp', 'mRec', 'mUncol'];
-/* The strip's own Early Collection tile (perf.ecolPct/ecolExp/ecolCol) reads the exact same
-   month ledger as the Orodha's mEColPct -- the SAME sanctioned divergence, one level up: a
-   sibling of teamPerf under perf, not a row inside it, so it needs its own strip. */
-const PERF_LEDGER_KEYS = ['ecolPct', 'ecolExp', 'ecolCol'];
+/* The strip's own Early Collection tile (perf.ecolPct/dEcol) used to read the exact same
+   month ledger as the Orodha's mEColPct -- the SAME sanctioned divergence, one level up --
+   until 14 Nov 2026, when it moved off the ledger entirely to become week-over-week, reading
+   expectedTotalsInRange (type:'initial') the same way colTrend/dCol already do. That source
+   has its own raw-row fallback and is never null for lack of the migration, so perf.ecolPct
+   and perf.dEcol are no longer a sanctioned divergence -- they must agree exactly, like
+   dSales/dCol/dRec already do, and the plain deep-equal below now checks that for free. */
 function withoutLedger(d) {
   if (!d || !Array.isArray(d.teamPerf)) return d;
   const { monthReady, ...rest } = d;
-  if (rest.perf) {
-    rest.perf = { ...rest.perf };
-    for (const k of PERF_LEDGER_KEYS) delete rest.perf[k];
-  }
   return { ...rest, teamPerf: d.teamPerf.map(t => {
     const c = { ...t };
     for (const k of LEDGER_KEYS) delete c[k];
@@ -266,7 +265,6 @@ for (const [label, fn, args] of SCREENS) {
               assert.equal(t[k], null, `${t.team}.${k}: null means "not yet", never a figure`);
             }
           }
-          assert.equal(inMemory.perf.ecolPct, null, 'perf.ecolPct: null means "not yet", never a figure');
         }
         assert.deepEqual(withoutLedger(fromDb), withoutLedger(inMemory),
           `${label} answered differently when the database did the adding up.\n` +

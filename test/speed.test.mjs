@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -270,8 +270,27 @@ const BUDGETS = [
      (legalLedgerWeek_), the same reading as the deck's legal slide. Could the database do it
      instead? The fold is the database doing it; what comes back is the register and a week of
      payments against it, never the two-week payments book. Rows unchanged: both are small. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  37,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  36,   900],
+  /* 37 -> 39 (2026-11-14): EARLY COLLECTION, WEEK-OVER-WEEK -- "Early Collection % should be
+     of week and showing rise or fall as the other widgets" / "the card ... should be of 5
+     days as the others", reversing #691's own month-to-date choice. Two more week-sized
+     totals reads (type:'initial', this week and last), the identical shape expWeek/expPrev
+     already pay for the 'today' sheet -- THIS week unbounded (the tile's own headline figure
+     now, not only its arrow), LAST week budgeted under dashPrevBudget_ for the same reason
+     expPrev already is. Could the database do it instead? It already does: expectedTotalsInRange
+     is the one aggregate function every week-sized read on this screen goes through. Rows
+     unchanged -- a week of early-collection totals is a handful of per-team-per-day rows,
+     never customers, the same as every other week-sized read here.
+     39 -> 40 (2026-11-14, same day): THE LOAN PIPELINE WIDGET'S REPLACEMENT -- "Remove the
+     Loan pipeline widget at dashboard replace with expected defaulters recovery cards Monday
+     to Sunday with rising and falling arrows as usual". Two more reads (expdfRecoveryTotals,
+     this week unbounded and last week budgeted, the identical this-week/last-week asymmetry
+     above) MINUS one removed: `stageCounts`, the pipeline funnel's own read, left with the
+     widget it existed for -- net +1, not +2. Could the database do it instead? It already
+     does: db/RUN-ME-056 is one grouped call, the same shape as every other totals read here,
+     never a read per team or per officer. Rows unchanged -- a week of team-day totals, never
+     customers. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  40,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  39,   900],
   /* THE COMPANY'S LINE FOR A SCOPED ORODHA (2026-10-16): "the red conditional format from the whole company is what they
      see ... not their own pivot ... They can't see company wide data". A second call the screen makes after it has
      painted, so the dashboard's own budget above is untouched. COLD it is the whole-book dashboard (the line is its grand
@@ -279,7 +298,7 @@ const BUDGETS = [
      deployment and the whole-book viewers' own dashboards refresh it -- so three hundred team codes in one morning cost
      one such read, not three hundred. Could the database do it instead? It does: these are the same aggregate reads the
      all-teams dashboard already makes. */
-  ['Company line (one team, cold)', 'orodhaJudge', { rows: [{ team: 'KONGOWE', tColPct: 50 }] }, OFFICER, 83, 90000, 37, 5500],
+  ['Company line (one team, cold)', 'orodhaJudge', { rows: [{ team: 'KONGOWE', tColPct: 50 }] }, OFFICER, 83, 90000, 40, 5500],
   /* +3 TRIPS (2026-10-12): the legal recovery slide -- "add legal recovery slide at presentation,
      todays and weekly recovery columns as pmo recovery does". The notice register scoped like
      every other read here, the ledger fold, and the week's ledger rows. Could the database do
@@ -548,7 +567,7 @@ const WORLDS = [
   /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
      counts collapse into one grouped call the same way the team-day sums do, and a budget that
      leaves that out is measuring a deployment nobody is running. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC } }, 6, 7],
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC, ...EXPDF_RECOVERY_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {
