@@ -986,11 +986,13 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     assignStrategy(db),
     /* THE INITIAL ARREARS BEHIND THE LIST'S "Initial arrears" AND "Recovered" COLUMNS -- "remove
        branch column, add recovered so after DS (initial arrears, current arrears, recovered)".
-       Today's own initial deck, scoped at the database and only the three columns the match
-       needs (ref, team, arrears), the same read and the same rule Defaulters Followup uses. It
-       adds one deck read (the date, then its rows) to a screen that is not the upload or the
-       call app; the speed budget below says so. */
-    defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs), columns: 'ref, team, arrears' }),
+       Today's own initial deck, scoped at the database and only the columns actually read:
+       ref/team/arrears for the match, plus disb_date -- added same-day, for the never-once-
+       current rows below, which have a real disbursement date sitting on this exact row (the
+       column is on defaulter_snapshots itself, not gated to snapshot_type = 'current') and
+       never needed guessing at all. It adds one deck read (the date, then its rows) to a screen
+       that is not the upload or the call app; the speed budget below says so. */
+    defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs), columns: 'ref, team, arrears, disb_date' }),
   ]);
   const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
@@ -1058,17 +1060,32 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      row the filter above already built. NEVER A FABRICATED ROLE OR LEADER: assignFor needs
      fields that live only on a current-deck row, which this ref has never had, so role/phase/
      cycle stay null and leader reads '(unassigned)' -- the same honest sentinel this screen
-     already uses for "a team with nobody in that role", now also meaning "nobody to credit". */
+     already uses for "a team with nobody in that role", now also meaning "nobody to credit".
+
+     THE REAL disb_date, NOT A GUESS -- "i already said that we already know their days due
+     disb date column but you just distract me man" -- the owner, 14 Nov 2026. A first cut here
+     bucketed these rows under "No date," then, corrected within the same hour but still wrong,
+     substituted TODAY's own weekday as a stand-in -- both missed that `disb_date` is a column on
+     `defaulter_snapshots` itself, not one gated to `snapshot_type = 'current'`: this ref's own
+     initial-deck row already carries its real disbursement date, the owner's point exactly, and
+     `iniSnap` above now reads it. `primary`/`secondary` computed by the identical formula the
+     current-deck rows above use (isoWeekday of disb_date, then +3 days wrapped) -- one rule, not
+     a second one invented for this case -- so this customer lands on their own real two cycle
+     days, the same as anyone else, never on an invented "today" and never on "No date". A ref
+     whose own initial row somehow carries no disb_date either (rare, but not impossible) still
+     falls back to day 0 honestly, the same as an unreadable date already does everywhere else. */
   const seenRefs = new Set(rows.map(r => K(r.ref)));
   for (const r of scoped(user, iniSnap.rows)) {
     const ref = K(r.ref);
     if (seenRefs.has(ref)) continue;
     seenRefs.add(ref);
     const initial = num(r.arrears);
+    const primary = r.disb_date ? isoWeekday(Date.parse(String(r.disb_date) + 'T00:00:00Z')) : 0;
+    const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
     rows.push({ ref: r.ref, full_name: null, contact: null, team: r.team,
       arrears: 0, initial, recovered: initial, balance: null, ds: null, dc: null,
-      status: 'CLEARED', disb_date: null, primary: 0, secondary: 0,
-      primaryName: '—', secondaryName: '—',
+      status: 'CLEARED', disb_date: r.disb_date || null, primary, secondary,
+      primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
       phase: null, role: null, cycle: null, leader: '(unassigned)' });
   }
   // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.

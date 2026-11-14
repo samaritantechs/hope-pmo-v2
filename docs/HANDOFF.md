@@ -6266,6 +6266,46 @@ the budget makes the symptom impossible regardless of the real number, but the r
 itself would still be worth knowing, from the owner's own side, the next time the SQL editor is
 open.
 
+## Part 77 — The never-once-current rows (Part 75) land on their own real days, not "No date," not "today"
+
+> "i think you added no-date instead of customers staying in their respective initial defaulters
+> days... each day is independent" and, a few minutes later, after a first correction still
+> missed the point: "i already said that we already know their days due disb date column but
+> you just distract me man" -- the owner, 14 Nov 2026, the same hour Part 76 shipped.
+
+Part 75's own never-once-current rows (a customer on today's own initial deck with no
+current-type row, ever) carried `primary: 0, secondary: 0` -- the same "No date" bucket an
+unreadable disbursement date already uses. The owner's first message said that bucket was
+wrong; the first fix (`primary` set to TODAY's own weekday) answered a question nobody asked --
+the owner's second message named the actual answer directly: `disb_date` is a column on
+`defaulter_snapshots` itself, present on an INITIAL row exactly as it is on a CURRENT one, so
+this ref's own real disbursement date was sitting on the row the whole time. `iniSnap`'s own
+column list (`portal-core.js`) only ever asked for `ref, team, arrears` -- now widened to
+include `disb_date` -- and the never-once-current row's own `primary`/`secondary` are computed
+by the identical formula every current-deck row already uses (`isoWeekday(disb_date)`, then +3
+days wrapped), landing it on its own real two cycle days, the same as anyone else. A ref whose
+initial row somehow carries no `disb_date` at all still falls back to "No date" honestly --
+checked directly, in a second, separate test -- since that case genuinely has nothing to read.
+
+**A test that was testing the bug, not guarding against it.** The dedicated test for this case
+(Part 75) built its fixture through the suite's own `D()` helper, which sets a real `disb_date`
+(2026-07-21, a Tuesday) on every row by default -- so this exact scenario had a real date
+available the whole time, and the test's own assertion (`dist[0] === 1`, "bucketed as undated")
+was asserting the first cut's bug as if it were the feature, because the code never read the
+column the fixture had already given it. Rewritten to assert the real days (`primary`/
+`secondary`/`disb_date` on the row; `dist[2]`/`dist[5]` up by one against an identical
+before/after fixture, since the baseline book already has other customers on those same two
+days -- an absolute count would have been the wrong proof).
+
+**What it costs.** One column added to a read the screen already makes (`disb_date`, alongside
+`ref`/`team`/`arrears`); no new read, no change to round-trip count, `test/speed.test.mjs`
+unaffected. No read on `/api/upload` or `/api/call`.
+
+**Checked.** The existing test rewritten to prove the row lands on its own real Tue/Fri, not
+"No date"; one new test proving the honest fallback still holds when a ref's own initial row
+genuinely carries no date either. `npm test`: 1,533 pass. Server-only -- `BUILD`/`CALL_BUILD`
+stay as Part 76 left them.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
