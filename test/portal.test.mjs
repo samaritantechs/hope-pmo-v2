@@ -347,6 +347,39 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
   assert.ok(past.rows.some(r => r.ref === 'A1'), 'the real customer is still there -- only the ghost lookup is skipped, nothing else about the closed week');
 });
 
+/* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
+   owner, 14 Nov 2026. ghostRowsFor_ (the test above) rescues a ref missing from today's
+   current deck that has SOME current-type row anywhere in this team's history -- its own join
+   needs that to exist. A ref whose very first appearance anywhere is today's own initial deck,
+   never once on a current-type row, is the one case even that cannot reach (the RPC's own
+   candidate-walk finds the ref, but the join behind it returns nothing for it). Added here,
+   additively: a customer on today's own initial deck still shows, status CLEARED, counted in
+   every total, but never credited to a real leader -- assignFor needs fields that live only on
+   a current-deck row, which this ref has never had, so role/phase stay null and leader reads
+   the honest '(unassigned)' sentinel this screen already uses for "nobody to credit". Checked
+   here only -- expectedDefaulters is the one screen in this system that lists every customer
+   rather than one leader's own book (buildRows_ and its own callers, api/_lib/expdf.js, are
+   ALL structured around a role: the phone's list, the role-based report, even the week's own
+   internal bookkeeping key every row by role|leader|ref, so a roleless customer has nowhere to
+   go there regardless; extending this same fix to that side was tried and found to change
+   nothing reachable, so it was not kept). */
+test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, unassigned', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(D('NOCUR1', 'KONGOWE', 20000, 'initial'));
+  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  const row = d.rows.find(r => r.ref === 'NOCUR1');
+  assert.ok(row, 'found -- not silently dropped for lack of any current row at all');
+  assert.equal(row.status, 'CLEARED');
+  assert.equal(row.arrears, 0, 'nothing current to report');
+  assert.equal(row.initial, 20000, 'its own day\'s initial baseline');
+  assert.equal(row.recovered, 20000, 'fully recovered -- the same absence-is-the-signal rule the ghost already follows');
+  assert.equal(row.leader, '(unassigned)', 'never a fabricated leader -- there is no real current-row data to read a cycle from');
+  assert.equal(row.phase, null);
+  assert.equal(row.role, null);
+  assert.equal(d.dist[0], 1, 'bucketed as undated, the same bucket an unreadable disbursement date already uses');
+  assert.equal(d.initial, d.rows.reduce((s, r) => s + r.initial, 0), 'the grand total adds it in');
+});
+
 /* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
    this shipped: nothing in the suite exercised GHOST_BUDGET_MS/withinMs_'s own timeout-
    abandonment at all (test/speed.test.mjs counts round trips and rows, never wall-clock), the

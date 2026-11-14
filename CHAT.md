@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 74**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 75**.
 
 ---
 
@@ -78,6 +78,23 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Expected Defaulters: a customer never once on a current row still shows, 14 Nov** — "a
+  customer who drops off the current deck entirely shouldnt be invisible anywhere," following
+  directly from the entry below. #697's own ghost mechanism rescues a customer missing from
+  today's current deck who has SOME current-type row anywhere in history; a customer whose
+  very first appearance anywhere is TODAY's own initial deck -- never once on a current row,
+  ever -- is the one case even that cannot reach, confirmed by tracing the real code. **Tried
+  first on `buildRows_` (api/_lib/expdf.js), and not kept there**: the fix changed nothing
+  reachable, since every one of its three callers (the phone's own list, the role-based
+  report, the leader tap-view) filters by role before anything else, and the week's own
+  internal bookkeeping does too -- confirmed empirically with a direct test against a closed
+  week, which still came back without the row. Reverted rather than shipped. **Kept on
+  `expectedDefaulters` instead** -- the one screen that lists every customer rather than one
+  leader's book, and the one that is not organized by role at all: the customer now shows,
+  status CLEARED, fully recovered, `role`/`phase` left null rather than fabricated, `leader`
+  reading the existing `'(unassigned)'` sentinel. No new read: today's own initial deck was
+  already fetched for this screen's existing baseline. `npm test`: 1,531 pass. No front-end
+  file touched; `BUILD`/`CALL_BUILD` unchanged. Handbook Part 75.
 - **Expected Defaulters recovery, corrected before it was ever run, 14 Nov** — "not yet, i
   want the weekly cyle to be facts of the no of defaulters we really had, not who remained so
   the lists per day must come from initial files i think," read against `db/RUN-ME-056`'s own

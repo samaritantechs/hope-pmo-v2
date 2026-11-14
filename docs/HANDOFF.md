@@ -6125,6 +6125,65 @@ its own driving table is a materially bigger, riskier change than this one (a br
 not-yet-run dashboard function) was -- not undertaken here, not without being asked. Whether
 "the lists per day must come from initial files" should extend there too is the owner's to say.
 
+## Part 75 — Expected Defaulters: a customer never once on a current row still shows, status CLEARED
+
+> "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
+> owner, 14 Nov 2026, following directly from Part 74's own correction.
+
+#697's own ghost mechanism (`ghostRowsFor_`, `db/RUN-ME-055`) rescues a customer missing from
+TODAY's current deck who has SOME current-type row anywhere in this team's history -- its own
+all-time walk needs that to exist, since the join behind it (`... and d.snapshot_type =
+'current'`) only ever matches a current-type row. A customer whose VERY FIRST appearance
+anywhere is today's own initial deck -- never once on a current-type row, in the whole history
+-- is the one case even that mechanism cannot reach: the walk finds the ref as a candidate, the
+join behind it returns nothing for it, and `buildRows_`'s own filter (over `curRows`, which this
+ref was never in to begin with) never visits it either. Genuinely invisible, confirmed by
+tracing the real code rather than assumed.
+
+**Tried on `buildRows_` first, and not kept there.** The natural fix -- drive the day's
+population from the day's own initial deck instead of the current one, the identical principle
+Part 74 just gave the dashboard -- was built and tested against `api/_lib/expdf.js` first. It
+turned out to change nothing reachable: `expdfCore`'s raw rows feed exactly three callers
+(`expdfMine`, `expdfReport`, `expdfLeader`), every one of which filters by
+`RECYCLE_ROLES.includes(r.role)` before anything else, and `expdfWeekCompute_`'s own internal
+bookkeeping (`cells`, keyed `role|leader|ref`) filters the SAME way before a row ever reaches its
+own output -- so a customer with no real current-row data to assign a role from (the initial
+deck carries no status, no disbursement date, nothing `assignFor` needs) has nowhere to surface
+on any of those three screens, with or without the fix. Confirmed empirically: a direct test
+against `expdfWeekCore`'s own raw output, for exactly this customer, on a CLOSED week (where
+Part 74's reasoning said the fix should reach further than the ghost mechanism ever could)
+still came back absent -- not because the day was unmeasured, but because the row was being
+built and then immediately discarded by the week's own role-keyed `cells` map. Reverted rather
+than shipped: code with no observable effect anywhere is exactly the "half-finished
+implementation" this repository's own rules already warn against, however reasoned the path to
+it was.
+
+**Kept on `expectedDefaulters` instead** -- the one screen in this system built to list every
+customer rather than one leader's own book (the actual "Orodha / List of expected defaulters"
+this whole thread started from), and the one screen that does NOT organize its rows by role at
+all. A customer on today's own initial deck with no current-type row, ever, now gets a row
+there too: status CLEARED, `arrears` 0, `recovered` the full initial amount (the same
+absence-is-the-signal rule the ghost mechanism already follows), `role`/`phase` left `null`
+rather than guessed (never a fabricated rotation slot), `leader` reading the same
+`'(unassigned)'` sentinel this screen already uses for "nobody to credit." Bucketed into the
+existing `dist[0]` ("cannot be placed on a weekday") the same way an unreadable disbursement
+date already is; counted into every grand total the same way any other row is.
+
+**What it costs.** Nothing: `iniSnap.rows` (today's own initial deck) was already read at the
+top of this function for the existing baseline lookup; this only adds a second pass over data
+already in memory. No new read, `test/speed.test.mjs` unaffected. No front-end file touched, so
+`BUILD`/`CALL_BUILD` stay as Part 74 left them.
+
+**Checked.** A new test proves the row appears, with the exact figures above, and that
+`dist`/`initial` correctly include it. `npm test`: 1,531 pass (one net new test -- the two
+tests written for the `buildRows_` attempt were removed along with the code they were testing,
+since neither exercised anything that would not have passed identically before it).
+
+**Not done, and said so rather than silently expanded:** the dedicated Exp.Def Report, the
+phone's own worklist, and the leader-tap view all remain exactly as they were -- a customer
+with no real current-row data genuinely has no leader to be credited to, and inventing one
+would be a worse defect than the invisibility it replaced.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

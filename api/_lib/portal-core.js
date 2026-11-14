@@ -1037,6 +1037,31 @@ async function expectedDefaulters(db, user, _args, nowMs) {
         phase: a.phase, role: a.role, cycle: a.label,
         leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)' };
     });
+  /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" --
+     the owner, 14 Nov 2026 -- the same order buildRows_ (expdf.js) answers, read here too so
+     the two stay the one rule they already are (#696's own note on this pair: "one rule, read
+     twice", not a guarantee the two can never disagree, since this screen and the Exp.Def
+     Report already resolve "today" by two separate, pre-existing rules). ghostRowsFor_ above
+     rescues a ref missing from TODAY's current deck that has SOME current-type row anywhere in
+     this team's history; a ref whose very first appearance is today's own initial deck -- never
+     once on a current-type row, ever -- is the one case even that cannot reach, and it was
+     simply absent from `def.rows`+`ghosts` to begin with. Added additively, never replacing a
+     row the filter above already built. NEVER A FABRICATED ROLE OR LEADER: assignFor needs
+     fields that live only on a current-deck row, which this ref has never had, so role/phase/
+     cycle stay null and leader reads '(unassigned)' -- the same honest sentinel this screen
+     already uses for "a team with nobody in that role", now also meaning "nobody to credit". */
+  const seenRefs = new Set(rows.map(r => K(r.ref)));
+  for (const r of scoped(user, iniSnap.rows)) {
+    const ref = K(r.ref);
+    if (seenRefs.has(ref)) continue;
+    seenRefs.add(ref);
+    const initial = num(r.arrears);
+    rows.push({ ref: r.ref, full_name: null, contact: null, team: r.team,
+      arrears: 0, initial, recovered: initial, balance: null, ds: null, dc: null,
+      status: 'CLEARED', disb_date: null, primary: 0, secondary: 0,
+      primaryName: '—', secondaryName: '—',
+      phase: null, role: null, cycle: null, leader: '(unassigned)' });
+  }
   // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.
   // Day 0 holds anyone whose loan carries no disbursement date: they cannot be placed on a
   // weekday, and the live system simply dropped them from the cycle. Silently losing a
