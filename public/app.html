@@ -785,7 +785,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-13-f';
+var BUILD = '2026-11-14-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3829,11 +3829,10 @@ VIEWS.dashboard = function(){
       + (function(){ var p = d.perf || {}; return '<div class="kpis sm" style="margin-top:8px">'
           + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), leaderSub_(trendSub(p.dSales), p.topSales))
           /* "add ealy col widget btn sales and col" -- Early Collection sits between Sales %
-             and Collection %, month-to-date (the owner's own choice, costed first: the figure
-             already exists for every load; a week-by-day version does not). No arrow -- there
-             is no "last week" for a month-to-date number -- and MTD is said outright, since
-             every other tile on this strip is week-over-week. */
-          + kpi('Early Collection % · MTD', pct(p.ecolPct), 'mwezi hadi sasa / month to date')
+             and Collection %. "should be of week and showing rise or fall as the other
+             widgets" -- 14 Nov 2026, reversing the month-to-date choice above: now
+             week-over-week, with the same arrow its three neighbours already carry. */
+          + kpi('Early Collection %', pct(p.ecolPct) + trendArrow(p.dEcol), trendSub(p.dEcol))
           + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), leaderSub_(trendSub(p.dCol), p.topCol))
           + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), leaderSub_(trendSub(p.dRec), p.topRec))
           + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), leaderSub_(avgSub(p.dAvg, p.avgOn), p.topAvg))
@@ -3871,16 +3870,22 @@ VIEWS.dashboard = function(){
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'),
           trendArrow((d.perf||{}).dSales) + headDelta_((d.perf||{}).dSales))
-      /* "add ealy col cards between" Sales trend and Weekly expected trend -- a card of its
-         own, not a Mon-Sat grid like its neighbours: the month-to-date figure the strip's own
-         tile carries has no day kept beside it (the month ledger keeps only the sum), so there
-         is no day-by-day map to draw here, and the card says so rather than fake one. */
-      + '<div class="card"><div class="card-h">Early Collection'
-        + '<span style="font-weight:400;color:var(--mut);font-size:12px">mwezi hadi sasa, si kwa siku / month to date, not by day</span></div>'
-        + '<div class="kpis sm" style="margin:0 14px 14px">'
-        + kpi('Early Collection %', pct((d.perf||{}).ecolPct),
-            'TZS '+money((d.perf||{}).ecolCol||0)+' ya '+money((d.perf||{}).ecolExp||0)+' / of')
-        + '</div></div>'
+      /* "add ealy col cards between" Sales trend and Weekly expected trend. "the card ...
+         should be of 5 days as the others ... like loan apps, sales, col and rec" -- 14 Nov
+         2026: the Mon-Sat-grid neighbour this card was once said to need none of (the old
+         MTD figure kept no day beside its own sum) now gets exactly that grid, the same
+         tcell/trendArrow shape as Weekly expected trend right after it -- the early-
+         collection sheet against tomorrow's due list, instead of today's. */
+      + trendGrid('Early Collection trend (Mon–Fri)', 'expected · uncollected · collection % per weekday, against tomorrow’s due list', 'gEcol',
+          d.ecolTrend.map(function(x){ return x.uploaded === false
+            ? tcell(wdLabel(x.weekday), [['—', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
+            : tcell(wdLabel(x.weekday), [
+            ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']],
+            '', '', trendArrow(x.dEcol)); }),
+          tcell('TOTAL', [['<b>TZS '+money(d.ecolTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
+            ['Uncol TZS '+money(d.ecolTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.ecolTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
+            ['Col '+pct((function(){var e=d.ecolTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.ecolTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'),
+          trendArrow((d.perf||{}).dEcol) + headDelta_((d.perf||{}).dEcol))
       /* THE HEADLINE IS THE DAY'S EXPECTED, not what came in.
            "i wanted them to show expected, uncollected and % -- replace collection with
             total expected"

@@ -6850,6 +6850,10 @@ test('each trend card carries its own day-by-day arrow against the same weekday 
   t.repayment_snapshots = [
     E('111', 'KONGOWE', 1000, 'PAID', 0),                    // today (TODAY): 1000 exp, 1000 col -> 100%
     E('222', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'),     // last Friday: 1000 exp, 0 col -> 0%
+    // Early collection -- the 'initial' (tomorrow's due list) sheet, same shape, same two
+    // Fridays: this one fully paid, last one not, so its own arrow must rise too.
+    E('333', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
+    E('444', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17', 'initial'),
   ];
   const d = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
   const fri = d.appsTrend.find(x => x.date === TODAY);
@@ -6870,6 +6874,19 @@ test('each trend card carries its own day-by-day arrow against the same weekday 
   // A day genuinely not uploaded this week yet must carry no arrow -- never a fabricated one.
   const notUploaded = d.colTrend.find(x => x.uploaded === false);
   if (notUploaded) assert.equal(notUploaded.dCol, null, 'nothing to compare for a day with no sheet');
+
+  // Early collection: the same day-level arrow, against the SAME WEEKDAY last week, reading
+  // the 'initial' sheet instead of the 'today' one -- "should be of week and showing rise or
+  // fall as the other widgets" / "the card ... should be of 5 days as the others", 14 Nov 2026.
+  const ecolFri = d.ecolTrend.find(x => x.date === TODAY);
+  assert.equal(ecolFri.pct, 100, "today's early-collection sheet: 1000 expected, 1000 collected");
+  assert.equal(ecolFri.dEcol, 100, "today's 100% minus last Friday's 0% -- the same swing colFri has, on the other sheet");
+  const ecolNotUploaded = d.ecolTrend.find(x => x.uploaded === false);
+  if (ecolNotUploaded) assert.equal(ecolNotUploaded.dEcol, null, 'nothing to compare for a day with no early-collection sheet');
+  // The strip's own tile: the week is one Friday's worth of data either side, so the week
+  // figure and the single day's figure are the same number, and the week-level arrow agrees.
+  assert.equal(d.perf.ecolPct, 100, 'the strip tile now reads the week, not the month');
+  assert.equal(d.perf.dEcol, 100, 'and carries the identical arrow the day tile does');
 
   // Recovery: Mon-Fri carry a real number or null (never NaN/undefined); the weekend tiles,
   // which carry no percentage at all, carry no arrow either -- by design, not an oversight.
@@ -6926,36 +6943,32 @@ test('the strip names the leading leader per tile, among the teams this viewer s
   assert.equal(d2.perf.topAvg, null);
 });
 
-/* "add ealy col widget... add ealy col cards" -- Early Collection, month-to-date, the owner's
-   own choice over week-by-week (costed first: the MTD figure is already read on every load
-   for the Orodha's own M. columns; a daily version is not, and was not asked for once that
-   was known). perf.ecolPct reads the exact same monthByTeam the Orodha and the month report
-   already trust -- "no initial sheet this month" behaves exactly as it already does there. */
-test('the strip\'s Early Collection tile is month-to-date, among the teams this viewer sees, and null when unmeasured', async () => {
+/* "add ealy col widget... add ealy col cards" -- Early Collection, WEEK-OVER-WEEK since 14
+   Nov 2026 (reversing the month-to-date choice above, which read the slow-filling month
+   ledger). perf.ecolPct now reads expectedTotalsInRange(type:'initial') for the live week,
+   the exact function colTrend already calls for the 'today' sheet -- which carries its OWN
+   raw-row fallback and so needs no ledger, no "filling" dance, and no second load: unlike
+   the old MTD figure, this one is real on the very first request, migrated or not. */
+test('the strip\'s Early Collection tile is the week, among the teams this viewer sees, and null when unmeasured', async () => {
   const d = await run('dashboardFull', {}, ADMIN, dbWithRpc());
-  assert.equal(d.perf.ecolPct, null, 'the base fixture carries no initial sheet this month');
-  assert.equal(d.perf.ecolExp, 0);
-  assert.equal(d.perf.ecolCol, 0);
+  assert.equal(d.perf.ecolPct, null, 'the base fixture carries no early-collection sheet this week');
+  assert.equal(d.perf.dEcol, null, 'and so no arrow either');
 
   const t = tables();
-  // An early-collection ("initial") sheet this month, same shape the month report's own
-  // ecolPct test uses -- 'initial' is the early-collection list, not defaulter_snapshots'
-  // own same-named "initial"/"current" deck pair.
+  // An early-collection ("initial") sheet this week, on one team only -- 'initial' is the
+  // early-collection list, not defaulter_snapshots' own same-named "initial"/"current" pair.
   t.repayment_snapshots.push(
     E('e1', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'),
     E('e2', 'MBAGALA', 1000, 'UNPAID', 0, TODAY, 'initial'));
-  /* A COLD MONTH FILLS ACROSS LOADS (see "the Orodha's own officers and the month-to-date
-     percentages" above): the first dashboard load on a ledger nobody has filled says "not
-     yet", never a guessed number. The month report fills the rest under its own, bigger
-     budget; a second dashboard load, past the answer cache, then reads the whole month. */
   const db = dbWithRpc(t);
-  const cold = await run('dashboardFull', {}, ADMIN, db);
-  assert.equal(cold.perf.ecolPct, null, 'still filling: not yet, never a wrong number');
-  await run('monthReport', {}, ADMIN, db);
-  const d2 = await portalApi(db, ADMIN, 'dashboardFull', {}, NOW + 61000);
-  assert.equal(d2.perf.ecolExp, 2000);
-  assert.equal(d2.perf.ecolCol, 1000, 'KONGOWE PAID (1000) + MBAGALA UNPAID (0)');
-  assert.equal(d2.perf.ecolPct, 50);
+  // Real on the FIRST load -- no monthReport warm-up, no second request past an answer cache.
+  const d2 = await run('dashboardFull', {}, ADMIN, db);
+  assert.equal(d2.perf.ecolPct, 50, 'KONGOWE PAID (1000/1000) + MBAGALA UNPAID (0/1000) = 1000 of 2000');
+
+  // Scoped to one team: an officer who can only see KONGOWE reads KONGOWE's own 100%, not
+  // the whole-company 50% the admin above reads -- the same scoping every sibling tile has.
+  const d3 = await run('dashboardFull', {}, GMO, db);
+  assert.equal(d3.perf.ecolPct, 100, "KONGOWE's own early-collection sheet, not the company's");
 });
 
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries

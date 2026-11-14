@@ -12252,7 +12252,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
-  const [expWeek, defWeek, expPrev, defPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, funnelCounts, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
@@ -12271,6 +12271,19 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     within_(expectedTotalsInRange(db, { type: 'today', from: prevMon, to: prevSun, teams: user.teams }),
       dashPrevBudget_(), []),
     within_(defaulterTotalsInRange(db, { from: prevMon, to: prevSun, teams: user.teams }),
+      dashPrevBudget_(), []),
+    /* EARLY COLLECTION, NOW WEEK-OVER-WEEK LIKE ITS THREE SIBLINGS -- "Early Collection %
+       should be of week and showing rise or fall as the other widgets" / "the card ...
+       should be of 5 days as the others", the owner, 14 Nov 2026, reversing #691's own
+       month-to-date choice (that was costed too, and chosen for being free; this is not
+       free, and the owner was told so before it was built). THIS week's read is unbounded,
+       the same treatment expWeek/defWeek get, because it is the tile's own headline figure,
+       not only the arrow; LAST week's is budgeted exactly like expPrev/defPrev, for exactly
+       the reason given at their own comment above -- it exists only for the arrow. Two more
+       week-sized totals reads, the same question shape this database answers fastest and the
+       same function colTrend already calls (`type: 'initial'` instead of `'today'`). */
+    expectedTotalsInRange(db, { type: 'initial', from: mon, to: sun, teams: user.teams }),
+    within_(expectedTotalsInRange(db, { type: 'initial', from: prevMon, to: prevSun, teams: user.teams }),
       dashPrevBudget_(), []),
     stageCounts(db, user.teams),
     fetchAll(() => onTeams(db.from('loans')
@@ -12355,6 +12368,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
 
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
+  const myEcolWeek = scoped(user, ecolWeek), myEcolPrev = scoped(user, ecolPrev);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
      transaction, exactly as the Abnormal Payments tab resolves it. The two screens now count
@@ -12375,6 +12389,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      performance strip, the Col trend tile, the Orodha's T. and M. columns and the recovery
      denominators all move together or none of them does. */
   const colDay_ = (rows, d) => withAdj_(pickLatestBatchRows(dayRows(rows, d)), adj, 'expected-current', d);
+  // The early-collection sheet gets its OWN book's corrections, same reasoning as earlyExp
+  // below: an 'expected-current' correction laid over the 'initial' sheet would be a figure
+  // from one book printed against another.
+  const ecolDay_ = (rows, d) => withAdj_(pickLatestBatchRows(dayRows(rows, d)), adj, 'expected-initial', d);
   /* And the arrears side, the same way. Recovery is initial minus current, so BOTH decks are
      corrected or neither is -- correcting one and not the other would report the register as
      recovery. */
@@ -12634,6 +12652,28 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       pct: uncollected > 0 ? Math.round((recovered / uncollected) * 1000) / 10 : null };
   })();
 
+  /* ---- early collection trend Mon-Fri: the week-over-week replacement for the old MTD tile.
+     "Early Collection % should be of week and showing rise or fall as the other widgets" /
+     "the card ... should be of 5 days as the others ... like loan apps, sales, col and rec"
+     -- the owner, 14 Nov 2026. Line for line the same shape as colTrend above, reading the
+     'initial' (early-collection) sheet instead of the 'today' one: the day's own collection %
+     against tomorrow's due list, and each day's own arrow against the SAME WEEKDAY last week
+     (#690's own rule, not a week-level delta spread across every day). */
+  const ecolTrend = WD5.map((wd, i) => {
+    const d = addDaysKey(mon, i);
+    const rows = ecolDay_(myEcolWeek, d);
+    const exp = tExpected(rows);
+    const col = tCollected(rows);
+    const pct = exp > 0 ? Math.round((col / exp) * 1000) / 10 : null;
+    const uploaded = rows.length > 0;
+    const prows = ecolDay_(myEcolPrev, addDaysKey(prevMon, i));
+    const pexp = tExpected(prows);
+    const ppct = pexp > 0 ? Math.round((tCollected(prows) / pexp) * 1000) / 10 : null;
+    return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
+      adjusted: tAdjusted(rows), uploaded, pct,
+      dEcol: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+  });
+
   /* The PMO collection officers, by the teams on their codes -- the code wins over the
      sheet, because the code is where these people are actually maintained (Teams & Staff
      writes it). Two officers on one team are both named, so a handover shows as such. Built
@@ -12836,22 +12876,25 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     })();
   } catch (e) { /* the four tiles above still draw; only the names beside them are missing */ }
 
-  /* ---- EARLY COLLECTION, MONTH-TO-DATE, AMONG THE TEAMS THIS VIEWER SEES.
-     "add ealy col widget btn sales and col" / "add ealy col cards between" Sales trend and
-     Weekly expected trend -- a fifth strip tile. Chosen month-to-date rather than
-     week-over-week (the owner's call, both costed first): monthByTeam, above, is already
-     read on every dashboard load for the Orodha's own M. columns, so this is new arithmetic
-     on data already in hand, not a new read. It is the one MTD figure on an otherwise
-     week-over-week strip, so the client labels it MTD rather than mixing it in unmarked --
-     and there is no day-by-day card to match Sales trend / Weekly expected trend this way,
-     since the month ledger keeps no day beside its own sum (see monthDayCell_'s own note). */
-  let ecolExp = 0, ecolCol = 0;
-  if (monthByTeam) for (const t of myTeams) {
-    const m = monthByTeam[K(t.team)];
-    if (m) { ecolExp += m.ie; ecolCol += m.ic; }
+  /* ---- EARLY COLLECTION, THE WEEK, AMONG THE TEAMS THIS VIEWER SEES.
+     "Early Collection % should be of week and showing rise or fall as the other widgets" --
+     the owner, 14 Nov 2026, reversing #691's own month-to-date choice. The week's own figure
+     is exactly what ecolTrend above already summed per day; last week's is a second, small
+     pass over myEcolPrev for the same reason colTrend's own week-level dCol does not reuse
+     weekPcts_'s unrelated hasData gate -- an early-collection delta must stand or fall on
+     whether LAST WEEK'S early-collection sheet arrived, not on whether the 'today' sheet did. */
+  const ecolExpWeek = ecolTrend.reduce((s, x) => s + x.expected, 0);
+  const ecolColWeek = ecolTrend.reduce((s, x) => s + x.collected, 0);
+  const ecolPctNow = ecolExpWeek > 0 ? Math.round((ecolColWeek / ecolExpWeek) * 1000) / 10 : null;
+  let ecolExpPrev = 0, ecolColPrev = 0;
+  for (let i = 0; i < 5; i++) {
+    const prows = ecolDay_(myEcolPrev, addDaysKey(prevMon, i));
+    ecolExpPrev += tExpected(prows); ecolColPrev += tCollected(prows);
   }
-  perf.ecolPct = monthByTeam ? (ecolExp > 0 ? Math.round((ecolCol / ecolExp) * 1000) / 10 : null) : null;
-  perf.ecolExp = ecolExp; perf.ecolCol = ecolCol;
+  const ecolPctPrev = ecolExpPrev > 0 ? Math.round((ecolColPrev / ecolExpPrev) * 1000) / 10 : null;
+  perf.ecolPct = ecolPctNow;
+  perf.dEcol = (ecolPctNow != null && ecolPctPrev != null && myEcolPrev.length > 0)
+    ? Math.round((ecolPctNow - ecolPctPrev) * 10) / 10 : null;
 
   /* ---- pipeline funnel: an ALL-TIME count per stage, counted by the database ---- */
   const funnel = STAGES.map(st => ({ stage: st, count: funnelCounts[st] || 0 }));
@@ -13103,7 +13146,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     /* Legal recovery: what the noticed customers in scope paid today and this week against
        what their letters demanded, with `on` false and a note when the ledger is not there. */
     legal: legalTotals_(scoped(user, notices), legalLedger, today, mon, sun),
-    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, funnel, ...recoveryRuleOf_(stand, db),
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, funnel, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
     // False = no defaulter deck was filed today, so the today figures above are honest zeros.

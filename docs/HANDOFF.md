@@ -5913,6 +5913,77 @@ more round trip where it now genuinely runs (12 -> 13 trips on the dedicated fiv
 check, comment updated in the diff beside it); every other existing budget held unchanged. No
 front-end file touched; `BUILD`/`CALL_BUILD` still untouched.
 
+## Part 72 — Early Collection joins the week: a rising-and-falling tile, a five-day card
+
+> "At dashboard Early Collection % · MTD should be of week and showing rise or fall as the other
+> widgets" ... "And the card Early Collection, mwezi hadi sasa, si kwa siku / month to date, not
+> by day should be of 5 days as the others" ... "Like loan apps, sales, col and rec" — the owner,
+> 14 Nov 2026.
+
+#691 (Part 67) had put Early Collection on the strip as month-to-date on purpose — the owner was
+shown the cost of each shape beforehand and chose the cheaper one. This reverses that choice, in
+the owner's own words, which is theirs to do: the strip tile now reads the WEEK, with the same
+▲/▼/▬ arrow every other tile carries, and the standalone card below it is no longer a single
+static month figure but a five-day Monday–Friday grid, built to the exact pattern "loan apps,
+sales, col and rec" already share — a `trendGrid` of day tiles, each with its own arrow against
+the SAME WEEKDAY exactly one week earlier (#690's own rule, never a week-total spread across
+days).
+
+**Built by mirroring what this screen already pays for, not by inventing a second way to ask
+for a week.** `expectedTotalsInRange(db, { type: 'initial', ... })` is the one function every
+week-sized read on this screen already goes through (it is what `expWeek`/`expPrev`/`colTrend`
+already call); a new `ecolTrend` array reads it exactly the way `colTrend` does, through a new
+`ecolDay_` helper that tags the Iliyonasia-register correction `'expected-initial'` — the SAME
+tag `earlyExp`/`tomorrowSnap` already use a few lines below it, and deliberately not
+`colDay_`'s own `'expected-current'`, since mixing the two books' corrections is exactly what
+this file already warns against doing. **This week is read unbounded; last week is read under
+`dashPrevBudget_`** — the identical asymmetry `expWeek`/`expPrev` already carry, for the reason
+written beside them: a real production morning once saturated this database badly enough that
+"last week" reads (needed only for an arrow) had to be time-boxed to a race that falls back to
+`[]`, while "this week" (the tile's own headline number) cannot be skipped. No new safety
+mechanism was built; the existing one was extended to one more pair of reads. `perf.ecolPct` and
+its new sibling `perf.dEcol` are now computed from `ecolTrend`'s own sums, the same way the
+other three strip deltas (`dSales`/`dCol`/`dRec`) are computed from their own trend arrays, not
+from `weekPcts_` — that shared function's own `wkPrev.hasData` gate is specifically about the
+other three metrics' own all-or-nothing week comparison, and reusing it for Early Collection
+would have been the wrong rule borrowed for the wrong reason. `perf.ecolExp`/`perf.ecolCol` (the
+old month ledger's own two raw totals, read by nothing else in the codebase — checked) are
+removed outright, not kept and ignored.
+
+**What this unties.** The old tile read `monthByTeam`, the per-team-per-day cache kept in
+`settings` under `MONTH_LEDGER_<yyyy-mm>` — agg-only, `null` on a database without the SQL
+aggregate migration run, which is why the tile could read "not yet" for a whole month at a time
+on a database that had never filled it. `expectedTotalsInRange`'s `type: 'initial'` read carries
+its OWN raw-row fallback (`expFoldRead`/`snapshotsInRange`) and
+never returns null for lack of a migration, the same as `expWeek`/`expPrev` never do. The new
+figures are no more migration-sensitive than the three they now sit beside, so
+`test/snapshot-totals.test.mjs`'s own estate-wide parity check (migrated vs. unmigrated, byte for
+byte) now verifies `ecolPct`/`dEcol` for free — `PERF_LEDGER_KEYS`, the list that used to carve
+those two fields out of that check, is removed entirely, not merely edited; the Orodha's own
+ledger-level `mEColPct`/`mColPct`/`mRecPct` (`LEDGER_KEYS`, a different list, a different screen)
+are untouched.
+
+**What it costs.** Two more reads where the screen already pays for this shape of read: **+2
+round trips, 0 new rows**, on the MIGRATED-world budget only (`test/speed.test.mjs`) —
+`dashboardFull` 37→39 trips for an unrestricted admin, 36→38 for a one-team officer, carried
+unchanged onto the "Company line, cold" row that shares the dashboard's own numbers by its own
+design comment. The UNMIGRATED-world columns had headroom already and needed no change. Reasons
+are written beside the three changed rows, as this file's own rule requires. No read was added
+to `/api/upload` or `/api/call` — this function serves neither.
+
+**Checked.** `test/portal.test.mjs`: the existing per-day-arrow test gained two fixture rows
+(today-Friday and last-Friday, type `'initial'`) and new assertions on `d.ecolTrend` (the day's
+own pct and arrow, and a not-yet-uploaded day reading null) and on `d.perf.ecolPct`/`d.perf.dEcol`;
+the existing team-scoping test for the strip tile was rewritten end to end (the old cold/warm
+ledger-filling dance no longer applies) to prove the week figure is read among the teams the
+viewer sees, and null when unmeasured, using the suite's own already-tabbed `GMO` fixture.
+`npm test`: 1,529 pass, the same count as Part 71 left it — both changed tests were extensions
+and rewrites of existing ones, not new blocks. **Not done:** no real-browser check — this chat
+has no database to sign into and load a live dashboard with; `public/app.html`'s inline script is
+still parsed source-side by `test/pages.test.mjs`, part of `npm test`, which is what is actually
+run here. `BUILD 2026-11-14-a`; `CALL_BUILD` untouched, since nothing on the call app's own
+screens changed.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

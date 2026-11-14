@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 13 November 2026** — portal `BUILD 2026-11-13-f` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 71**.
+**As of 14 November 2026** — portal `BUILD 2026-11-14-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 72**.
 
 ---
 
@@ -78,6 +78,24 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Early Collection joins the week, 14 Nov** — the strip tile is week-over-week with the same
+  rise/fall arrow every other tile carries, reversing #691's own month-to-date choice in the
+  owner's own words ("Early Collection % · MTD should be of week and showing rise or fall as the
+  other widgets"); the standalone card is now a five-day Monday–Friday grid, built to the exact
+  pattern "loan apps, sales, col and rec" already share, each day its own arrow against the same
+  weekday a week earlier (#690's own rule). Built by reading one more pair of weeks through
+  `expectedTotalsInRange`, the same function `expWeek`/`expPrev`/`colTrend` already call — this
+  week unbounded, last week budgeted under `dashPrevBudget_`, the identical asymmetry those two
+  already carry and for the same reason written beside them. The new figures are no longer read
+  off the month ledger, so they are no more migration-sensitive than the three strip deltas they
+  now sit beside — `test/snapshot-totals.test.mjs`'s own parity check verifies them for free, and
+  the list that used to carve them out of it is removed outright. **Costs +2 round trips, 0 new
+  rows**, on the migrated-world dashboard budget only (`test/speed.test.mjs`, reason beside each
+  changed row); no read on `/api/upload` or `/api/call`. Checked: `test/portal.test.mjs`'s
+  per-day-arrow test and the strip's own team-scoping test, both extended/rewritten rather than
+  added, so `npm test` holds at 1,529. No real-browser check — no database to sign into from
+  here; `app.html`'s inline script is still parsed by `test/pages.test.mjs`, part of `npm test`.
+  `BUILD 2026-11-14-a`; `CALL_BUILD` untouched. Handbook Part 72.
 - **Staff registry, 13 Nov (sixth)** — three officers of Team Buzwagi A and B the P.M.O
   Supervisor flagged as not seeing themselves on their own team's list ("SIWAONI") -- the same
   flag, and the same PLACE handling, as the four Chamwino/Moro Center/Kihonda officers of 12
