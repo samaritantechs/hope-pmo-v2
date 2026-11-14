@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 76**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 77**.
 
 ---
 
@@ -79,6 +79,17 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Part 75's never-once-current rows corrected twice within the hour, 14 Nov** (handbook
+  Part 77) — "i think you added no-date instead of customers staying in their respective
+  initial defaulters days" and, a first fix later, "i already said that we already know their
+  days due disb date column but you just distract me man." The row was bucketed "No date";
+  wrongly fixed to TODAY's own weekday; actually fixed by reading the real `disb_date` that was
+  sitting on the ref's own initial row the whole time (the column is on `defaulter_snapshots`
+  itself, never gated to current-type rows) and computing its real two cycle days the identical
+  way every current-deck row already does. The dedicated test from Part 75 was itself asserting
+  the bug — its own fixture helper sets a real `disb_date` by default, so the code simply never
+  read a date the test had already given it. One column added to an existing read; no new
+  read, `test/speed.test.mjs` unaffected. `npm test`: 1,533 pass. Server-only.
 - **A production incident, 14 Nov: Expected Defaulters hung past 45 seconds, "Imeshindikana /
   Could not load"** (handbook Part 76) — triggered by the owner's own first-ever real run of
   `db/RUN-ME-055`: every earlier call to `defaulter_ghost_rows()` had failed fast with "function

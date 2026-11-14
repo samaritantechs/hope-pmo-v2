@@ -363,8 +363,13 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
    internal bookkeeping key every row by role|leader|ref, so a roleless customer has nowhere to
    go there regardless; extending this same fix to that side was tried and found to change
    nothing reachable, so it was not kept). */
-test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, unassigned', async () => {
+test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, unassigned, on their OWN real days from disb_date', async () => {
   const t = tables();
+  const before = await portalApi(fakeDb(tables(), { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  // D()'s own default disb_date is 2026-07-21, a Tuesday -> Day 1 Tue, Day 2 Fri (its own
+  // comment). "i already said that we already know their days due disb date column but you
+  // just distract me man" -- the owner, 14 Nov 2026: this ref's own initial-deck row already
+  // carries that real date, so it belongs on Tue/Fri, never on "No date" and never on "today".
   t.defaulter_snapshots.push(D('NOCUR1', 'KONGOWE', 20000, 'initial'));
   const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
   const row = d.rows.find(r => r.ref === 'NOCUR1');
@@ -376,8 +381,29 @@ test('expected defaulters: a customer missing from the current deck, with no cur
   assert.equal(row.leader, '(unassigned)', 'never a fabricated leader -- there is no real current-row data to read a cycle from');
   assert.equal(row.phase, null);
   assert.equal(row.role, null);
-  assert.equal(d.dist[0], 1, 'bucketed as undated, the same bucket an unreadable disbursement date already uses');
+  assert.equal(row.disb_date, '2026-07-21', 'the real date, read off its own initial row, not invented');
+  assert.equal(row.primary, 2); assert.equal(row.primaryName, 'Tue');
+  assert.equal(row.secondary, 5); assert.equal(row.secondaryName, 'Fri');
+  // Deltas against the identical fixture without this one row -- the baseline already has
+  // other customers on Tuesday/Friday, so the real proof is "one more on each of its own two
+  // real days, zero more on 'No date'," not an absolute count.
+  assert.equal(d.dist[2], before.dist[2] + 1, 'one more on its own real Tuesday, not dumped into "No date"');
+  assert.equal(d.dist[5], before.dist[5] + 1, 'and one more on its own real Friday too -- the same two-day cycle any other customer gets');
+  assert.equal(d.dist[0], before.dist[0], 'never "No date" when the date is actually known');
   assert.equal(d.initial, d.rows.reduce((s, r) => s + r.initial, 0), 'the grand total adds it in');
+});
+
+test('expected defaulters: a never-once-current customer whose own initial row ALSO carries no disb_date honestly falls to "No date", never a guess', async () => {
+  const t = tables();
+  const row = D('NODATE1', 'KONGOWE', 9000, 'initial');
+  row.disb_date = null;
+  t.defaulter_snapshots.push(row);
+  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  const r = d.rows.find(x => x.ref === 'NODATE1');
+  assert.ok(r, 'still found, even with no date at all to place it on');
+  assert.equal(r.status, 'CLEARED');
+  assert.equal(r.primary, 0); assert.equal(r.secondary, 0);
+  assert.equal(d.dist[0], 1, 'the one honest fallback left -- no real date anywhere on this ref, not even on its own initial row');
 });
 
 /* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
