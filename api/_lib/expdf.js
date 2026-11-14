@@ -159,6 +159,17 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
 const GHOST_TTL_MS = 90000;
 const GHOST_MISSING_TTL_MS = 5 * 60 * 1000;
 export const GHOST_BUDGET_MS = 800;              // passed only by expdfMine -- see adjustments.js's own ADJ_BUDGET_MS
+/* 14 Nov 2026 incident: expectedDefaulters, expdfReport, expdfLeader and expdfWeekCore all
+   called ghostRowsFor_ with budgetMs 0 -- "a report can wait out the rare slow read" was read
+   as "no ceiling at all," not "a longer one than the phone's." The day db/RUN-ME-055 was first
+   actually run on the live book, Expected Defaulters hung past the client's own 45-second fetch
+   timeout and failed to load, "Imeshindikana." Same shape as DASH_PREV_BUDGET_MS/
+   DASH_FLOORS_BUDGET_MS in portal-core.js (6000/8000ms, "well inside the client's 45 seconds"),
+   sized a little tighter here because these screens stack this read alongside several others in
+   the same request. Overridable the same way those two are (DASH_MONTH_BUDGET_MS's own test is
+   the precedent), so a test can shrink it instead of genuinely waiting out several seconds. */
+export const GHOST_REPORT_BUDGET_MS = 5000;
+export const ghostReportBudgetMs_ = () => Number(process.env.GHOST_REPORT_BUDGET_MS) || GHOST_REPORT_BUDGET_MS;
 const ghostCache = new WeakMap();                // db -> teamSetKey -> { at, rows, pending, missingAt }
 
 function withinMs_(p, ms, fallback) {
@@ -222,16 +233,21 @@ async function readGhosts_(db, teams, knownRefs, atMs) {
     whatever refs the caller already resolved from today's own deck (`knownRefs`) -- status is
     forced CLEARED for every one of these, unconditionally, by the caller (buildRows_): their
     absence from today's own deck IS the signal here, not a guess about whatever status text
-    their last known row happened to carry. `budgetMs` is honoured only by the sacred call path
-    (expdfMine passes GHOST_BUDGET_MS); a report can wait out the rare slow read, the phone
-    cannot -- and either way the read itself keeps running underneath and warms the cache for
-    the next caller, never cancelled. `teams` is the caller's own resolved list -- an
+    their last known row happened to carry. `budgetMs` is honoured by EVERY caller now, never
+    0 -- "a report can wait out the rare slow read, the phone cannot" used to mean the report
+    waited with no ceiling at all, and on 14 Nov, the first time db/RUN-ME-055 ever actually
+    ran a real query against the live book instead of erroring "function does not exist," that
+    turned into a real 45-second "Could not load" on Expected Defaulters (GHOST_REPORT_BUDGET_MS,
+    below -- "wait a while longer than the phone" was always the intent, "wait forever" never
+    was). Either way the read itself keeps running underneath and warms the cache for the next
+    caller, never cancelled -- a budget that is hit once is very unlikely to be hit twice in the
+    same 90-second GHOST_TTL_MS window. `teams` is the caller's own resolved list -- an
     unrestricted admin (`user.teams` null) reaches here with every team in the book, not
     nothing: that is the owner's own common sign-in, and ONE round trip for that whole list
-    (not one per team -- see readGhosts_'s own note) plus `budgetMs` on the sacred path are
-    what keep it safe, so the one person who asked for this the loudest is not the one it is
-    hidden from. An empty or missing `teams` here specifically means there was truly nothing to
-    resolve (no team at all), not "this caller is unrestricted". */
+    (not one per team -- see readGhosts_'s own note) plus `budgetMs` on every path are what keep
+    it safe, so the one person who asked for this the loudest is not the one it is hidden from.
+    An empty or missing `teams` here specifically means there was truly nothing to resolve (no
+    team at all), not "this caller is unrestricted". */
 export async function ghostRowsFor_(db, teams, knownRefs, budgetMs = 0) {
   if (!teams || !teams.length || typeof db.rpc !== 'function') return [];
   const normalized = (knownRefs || []).map(K);
@@ -242,7 +258,7 @@ export async function ghostRowsFor_(db, teams, knownRefs, budgetMs = 0) {
   return rows.filter(r => !known.has(K(r.ref))).map(r => ({ ...r, _ghost: true }));
 }
 
-export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false, ghostBudgetMs = 0 } = {}) {
+export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false, ghostBudgetMs = ghostReportBudgetMs_() } = {}) {
   const today = todayKey(nowMs), wd = currentWeekday(nowMs), mon = weekMondayKey(nowMs);
   // Only the baseline the period needs is read: Monday's deck for a week, the month's first
   // deck for a month, nothing extra for a day.
@@ -374,10 +390,12 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
     let curRows = cur.rows;
     if (d === today && ghostTeams) {
-      // No budget: this is the portal's own report, never the sacred call path (call-core.js
-      // reads only expdfMine), so it can wait out the rare slow read the way expectedDefaulters
-      // already does.
-      const ghosts = await ghostRowsFor_(db, ghostTeams, cur.rows.map(r => r.ref), 0);
+      // GHOST_REPORT_BUDGET_MS, not 0: this is the portal's own report, never the sacred call
+      // path (call-core.js reads only expdfMine), so it can wait longer than the phone's
+      // GHOST_BUDGET_MS -- but "longer" is not "unbounded." The 14 Nov incident on
+      // expectedDefaulters (see GHOST_REPORT_BUDGET_MS's own comment) was this exact assumption,
+      // read as no ceiling at all, on the day db/RUN-ME-055 first actually ran for real.
+      const ghosts = await ghostRowsFor_(db, ghostTeams, cur.rows.map(r => r.ref), ghostReportBudgetMs_());
       if (ghosts.length) curRows = cur.rows.concat(ghosts);
     }
     const built = buildRows_(user, curRows, baseBy, teamBy, strat, at);

@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 75**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 76**.
 
 ---
 
@@ -79,6 +79,26 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **A production incident, 14 Nov: Expected Defaulters hung past 45 seconds, "Imeshindikana /
+  Could not load"** (handbook Part 76) — triggered by the owner's own first-ever real run of
+  `db/RUN-ME-055`: every earlier call to `defaulter_ghost_rows()` had failed fast with "function
+  does not exist," so the one design choice behind this — pass `ghostRowsFor_` NO time budget on
+  a report screen, "it can wait out the rare slow read" — had never actually been tested against
+  a lookup that genuinely runs long. It was wrong: the live book's first real query burst through
+  the portal's own 45-second client timeout. **Not just `expectedDefaulters`** — the identical
+  "no budget" choice, the same words copied into a second comment, was also sitting in
+  `expdfReport`, `expdfLeader` and the week view (`expdfWeekCompute_`), so all four are fixed
+  together, in the one change, rather than only the one the owner happened to hit
+  (`GHOST_REPORT_BUDGET_MS`, 5000ms, env-overridable the same way the dashboard's own report
+  budgets already are). `expdfMine` — the phone's own sacred-path worklist — already had its own,
+  tighter budget and needed no change. A real test-writing trap found and avoided along the way:
+  a mock that simulates "the lookup never answers" with a promise that truly never settles
+  crashes node's own test runner and cascades to fail every later test in the file; the fix
+  mirrors an existing, already-safe pattern in this same test file (a mock that answers late
+  instead of never). No new read, no change to round-trip counts either way (`test/speed.test.mjs`
+  unaffected); no read on `/api/upload` or `/api/call`. `npm test`: 1,532 pass (one new test,
+  confirmed to fail on a deliberate revert before being kept). Server-only — `BUILD`/`CALL_BUILD`
+  unchanged.
 - **Staff registry, 14 Nov (third)** — a WhatsApp report of one officer who left the company
   (Team Kijichi, Zone Dar Center), tagged to this system. Phone number given alongside the
   name, so OFF had two ways to confirm the one person meant, not the name alone. The filled
@@ -1201,10 +1221,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner**: **`db/RUN-ME-055` (the ghost-rows migration, #697), confirmed 14 Nov not yet
-  run** — the Expected Defaulters weekday pills check-in (section 4, same day) read as the
-  answer to this. Run it to move the seven weekday numbers themselves (section 4 traces
-  exactly why #700's own fix, merged the same day, cannot).
+- **The owner**: whether the weekday pills (Mon 3888 … Sun 2493, section 4) actually moved once
+  Expected Defaulters could load again — `db/RUN-ME-055` is now run (confirmed 14 Nov: the index,
+  the function, and `db/RUN-ME-056`'s own function all read back) and the screen's 45-second hang
+  is fixed (section 4, Part 76), so both blockers that stood between those seven numbers and a
+  real answer are now cleared from this end; whether the numbers themselves came up the way the
+  owner expected is still theirs to look at and say.
 - **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
   new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
   line was mistaken for a role; and, worth confirming with the sender rather than guessing,
