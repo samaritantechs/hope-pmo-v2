@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 14 November 2026** — portal `BUILD 2026-11-14-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 73**.
+**As of 14 November 2026** — portal `BUILD 2026-11-14-c` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 75**.
 
 ---
 
@@ -78,6 +78,73 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 14 Nov (third)** — a WhatsApp report of one officer who left the company
+  (Team Kijichi, Zone Dar Center), tagged to this system. Phone number given alongside the
+  name, so OFF had two ways to confirm the one person meant, not the name alone. The filled
+  script went to the owner directly (never committed) and was tested twice against a
+  synthetic registry first (a decoy colleague on the same team left untouched; the role and
+  zone the person already carried left exactly as they were, since OFF only ever changes
+  status; a second run changing nothing and saying so). **Run and confirmed by the owner,
+  same day:** MADE INACTIVE — found not by an exact name match but one letter apart (the
+  registry's own spelling of the middle name differs from the WhatsApp message's by a single
+  letter), the fuzzy-match rank built for exactly this case (#671/#673's own precedent)
+  working correctly on the first run, no second round needed. Role and zone both came back
+  exactly as they already stood — Zone Dar Center was already right — since OFF never
+  touches either. The name, and the staff ID the script assigned, are in no file of the
+  repository.
+- **Expected Defaulters, the weekday pills, 14 Nov — checked in: Mon 3888 / Tue 2425 / Wed
+  2230 / Thu 3961 / Fri 3802 / Sat 2155 (confirmed as "leo" — today, 14 Nov, is a Saturday) /
+  Sun 2493, "Not yet" [the increase], "i even expect these nos to increse."** Traced to the
+  exact code: these are the "Mgawanyo wa wiki / Weekly distribution" pills on the Expected
+  Defaulters screen (`defexp`, `public/app.html`'s own `[1,2,3,4,5,6,7].map` pill row), each
+  counting a customer on both of their two weekly days. Read as the answer to the open question
+  in section 8 below: **`db/RUN-ME-055` (the ghost-rows migration, #697) has not been run.**
+  That — not #700's own narrower fix, merged today (below) — is what moves exactly these seven
+  numbers: a ghost row carries its customer's own real, last-known disbursement date
+  (`ghostRowsFor_`'s returned row), so once rescued it lands on its own real weekday pill, the
+  same as any other customer (`expectedDefaulters`, `portal-core.js` lines 1016-1018). #700's
+  own fix is for the narrower case of a customer who has NEVER once had a current-type row at
+  all — with no disbursement date of any kind to place it on a weekday, it is pushed into the
+  separate "No date" bucket (`primary: 0, secondary: 0`, deliberately, lines 1053 on) and so
+  cannot move these seven figures however many such customers exist. Told to the owner plainly,
+  with `db/RUN-ME-055` named again as the one still waiting.
+- **Expected Defaulters: a customer never once on a current row still shows, 14 Nov** — "a
+  customer who drops off the current deck entirely shouldnt be invisible anywhere," following
+  directly from the entry below. #697's own ghost mechanism rescues a customer missing from
+  today's current deck who has SOME current-type row anywhere in history; a customer whose
+  very first appearance anywhere is TODAY's own initial deck -- never once on a current row,
+  ever -- is the one case even that cannot reach, confirmed by tracing the real code. **Tried
+  first on `buildRows_` (api/_lib/expdf.js), and not kept there**: the fix changed nothing
+  reachable, since every one of its three callers (the phone's own list, the role-based
+  report, the leader tap-view) filters by role before anything else, and the week's own
+  internal bookkeeping does too -- confirmed empirically with a direct test against a closed
+  week, which still came back without the row. Reverted rather than shipped. **Kept on
+  `expectedDefaulters` instead** -- the one screen that lists every customer rather than one
+  leader's book, and the one that is not organized by role at all: the customer now shows,
+  status CLEARED, fully recovered, `role`/`phase` left null rather than fabricated, `leader`
+  reading the existing `'(unassigned)'` sentinel. No new read: today's own initial deck was
+  already fetched for this screen's existing baseline. `npm test`: 1,531 pass. No front-end
+  file touched; `BUILD`/`CALL_BUILD` unchanged. Handbook Part 75.
+- **Expected Defaulters recovery, corrected before it was ever run, 14 Nov** — "not yet, i
+  want the weekly cyle to be facts of the no of defaulters we really had, not who remained so
+  the lists per day must come from initial files i think," read against `db/RUN-ME-056`'s own
+  text before the owner had run it anywhere. The first cut drove from the CURRENT deck (a row
+  counted by its current status, or by matching that day's initial deck) -- "who remained,"
+  not "who we really had": a customer gone from the current deck ENTIRELY was never reached.
+  Inverted to drive from the INITIAL deck alone: every ref on a day's own initial deck counts,
+  full stop; a ref with no matching current row that day is read as fully recovered, the way
+  #697's own order already reads an absence everywhere else, now applied per day rather than
+  only to "today." A current-only defaulter-ish row with no matching initial row is excluded
+  outright -- the opposite of the first cut's own treatment of it. `db/RUN-ME-056` is revised
+  in place (the owner had read it, not run it, so nothing live needed migrating away from);
+  re-measured on the same 2.27-million-row fixture, unchanged within noise (~210ms worst case,
+  ~50ms the common case) since the row count read is the same, only which rows are kept
+  changed. **Flagged, not changed:** the dedicated Exp.Def Report's own week
+  (`buildRows_`/`expdfWeekCore`) has the identical gap in its own code today -- its own
+  comment already says so -- but it feeds the phone's sacred call path too, so extending this
+  same fix there is a separate, bigger decision, not made here without being asked. `npm test`:
+  1,530 pass (the dedicated test from the same day rewritten with the two flipped cases, not a
+  new one added). `BUILD 2026-11-14-c`; `CALL_BUILD` untouched. Handbook Part 74.
 - **"Orodha / List of expected defaulters not yet having the cleared customers", 14 Nov —
   checked, no code fault found; most likely the ghost migration, not yet confirmed run.** "Orodha
   / List" is not its own screen -- it is the generic table header this system's own code
@@ -1133,11 +1200,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner**: whether `db/RUN-ME-055` (the ghost-rows migration, #697) has actually been
-  run — nothing in this file confirms it, unlike every other recent migration — and, if the
-  "Orodha / List of expected defaulters" cleared-customer report (section 4, 14 Nov) is still
-  wrong once it has, which exact customer and tab, since a careful code-level check found
-  nothing else that would hide one.
+- **The owner**: **`db/RUN-ME-055` (the ghost-rows migration, #697), confirmed 14 Nov not yet
+  run** — the Expected Defaulters weekday pills check-in (section 4, same day) read as the
+  answer to this. Run it to move the seven weekday numbers themselves (section 4 traces
+  exactly why #700's own fix, merged the same day, cannot).
 - **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
   new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
   line was mistaken for a role; and, worth confirming with the sender rather than guessing,

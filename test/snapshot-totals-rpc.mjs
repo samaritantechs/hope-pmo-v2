@@ -488,14 +488,19 @@ export const DEFAULTER_GHOST_ROWS_RPC = {
 };
 
 /* expdf_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-056, clause for clause: the
-   dashboard's own team-wide "Expected Defaulters recovery" cards. buildRows_'s membership test
-   (api/_lib/expdf.js), ported -- a current row counts when it is Chronic/Expired/(Partial)
-   Defaulter by status, OR matched by ref to that SAME day's own initial deck -- and recovered
-   is a SUM OF PER-CUSTOMER CLAMPED DIFFERENCES, never a team-total subtraction (that is
-   recovery_standing's own question, above, a different one on purpose -- see the SQL file's
-   header for why the two are allowed to disagree). Exact date+weekday match on both decks,
-   never "the latest upload on or before" -- recovery_standing's own carry-forward rule would
-   be wrong here, for the identical reason recoveryByTeam's own note gives. */
+   dashboard's own team-wide "Expected Defaulters recovery" cards. DRIVEN BY THE INITIAL DECK,
+   not the current one -- "the lists per day must come from initial files," the owner, 14 Nov
+   2026, read and corrected before this was ever run. Every ref on a day's own initial deck
+   counts, full stop; the current deck is looked up for that ref, never iterated on its own,
+   and a ref not found there reads as fully recovered (current 0), the way #697's own order
+   already reads an absence everywhere else, applied per day instead of only to "today." A ref
+   on the current deck that never appeared on that SAME day's initial deck is not counted at
+   all, whatever its status says. Recovered is a SUM OF PER-CUSTOMER CLAMPED DIFFERENCES, never
+   a team-total subtraction (that is recovery_standing's own question, above, a different one
+   on purpose -- see the SQL file's header for why the two are allowed to disagree). Exact
+   date+weekday match on both decks, never "the latest upload on or before" --
+   recovery_standing's own carry-forward rule would be wrong here, for the identical reason
+   recoveryByTeam's own note gives. */
 export const EXPDF_RECOVERY_RPC = {
   expdf_recovery_totals(store, a = {}) {
     const src = (store.defaulter_snapshots && store.defaulter_snapshots.rows) || [];
@@ -521,7 +526,7 @@ export const EXPDF_RECOVERY_RPC = {
         if (!e || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
         const ref = String(r.ref);
         const c = m.get(ref);
-        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref, arrears: n0(r.arrears), status: r.status });
+        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref, arrears: n0(r.arrears) });
       }
       return m;
     };
@@ -538,15 +543,15 @@ export const EXPDF_RECOVERY_RPC = {
       const cur = readDeck('current', d, wd);
       const byTeam = new Map();
       const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, recovered: 0 }).get(String(t));
-      for (const c of cur.values()) {
-        const i = ini.get(c.ref);
-        const s = String(c.status == null ? '' : c.status).toUpperCase();
-        const defaulterish = s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT');
-        if (!i && !defaulterish) continue;                    // not Exp.Def's population: excluded
-        const refInitial = i ? i.arrears : c.arrears;          // current-only, defaulter-ish: a wash
-        const e = cell(c.team);
-        e.initial += refInitial; e.current += c.arrears;
-        e.recovered += Math.max(0, refInitial - c.arrears);    // per-customer clamp, THEN summed
+      // DRIVEN BY INITIAL: every ref here counts, whatever the current deck says (or does not
+      // say at all). A current-only ref (not in `ini`) is never visited -- `cur` is only a
+      // lookup, read through `ini`'s own refs.
+      for (const i of ini.values()) {
+        const c = cur.get(i.ref);
+        const curArrears = c ? c.arrears : 0;                 // no current row at all: fully recovered
+        const e = cell(i.team);
+        e.initial += i.arrears; e.current += curArrears;
+        e.recovered += Math.max(0, i.arrears - curArrears);   // per-customer clamp, THEN summed
       }
       for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
         out.push({ snapshot_date: d, team: e.team, initial: e.initial, current: e.current, recovered: e.recovered });

@@ -347,6 +347,39 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
   assert.ok(past.rows.some(r => r.ref === 'A1'), 'the real customer is still there -- only the ghost lookup is skipped, nothing else about the closed week');
 });
 
+/* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
+   owner, 14 Nov 2026. ghostRowsFor_ (the test above) rescues a ref missing from today's
+   current deck that has SOME current-type row anywhere in this team's history -- its own join
+   needs that to exist. A ref whose very first appearance anywhere is today's own initial deck,
+   never once on a current-type row, is the one case even that cannot reach (the RPC's own
+   candidate-walk finds the ref, but the join behind it returns nothing for it). Added here,
+   additively: a customer on today's own initial deck still shows, status CLEARED, counted in
+   every total, but never credited to a real leader -- assignFor needs fields that live only on
+   a current-deck row, which this ref has never had, so role/phase stay null and leader reads
+   the honest '(unassigned)' sentinel this screen already uses for "nobody to credit". Checked
+   here only -- expectedDefaulters is the one screen in this system that lists every customer
+   rather than one leader's own book (buildRows_ and its own callers, api/_lib/expdf.js, are
+   ALL structured around a role: the phone's list, the role-based report, even the week's own
+   internal bookkeeping key every row by role|leader|ref, so a roleless customer has nowhere to
+   go there regardless; extending this same fix to that side was tried and found to change
+   nothing reachable, so it was not kept). */
+test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, unassigned', async () => {
+  const t = tables();
+  t.defaulter_snapshots.push(D('NOCUR1', 'KONGOWE', 20000, 'initial'));
+  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
+  const row = d.rows.find(r => r.ref === 'NOCUR1');
+  assert.ok(row, 'found -- not silently dropped for lack of any current row at all');
+  assert.equal(row.status, 'CLEARED');
+  assert.equal(row.arrears, 0, 'nothing current to report');
+  assert.equal(row.initial, 20000, 'its own day\'s initial baseline');
+  assert.equal(row.recovered, 20000, 'fully recovered -- the same absence-is-the-signal rule the ghost already follows');
+  assert.equal(row.leader, '(unassigned)', 'never a fabricated leader -- there is no real current-row data to read a cycle from');
+  assert.equal(row.phase, null);
+  assert.equal(row.role, null);
+  assert.equal(d.dist[0], 1, 'bucketed as undated, the same bucket an unreadable disbursement date already uses');
+  assert.equal(d.initial, d.rows.reduce((s, r) => s + r.initial, 0), 'the grand total adds it in');
+});
+
 /* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
    this shipped: nothing in the suite exercised GHOST_BUDGET_MS/withinMs_'s own timeout-
    abandonment at all (test/speed.test.mjs counts round trips and rows, never wall-clock), the
@@ -6979,14 +7012,30 @@ test('the strip\'s Early Collection tile is the week, among the teams this viewe
    trend", not a renamed copy of it: recovered here is a SUM OF PER-CUSTOMER, CLAMPED
    differences, never a team-total subtraction -- so a customer whose arrears grew contributes
    nothing (never a negative), while recTrend's own team-total figure nets that loss against
-   a stranger's gain on the exact same underlying rows. */
-test('Expected Defaulters recovery is a sum of per-customer clamped differences, never recTrend\'s team-total subtraction', async () => {
+   a stranger's gain on the exact same underlying rows.
+
+   DRIVEN BY THE INITIAL DECK, NOT THE CURRENT ONE -- "i want the weekly cycle to be facts of
+   the no of defaulters we really had, not who remained so the lists per day must come from
+   initial files" -- the owner, 14 Nov 2026, read and corrected before this was ever run on a
+   real database. X3 and X4 below are the two cases that prove it: X3 (on the initial deck,
+   gone from the current deck entirely) now counts, fully recovered, never invisible; X4 (on
+   the current deck with a defaulter-ish status, never on that day's own initial deck) now
+   does NOT count at all -- the opposite of each other's old treatment. */
+test('Expected Defaulters recovery comes from the initial deck -- a customer missing from today\'s current deck is recovered, not invisible', async () => {
   const t = tables();
   t.defaulter_snapshots = [
     // X1: a real recovery, 100,000 -> 40,000.
     D('X1', 'KONGOWE', 100000, 'initial'), D('X1', 'KONGOWE', 40000, 'current'),
     // X2: arrears GREW, 50,000 -> 80,000. Per-customer clamp: contributes 0, never negative.
     D('X2', 'KONGOWE', 50000, 'initial'), D('X2', 'KONGOWE', 80000, 'current'),
+    // X3: on today's own INITIAL deck, 30,000 -- and nowhere on today's CURRENT deck at all.
+    // "the no of defaulters we really had, not who remained": X3 WAS a defaulter today, by
+    // the initial file, so X3 counts -- fully recovered (current 0), never dropped.
+    D('X3', 'KONGOWE', 30000, 'initial'),
+    // X4: on today's CURRENT deck with a defaulter-ish status, but never on today's own
+    // INITIAL deck at all. "the lists per day must come from initial files": X4 is not
+    // today's to count, whatever its status says -- excluded outright.
+    { ...D('X4', 'KONGOWE', 99999, 'current'), status: 'Chronic' },
     // Last Friday, so the arrow has something to compare against: one customer, 100,000 -> 90,000.
     D('X1', 'KONGOWE', 100000, 'initial', 45, '2026-07-17'), D('X1', 'KONGOWE', 90000, 'current', 45, '2026-07-17'),
   ];
@@ -6995,19 +7044,17 @@ test('Expected Defaulters recovery is a sum of per-customer clamped differences,
 
   const fri = d.edrTrend.find(x => x.date === TODAY);
   assert.equal(fri.uploaded, true);
-  assert.equal(fri.initial, 150000, 'X1 100,000 + X2 50,000');
-  assert.equal(fri.current, 120000, 'X1 40,000 + X2 80,000');
-  assert.equal(fri.recovered, 60000, "X1's 60,000 recovered -- X2's own loss clamped to 0, never netted against it");
-  assert.equal(fri.pct, 40, '60,000 of 150,000');
-  assert.equal(fri.dEdr, 30, '40.0 this Friday vs 10.0 last Friday (10,000 of 100,000)');
+  assert.equal(fri.initial, 180000, 'X1 100,000 + X2 50,000 + X3 30,000 -- X4 never counted, not on the initial deck');
+  assert.equal(fri.current, 120000, "X1 40,000 + X2 80,000 + X3's own 0 (missing from current entirely)");
+  assert.equal(fri.recovered, 90000, "X1's 60,000 + X3's full 30,000 -- X2's loss clamped to 0, X4 excluded outright");
+  assert.equal(fri.pct, 50, '90,000 of 180,000');
+  assert.equal(fri.dEdr, 40, '50.0 this Friday vs 10.0 last Friday (10,000 of 100,000)');
 
   // THE SAME UNDERLYING ROWS, READ recTrend's OWN way (team-total subtraction), disagree --
   // on purpose, documented, the same as #688 let two figures on one screen disagree rather
   // than force a wrong agreement.
   const friRec = d.recTrend.find(x => x.date === TODAY);
-  assert.equal(friRec.from, 150000, 'the same two decks');
-  assert.equal(friRec.to, 120000);
-  assert.notEqual(friRec.recovered, fri.recovered, "recTrend nets X2's loss against X1's gain -- 30,000, not 60,000");
+  assert.notEqual(friRec.recovered, fri.recovered, "recTrend's own deck-total shape reads this day differently");
 
   // A day with nothing uploaded (Monday of the same week) is unmeasured, never a guessed zero.
   const mon = d.edrTrend.find(x => x.date === MON);
@@ -7016,14 +7063,14 @@ test('Expected Defaulters recovery is a sum of per-customer clamped differences,
   assert.equal(mon.dEdr, null);
 
   // The week's own total, worked out beside the tiles it sums.
-  assert.equal(d.edrTrendTotal.initial, 150000);
-  assert.equal(d.edrTrendTotal.recovered, 60000);
-  assert.equal(d.edrTrendTotal.pct, 40);
+  assert.equal(d.edrTrendTotal.initial, 180000);
+  assert.equal(d.edrTrendTotal.recovered, 90000);
+  assert.equal(d.edrTrendTotal.pct, 50);
 
   // Team-scoped at the database -- a GMO who can only see KONGOWE reads the same figures (the
   // whole fixture is one team here), the same scoping every sibling card has.
   const dGmo = await run('dashboardFull', {}, GMO, db);
-  assert.equal(dGmo.edrTrend.find(x => x.date === TODAY).recovered, 60000);
+  assert.equal(dGmo.edrTrend.find(x => x.date === TODAY).recovered, 90000);
 
   // A database without db/RUN-ME-056 run (the EXPDF_RECOVERY_RPC mock left out) reads "not
   // yet filed" on every day, never a failed dashboard load.

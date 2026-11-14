@@ -779,7 +779,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-14-b';
+var BUILD = '2026-11-14-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3940,7 +3940,7 @@ VIEWS.dashboard = function(){
          per-customer, never-negative differences (api/_lib/snapshot-totals.js's own note on
          expdfRecoveryTotals), which is why it can read differently from the "Weekly recovery
          trend" card above on the same day, on purpose. */
-      + trendGrid('Expected Defaulters recovery (Mon–Sun)', 'Chronic · Expired · Defaulter, today’s own initial deck included · recovered = initial − current per customer, never negative', 'gEdr',
+      + trendGrid('Expected Defaulters recovery (Mon–Sun)', 'who that day’s own initial file had, whatever the current file now shows · recovered = initial − current per customer, never negative', 'gEdr',
           d.edrTrend.map(function(x){ return x.uploaded === false
             ? tcell(wdLabel(x.weekday), [['—', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [

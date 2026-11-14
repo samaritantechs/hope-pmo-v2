@@ -1037,6 +1037,31 @@ async function expectedDefaulters(db, user, _args, nowMs) {
         phase: a.phase, role: a.role, cycle: a.label,
         leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)' };
     });
+  /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" --
+     the owner, 14 Nov 2026 -- the same order buildRows_ (expdf.js) answers, read here too so
+     the two stay the one rule they already are (#696's own note on this pair: "one rule, read
+     twice", not a guarantee the two can never disagree, since this screen and the Exp.Def
+     Report already resolve "today" by two separate, pre-existing rules). ghostRowsFor_ above
+     rescues a ref missing from TODAY's current deck that has SOME current-type row anywhere in
+     this team's history; a ref whose very first appearance is today's own initial deck -- never
+     once on a current-type row, ever -- is the one case even that cannot reach, and it was
+     simply absent from `def.rows`+`ghosts` to begin with. Added additively, never replacing a
+     row the filter above already built. NEVER A FABRICATED ROLE OR LEADER: assignFor needs
+     fields that live only on a current-deck row, which this ref has never had, so role/phase/
+     cycle stay null and leader reads '(unassigned)' -- the same honest sentinel this screen
+     already uses for "a team with nobody in that role", now also meaning "nobody to credit". */
+  const seenRefs = new Set(rows.map(r => K(r.ref)));
+  for (const r of scoped(user, iniSnap.rows)) {
+    const ref = K(r.ref);
+    if (seenRefs.has(ref)) continue;
+    seenRefs.add(ref);
+    const initial = num(r.arrears);
+    rows.push({ ref: r.ref, full_name: null, contact: null, team: r.team,
+      arrears: 0, initial, recovered: initial, balance: null, ds: null, dc: null,
+      status: 'CLEARED', disb_date: null, primary: 0, secondary: 0,
+      primaryName: '—', secondaryName: '—',
+      phase: null, role: null, cycle: null, leader: '(unassigned)' });
+  }
   // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.
   // Day 0 holds anyone whose loan carries no disbursement date: they cannot be placed on a
   // weekday, and the live system simply dropped them from the cycle. Silently losing a
@@ -12286,10 +12311,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        arrows as usual" ... "Am talking of the days performance Monday to Sunday like the cards
        showing summary of sales and collection per day" -- the owner, 14 Nov 2026, confirming
        these are team-wide day tiles, never the per-officer figure the dedicated Exp.Def Report
-       shows. See db/RUN-ME-056 and snapshot-totals.js's own long note on expdfRecoveryTotals
-       for why this reads the ONE existing rule that decides who COUNTS as an Expected
-       Defaulter (buildRows_, expdf.js) rather than either re-reading the whole week's raw
-       decks (expdfWeekCore's own shape: ~13 more round trips) or re-deriving the rotation that
+       shows -- and, the same day, read and corrected before it was ever run: "i want the
+       weekly cycle to be facts of the no of defaulters we really had, not who remained so the
+       lists per day must come from initial files." Every ref on a day's own INITIAL deck
+       counts, full stop; the current deck is only looked up for that ref, never iterated on
+       its own, so a customer missing from today's current deck entirely reads as fully
+       recovered, never invisible. See db/RUN-ME-056 and snapshot-totals.js's own long note on
+       expdfRecoveryTotals for the rest, and for why this never re-reads the whole week's raw
+       decks (expdfWeekCore's own shape: ~13 more round trips) or re-derives the rotation that
        decides WHO owns a customer a second time, in SQL. THIS week unbounded (the cards' own
        headline figures), LAST week budgeted exactly like expPrev/defPrev/ecolPrev above, for
        the identical reason: it exists only to feed the day tiles' own arrows. `null` (not `[]`)
@@ -12917,7 +12946,10 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
       days performance Monday to Sunday like the cards showing summary of sales and collection
       per day" -- the owner, 14 Nov 2026. Team-wide, day by day, the same shape as the four
-      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows (see
+      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows, and
+      driven by the INITIAL deck ("the lists per day must come from initial files," the same
+      day, read and corrected before this was ever run) so a customer missing from today's
+      current deck entirely is fully recovered here, never invisible (see
       snapshot-totals.js's own long note on expdfRecoveryTotals for why, and for why
       `recovered` here is a sum of per-customer CLAMPED differences, never the team-total
       subtraction recTrend above uses -- the two are allowed to disagree on the same day, on
