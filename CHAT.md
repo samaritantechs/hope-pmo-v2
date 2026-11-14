@@ -78,6 +78,36 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 14 Nov (third)** — a WhatsApp report of one officer who left the company
+  (Team Kijichi, Zone Dar Center), tagged to this system. Phone number given alongside the
+  name, so OFF had two ways to confirm the one person meant, not the name alone. The filled
+  script went to the owner directly (never committed) and was tested twice against a
+  synthetic registry first (a decoy colleague on the same team left untouched; the role and
+  zone the person already carried left exactly as they were, since OFF only ever changes
+  status; a second run changing nothing and saying so). **Run and confirmed by the owner,
+  same day:** MADE INACTIVE — found not by an exact name match but one letter apart (the
+  registry's own spelling of the middle name differs from the WhatsApp message's by a single
+  letter), the fuzzy-match rank built for exactly this case (#671/#673's own precedent)
+  working correctly on the first run, no second round needed. Role and zone both came back
+  exactly as they already stood — Zone Dar Center was already right — since OFF never
+  touches either. The name, and the staff ID the script assigned, are in no file of the
+  repository.
+- **Expected Defaulters, the weekday pills, 14 Nov — checked in: Mon 3888 / Tue 2425 / Wed
+  2230 / Thu 3961 / Fri 3802 / Sat 2155 (confirmed as "leo" — today, 14 Nov, is a Saturday) /
+  Sun 2493, "Not yet" [the increase], "i even expect these nos to increse."** Traced to the
+  exact code: these are the "Mgawanyo wa wiki / Weekly distribution" pills on the Expected
+  Defaulters screen (`defexp`, `public/app.html`'s own `[1,2,3,4,5,6,7].map` pill row), each
+  counting a customer on both of their two weekly days. Read as the answer to the open question
+  in section 8 below: **`db/RUN-ME-055` (the ghost-rows migration, #697) has not been run.**
+  That — not #700's own narrower fix, merged today (below) — is what moves exactly these seven
+  numbers: a ghost row carries its customer's own real, last-known disbursement date
+  (`ghostRowsFor_`'s returned row), so once rescued it lands on its own real weekday pill, the
+  same as any other customer (`expectedDefaulters`, `portal-core.js` lines 1016-1018). #700's
+  own fix is for the narrower case of a customer who has NEVER once had a current-type row at
+  all — with no disbursement date of any kind to place it on a weekday, it is pushed into the
+  separate "No date" bucket (`primary: 0, secondary: 0`, deliberately, lines 1053 on) and so
+  cannot move these seven figures however many such customers exist. Told to the owner plainly,
+  with `db/RUN-ME-055` named again as the one still waiting.
 - **Expected Defaulters: a customer never once on a current row still shows, 14 Nov** — "a
   customer who drops off the current deck entirely shouldnt be invisible anywhere," following
   directly from the entry below. #697's own ghost mechanism rescues a customer missing from
@@ -1170,11 +1200,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner**: whether `db/RUN-ME-055` (the ghost-rows migration, #697) has actually been
-  run — nothing in this file confirms it, unlike every other recent migration — and, if the
-  "Orodha / List of expected defaulters" cleared-customer report (section 4, 14 Nov) is still
-  wrong once it has, which exact customer and tab, since a careful code-level check found
-  nothing else that would hide one.
+- **The owner**: **`db/RUN-ME-055` (the ghost-rows migration, #697), confirmed 14 Nov not yet
+  run** — the Expected Defaulters weekday pills check-in (section 4, same day) read as the
+  answer to this. Run it to move the seven weekday numbers themselves (section 4 traces
+  exactly why #700's own fix, merged the same day, cannot).
 - **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
   new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
   line was mistaken for a role; and, worth confirming with the sender rather than guessing,
