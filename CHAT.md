@@ -78,6 +78,21 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **Staff registry, 14 Nov** — a new-hire form for a Dar es Salaam employee, forwarded twice
+  (the same message, not two people), tagged "@Mark2" (this system) and "Naomba afisa awekwe
+  kwenye Mfumo wa sarery advance" (please have the officer placed in the Salary Advance
+  system). The owner was asked for the zone, since the form names none and the one it would
+  imply is not yet known to be a filed team's own: answered directly, **Dar Center**. **Left
+  as ASK, not filed, for what the form still does not give:** no role and no team at all — a
+  name and phone appearing after the form's own fields read as the WhatsApp sender's own
+  signature (a different person, a driver, not the new hire), not a role for the person this
+  form is actually about. Two more flags, for the owner to settle with the sender rather than
+  a script guessing: the form's own birth date and its own start-of-employment date are the
+  identical day, which nobody can really have both happened on; and no NIDA was given at all,
+  a Tanzanian voter's registration number standing in its place, a different ID entirely. Both
+  guarantors given (a mother, a sister) fit the registry's two kin slots and need no choice
+  between them. Account, TIN and NSSF are all "on process" and so left out, as always. Nothing
+  is filed until the role and team come back. The name is in no file of the repository.
 - **The Loan pipeline widget leaves; Expected Defaulters recovery, Mon–Sun, arrives, 14 Nov**
   — "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
   cards Monday to Sunday with rising and falling arrows as usual"; asked whether that meant
@@ -1102,6 +1117,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner**: the staff-registry form of 14 Nov (section 4) — the role and team for the
+  new Dar es Salaam hire (zone already given, Dar Center); whether the sender's own signature
+  line was mistaken for a role; and, worth confirming with the sender rather than guessing,
+  the matching birth/start date and the voter's-registration number standing in for a NIDA.
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
 - **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and
