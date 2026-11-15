@@ -58,6 +58,7 @@ Given since, and written nowhere else:
 | 12 Nov 2026 | "always Auto default grant all tabs to admin role. i dont have to go manually grant all new tabs i create" | Admin's own access to a screen was never actually gated on a hand-typed list in the first place — `allowed()` in `app.html` and `tabGate_` in `portal-core.js` both pass anyone whose role reads ADMIN before either one ever looks at a tabs list, and that stays true for every tab this system has or will have, with no step of any kind. What a new tab's id still has to be named in, once, is `EXTRA_TABS` (`api/_lib/auth.js`) — not for admin's sake, but because that is the one list the Roles & access screen reads to offer a checkbox for granting the tab to a *different* role; `ADMIN_TABS` is now computed from it rather than carrying a second, separately-typed copy, so the two can no longer drift apart the way they did the day this order was given (`leave`/`leaverep` named in one and not the other). |
 | 14 Nov 2026 | "if there is sql text to run always provide it right away not waiting me to dream bro" | **Any SQL waiting to be run is pasted in full, in the chat, the moment it comes up — never just named by file.** Said after a chat pointed at `db/RUN-ME-055` by name (twice) without ever pasting its text. Applies to a migration already sitting in the repo waiting on the owner (RUN-ME-05x and the like) the same as a freshly filled staff-change script: if the owner would have to go find or ask for the text, that is the failure this order is against. |
 | 14 Nov 2026 | "dont just bring things up and kill the whole system better pass through the old chat brother" · "before fixing anything becase all these have their rules there already" · "Please never fix my system by making up a new rule unless we building something new to it - everything that was there has taken days anmd nights man" | **A surprising result is read against the rule that already governs it before anything is called a gap.** Said when a chat treated a deliberately-scoped, three-times-reviewed design decision (Parts 69-71: the ghost rescue reaches only *today*, never a past day, on purpose) as a newly-found bug worth fixing. `docs/HANDOFF.md`'s own Parts are the record of that reasoning — read the Part behind a screen before proposing a change to it, and if the existing rule already explains what is being seen, say so and stop, rather than inventing a new one beside it. A new rule is for new ground, never a patch for old ground that already has one. |
+| 15 Nov 2026 | "i said i cant be re-asking or re-prompting what i already did - i dont expect these - {merge it bro} complete whatever asked not partials waiting another promts. man my head is done" | **A chat's own caution is not a reason to hold a green, tested change back.** Said after a chat opened #703 as a draft "for a second look" nobody asked for. The existing rule already covered this ("Merge now... I never said that rule," 11 Nov) — this restates it for a chat's own extra-care instinct, not only a time-of-day one: once `npm test` and CI both read clean, merge it the same session, the same as anything else. A real blocker (a merge conflict, a failing test, a question only the owner can answer) is still said once and acted on; "I'd like someone to look this over first" is not one of those and is never grounds to leave work half-delivered, waiting on a prompt that should not have to come. |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -104,7 +105,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   what is EMPTY, never overwrites an existing role, so neither was touched — correctly, since a
   script cannot know which of a promotion, a demotion or two different people sharing a name is
   the true story. Both left exactly as filed; see section 8.
-- **#703 (draft, not merged) — the Exp.Def week keeps a day's own initial-only customer too,
+- **#703 (merged) — the Exp.Def week keeps a day's own initial-only customer too,
   unassigned, never guessed (handbook Part 78).** "as i said we have initial of a day, i expect
   that customer in initial never to get lost even if cleared its amounts and statuses that
   change" — read against the real Thursday 12 Nov/ref 4231948032 case (Part 77). A **day-ghost**:
@@ -127,9 +128,12 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   pass (one new test — and a real fixture bug caught building it: giving the new row its own
   `upload_batch` collided with the "latest batch per team+weekday" rule and silently dropped
   that day's real rows, nothing to do with the fix itself; fixed by sharing the day's real
-  batch). `BUILD 2026-11-15-a`; `CALL_BUILD` untouched. **Shipped as a draft PR, not merged** —
-  this exact subsystem has needed real correction three times in the last day alone (Parts
-  76-77 above), so this one gets a second look before it joins `main`, not an automatic merge.
+  batch). `BUILD 2026-11-15-a`; `CALL_BUILD` untouched. Opened as a draft first and merged the
+  same session once `npm test` and CI both read clean — "i cant be re-asking or re-prompting
+  what i already did... complete whatever asked not partials waiting another promts," the
+  owner, 15 Nov: holding a green, tested change back for an extra look it was not asked for is
+  exactly the partial-and-waiting pattern this order is against. Standing order recorded in
+  section 2.
 - **4231948032 / Thursday 12 Nov, re-examined, 14 Nov — Parts 69-71 already cover it; nothing
   changed.** Asked why she still does not show on Thursday 12th's own tab in the week view even
   with everything shipped today. Read Parts 69-71 in full rather than guessing: the "keep a
@@ -1318,9 +1322,6 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   whether January Jacob Joseph, Amosi Joseph, Epitas Bitangisake Mtahilaja and Eliud Moses Erasto
   are new staff never yet filed, or existing staff under spellings too different for this round's
   fuzzy match to trust — a phone number or account for any of the four would settle it.
-- **Anyone reviewing #703 (section 4, handbook Part 78)** — shipped as a draft on purpose, not
-  merged: this exact subsystem (the Exp.Def week/ghost mechanisms) has needed real correction
-  three times in the twenty-four hours before it, so it gets a second look before joining `main`.
 - **The owner**: whether the weekday pills (Mon 3888 … Sun 2493, section 4) actually moved once
   Expected Defaulters could load again — `db/RUN-ME-055` is now run (confirmed 14 Nov: the index,
   the function, and `db/RUN-ME-056`'s own function all read back) and the screen's 45-second hang
