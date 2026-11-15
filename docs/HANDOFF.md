@@ -6383,6 +6383,123 @@ and proves a day (not week) reading of the same screen carries no `unassignedCle
 all, flagging the known, deliberately out-of-scope gap rather than leaving it unexplained.
 `npm test`: 1,534 pass. No read on `/api/upload` or `/api/call`.
 
+## Part 79 — The dashboard's Expected Defaulters recovery is each day's own list, not the whole book
+
+> "i dont think all the amount we recover per day is of expected defaulters only - these widgets
+> are confusing too" ... "whole company recovery being equal to expected defaulters recovery is
+> abnormal, fixed?" -- the owner, 14 Nov 2026. And the next day, with the two dashboard cards
+> side by side: "This cant be okay" ... "recovered amounts of full cant equal of owed expected
+> defs".
+
+**What the owner was looking at.** "Weekly recovery trend (Mon-Sun)" and, under it, "Expected
+Defaulters recovery (Mon-Sun)": Monday 9,286,335 on both, Tuesday 13,911,553 on both, Friday
+11,913,273 on both; Wednesday, Thursday and Saturday a few tens of thousands apart. Two cards
+with two names and one figure.
+
+**The owner was right, and was first told otherwise.** On 14 Nov the answer given was that the
+two cards read the same defaulter files by two formulas, on purpose. That described the code
+correctly and missed the point: the code was wrong. An Expected Defaulter OF A DAY has had one
+definition in this system since the tab of that name was built --
+
+> "Every defaulter is visited twice a week and the two days are derived from the loan itself:
+> the weekday it was disbursed on (Day 1) and three days later (Day 2)" -- `expectedDefaulters`,
+> `api/_lib/portal-core.js`: the Mon..Sun pills of the Expected Defaulters tab. And the daily
+> list of the Exp.Def Report: "on a daily reading, the customers whose cycle day it is"
+> (`periodRows_`, `api/_lib/expdf.js`).
+
+-- and the function behind the card (Part 73, `db/RUN-ME-056`) ported the Exp.Def Report's test
+for "is this customer in the file" (`buildRows_`) and left out its test for "is today their
+day" (`periodRows_`). Part 74 moved the driving table to the initial deck, which was right, and
+carried the omission with it. So every tile summed the whole defaulter book: the population
+"Weekly recovery trend" reads. The two could differ only by a customer whose arrears grew.
+No rule was missing. The card did not follow the one there was.
+
+**What a tile is now.** For day D and each team:
+
+- **Who:** a customer on D's own INITIAL file ("i want the weekly cyle to be facts of the no
+  of defaulters we really had, not who remained so the lists per day must come from initial
+  files") whose Day 1 or Day 2 is D's weekday. Day 1 is the weekday of the disbursement date;
+  Day 2 is three days later, wrapping the week, Monday 1 to Sunday 7 -- `buildRows_`'s own
+  formula, `((primary - 1 + 3) % 7) + 1`, to the character. The date is read off the customer's
+  row on the initial file; where that row has none, off the same customer's row on the same
+  day's current file.
+- **What came back:** initial arrears less the SAME day's current arrears, per customer, never
+  negative; a customer the current file no longer names is recovered in full; a customer the
+  initial file never named is not counted. Unchanged from Parts 73 and 74.
+- **The percentage:** recovered over the initial arrears of that day's own list -- "opnly expeef
+  is against total arrea of the day given".
+- **A customer with no disbursement date** on either row has no day. The Exp.Def week already
+  says what to do with one (Part 54): counted ONCE for the week, on the last day that carried
+  them, never once per day. The same here, within the dates one call asks for; and not at all
+  if the same customer was counted on a real cycle day among those dates. The tile says how
+  many of its customers were counted that way.
+- **A team-day with a file and nobody on cycle** answers zeros and reads as uploaded. An absent
+  row is what the card draws as "not uploaded yet", and a filed day must never read as that.
+
+The tile now also says **how many customers** were on the day's list, so it can be laid beside
+the Expected Defaulters tab's pill for the same weekday.
+
+**`db/RUN-ME-057`, a new function under a new name** -- `expdf_cycle_recovery_totals`. The page
+asks for that name. Until the file is run the function does not exist, the read answers
+nothing, and the card says so: every tile reads "no answer yet" and a line under the card names
+the file (`edrNote`). It does NOT go on showing the whole book's recovery under the Expected
+Defaulters' name off the old function, which the file drops: one definition of a figure, and
+silence reads as success. **The owner has to run it once**; its text was pasted in the chat.
+
+**What was not touched.** "Weekly recovery trend" (the whole book, the standing of RUN-ME-032,
+the commission board that pays on it), the Exp.Def Report, the Expected Defaulters tab, the
+phone. Nothing on `/api/upload` or `/api/call` reads this.
+
+**Seen in the same screenshot, read against its rule, and left.** The first card's TOTAL read
+94,338,048 where its six filed tiles add to 75,856,074: the difference is Saturday's
+18,481,974 exactly. Sunday had no file yet; the standing carries the latest files forward to a
+day that has none ("the latest current defaulter file is to live until the next one is
+uploaded"), the tile says "not uploaded yet", and the week adds the standing -- the figure the
+commission board pays on, pinned by the test that ties the board's week to the dashboard's
+(`test/portal.test.mjs`, "the board's week is the dashboard's week"). That is the rule as
+written and it is not this change's to alter. Whether a day with no file of its own should add
+to the week is the owner's to say.
+
+**What it costs.** The same two files a day the old function read, the same way, with one more
+column (`disb_date`) and a pass over the week's rows in memory. Measured on a real PostgreSQL,
+old function and new in the same minute, on 2,267,118 rows (42 teams, 150 days, two files a
+day, 180 customers a team a day, each customer with a disbursement date of their own): a full
+week for every team, 294 rows in 300 to 365 ms against the old function's 220 to 265 ms; one
+team's week, 45 ms for either. A first writing of it sent the week's rows to temporary files
+and took up to 560 ms; the one shipped keeps them in memory (`work_mem = 8MB`, for this
+function alone). The dashboard asks for it twice a load, this week and last, as before:
+`test/speed.test.mjs` is unchanged.
+
+**Checked.**
+- **The function against its mirror, on a PostgreSQL.** The tests cannot run SQL, so they read
+  the rule through a JavaScript mirror (`EXPDF_RECOVERY_RPC`, `test/snapshot-totals-rpc.mjs`).
+  A new check, `tools/db-checks/expdf-cycle-recovery-parity.mjs`, draws random weeks of decks
+  -- customers who are in the file and are not that day's, initial-only and current-only
+  customers, undated ones and ones that gain a date mid-week, a date carried by the current row
+  alone, a deck uploaded twice, a deck stamped with another weekday, a filed day with nobody on
+  cycle, one customer under two teams, empty arrears, a team filter -- reads each through the
+  real function and through the mirror, and fails on the first difference. 500 weeks read
+  alike. Then the rule was broken eight ways in the mirror (any cycle day counts; an undated
+  customer every day; Day 2 two days later; a missing current row as nothing recovered; the
+  earlier upload wins; the date from the initial row only; an undated-then-dated customer
+  twice; a deck of another weekday read) and the check failed on each.
+- **The function against a query written a second way**, on the 2.27-million-row book: the
+  same 294 rows, to the shilling. And beside the old function there: Thursday's own list was
+  2,139 of the 7,560 customers on the file, 736,977 recovered where the whole book showed
+  2,931,516.
+- **Two tests** (`test/portal.test.mjs`): a customer who is in Friday's file, pays 70,000 on
+  Friday and whose days are Wednesday and Saturday is on the whole book's card and not on
+  Friday's Expected Defaulters; each customer lands on their own days; an undated one counts
+  once; one that gains a date is not counted twice; a filed day with nobody on cycle is a zero
+  and not a missing upload; a database without the new function, and one with only the old
+  function, show no figure and name the file.
+- **The card in a real browser**, the page's own code and CSS, both states (figures; no answer).
+- `npm test`: 1,535 pass. `BUILD 2026-11-15-b`; `CALL_BUILD` untouched.
+
+**Not done.** No tip in the `hints` table (the card's own line says what it reads). The card
+does not open a customer list on a tap; nobody asked. The gap Part 78 flagged in the Exp.Def
+Report's single-day and month readings stands as it was.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

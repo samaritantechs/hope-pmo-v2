@@ -288,7 +288,11 @@ const BUDGETS = [
      widget it existed for -- net +1, not +2. Could the database do it instead? It already
      does: db/RUN-ME-056 is one grouped call, the same shape as every other totals read here,
      never a read per team or per officer. Rows unchanged -- a week of team-day totals, never
-     customers. */
+     customers.
+
+     UNCHANGED BY db/RUN-ME-057 (2026-11-15): the card now reads each day's own cycle-day
+     list (expdf_cycle_recovery_totals) instead of the whole book -- the same two calls, the
+     same team-day rows back, one function for another. */
   ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  40,  5500],
   ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  39,   900],
   /* THE COMPANY'S LINE FOR A SCOPED ORODHA (2026-10-16): "the red conditional format from the whole company is what they

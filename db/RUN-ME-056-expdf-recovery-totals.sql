@@ -1,4 +1,12 @@
 -- =====================================================================================
+-- *** SUPERSEDED BY RUN-ME-057 (15 Nov 2026) -- DO NOT RUN THIS FILE AGAIN. ***
+-- The function below counts EVERY customer on a day's initial file -- the whole defaulter
+-- book -- so the dashboard's "Expected Defaulters recovery" card repeated "Weekly recovery
+-- trend" day after day ("recovered amounts of full cant equal of owed expected defs", the
+-- owner). An expected defaulter OF A DAY is a customer whose cycle day it is; RUN-ME-057 reads
+-- that, under a new function name, and DROPS this one. Nothing in the code calls
+-- expdf_recovery_totals any more. Kept for the record of what ran on the live book on 14 Nov.
+-- =====================================================================================
 -- RUN-ME-056 -- THE DASHBOARD'S OWN "EXPECTED DEFAULTERS RECOVERY" CARDS, TEAM-WIDE, BY DAY
 -- =====================================================================================
 --
