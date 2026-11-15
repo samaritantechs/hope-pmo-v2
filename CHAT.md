@@ -121,7 +121,11 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   plus Saturday's 18,481,974 again — Sunday had no file, the standing (RUN-ME-032) carries the
   latest files forward to a day without one, and the week adds the standing: the rule the
   commission board pays on, pinned by a test. Whether a day with no file should add to the week
-  is the owner's to say (section 8).
+  is the owner's to say (section 8). **Merged 16 Nov, 02:46 EAT, not read by anybody else:**
+  three reviewers were started before the merge and all three stopped on the account's five-hour
+  usage limit without a finding — and the chat stopped with them, so the change sat tested and
+  green for seven and a half hours until the owner wrote "Please continue" (section 7). It went
+  in on the tests, the PostgreSQL checks and the browser.
 - **North-West / Lake Coast SIWAONI batch, run by the owner, 15 Nov — 4 moved or added clean, 2
   flagged as role conflicts needing the owner's word, 1 strong near-match found but not acted
   on, 4 genuinely not in the registry under any name close enough to trust.** The 11-row script
@@ -1243,7 +1247,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **`grep` calls `public/app.html` a binary file** and prints nothing useful: use `grep -a`.
 - **A chat that has worked all day is at the limit.** The second team of 11 Nov (three reviewers,
   #669) lost two of its three to the same five-hour allowance within two minutes. Late in a long
-  day, review alone: tests, a real browser, a real PostgreSQL.
+  day, review alone: tests, a real browser, a real PostgreSQL. **It happened again on 15 Nov and
+  cost more:** three reviewers on #705, started after a full day's work, used up the allowance
+  without one finding, and the limit froze the chat itself — a change that was built, tested and
+  green sat unmerged for seven and a half hours, the owner waiting, until "Please continue".
+  A review that can stop the chat is never started while a finished change is waiting to be
+  merged: merge first (section 2), then have it read if the allowance is there.
 - **A script for the SQL editor is timed on a book of the live book's size first.** One that takes
   seconds on the test machine is made lighter before it is handed over.
 - **A document for the owner's management goes out whole.** On 11 Nov a report was sent with two

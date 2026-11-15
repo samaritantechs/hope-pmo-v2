@@ -6507,6 +6507,16 @@ the week's rows to temporary files and took up to 560 ms; the one shipped keeps 
 - **The card in a real browser**, the page's own code and CSS, both states (figures; no answer).
 - `npm test`: 1,535 pass. `BUILD 2026-11-15-b`; `CALL_BUILD` untouched.
 
+**Not read by anybody else, and what trying cost.** Three independent reviewers were started on
+this change before it was merged. All three stopped on the account's five-hour usage limit
+before returning a single finding -- and the limit stopped this chat with them: the change sat
+tested, green and unmerged from 19:07 on 15 Nov until the owner wrote "Please continue" at
+02:44 the next morning, seven and a half hours. It went in on the checks above (the tests, the
+PostgreSQL parity check and its nine breaks, the second query, the browser), which is what
+`CHAT.md` section 7 already said to do late in a long day: "review alone". The one fault found
+after the first push -- a day with no current file read as recovered in full -- was found by
+reading the function against the week's loop again, not by a reviewer.
+
 **Not done.** No tip in the `hints` table (the card's own line says what it reads). The card
 does not open a customer list on a tap; nobody asked. The gap Part 78 flagged in the Exp.Def
 Report's single-day and month readings stands as it was.
