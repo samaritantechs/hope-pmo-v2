@@ -824,7 +824,8 @@ function resolved(agg, date) {
 }
 
 /* =====================================================================================
-   THE DASHBOARD'S OWN "EXPECTED DEFAULTERS" CARDS -- team-wide, day by day.
+   THE DASHBOARD'S OWN "EXPECTED DEFAULTERS RECOVERY" CARDS -- team-wide, day by day, EACH
+   DAY'S OWN LIST AND NOBODY ELSE.
 
      "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
       cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
@@ -832,51 +833,55 @@ function resolved(agg, date) {
       per day" -- the owner, 14 Nov 2026, confirming these are team-wide day tiles, not a
       per-officer breakdown.
 
-   NEVER THE PER-OFFICER FIGURE THE EXP.DEF REPORT ITSELF SHOWS (buildRows_, expdfWeekCore,
-   api/_lib/expdf.js), and never a second copy of the rotation that decides WHO owns which
-   customer (assign.js's own assignFor, configurable live from the settings table) -- a
-   company-wide dashboard tile does not need to know which GMO, Manager or Bike officer a
-   customer is assigned to today, only whether that customer counts as an Expected Defaulter
-   at all. Re-deriving the rotation's own configurable strategy a second time, in SQL, is
-   exactly the "two implementations that can disagree" CLAUDE.md section 2 already names two
-   real blackouts for -- so this never touches the assignment at all.
+   WHO IS AN EXPECTED DEFAULTER OF A DAY has had one definition here all along: "Every
+   defaulter is visited twice a week and the two days are derived from the loan itself: the
+   weekday it was disbursed on (Day 1) and three days later (Day 2)" -- expectedDefaulters in
+   portal-core.js (the Mon..Sun pills of the Expected Defaulters tab) and the daily list of the
+   Exp.Def Report (periodRows_ in expdf.js: "on a daily reading, the customers whose cycle day
+   it is"). The first function behind these cards (db/RUN-ME-056, expdf_recovery_totals) ported
+   the report's test for "is this customer in the file" and LEFT OUT the test for "is today
+   their day" -- so each tile summed the whole defaulter book, the population "Weekly recovery
+   trend" reads two cards up, and the two cards showed the same money day after day:
 
-   DRIVEN BY THE INITIAL DECK, NOT THE CURRENT ONE -- "i want the weekly cycle to be facts of
-   the no of defaulters we really had, not who remained so the lists per day must come from
-   initial files" -- the owner, 14 Nov 2026, read and corrected before this was ever run. Every
-   ref on a given day's own INITIAL deck is a defaulter that day, by definition; the current
-   deck is looked UP for that ref, never iterated on its own. A ref not found on the current
-   deck that day is not invisible -- it is read the same way #697's own order already reads an
-   absence everywhere else on this system ("status column ... automatic becomes cleared if no
-   longer in default list"): CURRENT taken as 0, fully recovered, applied per day rather than
-   only to "today." A ref on the CURRENT deck that never appeared on that SAME day's own
-   initial deck is not counted at all, whatever its status says -- "the lists per day must come
-   from initial files" means initial is the only door in.
+     "i dont think all the amount we recover per day is of expected defaulters only"
+     "whole company recovery being equal to expected defaulters recovery is abnormal"
+     "recovered amounts of full cant equal of owed expected defs" -- the owner, 14-15 Nov 2026,
+      who was told the first time that it was by design. It was not: the rule existed, and the
+      card did not follow it.
 
-   RECOVERED HERE IS A SUM OF PER-CUSTOMER, CLAMPED DIFFERENCES -- buildRows_'s own
-   `Math.max(0, initial - arrears)`, summed over the day's Expected-Defaulter population --
-   NOT the deck-total subtraction recoveryByTeam/recovery_standing use for "Weekly recovery
-   trend" a few tiles along (the note above this one). The two are different questions and
-   are ALLOWED TO DISAGREE on the same day, on purpose (the same way #688 let the dashboard's
-   loan-apps arrival count and backlog count disagree, documented rather than hidden): a
-   customer whose arrears GREW between decks contributes nothing to this figure (never a
-   negative), while the deck-total figure nets the whole book against itself and can read
-   lower on a day where this one reads higher.
+   db/RUN-ME-057 (expdf_cycle_recovery_totals) is the same read with the missing test. Of a
+   day's own INITIAL file -- "i want the weekly cycle to be facts of the no of defaulters we
+   really had, not who remained so the lists per day must come from initial files" -- it keeps
+   the customers whose Day 1 or Day 2 is that weekday, by the one formula buildRows_ and
+   expectedDefaulters share. What each recovered is unchanged from RUN-ME-056: initial less the
+   SAME day's current, per customer, never negative (buildRows_'s own `Math.max(0, initial -
+   arrears)`, a sum of clamped differences and not the deck-total subtraction recoveryByTeam
+   uses), a customer the current file no longer names recovered in full (#697's reading of an
+   absence), a customer the initial file never named not counted at all. A customer with no
+   disbursement date has no day and is counted ONCE in the dates one call asks for, on the last
+   that carried them -- the Exp.Def week's own rule (handbook Part 54), never once per day.
+   And A DAY COUNTS WHEN BOTH ITS OWN DECKS WERE FILED ON IT, the week's rule again
+   (expdfWeekCompute_): a customer missing from a current deck that exists has cleared, but a
+   current deck that does not exist yet says nothing about anybody -- the morning a day's
+   initial deck is in and its current one is not, the day answers no row and the tile reads
+   "not uploaded yet", where RUN-ME-056's function read the whole day as recovered in full.
+   The SQL file's header has the rest, and the measured cost.
 
-   db/RUN-ME-056's own header has the full before/after and the measured cost, which did not
-   change: driving from initial instead of current changes which rows are kept, not how many
-   decks are read.
+   STILL NEVER THE PER-OFFICER FIGURE THE EXP.DEF REPORT SHOWS, and never a second copy of the
+   rotation that decides WHO owns which customer (assign.js's assignFor, configurable live from
+   the settings table): which GMO, Manager or Bike officer holds a customer is not this card's
+   question. The cycle DAY is not the rotation -- it is two lines of arithmetic on the
+   disbursement date, the same in every screen that has it.
 
-   EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the identical
-   day-pairing rule recoveryByTeam (below) and recTrend already use, for the identical reason
-   recoveryByTeam's own note gives: pairing two different weekdays' decks reports the gap
-   between two different populations as recovery.
+   EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the day-pairing
+   rule recoveryByTeam (below) and recTrend use, for the reason recoveryByTeam's own note gives.
 
-   WITHOUT db/RUN-ME-056 run, every call here returns null and the two new cards read "not
-   yet filed", the exact behaviour the rest of this screen already gives an unmeasured day --
-   never a failed request, and never the raw-row read this was built specifically to avoid
-   (db/RUN-ME-056's own comment has the ~13-round-trip estimate for that alternative). */
-export const EXPDF_RECOVERY_TOTALS_FN = 'expdf_recovery_totals';
+   A NEW FUNCTION NAME ON PURPOSE. A database where RUN-ME-057 has not been run answers null
+   here and the cards say so ("not uploaded yet" on every day, and which file to run) -- they
+   do not go on showing the whole book's recovery under the Expected Defaulters' name off the
+   old function, which RUN-ME-057 drops. Never a failed request, and never the raw-row read
+   this exists to avoid (about thirteen more round trips: db/RUN-ME-056's own costing). */
+export const EXPDF_RECOVERY_TOTALS_FN = 'expdf_cycle_recovery_totals';
 const expdfRecoveryMissing = new WeakMap();        // db -> when it was last found missing
 const EXPDF_RECOVERY_MISSING_TTL_MS = 5 * 60 * 1000;
 export async function expdfRecoveryTotals(db, { dates, weekdays, teams = null } = {}) {

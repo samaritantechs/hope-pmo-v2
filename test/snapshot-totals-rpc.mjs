@@ -487,27 +487,40 @@ export const DEFAULTER_GHOST_ROWS_RPC = {
   },
 };
 
-/* expdf_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-056, clause for clause: the
-   dashboard's own team-wide "Expected Defaulters recovery" cards. DRIVEN BY THE INITIAL DECK,
-   not the current one -- "the lists per day must come from initial files," the owner, 14 Nov
-   2026, read and corrected before this was ever run. Every ref on a day's own initial deck
-   counts, full stop; the current deck is looked up for that ref, never iterated on its own,
-   and a ref not found there reads as fully recovered (current 0), the way #697's own order
-   already reads an absence everywhere else, applied per day instead of only to "today." A ref
-   on the current deck that never appeared on that SAME day's initial deck is not counted at
-   all, whatever its status says. Recovered is a SUM OF PER-CUSTOMER CLAMPED DIFFERENCES, never
-   a team-total subtraction (that is recovery_standing's own question, above, a different one
-   on purpose -- see the SQL file's header for why the two are allowed to disagree). Exact
-   date+weekday match on both decks, never "the latest upload on or before" --
-   recovery_standing's own carry-forward rule would be wrong here, for the identical reason
-   recoveryByTeam's own note gives. */
+/* expdf_cycle_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-057, clause for clause:
+   the dashboard's team-wide "Expected Defaulters recovery" cards, EACH DAY'S OWN LIST. Of a
+   day's own INITIAL deck (the winning upload per team on that exact date and weekday), the
+   customers whose cycle day it is -- Day 1 the weekday of the disbursement date, Day 2 three
+   days later, Monday 1 to Sunday 7, the formula buildRows_ and expectedDefaulters share. The
+   date is read off the initial row, else off the same customer's row on the same day's current
+   deck. The current deck is looked up for those customers and never iterated on its own: one
+   not found there reads as fully recovered (current 0); one the initial deck never named is
+   not counted, whatever its status says. Recovered is a SUM OF PER-CUSTOMER CLAMPED
+   DIFFERENCES. A customer with no disbursement date on either row is counted ONCE in the dates
+   asked for, on the latest that carried them undated, and not at all if the same customer was
+   counted on a real cycle day among those dates (the Exp.Def week's own rule). A DAY COUNTS
+   WHEN BOTH ITS DECKS WERE FILED ON IT: a date with no current deck at all (among the teams
+   asked for) answers nothing -- no current file yet is not "everyone cleared" -- as in
+   expdfWeekCompute_. A team with an initial deck on a measured day and nobody on cycle answers
+   a row of zeros, never no row.
+
+   tools/db-checks/expdf-cycle-recovery-parity.mjs reads random decks through this and through
+   the real function on a PostgreSQL and fails on the first difference: keep the two in step,
+   and break one to see that check fail before trusting a change to either. */
 export const EXPDF_RECOVERY_RPC = {
-  expdf_recovery_totals(store, a = {}) {
+  expdf_cycle_recovery_totals(store, a = {}) {
     const src = (store.defaulter_snapshots && store.defaulter_snapshots.rows) || [];
     const teams = a.p_teams ? a.p_teams.map(String) : null;
     const dk = v => String(v == null ? '' : v).slice(0, 10);
     const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');
     const inScope = r => !teams || teams.includes(String(r.team));
+    // extract(isodow from date): Monday 1 .. Sunday 7; 0 for no date at all.
+    const isodow = v => {
+      const t = Date.parse(dk(v) + 'T00:00:00Z');
+      if (!dk(v) || !Number.isFinite(t)) return 0;
+      const d = new Date(t).getUTCDay();
+      return d === 0 ? 7 : d;
+    };
     // One winning row per ref, for this EXACT (date, weekday, type): the latest upload per
     // team on it (newest created_at, then batch id) -- the same idiom recoveryStandingMirror_
     // uses, with the date given directly rather than resolved as "the latest on or before".
@@ -526,7 +539,8 @@ export const EXPDF_RECOVERY_RPC = {
         if (!e || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
         const ref = String(r.ref);
         const c = m.get(ref);
-        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref, arrears: n0(r.arrears) });
+        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref,
+          arrears: n0(r.arrears), disb_date: r.disb_date == null || r.disb_date === '' ? null : r.disb_date });
       }
       return m;
     };
@@ -537,26 +551,41 @@ export const EXPDF_RECOVERY_RPC = {
       if (!d || !wd || seen.has(d + '|' + wd)) continue;
       seen.add(d + '|' + wd); pairs.push({ d, wd });
     }
-    const out = [];
+    // j / k: every customer of every day's initial deck, with what the current deck says of
+    // them and whether the day is one of their two.
+    const all = [];
     for (const { d, wd } of pairs) {
       const ini = readDeck('initial', d, wd);
       const cur = readDeck('current', d, wd);
-      const byTeam = new Map();
-      const cell = t => byTeam.get(String(t)) || byTeam.set(String(t), { team: t, initial: 0, current: 0, recovered: 0 }).get(String(t));
-      // DRIVEN BY INITIAL: every ref here counts, whatever the current deck says (or does not
-      // say at all). A current-only ref (not in `ini`) is never visited -- `cur` is only a
-      // lookup, read through `ini`'s own refs.
+      // `filed`: a day counts when BOTH its own decks were filed on it (among the teams asked
+      // for). No current deck yet says nothing about anybody -- it is not "everyone cleared".
+      if (!cur.size) continue;
+      const dow = isodow(d);
       for (const i of ini.values()) {
         const c = cur.get(i.ref);
-        const curArrears = c ? c.arrears : 0;                 // no current row at all: fully recovered
-        const e = cell(i.team);
-        e.initial += i.arrears; e.current += curArrears;
-        e.recovered += Math.max(0, i.arrears - curArrears);   // per-customer clamp, THEN summed
-      }
-      for (const e of [...byTeam.values()].sort((x, y) => String(x.team).localeCompare(String(y.team)))) {
-        out.push({ snapshot_date: d, team: e.team, initial: e.initial, current: e.current, recovered: e.recovered });
+        const d1 = isodow(i.disb_date != null ? i.disb_date : (c ? c.disb_date : null));
+        const onDay = d1 !== 0 && (d1 === dow || ((d1 - 1 + 3) % 7) + 1 === dow);
+        all.push({ date: d, team: i.team, ref: i.ref, ini: i.arrears, cur: c ? c.arrears : 0, d1, onDay });
       }
     }
-    return out;
+    // m: per customer, across the dates asked for.
+    const everOnDay = new Set(), lastUndated = new Map();
+    for (const r of all) {
+      if (r.onDay) everOnDay.add(r.ref);
+      if (r.d1 === 0 && (!lastUndated.has(r.ref) || r.date > lastUndated.get(r.ref))) lastUndated.set(r.ref, r.date);
+    }
+    // n, then the grouped answer: every team-day with an initial deck, zeros when nobody is kept.
+    const byKey = new Map();
+    for (const r of all) {
+      const k = r.date + '|' + String(r.team);
+      const e = byKey.get(k) || byKey.set(k, { snapshot_date: r.date, team: r.team, initial: 0, current: 0, recovered: 0, customers: 0, undated: 0 }).get(k);
+      const keep = r.onDay || (r.d1 === 0 && !everOnDay.has(r.ref) && r.date === lastUndated.get(r.ref));
+      if (!keep) continue;
+      e.initial += r.ini; e.current += r.cur;
+      e.recovered += Math.max(0, r.ini - r.cur);              // per-customer clamp, THEN summed
+      e.customers += 1;
+      if (!r.onDay) e.undated += 1;
+    }
+    return [...byKey.values()].sort((x, y) => x.snapshot_date.localeCompare(y.snapshot_date) || String(x.team).localeCompare(String(y.team)));
   },
 };

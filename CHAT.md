@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 15 November 2026** — portal `BUILD 2026-11-15-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 78**.
+**As of 15 November 2026** — portal `BUILD 2026-11-15-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 79**.
 
 ---
 
@@ -81,6 +81,47 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#705 — the dashboard's Expected Defaulters recovery is each day's own list, not the whole
+  book (handbook Part 79).** "This cant be okay" ... "recovered amounts of full cant equal of
+  owed expected defs" — the owner, 15 Nov, with "Weekly recovery trend" and "Expected Defaulters
+  recovery" showing the same money day after day (Monday 9,286,335 on both, Tuesday 13,911,553
+  on both). **The owner had said so on 14 Nov** ("whole company recovery being equal to expected
+  defaulters recovery is abnormal") **and was told it was by design. It was not.** The function
+  behind the card (#698, `db/RUN-ME-056`) counted every customer on a day's initial file — the
+  whole defaulter book, the other card's population. An Expected Defaulter OF A DAY already had
+  one definition here: a customer whose cycle day it is, Day 1 the disbursement weekday and
+  Day 2 three days later (`expectedDefaulters`' own Mon..Sun pills; the Exp.Def Report's daily
+  list, `periodRows_`). #698 ported the report's test for "in the file" and left out its test
+  for "today is their day". **`db/RUN-ME-057`** is the same read with that test: a new function,
+  `expdf_cycle_recovery_totals`, under a **new name on purpose** — until the owner runs it the
+  card says "no answer yet" and names the file, rather than go on showing the whole book under
+  the Expected Defaulters' name (the old function is dropped by the file). Per day and team: who
+  is on the day's own initial file with Day 1 or Day 2 that weekday; what each recovered against
+  the same day's current file, per customer, never negative, a customer gone from the current
+  file recovered in full; Rec % over that list's own arrears ("opnly expeef is against total
+  arrea of the day given"); a customer with no disbursement date counted once in the week, on
+  the last day that had them (the Exp.Def week's rule, Part 54); **a day counts only when both
+  its files were filed** (the week's rule again: on a morning with the initial file in and the
+  current one not yet, the old function read the whole day as recovered in full; now the tile
+  reads "not uploaded yet" until the current file lands — caught while the change waited on its
+  tests, by reading the function against the week's loop once more); a filed day with nobody on
+  cycle is a zero, not "not uploaded". Each tile now also says how many customers were on the
+  day's list, to lay beside the Expected Defaulters tab's pill. **Checked on a real PostgreSQL:**
+  a new kept check, `tools/db-checks/expdf-cycle-recovery-parity.mjs`, read 550 random weeks of
+  decks through the real function and through the mirror the tests use and found no difference,
+  then failed on each of nine deliberate breaks of the rule; on the 2.27-million-row book the
+  function matched a query written a second way to the shilling (Thursday's own list: 2,139 of
+  7,560 customers, 736,977 recovered where the whole book showed 2,931,516). **Cost:** a full
+  week for every team in about 0.3 s against the old function's 0.2 to 0.28 s on the same
+  machine, one team's week about 45 ms either way; two calls a dashboard load as before, so
+  `test/speed.test.mjs` is unchanged. No read on `/api/upload` or `/api/call`. `npm test`: 1,535
+  pass. `BUILD 2026-11-15-b`; `CALL_BUILD` untouched. **Not touched:** "Weekly recovery trend",
+  the commission board, the Exp.Def Report, the phone. **Seen in the same screenshot and left,
+  read against its rule:** the first card's TOTAL (94,338,048) is its six filed days (75,856,074)
+  plus Saturday's 18,481,974 again — Sunday had no file, the standing (RUN-ME-032) carries the
+  latest files forward to a day without one, and the week adds the standing: the rule the
+  commission board pays on, pinned by a test. Whether a day with no file should add to the week
+  is the owner's to say (section 8).
 - **North-West / Lake Coast SIWAONI batch, run by the owner, 15 Nov — 4 moved or added clean, 2
   flagged as role conflicts needing the owner's word, 1 strong near-match found but not acted
   on, 4 genuinely not in the registry under any name close enough to trust.** The 11-row script
@@ -1300,6 +1341,20 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   test book of the live book's size ended in "upstream timeout" in the SQL editor; the owner's
   two exports answered the same question in minutes ("Check from here no need of sql"). A dig is
   not proven until it has run on the live book, and a chat cannot run it there.
+- **When the owner says two figures cannot be equal, find who each one is summed over before
+  answering.** On 14 Nov the owner said the Expected Defaulters card could not equal the whole
+  book's recovery, and was told the two were different formulas by design. They were: over the
+  same customers. The card had been built on the Exp.Def Report's test for "in the file" without
+  its test for "today is their day" (handbook Part 79). "By design" is an answer about the code;
+  the owner's question was about the business, and the rule that answered it was already
+  written three files away.
+- **A corrected database function gets a new name.** A page that asks for the old name on a
+  book where the new file has not been run would go on showing the old, wrong figure with
+  nothing to say so. Under a new name it gets no answer, says "no answer yet" and names the file.
+- **A mirror the tests read is checked against the real function on a PostgreSQL**
+  (`tools/db-checks/expdf-cycle-recovery-parity.mjs`, as `gmo-zone-parity.mjs` does for the
+  zone rule): random cases through both, fail on the first difference, refuse to pass when the
+  hard cases were not drawn, and break the rule on purpose to see it fail.
 - **A tab still reading "Running..." may already be dead.** `RUN-ME-054`'s first
   `CREATE INDEX CONCURRENTLY` (12 Nov) sat in the SQL editor reading "Running..." long after the
   server-side build had actually stopped -- the editor's own connection had dropped, Postgres had
@@ -1313,6 +1368,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner — first**: run `db/RUN-ME-057-expdf-cycle-recovery-totals.sql` in the SQL editor
+  (pasted in full in the chat, 15 Nov). Until it is run the dashboard's Expected Defaulters
+  recovery card reads "no answer yet" on every day and names this file; once it is, each tile is
+  that day's own expected list (section 4, #705). And, only if the owner wants it changed: the
+  "Weekly recovery trend" TOTAL adds a day that has no file of its own at the standing carried
+  forward to it (a Sunday with no upload repeats Saturday in the week's total) — the existing
+  rule, which the commission board pays on; nothing was changed.
 - **The owner**: the North-West/Lake Coast batch run 15 Nov (section 4) — whether Faustine
   Beatus Zachariah (FBZ/0400/2026, already filed in NORTH WEST) is the same person as Phaustine
   Beatus Zakaria on the list (if so, a PLACE by his real staff ID moves/fills him; a script will

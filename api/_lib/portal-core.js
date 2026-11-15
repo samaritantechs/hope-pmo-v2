@@ -12337,19 +12337,23 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        arrows as usual" ... "Am talking of the days performance Monday to Sunday like the cards
        showing summary of sales and collection per day" -- the owner, 14 Nov 2026, confirming
        these are team-wide day tiles, never the per-officer figure the dedicated Exp.Def Report
-       shows -- and, the same day, read and corrected before it was ever run: "i want the
-       weekly cycle to be facts of the no of defaulters we really had, not who remained so the
-       lists per day must come from initial files." Every ref on a day's own INITIAL deck
-       counts, full stop; the current deck is only looked up for that ref, never iterated on
-       its own, so a customer missing from today's current deck entirely reads as fully
-       recovered, never invisible. See db/RUN-ME-056 and snapshot-totals.js's own long note on
-       expdfRecoveryTotals for the rest, and for why this never re-reads the whole week's raw
-       decks (expdfWeekCore's own shape: ~13 more round trips) or re-derives the rotation that
-       decides WHO owns a customer a second time, in SQL. THIS week unbounded (the cards' own
-       headline figures), LAST week budgeted exactly like expPrev/defPrev/ecolPrev above, for
-       the identical reason: it exists only to feed the day tiles' own arrows. `null` (not `[]`)
-       is this function's own way of saying "no answer yet" -- a budget timeout and a database
-       without RUN-ME-056 run read identically downstream: no arrow, no guess. */
+       shows -- and, the same day: "i want the weekly cycle to be facts of the no of defaulters
+       we really had, not who remained so the lists per day must come from initial files."
+       EACH DAY'S OWN LIST: of a day's own INITIAL deck, the customers whose cycle day it is
+       (Day 1 the disbursement weekday, Day 2 three days later -- the Expected Defaulters tab's
+       and the Exp.Def Report's one rule), never the whole deck: the first function behind this
+       (RUN-ME-056) counted everybody on the file and so repeated "Weekly recovery trend" under
+       another name -- "recovered amounts of full cant equal of owed expected defs", the owner,
+       15 Nov 2026. The current deck is only looked up for those customers, never iterated on
+       its own, so one missing from it entirely reads as fully recovered, never invisible. See
+       db/RUN-ME-057 and snapshot-totals.js's own long note on expdfRecoveryTotals for the
+       rest, and for why this never re-reads the whole week's raw decks (expdfWeekCore's own
+       shape: ~13 more round trips) or re-derives the rotation that decides WHO owns a customer
+       a second time, in SQL. THIS week unbounded (the cards' own headline figures), LAST week
+       budgeted exactly like expPrev/defPrev/ecolPrev above, for the identical reason: it
+       exists only to feed the day tiles' own arrows. `null` (not `[]`) is this function's own
+       way of saying "no answer yet" -- a budget timeout and a database without RUN-ME-057 run
+       read identically downstream: no arrow, no guess. */
     expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(mon, i)), weekdays: WD7, teams: user.teams }),
     within_(expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(prevMon, i)), weekdays: WD7, teams: user.teams }),
       dashPrevBudget_(), null),
@@ -12437,7 +12441,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
   const myEcolWeek = scoped(user, ecolWeek), myEcolPrev = scoped(user, ecolPrev);
   // expdfRecoveryTotals answers null, never [], when it has nothing -- a budget timeout or a
-  // database without RUN-ME-056 run -- so edrTrend/edrTrendTotal below can tell "unmeasured"
+  // database without RUN-ME-057 run -- so edrTrend/edrTrendTotal below can tell "unmeasured"
   // from "measured, zero" the same way every other null-capable read on this screen does.
   const myEdrWeek = scoped(user, edrWeek || []), myEdrPrev = scoped(user, edrPrev || []);
   const myLoans = scoped(user, loansAll);
@@ -12972,33 +12976,42 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       cards Monday to Sunday with rising and falling arrows as usual" ... "Am talking of the
       days performance Monday to Sunday like the cards showing summary of sales and collection
       per day" -- the owner, 14 Nov 2026. Team-wide, day by day, the same shape as the four
-      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows, and
-      driven by the INITIAL deck ("the lists per day must come from initial files," the same
-      day, read and corrected before this was ever run) so a customer missing from today's
-      current deck entirely is fully recovered here, never invisible (see
-      snapshot-totals.js's own long note on expdfRecoveryTotals for why, and for why
-      `recovered` here is a sum of per-customer CLAMPED differences, never the team-total
-      subtraction recTrend above uses -- the two are allowed to disagree on the same day, on
-      purpose, the same way #688 let two figures on one screen disagree rather than force a
-      wrong agreement). Each day's own arrow is against the SAME WEEKDAY last week (#690's own
-      rule), the identical shape ecolTrend/colTrend/recTrend already carry. `edrWeek`/`edrPrev`
-      are null, never [], when there is no answer (budget timeout or RUN-ME-056 not run) --
+      cards beside it -- never the per-officer figure the dedicated Exp.Def Report shows.
+      EACH TILE IS THAT DAY'S OWN EXPECTED LIST: the customers on the day's INITIAL deck ("the
+      lists per day must come from initial files") whose cycle day it is -- Day 1 the
+      disbursement weekday, Day 2 three days later -- so Monday's tile is Monday's list and
+      not the whole book ("recovered amounts of full cant equal of owed expected defs", the
+      owner, 15 Nov 2026: the first version summed everybody on the file and repeated
+      recTrend above to the shilling). `customers` is how many were on that day's list;
+      `undated` how many of them carry no disbursement date and are counted once for the
+      week, on the last day that had them (the Exp.Def week's own rule). `recovered` is a sum
+      of per-customer CLAMPED differences, a customer gone from the current deck recovered in
+      full -- and a day whose current deck has not been filed at all answers no row, so its
+      tile reads "not uploaded yet" rather than a whole list recovered (the Exp.Def week's own
+      "both decks filed" rule); `pct` is over that list's own initial arrears -- "opnly expeef is against total
+      arrea of the day given". See snapshot-totals.js's own long note on expdfRecoveryTotals.
+      Each day's own arrow is against the SAME WEEKDAY last week (#690's own rule), the
+      identical shape ecolTrend/colTrend/recTrend already carry. `edrWeek`/`edrPrev` are null,
+      never [], when there is no answer (budget timeout or RUN-ME-057 not run) --
       myEdrWeek/myEdrPrev fold that to [] above, so every day here reads `uploaded: false`
-      exactly as an unmeasured day already does everywhere else on this screen. */
+      exactly as an unmeasured day already does everywhere else on this screen, and `edrNote`
+      says which file the card is waiting for rather than leaving seven empty tiles to speak
+      for themselves. */
   const edrSum_ = rows => rows.reduce((s, r) => ({ initial: s.initial + num(r.initial),
-    current: s.current + num(r.current), recovered: s.recovered + num(r.recovered) }),
-    { initial: 0, current: 0, recovered: 0 });
+    current: s.current + num(r.current), recovered: s.recovered + num(r.recovered),
+    customers: s.customers + num(r.customers), undated: s.undated + num(r.undated) }),
+    { initial: 0, current: 0, recovered: 0, customers: 0, undated: 0 });
   const edrDay_ = (rows, d) => rows.filter(r => String(r.snapshot_date) === d);
   const edrTrend = WD7.map((wd, i) => {
     const d = addDaysKey(mon, i);
     const rows = edrDay_(myEdrWeek, d);
     const uploaded = rows.length > 0;
-    const { initial, current, recovered } = edrSum_(rows);
+    const { initial, current, recovered, customers, undated } = edrSum_(rows);
     const pct = initial > 0 ? Math.round((recovered / initial) * 1000) / 10 : null;
     const prows = edrDay_(myEdrPrev, addDaysKey(prevMon, i));
     const pSum = edrSum_(prows);
     const ppct = pSum.initial > 0 ? Math.round((pSum.recovered / pSum.initial) * 1000) / 10 : null;
-    return { weekday: wd, date: d, initial, current, recovered, uploaded, pct,
+    return { weekday: wd, date: d, initial, current, recovered, customers, undated, uploaded, pct,
       dEdr: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
   });
   const edrTrendTotal = (() => {
@@ -13009,6 +13022,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     return { initial, current, recovered, pct,
       dEdr: (edrTrend.some(x => x.uploaded) && myEdrPrev.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
   })();
+  /* NO ANSWER IS SAID, NOT LEFT AS SEVEN EMPTY TILES. `edrWeek` is null only when the database
+     gave nothing for THIS week -- db/RUN-ME-057 not run there yet, or its read failed (its own
+     two-second ceiling included) -- and this week's read carries no budget of ours to run out.
+     A week with the function installed and nothing uploaded is [], and says nothing here. */
+  const edrNote = edrWeek === null
+    ? 'Kadi ya Expected Defaulters haijajibiwa na database: endesha db/RUN-ME-057-expdf-cycle-recovery-totals.sql kwenye SQL editor (kama imeshaendeshwa, usomaji umechelewa: fungua upya).'
+      + ' / The Expected Defaulters card got no answer from the database: run db/RUN-ME-057-expdf-cycle-recovery-totals.sql in the SQL editor (if it has been run, the read timed out: reload).'
+    : null;
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
   const todayExp = colDay_(myExpWeek, today);
@@ -13257,7 +13278,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     /* Legal recovery: what the noticed customers in scope paid today and this week against
        what their letters demanded, with `on` false and a note when the ledger is not there. */
     legal: legalTotals_(scoped(user, notices), legalLedger, today, mon, sun),
-    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, edrTrend, edrTrendTotal, ...recoveryRuleOf_(stand, db),
+    appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, edrTrend, edrTrendTotal, edrNote, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
     // False = no defaulter deck was filed today, so the today figures above are honest zeros.
