@@ -347,6 +347,57 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
   assert.ok(past.rows.some(r => r.ref === 'A1'), 'the real customer is still there -- only the ghost lookup is skipped, nothing else about the closed week');
 });
 
+/* A DAY-GHOST, THE WEEK'S OWN -- "i expect that customer in initial never to get lost even if
+   cleared its amounts and statuses that change," 14 Nov 2026, read against the real Thursday
+   12 Nov/ref 4231948032 case: on that day's own initial deck, absent from that same day's own
+   current deck. Unlike the all-time ghost above, this reads only that ONE day's own two files
+   -- nothing about today -- so it is deliberately NOT how Thursday 12th itself stays (Part 71's
+   own today-only scope, untouched either way). With no current-row data for that day to assign
+   a role from, it is kept visible and counted, but never credited to a leader:
+   expdfWeekCompute_'s own cells (role|leader|ref keyed, RECYCLE_ROLES-filtered) never see it,
+   so every total in the "sum of its days" test above is unchanged by adding this ref; it comes
+   back on its own, as unassignedCleared, for expdfReport to show separately. */
+test('the expdf week keeps a customer on one day\'s own initial deck but missing that same day\'s own current deck -- unassigned, never guessed, never lost', async () => {
+  const t = expdfWeekTables();
+  // DG1: on Wednesday 2026-07-22's own initial deck only -- no matching current row that day,
+  // and no other day of the week either, so there is nothing anywhere to assign a role from.
+  // upload_batch matches the rest of Wednesday's own initial cohort exactly (R()'s own 'bi' +
+  // date) -- a different batch string here would make the "latest batch per team+weekday" rule
+  // pick a winner between the two and silently drop A1/B1's real Wednesday rows, nothing to do
+  // with the fix under test.
+  t.defaulter_snapshots.push(
+    { ref: 'DG1', full_name: 'C DG1', team: 'KONGOWE', arrears: 5000, status: 'Defaulter', ds: '2/6', dc: 2,
+      days_elapsed: 3, disb_date: '2026-07-20', snapshot_type: 'initial', weekday: 'WED', snapshot_date: '2026-07-22',
+      upload_batch: 'bi2026-07-22', created_at: '2026-07-22T04:00:00Z' });
+  const db = fakeDb(t);
+  const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
+
+  assert.ok(week.unassignedCleared, 'surfaced, not silently dropped');
+  assert.equal(week.unassignedCleared.customers, 1);
+  assert.equal(week.unassignedCleared.initial, 5000);
+  assert.equal(week.unassignedCleared.recovered, 5000, 'fully recovered against its own day\'s baseline -- the absence-is-the-signal rule, same as every other ghost');
+  const row = week.unassignedCleared.rows.find(r => r.ref === 'DG1');
+  assert.ok(row);
+  assert.equal(row.status, 'CLEARED'); assert.equal(row.leader, '(unassigned)');
+  assert.equal(row.role, null); assert.equal(row.phase, null); assert.equal(row.cycle, null);
+  assert.equal(row.team, 'KONGOWE');
+  assert.equal(row.disb_date, '2026-07-20', 'its own day\'s real date, read off its own initial row');
+  assert.deepEqual(row.byDay, { '2026-07-22': { initial: 5000, arrears: 0, recovered: 5000, status: 'CLEARED' } });
+
+  // NEVER in any role section's own book, never in the grand total above, never on a named
+  // leader's own card -- there is no leader to credit, and nothing here should invent one.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'GMO', leader: 'GMO GEE', period: 'week' }, NOW);
+  assert.ok(!card.rows.some(r => r.ref === 'DG1'), 'no leader\'s own card shows it either -- there is nobody to credit');
+  assert.equal(week.totals.recovered, 1400, 'the grand total is exactly the sibling test\'s own figure -- DG1 never joins it, by design');
+  assert.equal(week.totals.customers, 3, 'DG1 is not one of the three role-bucketed customers');
+
+  // A day view (not a week) does not carry this field at all -- the identical gap sits in
+  // expdfCore's single-day reading too (buildRows_, shared with the phone), flagged, not
+  // reached here (the comment above expdfWeekCompute_).
+  const day = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: '2026-07-22' }, NOW);
+  assert.equal(day.unassignedCleared, null);
+});
+
 /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
    owner, 14 Nov 2026. ghostRowsFor_ (the test above) rescues a ref missing from today's
    current deck that has SOME current-type row anywhere in this team's history -- its own join

@@ -779,7 +779,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-14-c';
+var BUILD = '2026-11-15-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3946,11 +3946,11 @@ VIEWS.dashboard = function(){
             : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             ['Owing TZS '+money(x.current), 'badl'],
-            [x.pct != null ? 'Rec '+pct(x.pct) : 'Rec —', 'good']],
+            [x.pct != null ? 'Rec '+pct1(x.pct) : 'Rec —', 'good']],
             '', '', trendArrow(x.dEdr)); }),
           tcell('TOTAL', [['<b>TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.recovered : d.edrTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Owing TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.current : 0), 'badl'],
-            ['Rec '+pct(d.edrTrendTotal ? d.edrTrendTotal.pct : null), 'good']], 'tot'),
+            ['Rec '+pct1(d.edrTrendTotal ? d.edrTrendTotal.pct : null), 'good']], 'tot'),
           trendArrow((d.edrTrendTotal||{}).dEdr) + headDelta_((d.edrTrendTotal||{}).dEdr));
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.
@@ -4553,6 +4553,20 @@ VIEWS.expdfrep = function(){
             xdDayTotals_(d, sec.totals, {opm:'', leader:'', teams:'', customers:sec.totals.customers, calls:sec.totals.calls, talk:sec.totals.talk, comments:sec.totals.comments,
              initial:sec.totals.initial, arrears:sec.totals.arrears, recovered:sec.totals.recovered, pct:sec.totals.pct}));
         }).join('')
+      /* A week only: a customer on some day's own initial deck, missing that same day's own
+         current deck, with nothing on record to say whose book they were in that day -- never
+         guessed at (api/_lib/expdf.js, the comment above expdfWeekCompute_). Kept out of the
+         three boards above and their totals, which stay exactly what they were; shown here on
+         its own so the recovery is visible rather than silently lost. */
+      + (d.unassignedCleared ? board('xd_unassigned', 'Wamefutwa, hatujui kiongozi / Cleared, no leader on record for the day',
+          money(d.unassignedCleared.customers) + ' wateja / customers — kwenye orodha ya awali ya siku, hawakuwepo ya sasa siku hiyo,'
+            + ' hatuna taarifa ya aliyemhudumia siku hiyo. / on that day’s own initial deck, missing from that same day’s own'
+            + ' current deck, with nothing on record to say whose book they were in that day.',
+          d.unassignedCleared.rows,
+          [col('ref','Ref'), col('team','Team'),
+           {key:'primaryName', label:'Siku / Day', kind:'text', title:'Siku ya mzunguko kwa tarehe ya awali ya mkopo / Cycle day, from the loan’s own disbursement date'},
+           col('initial','Initial','money'),
+           {key:'recovered', label:'Recovered', kind:'money', cls:function(r){ return r.recovered>0?'good':''; }}]) : '')
       + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku, za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa za orodha yake, katika kipindi hiki; jina lisilosajiliwa HOPE Calls linasoma 0 (kijivu). Maoni = yaliyoandikwa kwa jina lake katika kipindi hiki kwa wateja hao. / A call is one number per day, portfolio only, to the customers, guarantors and recorded other numbers of their list, in this period; a name not registered in HOPE Calls reads 0 (grey). Comments are those written under this name in this period on these customers.</div>';
     // The whole book behind the three boards, so a leader's row can be opened to the customer.
     S.rows = [];
