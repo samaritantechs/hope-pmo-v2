@@ -12986,7 +12986,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       `undated` how many of them carry no disbursement date and are counted once for the
       week, on the last day that had them (the Exp.Def week's own rule). `recovered` is a sum
       of per-customer CLAMPED differences, a customer gone from the current deck recovered in
-      full; `pct` is over that list's own initial arrears -- "opnly expeef is against total
+      full -- and a day whose current deck has not been filed at all answers no row, so its
+      tile reads "not uploaded yet" rather than a whole list recovered (the Exp.Def week's own
+      "both decks filed" rule); `pct` is over that list's own initial arrears -- "opnly expeef is against total
       arrea of the day given". See snapshot-totals.js's own long note on expdfRecoveryTotals.
       Each day's own arrow is against the SAME WEEKDAY last week (#690's own rule), the
       identical shape ecolTrend/colTrend/recTrend already carry. `edrWeek`/`edrPrev` are null,

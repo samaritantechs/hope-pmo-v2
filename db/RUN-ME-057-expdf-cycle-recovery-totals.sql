@@ -49,8 +49,17 @@
 -- customer was counted on a real cycle day in those dates. `undated` says how many of a day's
 -- customers were counted that way, so the card can say so.
 --
--- A TEAM-DAY WITH A FILE AND NOBODY ON CYCLE comes back as a row of zeros, not as no row: the
--- card reads "not uploaded yet" from an absent row, and a file that was uploaded must never
+-- A DAY COUNTS WHEN BOTH ITS OWN FILES WERE FILED ON IT -- the Exp.Def week's own rule
+-- (expdfWeekCompute_: "a day nobody filed contributes nothing, and the answer says which days
+-- those were"). A customer missing from a current file that EXISTS has cleared; a current file
+-- that does not exist yet says nothing about anybody. On the morning a day's initial file is in
+-- and its current file is not, RUN-ME-056's function read every customer of the day as
+-- recovered in full. Here such a day answers no row at all, the card draws it as "not uploaded
+-- yet", and it fills in when the current file lands. "Exists" is asked of the teams the call
+-- names, as the report asks it of the teams its reader may see.
+--
+-- A TEAM-DAY WITH BOTH FILES AND NOBODY ON CYCLE comes back as a row of zeros, not as no row:
+-- the card reads "not uploaded yet" from an absent row, and a day that was filed must never
 -- read as one that was not.
 --
 -- A NEW NAME, NOT A NEW BODY UNDER THE OLD ONE. The page asks for expdf_cycle_recovery_totals.
@@ -66,8 +75,9 @@
 -- new on the same machine in the same minute, on a book of 2,267,118 rows (42 teams, 150 days,
 -- two files a day, 180 customers a team a day, every customer with a disbursement date of
 -- their own spread over the seven weekdays): a full week for every team -- the most an
--- unrestricted admin's dashboard asks for -- 294 rows in 300 to 365 ms, where RUN-ME-056's
--- function took 220 to 265 ms; one team's week, 45 ms for either. Checked there against a
+-- unrestricted admin's dashboard asks for -- 294 rows in about 0.3 s (0.27 to 0.4 over five
+-- runs), where RUN-ME-056's function took 0.2 to 0.28 s; one team's week, about 45 ms for
+-- either. Checked there against a
 -- query written a second way (the same 294 rows, to the shilling), and day for day against the
 -- old function: Thursday's own list was 2,139 of the 7,560 customers on the file, 736,977
 -- recovered where the whole book showed 2,931,516. The planner settings and the two-second
@@ -76,7 +86,7 @@
 --
 -- tools/db-checks/expdf-cycle-recovery-parity.mjs reads random weeks of decks through this
 -- function and through the mirror the tests use (test/snapshot-totals-rpc.mjs) and fails on
--- the first difference; it was run on 500 weeks, and on eight deliberate breaks of the rule.
+-- the first difference; it was run on 550 weeks, and on nine deliberate breaks of the rule.
 --
 -- Nothing on /api/upload or /api/call reads this. Paste the whole file and run it once.
 -- SAFE TO RE-RUN.
@@ -135,10 +145,16 @@ cur as materialized (
     order by y.ref, y.created_at desc nulls last
   ) x
 ),
--- Each customer of each day: what the current file says of them (nothing = 0, recovered in
--- full); Day 1 of their cycle, the weekday of the disbursement date (0 when neither of the
--- day's two rows carries one); and IS TODAY THEIR DAY -- Day 1, or Day 2 three days later.
--- The formula is buildRows_'s, to the character: secondary = ((primary - 1 + 3) % 7) + 1.
+-- THE DAYS THAT COUNT: the ones whose current file was filed at all (among the teams asked
+-- for). A day with an initial file and no current file yet is not measured -- see the header.
+filed as materialized (
+  select distinct c.snapshot_date from cur c
+),
+-- Each customer of each measured day: what the current file says of them (nothing = 0,
+-- recovered in full); Day 1 of their cycle, the weekday of the disbursement date (0 when
+-- neither of the day's two rows carries one); and IS TODAY THEIR DAY -- Day 1, or Day 2 three
+-- days later. The formula is buildRows_'s, to the character:
+-- secondary = ((primary - 1 + 3) % 7) + 1.
 k as materialized (
   select j.snapshot_date, j.team, j.ref, j.ini_arrears, j.cur_arrears, j.d1,
          (j.d1 <> 0 and (j.d1 = j.dow or ((j.d1 - 1 + 3) % 7) + 1 = j.dow)) as on_day
@@ -147,6 +163,7 @@ k as materialized (
            coalesce(c.arrears, 0) as cur_arrears,
            coalesce(extract(isodow from coalesce(i.disb_date, c.disb_date))::int, 0) as d1
     from ini i
+    join filed f on f.snapshot_date = i.snapshot_date
     left join cur c on c.snapshot_date = i.snapshot_date and c.ref = i.ref
   ) j
 ),
@@ -159,7 +176,7 @@ und as materialized (
     and not exists (select 1 from k d where d.ref = u.ref and d.on_day)
   group by u.ref
 )
--- Every team-day that HAS an initial file answers, with zeros when nobody on it is on cycle.
+-- Every team with an initial file on a measured day answers, with zeros when nobody is on cycle.
 select n.snapshot_date, n.team,
        coalesce(sum(n.ini_arrears) filter (where n.keep), 0)::numeric as initial,
        coalesce(sum(n.cur_arrears) filter (where n.keep), 0)::numeric as current,

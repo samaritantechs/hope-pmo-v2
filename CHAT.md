@@ -100,16 +100,20 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   the same day's current file, per customer, never negative, a customer gone from the current
   file recovered in full; Rec % over that list's own arrears ("opnly expeef is against total
   arrea of the day given"); a customer with no disbursement date counted once in the week, on
-  the last day that had them (the Exp.Def week's rule, Part 54); a filed day with nobody on
+  the last day that had them (the Exp.Def week's rule, Part 54); **a day counts only when both
+  its files were filed** (the week's rule again: on a morning with the initial file in and the
+  current one not yet, the old function read the whole day as recovered in full; now the tile
+  reads "not uploaded yet" until the current file lands — caught while the change waited on its
+  tests, by reading the function against the week's loop once more); a filed day with nobody on
   cycle is a zero, not "not uploaded". Each tile now also says how many customers were on the
   day's list, to lay beside the Expected Defaulters tab's pill. **Checked on a real PostgreSQL:**
-  a new kept check, `tools/db-checks/expdf-cycle-recovery-parity.mjs`, read 500 random weeks of
+  a new kept check, `tools/db-checks/expdf-cycle-recovery-parity.mjs`, read 550 random weeks of
   decks through the real function and through the mirror the tests use and found no difference,
-  then failed on each of eight deliberate breaks of the rule; on the 2.27-million-row book the
+  then failed on each of nine deliberate breaks of the rule; on the 2.27-million-row book the
   function matched a query written a second way to the shilling (Thursday's own list: 2,139 of
   7,560 customers, 736,977 recovered where the whole book showed 2,931,516). **Cost:** a full
-  week for every team in 300 to 365 ms against the old function's 220 to 265 ms on the same
-  machine, one team's week 45 ms either way; two calls a dashboard load as before, so
+  week for every team in about 0.3 s against the old function's 0.2 to 0.28 s on the same
+  machine, one team's week about 45 ms either way; two calls a dashboard load as before, so
   `test/speed.test.mjs` is unchanged. No read on `/api/upload` or `/api/call`. `npm test`: 1,535
   pass. `BUILD 2026-11-15-b`; `CALL_BUILD` untouched. **Not touched:** "Weekly recovery trend",
   the commission board, the Exp.Def Report, the phone. **Seen in the same screenshot and left,

@@ -498,8 +498,11 @@ export const DEFAULTER_GHOST_ROWS_RPC = {
    not counted, whatever its status says. Recovered is a SUM OF PER-CUSTOMER CLAMPED
    DIFFERENCES. A customer with no disbursement date on either row is counted ONCE in the dates
    asked for, on the latest that carried them undated, and not at all if the same customer was
-   counted on a real cycle day among those dates (the Exp.Def week's own rule). A team-day with
-   an initial deck and nobody on cycle answers a row of zeros, never no row.
+   counted on a real cycle day among those dates (the Exp.Def week's own rule). A DAY COUNTS
+   WHEN BOTH ITS DECKS WERE FILED ON IT: a date with no current deck at all (among the teams
+   asked for) answers nothing -- no current file yet is not "everyone cleared" -- as in
+   expdfWeekCompute_. A team with an initial deck on a measured day and nobody on cycle answers
+   a row of zeros, never no row.
 
    tools/db-checks/expdf-cycle-recovery-parity.mjs reads random decks through this and through
    the real function on a PostgreSQL and fails on the first difference: keep the two in step,
@@ -554,6 +557,9 @@ export const EXPDF_RECOVERY_RPC = {
     for (const { d, wd } of pairs) {
       const ini = readDeck('initial', d, wd);
       const cur = readDeck('current', d, wd);
+      // `filed`: a day counts when BOTH its own decks were filed on it (among the teams asked
+      // for). No current deck yet says nothing about anybody -- it is not "everyone cleared".
+      if (!cur.size) continue;
       const dow = isodow(d);
       for (const i of ini.values()) {
         const c = cur.get(i.ref);

@@ -16,9 +16,10 @@
    deck only, and on the current deck only; customers with no disbursement date (counted once,
    on the last day that carried them) and ones that gain a date during the week; a date carried
    by the current row alone; a day's deck uploaded twice (the later upload wins, the earlier is
-   not read); a deck stamped with another weekday; a team-day with a file and nobody on cycle
-   (zeros, not a missing row); the same customer under two teams; arrears left empty; a team
-   filter.
+   not read); a deck stamped with another weekday; a day whose initial deck is in and whose
+   current deck is not (not measured -- never "everyone cleared"); a team-day with both decks
+   and nobody on cycle (zeros, not a missing row); the same customer under two teams; arrears
+   left empty; a team filter.
 
    It needs a PostgreSQL it can reach with psql and NO defaulter_snapshots table in the
    database it is pointed at: it creates a small one, and everything it does is rolled back.
@@ -31,8 +32,8 @@
 
    BREAK THE RULE AND SEE IT FAIL before trusting a change to either side. In the mirror: count
    a customer whatever their cycle day, count an undated customer on every day, take Day 2 as
-   two days later, read a missing current row as "nothing recovered", or let the earlier upload
-   of a day win. Each must come back DIFFERENT. */
+   two days later, read a missing current row as "nothing recovered", let the earlier upload
+   of a day win, or measure a day that has no current deck. Each must come back DIFFERENT. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -70,7 +71,7 @@ const uuid = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const lit = v => (v == null ? 'null' : "'" + String(v).replace(/'/g, "''") + "'");
 
 const drawn = { cases: 0, notTheirDay: 0, initialOnly: 0, currentOnly: 0, undatedCounted: 0, undatedThenDated: 0,
-  dateFromCurrent: 0, losingBatch: 0, wrongWeekday: 0, zeroDay: 0, twoTeams: 0, emptyArrears: 0, teamFilter: 0 };
+  dateFromCurrent: 0, losingBatch: 0, wrongWeekday: 0, noCurrentDeck: 0, zeroDay: 0, twoTeams: 0, emptyArrears: 0, teamFilter: 0 };
 
 function drawCase() {
   const teams = ['T1', 'T2', 'T3', 'T4'].slice(0, 2 + Math.floor(rnd() * 3));
@@ -86,7 +87,9 @@ function drawCase() {
   const batch = () => ({ id: uuid(++batchNo), at: '2026-07-01T00:' + String(Math.floor(++stamp / 60)).padStart(2, '0') + ':' + String(stamp % 60).padStart(2, '0') + 'Z' });
   days.forEach((date, di) => {
     const wd = WD[isodow(date) - 1];
+    const noCurrentYet = chance(0.15);                                // the morning: the initial deck is in, the current one is not
     for (const type of ['initial', 'current']) {
+      if (type === 'current' && noCurrentYet) continue;
       for (const team of teams) {
         if (chance(0.08)) continue;                                   // this team filed nothing of this type today
         const mine = customers.filter(c => c.team === team);
@@ -145,7 +148,11 @@ function tally(c, answer) {
     if (!e || r.created_at > e) win.set(k, r.created_at); }
   const live = c.rows.filter(r => r.tag !== 'wrongwd' && win.get(r.snapshot_type + '|' + r.snapshot_date + '|' + r.team) === r.created_at
     && c.p_dates.includes(r.snapshot_date) && (!c.p_teams || c.p_teams.includes(r.team)));
-  const ini = live.filter(r => r.snapshot_type === 'initial'), cur = live.filter(r => r.snapshot_type === 'current');
+  const cur = live.filter(r => r.snapshot_type === 'current');
+  const measured = new Set(cur.map(r => r.snapshot_date));           // a day counts when its current deck was filed at all
+  const iniAll = live.filter(r => r.snapshot_type === 'initial');
+  for (const d of new Set(iniAll.map(r => r.snapshot_date))) if (!measured.has(d)) drawn.noCurrentDeck++;
+  const ini = iniAll.filter(r => measured.has(r.snapshot_date));
   const curKey = new Map(cur.map(r => [r.snapshot_date + '|' + r.ref, r])), iniKey = new Set(ini.map(r => r.snapshot_date + '|' + r.ref));
   for (const r of ini) {
     const c2 = curKey.get(r.snapshot_date + '|' + r.ref);
@@ -177,7 +184,8 @@ for (let n = 1; n <= CASES; n++) {
 }
 // Too few of the hard cases is a pass that proves nothing.
 const need = { notTheirDay: CASES, initialOnly: CASES / 2, currentOnly: CASES / 2, undatedCounted: CASES / 4, undatedThenDated: CASES / 10,
-  dateFromCurrent: CASES / 10, losingBatch: CASES / 2, wrongWeekday: CASES / 10, zeroDay: CASES / 10, twoTeams: CASES / 10, emptyArrears: CASES / 10, teamFilter: CASES / 4 };
+  dateFromCurrent: CASES / 10, losingBatch: CASES / 2, wrongWeekday: CASES / 10, noCurrentDeck: CASES / 4, zeroDay: CASES / 10, twoTeams: CASES / 10,
+  emptyArrears: CASES / 10, teamFilter: CASES / 4 };
 const thin = Object.entries(need).filter(([k, v]) => drawn[k] < v);
 console.log(JSON.stringify(drawn));
 if (thin.length) { console.error('NOT ENOUGH of: ' + thin.map(([k, v]) => k + ' (' + drawn[k] + ' < ' + v + ')').join(', ') + ' -- a pass on these draws proves too little'); process.exit(2); }

@@ -860,6 +860,11 @@ function resolved(agg, date) {
    absence), a customer the initial file never named not counted at all. A customer with no
    disbursement date has no day and is counted ONCE in the dates one call asks for, on the last
    that carried them -- the Exp.Def week's own rule (handbook Part 54), never once per day.
+   And A DAY COUNTS WHEN BOTH ITS OWN DECKS WERE FILED ON IT, the week's rule again
+   (expdfWeekCompute_): a customer missing from a current deck that exists has cleared, but a
+   current deck that does not exist yet says nothing about anybody -- the morning a day's
+   initial deck is in and its current one is not, the day answers no row and the tile reads
+   "not uploaded yet", where RUN-ME-056's function read the whole day as recovered in full.
    The SQL file's header has the rest, and the measured cost.
 
    STILL NEVER THE PER-OFFICER FIGURE THE EXP.DEF REPORT SHOWS, and never a second copy of the

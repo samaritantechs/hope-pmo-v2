@@ -6433,8 +6433,16 @@ No rule was missing. The card did not follow the one there was.
   them, never once per day. The same here, within the dates one call asks for; and not at all
   if the same customer was counted on a real cycle day among those dates. The tile says how
   many of its customers were counted that way.
-- **A team-day with a file and nobody on cycle** answers zeros and reads as uploaded. An absent
-  row is what the card draws as "not uploaded yet", and a filed day must never read as that.
+- **A day counts when both its own files were filed on it** -- the Exp.Def week's own rule
+  (`expdfWeekCompute_`). A customer missing from a current file that exists has cleared; a
+  current file that does not exist yet says nothing about anybody. On the morning a day's
+  initial file is in and its current file is not, the first function read every customer of
+  the day as recovered in full; now that day answers nothing, its tile reads "not uploaded
+  yet", and it fills in when the current file lands. Found while this change was waiting on
+  its tests, by reading the function against the week's own loop one more time.
+- **A team-day with both files and nobody on cycle** answers zeros and reads as uploaded. An
+  absent row is what the card draws as "not uploaded yet", and a filed day must never read as
+  that.
 
 The tile now also says **how many customers** were on the day's list, so it can be laid beside
 the Expected Defaulters tab's pill for the same weekday.
@@ -6464,10 +6472,10 @@ to the week is the owner's to say.
 column (`disb_date`) and a pass over the week's rows in memory. Measured on a real PostgreSQL,
 old function and new in the same minute, on 2,267,118 rows (42 teams, 150 days, two files a
 day, 180 customers a team a day, each customer with a disbursement date of their own): a full
-week for every team, 294 rows in 300 to 365 ms against the old function's 220 to 265 ms; one
-team's week, 45 ms for either. A first writing of it sent the week's rows to temporary files
-and took up to 560 ms; the one shipped keeps them in memory (`work_mem = 8MB`, for this
-function alone). The dashboard asks for it twice a load, this week and last, as before:
+week for every team, 294 rows in about 0.3 s (0.27 to 0.4 over five runs) against the old
+function's 0.2 to 0.28 s; one team's week, about 45 ms for either. A first writing of it sent
+the week's rows to temporary files and took up to 560 ms; the one shipped keeps them in memory
+(`work_mem = 8MB`, for this function alone). The dashboard asks for it twice a load, this week and last, as before:
 `test/speed.test.mjs` is unchanged.
 
 **Checked.**
@@ -6476,13 +6484,14 @@ function alone). The dashboard asks for it twice a load, this week and last, as 
   A new check, `tools/db-checks/expdf-cycle-recovery-parity.mjs`, draws random weeks of decks
   -- customers who are in the file and are not that day's, initial-only and current-only
   customers, undated ones and ones that gain a date mid-week, a date carried by the current row
-  alone, a deck uploaded twice, a deck stamped with another weekday, a filed day with nobody on
-  cycle, one customer under two teams, empty arrears, a team filter -- reads each through the
-  real function and through the mirror, and fails on the first difference. 500 weeks read
-  alike. Then the rule was broken eight ways in the mirror (any cycle day counts; an undated
-  customer every day; Day 2 two days later; a missing current row as nothing recovered; the
-  earlier upload wins; the date from the initial row only; an undated-then-dated customer
-  twice; a deck of another weekday read) and the check failed on each.
+  alone, a deck uploaded twice, a deck stamped with another weekday, a day with no current
+  deck yet, a filed day with nobody on cycle, one customer under two teams, empty arrears, a
+  team filter -- reads each through the real function and through the mirror, and fails on the
+  first difference. 550 weeks read alike. Then the rule was broken nine ways in the mirror (any
+  cycle day counts; an undated customer every day; Day 2 two days later; a missing current row
+  as nothing recovered; the earlier upload wins; the date from the initial row only; an
+  undated-then-dated customer twice; a deck of another weekday read; a day with no current
+  deck measured) and the check failed on each.
 - **The function against a query written a second way**, on the 2.27-million-row book: the
   same 294 rows, to the shilling. And beside the old function there: Thursday's own list was
   2,139 of the 7,560 customers on the file, 736,977 recovered where the whole book showed
@@ -6491,8 +6500,10 @@ function alone). The dashboard asks for it twice a load, this week and last, as 
   Friday and whose days are Wednesday and Saturday is on the whole book's card and not on
   Friday's Expected Defaulters; each customer lands on their own days; an undated one counts
   once; one that gains a date is not counted twice; a filed day with nobody on cycle is a zero
-  and not a missing upload; a database without the new function, and one with only the old
-  function, show no figure and name the file.
+  and not a missing upload; a day with its initial file and no current file is not measured,
+  and its customers are not read as recovered; a database without the new function, and one
+  with only the old function, show no figure and name the file. Both tests were run with the
+  cycle-day test taken out of the mirror, and with the both-files rule taken out: they fail.
 - **The card in a real browser**, the page's own code and CSS, both states (figures; no answer).
 - `npm test`: 1,535 pass. `BUILD 2026-11-15-b`; `CALL_BUILD` untouched.
 

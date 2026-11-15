@@ -7234,12 +7234,20 @@ test('Expected Defaulters recovery is each day\'s own list from its initial deck
      U2  no date on Wednesday's file, a Tuesday date by Friday's -- counted on Friday as the
          dated customer it now is, and NOT a second time for its undated Wednesday.
    Thursday has a file and nobody on cycle (nobody here was disbursed on a Thursday or a
-   Monday): it answers zeros and reads as uploaded -- never as "not uploaded yet". */
-test('Expected Defaulters recovery: each customer counts on their own cycle days, an undated one once, and a filed day with nobody on cycle is a zero, not a missing upload', async () => {
+   Monday): it answers zeros and reads as uploaded -- never as "not uploaded yet".
+   TUESDAY HAS ITS INITIAL FILE AND NO CURRENT FILE AT ALL -- the morning before the day's
+   current deck is uploaded. T1 is Tuesday's customer (Day 1) and is on that initial file with
+   100,000. A current file that does not exist yet says nothing about anybody: the day is not
+   measured ("a day counts when both its own decks were filed on it", the Exp.Def week's own
+   rule), and T1's 100,000 is NOT read as recovered in full -- which is what the first function
+   behind this card did with such a morning. */
+test('Expected Defaulters recovery: each customer counts on their own cycle days, an undated one once, a filed day with nobody on cycle is a zero, and a day with no current deck yet is not measured', async () => {
   const t = tables();
-  const WED = '2026-07-22', THU = '2026-07-23';
+  const TUE = '2026-07-21', WED = '2026-07-22', THU = '2026-07-23';
   const on = (row, disb) => ({ ...row, disb_date: disb });
   t.defaulter_snapshots = [
+    // Tuesday's INITIAL file only -- its current file has not been uploaded.
+    D('T1', 'KONGOWE', 100000, 'initial', 45, TUE, 'TUE'),
     // Wednesday's file.
     on(D('W1', 'KONGOWE', 250000, 'initial', 45, WED, 'WED'), '2026-07-15'), on(D('W1', 'KONGOWE', 200000, 'current', 45, WED, 'WED'), '2026-07-15'),
     D('T1', 'KONGOWE', 100000, 'initial', 45, WED, 'WED'), D('T1', 'KONGOWE', 60000, 'current', 45, WED, 'WED'),
@@ -7256,6 +7264,12 @@ test('Expected Defaulters recovery: each customer counts on their own cycle days
   const db = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } });
   const d = await run('dashboardFull', {}, ADMIN, db);
   const tile = date => d.edrTrend.find(x => x.date === date);
+
+  // TUESDAY IS NOT MEASURED: no current deck was filed, so nobody on it has "cleared".
+  const tue = tile(TUE);
+  assert.equal(tue.uploaded, false, 'an initial file with no current file yet is not a measured day');
+  assert.equal(tue.recovered, 0, 'and T1\'s 100,000 is not read as recovered in full');
+  assert.equal(tue.pct, null);
 
   // WEDNESDAY IS W1'S AND NOBODY ELSE'S: T1 recovered 40,000 on Wednesday and it is not
   // Wednesday's customer; U1 and U2 are not counted on a day that is not their last.
@@ -7276,7 +7290,8 @@ test('Expected Defaulters recovery: each customer counts on their own cycle days
   assert.deepEqual([fri.customers, fri.undated, fri.initial, fri.current, fri.recovered], [3, 1, 72000, 23000, 49000]);
   assert.equal(fri.pct, 68.1);
 
-  // The week is its days added: U1 once (5,000, not 0 + 3,000 + 5,000), U2 once (4,000).
+  // The week is its measured days added: U1 once (5,000, not 0 + 3,000 + 5,000), U2 once
+  // (4,000), and nothing of Tuesday's unmeasured 100,000.
   assert.equal(d.edrTrendTotal.initial, 322000);
   assert.equal(d.edrTrendTotal.recovered, 99000);
   assert.equal(d.edrTrendTotal.pct, 30.7);
