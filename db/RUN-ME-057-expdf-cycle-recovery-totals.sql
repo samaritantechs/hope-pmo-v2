@@ -77,12 +77,12 @@
 -- their own spread over the seven weekdays): a full week for every team -- the most an
 -- unrestricted admin's dashboard asks for -- 294 rows in about 0.3 s (0.27 to 0.4 over five
 -- runs), where RUN-ME-056's function took 0.2 to 0.28 s; one team's week, about 45 ms for
--- either. Checked there against a
--- query written a second way (the same 294 rows, to the shilling), and day for day against the
--- old function: Thursday's own list was 2,139 of the 7,560 customers on the file, 736,977
--- recovered where the whole book showed 2,931,516. The planner settings and the two-second
--- ceiling are RUN-ME-056's own; `work_mem = 8MB` for this function alone keeps the week's rows
--- in memory (without it they went to temporary files and the same read took about 365 ms).
+-- either. Checked there against a query written a second way (the same 294 rows, to the
+-- shilling), and day for day against the old function: Thursday's own list was 2,139 of the
+-- 7,560 customers on the file, 736,977 recovered where the whole book showed 2,931,516. The
+-- planner settings and the two-second ceiling are RUN-ME-056's own; `work_mem = 8MB` for this
+-- function alone keeps the week's rows in memory (without it they went to temporary files and
+-- the same read took about 365 ms).
 --
 -- tools/db-checks/expdf-cycle-recovery-parity.mjs reads random weeks of decks through this
 -- function and through the mirror the tests use (test/snapshot-totals-rpc.mjs) and fails on
