@@ -6308,5 +6308,82 @@ stay as Part 76 left them.
 
 ---
 
+## Part 78 — The Exp.Def week keeps a day's own initial-only customer too, unassigned, never guessed
+
+**"as i said we have initial of a day, i expect that customer in initial never to get lost even
+if cleared its amounts and statuses that change"** -- the owner, 14 Nov 2026, read against the
+real Thursday 12 Nov / ref 4231948032 case (Part 77's own re-examination): that ref's own
+initial deck for that day carried it, 15,500, Chronic; that same day's own current deck did
+not. Part 69/70's "keep a customer on their own initial deck" rule (`buildRows_`) only ever
+WIDENS the filter for a row already present in `curRows` -- it has never been able to
+SYNTHESIZE a row for a ref that is in `baseBy` but entirely absent from `curRows`, the harder
+case both Parts named and left. Part 75 closed that harder case for `expectedDefaulters`
+alone, for TODAY alone. This closes it for `expdfWeekCompute_`'s own per-day loop, for every
+day of the week, not only today.
+
+**Why this is not the all-time ghost, and must never be confused with it.** `expdfWeekCompute_`
+already carries one rescue of this shape -- the all-time ghost (Part 71, `ghostRowsFor_`/
+`db/RUN-ME-055`) -- but that one answers "missing from the team's LATEST data right now," and
+is deliberately reached only through the week's own TODAY iteration: "the one thing this
+feature's own design refuses to do anywhere else" is judge a past day by a fact only true
+today. Read against that rule, Thursday 12th stays correctly excluded (Part 77) -- the gap is
+real, but it was never the all-time ghost's to close. The new mechanism here, a **day-ghost**,
+reads only ONE day's own two files: a ref on day `d`'s own initial deck, absent from day `d`'s
+own current deck -- nothing about today, nothing borrowed from any other day -- so it can never
+contradict Part 71's own scope, and it costs no new read at all (`ini.rows` and `cur.rows` for
+day `d` are already fetched by the existing loop).
+
+**What it cannot do honestly: name who should be credited.** `buildRows_`'s `assignFor` needs
+fields (`days_elapsed`, `chronic_date`, `expire_date`) that live only on a CURRENT-type row, and
+a day-ghost has none for day `d` by definition. Reaching back to find the ref's own current-type
+row as of some earlier day is real, separate work -- a new, date-bounded database lookup;
+`RUN-ME-055`'s own function takes no date parameter and only ever answers "right now" -- and it
+is not guessed at here. A day-ghost is instead kept VISIBLE and its recovery COUNTED, with role,
+phase and cycle left `null` and leader reading the honest `'(unassigned)'` sentinel this system
+already uses for exactly this "nothing to credit" case (Part 75). It is kept OUT of
+`expdfWeekCompute_`'s own `cells` (every existing row there is keyed `role|leader|ref` and
+later filtered by `periodRows_`'s `RECYCLE_ROLES.includes(r.role)` -- a `null` role would be
+silently dropped by that filter in every caller, `expdfReport` and `expdfLeader` alike, which
+is exactly why this is NOT fed through the normal pipeline) and returned on its own, as
+`unassignedCleared`, which `expdfReport` folds into a new top-level field of the same name
+(`{customers, initial, recovered, rows}`) -- never into `sections` or the grand `totals`, which
+stay exactly what they were, so nothing already shipped and tested changes shape or figure.
+`expdfLeader` needs no change at all: a day-ghost has no leader, so it was never going to appear
+on anyone's own card regardless.
+
+**Scoped tightly, on purpose.** Only `expdfWeekCompute_`'s own per-day loop is touched.
+`buildRows_`, `expdfCore` and `expdfMine` -- the sacred `/api/call` path -- are untouched, and so
+is `expectedDefaulters` (Part 75's own, separate fix, which already covers its own screen). The
+identical gap sits in `expdfCore`'s single-day and month readings too (used by `expdfReport`'s
+day/month views) -- **flagged, not fixed here**: closing it there means touching `buildRows_` or
+`expdfCore` directly, both shared with the phone, a bigger and separate decision than this one.
+
+**What it costs.** Nothing new is read: `INI_COLS_` widens by one column (`disb_date`, the same
+column Part 77 already widened `portal-core.js`'s own initial read to carry, for the identical
+reason -- a day-ghost's own cycle day comes from its own initial row, never guessed). The per-day
+diff is a plain in-memory Set lookup against data the loop already holds. `test/speed.test.mjs`
+is unaffected; no read on `/api/upload` or `/api/call`.
+
+**The front end.** The Exp.Def Report's week view gains one more board, "Cleared, no leader on
+record for the day," shown only when the week actually has one of these rows -- ref, team, the
+cycle day read off its own initial row, initial and recovered. It sits after the three
+GMO/MANAGER/BIKE boards and before their shared footnote, built from `board()` the same as every
+other table on this screen, so it inherits the same sort, totals and styling for free. `BUILD
+2026-11-15-a`.
+
+**Checked.** A new test (`test/portal.test.mjs`) adds a customer to one day only (Wednesday) of
+the existing seven-day week fixture, on that day's own initial deck alone, sharing that day's
+real upload batch (a different batch string would have tripped the unrelated "latest batch per
+team+weekday" rule and silently dropped the fixture's own real rows for that day -- caught
+before the fix was confirmed, not a bug in the fix itself): proves it is counted in
+`unassignedCleared` with the right initial/recovered and its own real cycle day; proves the
+existing "sum of its days" test's own grand total and customer count are byte-for-byte
+unchanged by its presence; proves no role section and no named leader's own card ever shows it;
+and proves a day (not week) reading of the same screen carries no `unassignedCleared` field at
+all, flagging the known, deliberately out-of-scope gap rather than leaving it unexplained.
+`npm test`: 1,534 pass. No read on `/api/upload` or `/api/call`.
+
+---
+
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*

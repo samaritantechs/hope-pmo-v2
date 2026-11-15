@@ -333,7 +333,7 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
    nothing on /api/upload or /api/call reads this. The month keeps its first-deck baseline (a
    month of decks is not a request's worth of reads); say if it should follow. */
 const WD_ = ['', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const INI_COLS_ = ['ref', 'arrears', 'team'];
+const INI_COLS_ = ['ref', 'arrears', 'team', 'disb_date'];  // disb_date: a day-ghost's own cycle day (below) -- the day-ghost rows below read it
 const CUR_COLS_ = ['ref', 'full_name', 'contact', 'guarantor_name', 'guarantor_contact', 'team', 'arrears', 'other_inst', 'ds', 'dc',
   'disb_date', 'status', 'days_elapsed', 'chronic_date', 'expire_date'];
 /** The week, kept for a minute per set of teams (answer-cache.js): the report pays for the days
@@ -367,6 +367,41 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   // (Found on review, before this shipped: proved with a customer whose days_elapsed crosses a
   // bucket boundary mid-week, counted on both the BIKE and the MANAGER board for one week.)
   const undatedSeen = new Map(), seenAsDated = new Set();
+  /* A DAY-GHOST IS THAT DAY'S OWN FACT, NEVER TODAY'S -- "i expect that customer in initial
+     never to get lost even if cleared its amounts and statuses that change," 14 Nov 2026, after
+     Thursday 12 Nov's own initial deck was shown (by direct SQL) to carry ref 4231948032
+     (15,500, Chronic) with no matching row on Thursday's own current deck -- the harder case
+     Part 69/70 named and left, asked for now across the whole week, not only today.
+
+     This is deliberately NOT the all-time ghost below (ghostRowsFor_/db/RUN-ME-055), and the
+     two must never be confused: the all-time ghost answers "missing from the LATEST data right
+     now" and is reached only through the week's own TODAY iteration, on purpose (Part 71 --
+     "the one thing this feature's own design refuses to do anywhere else" is judge a past day
+     by a fact only true today). Read against that rule, Thursday 12th is correctly excluded,
+     re-confirmed 14 Nov: the gap is real, but closing it is not the all-time ghost's to do.
+
+     A day-ghost instead reads ONLY that one day's own two files: a ref on day d's own initial
+     deck, absent from day d's own current deck -- nothing about today, nothing about any other
+     day, so it can never contradict Part 71's own scope, and it costs no new read (ini.rows and
+     cur.rows for day d are already fetched below). What it cannot do honestly is name who
+     should be credited: buildRows_'s assignFor needs fields (days_elapsed, chronic_date,
+     expire_date) that live only on a CURRENT-type row, and a day-ghost has none for day d by
+     definition -- reaching back to find the ref's own current-type row as of some earlier day
+     is real, separate work (a new, date-bounded database lookup; RUN-ME-055 has no date
+     parameter and answers only "right now"), not guessed at here. So a day-ghost is kept
+     VISIBLE and its recovery COUNTED -- role, phase and cycle null, leader '(unassigned)',
+     exactly the shape Part 75 already uses on expectedDefaulters for the identical "no
+     current-row data to assign from" case -- kept OUT of `cells` (never fed through
+     periodRows_'s RECYCLE_ROLES filter, which would silently drop a null role) and returned
+     separately as `unassignedCleared`, so expdfReport can show it on its own rather than
+     attributing a guess to a name.
+
+     Scoped to this function's own per-day loop only -- buildRows_, expdfCore and expdfMine (the
+     sacred /api/call path) are untouched, and so is expectedDefaulters (Part 75's own, separate
+     fix). The identical gap sits in expdfCore's single-day and month readings too (used by
+     expdfReport's day/month views) -- flagged, not fixed here: closing it there means touching
+     buildRows_ or expdfCore directly, which the phone shares, a bigger and separate decision. */
+  const unassignedCells = new Map();
   /* THE GHOST IS TODAY'S OWN FACT, NOT THE WEEK'S -- found on review, before this shipped: the
      week's per-day loop below never merged ghost rows at all, so a customer gone from the deck
      entirely (ghostRowsFor_, above) was visible on the Exp.Def Report's day and month views but
@@ -388,6 +423,25 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
     const baseBy = {};
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
+    // The day-ghost pass (see the comment above) -- read before curRows gains the all-time
+    // ghost's own additions below, so a same-day comparison is never confused with that
+    // different mechanism's own rows.
+    const curRefsToday = new Set(cur.rows.map(r => K(r.ref)));
+    for (const r of ini.rows) {
+      const ref = K(r.ref);
+      if (curRefsToday.has(ref) || !teamAllowed(user, r.team)) continue;
+      const primary = r.disb_date ? isoWeekday(Date.parse(String(r.disb_date) + 'T00:00:00Z')) : 0;
+      const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
+      const initial = num(r.arrears);
+      const dayCell = { initial, arrears: 0, recovered: initial, status: 'CLEARED' };
+      const c = unassignedCells.get(ref);
+      if (!c) unassignedCells.set(ref, { ref: r.ref, full_name: null, contact: null, team: r.team,
+        arrears: 0, initial, recovered: initial, status: 'CLEARED', disb_date: r.disb_date || null,
+        primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
+        role: null, phase: null, cycle: null, leader: '(unassigned)',
+        days: 1, byDay: { [d]: dayCell } });
+      else { c.byDay[d] = dayCell; c.initial += initial; c.recovered += initial; c.days += 1; }
+    }
     let curRows = cur.rows;
     if (d === today && ghostTeams) {
       // GHOST_REPORT_BUDGET_MS, not 0: this is the portal's own report, never the sacred call
@@ -427,7 +481,8 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   const measured = days.filter(x => x.measured), first = measured[0] || null, lastM = measured[measured.length - 1] || null;
   const lastAt = lastM ? Date.parse(lastM.date + 'T09:00:00Z') : (last === today ? nowMs : Date.parse(last + 'T09:00:00Z'));
   return { rows: [...cells.values()], dayIdx: isoWeekday(lastAt), weekday: WD_[isoWeekday(lastAt)], date: lastM ? lastM.date : null,
-    hasBaseline: measured.length > 0, baseDate: first ? first.date : null, baseline: 'week', days };
+    hasBaseline: measured.length > 0, baseDate: first ? first.date : null, baseline: 'week', days,
+    unassignedCleared: [...unassignedCells.values()] };
 }
 
 /* =======================================================================================
@@ -814,10 +869,20 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
     return { role, rows, totals: { ...sumExpdf(mine), calls: sum('calls'), dials: sum('dials'), talk: sum('talk'), comments: sum('comments') },
       unassigned: rows.filter(r => r.leader === '(unassigned)').length };
   });
+  // A week only (see the comment above expdfWeekCompute_): a customer on some day's own initial
+  // deck, absent that SAME day's own current deck, with no current-row data anywhere to say
+  // whose book they were in -- never guessed at. Kept out of every role section and the grand
+  // total above, which stay exactly what they were; reported here on its own so the recovery
+  // is counted somewhere rather than silently lost.
+  const unassignedCleared = core.unassignedCleared || [];
   return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     days: core.days || null,                                   // a week: which days were added, and which were not filed
-    sections, totals: sumExpdf(all) };
+    sections, totals: sumExpdf(all),
+    unassignedCleared: unassignedCleared.length ? { customers: unassignedCleared.length,
+      initial: unassignedCleared.reduce((s, r) => s + r.initial, 0),
+      recovered: unassignedCleared.reduce((s, r) => s + r.recovered, 0),
+      rows: unassignedCleared } : null };
 }
 
 

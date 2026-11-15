@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 14 November 2026** — portal `BUILD 2026-11-14-d` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 77**.
+**As of 15 November 2026** — portal `BUILD 2026-11-15-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 78**.
 
 ---
 
@@ -80,6 +80,56 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **North-West / Lake Coast SIWAONI batch, run by the owner, 15 Nov — 4 moved or added clean, 2
+  flagged as role conflicts needing the owner's word, 1 strong near-match found but not acted
+  on, 4 genuinely not in the registry under any name close enough to trust.** The 11-row script
+  delivered the same day (section 7's own rule: a list with names only is asked as MOVE, never
+  PLACE/NEW, so a non-match honestly reports NOT FOUND instead of silently creating a second
+  person) came back: **MOVED** clean — Lyashimba Ezekiel Lyashimba (Katoro A), Mathias Robert
+  Fumakule and Hamisi Nyota Hamisi (both Buzwagi B, Lake Coast); **ADDED** clean — Ahadi Geofrey
+  Simtanda (Runzewe, North-West). **NOT FOUND, no match close enough to trust** — January Jacob
+  Joseph, Amosi Joseph, Epitas Bitangisake Mtahilaja, Eliud Moses Erasto: none of the nearest
+  names the fuzzy match itself surfaced share enough to act on; these are genuinely missing from
+  the registry under any spelling this round could find, or are filed under data (a phone, an
+  account) nobody sent. **One real candidate, not acted on**: Phaustine Beatus Zakaria did not
+  match the fuzzy ranks at all (two of three names changed: P→F, "Zakaria"→"Zacharia"), but the
+  registry already holds Faustine Beatus Zachariah (FBZ/0400/2026) in NORTH WEST — the exact
+  zone this batch was moving people into, with the middle name identical and the other two one
+  Swahili spelling-variant apart. Flagged for the owner, not merged on a guess (section 7's own
+  rule: a script never merges two staff records on a name alone). **Two role conflicts, not
+  touched** — Edwin Cosmas Chiwango and Ansigar Rogatus Fussi both came back ALREADY IN THE
+  REGISTRY, each already filed under a DIFFERENT role than their form gave (Edwin: registry
+  "Manager - Buzwagi A" vs form "Field Officer"; Ansigar, found by his bank account one letter
+  off his filed name: registry "Field Officer" vs form "Area Manager"). PLACE only ever fills
+  what is EMPTY, never overwrites an existing role, so neither was touched — correctly, since a
+  script cannot know which of a promotion, a demotion or two different people sharing a name is
+  the true story. Both left exactly as filed; see section 8.
+- **#703 (draft, not merged) — the Exp.Def week keeps a day's own initial-only customer too,
+  unassigned, never guessed (handbook Part 78).** "as i said we have initial of a day, i expect
+  that customer in initial never to get lost even if cleared its amounts and statuses that
+  change" — read against the real Thursday 12 Nov/ref 4231948032 case (Part 77). A **day-ghost**:
+  a ref on one day's own initial deck, absent from that SAME day's own current deck — reads only
+  that one day's two files, nothing about today, so it can never contradict Part 71's own
+  today-only ghost scope (confirmed still correct, untouched). With nothing current-row-shaped
+  to assign a role from, it is kept visible and counted — role/phase/cycle null, leader
+  `'(unassigned)'`, Part 75's own shape for the identical case — kept OUT of
+  `expdfWeekCompute_`'s own role-keyed `cells` (which `periodRows_`'s RECYCLE_ROLES filter would
+  silently drop a null role from) and returned on its own as `unassignedCleared`, which
+  `expdfReport` shows as a new, separate field and a new board on the week view — never folded
+  into any role section or the grand total, which are both exactly unchanged. Scoped to
+  `expdfWeekCompute_` alone: `buildRows_`, `expdfCore`, `expdfMine` (the sacred `/api/call`
+  path) and `expectedDefaulters` (Part 75's own fix) are all untouched. **Flagged, not fixed:**
+  the identical gap sits in `expdfCore`'s single-day/month readings too (used by `expdfReport`'s
+  day/month views) — closing it there means touching code the phone shares, a bigger, separate
+  decision. Zero new reads (`INI_COLS_` widens by the one column, `disb_date`, already fetched
+  for Part 77; the per-day diff is in-memory against data the loop already holds).
+  `test/speed.test.mjs` unaffected; no read on `/api/upload` or `/api/call`. `npm test`: 1,534
+  pass (one new test — and a real fixture bug caught building it: giving the new row its own
+  `upload_batch` collided with the "latest batch per team+weekday" rule and silently dropped
+  that day's real rows, nothing to do with the fix itself; fixed by sharing the day's real
+  batch). `BUILD 2026-11-15-a`; `CALL_BUILD` untouched. **Shipped as a draft PR, not merged** —
+  this exact subsystem has needed real correction three times in the last day alone (Parts
+  76-77 above), so this one gets a second look before it joins `main`, not an automatic merge.
 - **4231948032 / Thursday 12 Nov, re-examined, 14 Nov — Parts 69-71 already cover it; nothing
   changed.** Asked why she still does not show on Thursday 12th's own tab in the week view even
   with everything shipped today. Read Parts 69-71 in full rather than guessing: the "keep a
@@ -1259,6 +1309,18 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner**: the North-West/Lake Coast batch run 15 Nov (section 4) — whether Faustine
+  Beatus Zachariah (FBZ/0400/2026, already filed in NORTH WEST) is the same person as Phaustine
+  Beatus Zakaria on the list (if so, a PLACE by his real staff ID moves/fills him; a script will
+  not merge the two on a name alone); whose role is right for Edwin Cosmas Chiwango (registry:
+  Manager - Buzwagi A; form: Field Officer) and for Ansigar Rogatus Fussi (registry: Field
+  Officer; form: Area Manager) — neither was touched, since PLACE only fills what is empty; and
+  whether January Jacob Joseph, Amosi Joseph, Epitas Bitangisake Mtahilaja and Eliud Moses Erasto
+  are new staff never yet filed, or existing staff under spellings too different for this round's
+  fuzzy match to trust — a phone number or account for any of the four would settle it.
+- **Anyone reviewing #703 (section 4, handbook Part 78)** — shipped as a draft on purpose, not
+  merged: this exact subsystem (the Exp.Def week/ghost mechanisms) has needed real correction
+  three times in the twenty-four hours before it, so it gets a second look before joining `main`.
 - **The owner**: whether the weekday pills (Mon 3888 … Sun 2493, section 4) actually moved once
   Expected Defaulters could load again — `db/RUN-ME-055` is now run (confirmed 14 Nov: the index,
   the function, and `db/RUN-ME-056`'s own function all read back) and the screen's 45-second hang
