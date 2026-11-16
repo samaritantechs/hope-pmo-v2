@@ -56,6 +56,7 @@ import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFu
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostReportBudgetMs_ } from './expdf.js';
+import { leaderKey, teamsOutsideScope } from './leader-scope.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
 
@@ -1136,10 +1137,17 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      isRecycleLeader does for the phone: holding a gmo/manager/bike column ANYWHERE is
      what gives somebody a rotation list, and moving them between teams re-points it with
      no other change. */
-  const me = K(user && user.name);
+  const me = leaderKey(user && user.name);
   return { rows, count: rows.length, dist, dayNames: DAY_NAMES,
     me: user && user.name ? String(user.name).trim() : '',
-    iAmLeader: !!me && teamRows.some(t => K(t.gmo) === me || K(t.manager) === me || K(t.bike) === me),
+    iAmLeader: !!me && teamRows.some(t => leaderKey(t.gmo) === me || leaderKey(t.manager) === me || leaderKey(t.bike) === me),
+    /* "that manager in their code ain't seeing them, they getting just a little like two yet a
+       Manager's gmo sees the manager has many" (the owner, 16 Nov 2026): the teams on which
+       Teams & Staff names this person as GMO / MANAGER / BIKE and their own access code does not
+       hold. The rotation hands them customers there, the report counts them, and this list
+       cannot show them -- the code decides what is seen, never the sheet (call-core.js scopeFor).
+       So the screen says so (leader-scope.js). Over the teams already read above: no read. */
+    outside: teamsOutsideScope(user, teamRows),
     unplaced: dist[0],
     todayIndex: isoWeekday(nowMs),
     teams: [...new Set(rows.map(r => r.team).filter(Boolean))].sort(),

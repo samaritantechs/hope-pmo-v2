@@ -16,6 +16,7 @@ function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key 
 const DAY_NAMES = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 import { assignFor, assignStrategy, ROLE_COLS } from './assign.js';
+import { leaderKey as LK, teamsOutsideScope, codeGapOf } from './leader-scope.js';
 
 /* =======================================================================================
    EXPECTED DEFAULTERS BY RECYCLING LEADER
@@ -294,7 +295,9 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   const dayIdx = isoWeekday(nowMs);
   const rows = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs);
   return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
-    baseline: monthly ? 'month' : (weekly ? 'week' : 'day') };
+    baseline: monthly ? 'month' : (weekly ? 'week' : 'day'),
+    // The teams sheet, as already read above: expdfMine names the teams that give its caller a book their own code cannot see.
+    teams: teamRows };
 }
 
 /* =======================================================================================
@@ -575,14 +578,25 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
   // (GHOST_BUDGET_MS, above) -- the report's own two call sites below take no budget at all,
   // since a report can wait out the rare slow read and the phone cannot.
   const core = await expdfCore(db, user, nowMs, { weekly, ghostBudgetMs: GHOST_BUDGET_MS });
-  const me = K(user.name);
+  /* The person's own name is compared the way every register of names is (leaderKey: runs of
+     blanks as one), so 'MARY  M' on a team and 'MARY M' on a code are one leader. */
+  const me = LK(user.name);
   /* "So even in call app if they clear they go down with status cleared" -- the owner, 13 Nov
      2026. This is read by the phone (the sacred /api/call path) as much as the portal, and a
      CLEARED row is kept here deliberately: an officer sees the customer sink to the bottom of
      their own list (0 arrears already sorts last, below) with a status saying why, rather than
      a customer silently missing with no way to tell a settled account from a data gap. */
   const assigned = core.rows.filter(r => RECYCLE_ROLES.includes(r.role));
-  const own = assigned.filter(r => K(r.leader) === me);
+  const own = assigned.filter(r => LK(r.leader) === me);
+  /* THE TEAMS THAT GIVE THIS PERSON A BOOK THEIR OWN CODE CANNOT SEE -- "that manager in their
+     code ain't seeing them, they getting just a little like two yet a Manager's gmo sees the
+     manager has many". The teams sheet names them as GMO / MANAGER / BIKE on teams their access
+     code does not hold, so the rotation hands them customers there (and the report counts
+     them) that this list will never show: the code decides what is seen, never the sheet
+     (call-core.js scopeFor). The rule is not changed; the screen says so (leader-scope.js).
+     Over the teams sheet expdfCore has already read: no read, an empty list for anybody whose
+     code holds every team they lead -- and for a team-code handset, which scopeFor widens. */
+  const outside = teamsOutsideScope(user, core.teams);
   // Everyone follows up in this mode, so everyone can see the day's expected defaulters for
   // the teams they are allowed to see -- each row naming who is assigned. A recycling leader
   // defaults to their OWN list because that is the work in front of them; anyone else (an
@@ -616,6 +630,7 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
   return { rows: scopeRows, weekday: core.weekday, date: core.date,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     scope: useOwn ? 'mine' : 'team', canSwitch: isLeaderOfSome,
+    outside,
     /* Exactly where the list got to zero. An empty screen that cannot say WHY it is empty
        costs a phone call and a day; these numbers answer it on the spot -- `undated` says how
        many of today's rows carry no cycle day and are shown on every day until one is read. */
@@ -690,7 +705,10 @@ export async function weekWork(db, books, weekOf, weekEnd, { perDay = false } = 
   const named = books.filter(b => b.leader && b.leader !== '(unassigned)' && b.rows.length);
   for (const b of named) b.phones = new Set((b.phones ? [...b.phones] : []).concat(b.rows.map(r => nine_(r.leaderPhone))).filter(Boolean));
   const inCalls = {};
-  if (!named.length) return { work: finish_(work), inCalls };
+  // Which access code, where exactly ONE carries the leader's name, and the teams it holds
+  // (null: every team) -- read off the codes this step already fetches, for the report's off-code mark.
+  const codeOf = {};
+  if (!named.length) return { work: finish_(work), inCalls, codeOf };
 
   /* 1. Whose calls. "Always match anyone who signed in with that code": a leader registers in
      HOPE Calls with their portal access code, and the account takes the CODE's name -- so the
@@ -700,8 +718,13 @@ export async function weekWork(db, books, weekOf, weekEnd, { perDay = false } = 
   let users = [], codes = [];
   [users, codes] = await Promise.all([
     fetchAll(() => db.from('call_users').select('user_id, name, phone')).catch(() => []),
-    fetchAll(() => db.from('access_codes').select('name')).catch(() => []),
+    // `teams` rides along: the same read, one more column (codeOf, below).
+    fetchAll(() => db.from('access_codes').select('name, teams')).catch(() => []),
   ]);
+  for (const b of named) {
+    const hits = codes.filter(c => LK(c.name) === LK(b.leader));
+    if (hits.length === 1) codeOf[K(b.leader)] = Array.isArray(hits[0].teams) ? hits[0].teams : null;
+  }
   const idBooks = {}, spellings = {}, nameBooks = {};
   const own = (b, s) => { const k = K(s); if (!k) return; b.names.add(k); (spellings[K(b.leader)] = spellings[K(b.leader)] || new Set()).add(String(s));
     if (!(nameBooks[k] || []).includes(b)) (nameBooks[k] = nameBooks[k] || []).push(b); };
@@ -811,7 +834,7 @@ export async function weekWork(db, books, weekOf, weekEnd, { perDay = false } = 
         promise_date: c.promise_date || null, promise_amt: c.promise_amt == null ? null : num(c.promise_amt), created_at: c.created_at });
     }
   }
-  return { work: finish_(work), inCalls };
+  return { work: finish_(work), inCalls, codeOf };
 }
 function finish_(work) {
   const out = {};
@@ -847,27 +870,39 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
     const mine = all.filter(r => r.role === role);
     const by = {};
     for (const r of mine) {
-      const b = bucket(by, r.leader, { customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, opms: {}, rows: [] });
+      /* ONE PERSON IS ONE ROW. The row is keyed by the name as every register compares one
+         (leaderKey: capitals, runs of blanks as one) and shown as the first spelling met, so
+         'MARY  M' on two teams and 'MARY M' on four are one leader with six teams, as the card
+         behind the name (expdfLeader) and the leader's own list already read them -- the report
+         used to key on the raw cell and show the same person as two rows that looked alike. */
+      const b = bucket(by, LK(r.leader), { leader: r.leader, customers: 0, arrears: 0, initial: 0, recovered: 0, teams: {}, opms: {}, rows: [] });
       b.customers++; b.arrears += r.arrears; b.initial += r.initial; b.recovered += r.recovered; b.rows.push(r);
       if (r.team) b.teams[K(r.team)] = r.team;
       // "Add an OPM column on the three role boards too": the OPM(s) of the teams this leader holds.
       if (r.opm && r.opm !== '(unassigned)') b.opms[K(r.opm)] = r.opm;
     }
-    for (const b of Object.values(by)) books.push({ key: role + '|' + K(b.key), leader: b.key, rows: b.rows });
+    for (const b of Object.values(by)) books.push({ key: role + '|' + LK(b.leader), leader: b.leader, rows: b.rows });
     return { role, by, mine };
   });
-  const { work, inCalls } = await weekWork(db, books, win.weekOf, win.weekEnd);
+  const { work, inCalls, codeOf } = await weekWork(db, books, win.weekOf, win.weekEnd);
   const sections = built.map(({ role, by, mine }) => {
-    const rows = Object.values(by).map(b => { const w = work[role + '|' + K(b.key)] || {}; return { leader: b.key,
+    const rows = Object.values(by).map(b => { const w = work[role + '|' + LK(b.leader)] || {};
+      /* "that manager in their code ain't seeing them": the teams of this leader's book that their
+         OWN access code does not hold -- the customers credited to them here that their own screen
+         cannot show. Said only where exactly one code carries their name (weekWork's codeOf). */
+      const offCode = codeGapOf(codeOf && codeOf[K(b.leader)], Object.values(b.teams));
+      return { leader: b.leader,
       opm: Object.values(b.opms).sort().join(', ') || '(unassigned)',
       teams: Object.keys(b.teams).length, customers: b.customers,
       calls: w.calls || 0, dials: w.dials || 0, talk: w.talk || 0, comments: w.comments || 0,
-      inCalls: !!inCalls[K(b.key)],
+      inCalls: !!inCalls[K(b.leader)],
       arrears: b.arrears, initial: b.initial, recovered: b.recovered, ...(b.rows.some(r => r.byDay) ? { byDay: dayTotals_(b.rows) } : {}),
+      ...(offCode.length ? { offCode } : {}),
       pct: pctOf(b.recovered, b.initial) }; }).sort((a, b) => b.recovered - a.recovered);
     const sum = f => rows.reduce((s, r) => s + r[f], 0);
     return { role, rows, totals: { ...sumExpdf(mine), calls: sum('calls'), dials: sum('dials'), talk: sum('talk'), comments: sum('comments') },
-      unassigned: rows.filter(r => r.leader === '(unassigned)').length };
+      unassigned: rows.filter(r => r.leader === '(unassigned)').length,
+      offCode: rows.filter(r => r.offCode).length };
   });
   // A week only (see the comment above expdfWeekCompute_): a customer on some day's own initial
   // deck, absent that SAME day's own current deck, with no current-row data anywhere to say
@@ -906,7 +941,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
   const weekly = period === 'week', monthly = period === 'month';
   const win = bookWeek_(nowMs, weekOf, weekEnd);
   const core = weekly ? await expdfWeekCore(db, user, nowMs, { from: win.weekOf, to: win.weekEnd }) : await expdfCore(db, user, nowMs, { weekly, monthly });
-  const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && K(r.leader) === K(L));
+  const rows = periodRows_(core, { daily: !weekly && !monthly, day }).filter(r => r.role === R && LK(r.leader) === LK(L));
   const { work, inCalls } = await weekWork(db, [{ key: 'one', leader: L, rows }], win.weekOf, win.weekEnd, { perDay: weekly });
   const w = work.one;
   const out = rows.map(r => { const p = w.per[K(r.ref)] || per_(); return {

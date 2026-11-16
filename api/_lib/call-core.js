@@ -1048,6 +1048,9 @@ async function list(db, [dev, which, which2], nowMs) {
       leader: r.leader, role: r.role,
     })), expdf: { totals: d.totals, byCycle: d.byCycle, byLeader: d.byLeader, dayName: d.dayName,
       date: d.date, hasBaseline: d.hasBaseline, scope: d.scope, canSwitch: d.canSwitch,
+      // The teams the sheet gives this person a book on that their own code does not hold (leader-scope.js):
+      // the strip says so, so a short list is explained rather than silent. Empty for nearly everybody.
+      outside: d.outside || [],
       diag: d.diag } };
   }
   let asOf = null, stale = false;
