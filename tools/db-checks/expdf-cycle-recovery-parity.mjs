@@ -3,23 +3,35 @@
      "recovered amounts of full cant equal of owed expected defs" -- the owner, 15 Nov 2026
 
    The dashboard's "Expected Defaulters recovery" cards are read by a database function,
-   expdf_cycle_recovery_totals (db/RUN-ME-057). Node cannot run SQL in `npm test`, so the tests
-   read the same rule through a JavaScript mirror, EXPDF_RECOVERY_RPC in
+   expdf_team_day_recovery_totals (db/RUN-ME-058). Node cannot run SQL in `npm test`, so the
+   tests read the same rule through a JavaScript mirror, EXPDF_RECOVERY_RPC in
    test/snapshot-totals-rpc.mjs. A mirror that drifts from the function makes every test of the
    card a test of something the live book does not do: #697's review found exactly that (a mock
    looser than the real function, hiding a fabricated figure). This is the check that can see
    it: it draws random weeks of defaulter decks, reads each one through the real function on a
    PostgreSQL and through the mirror, and fails on the first difference.
 
+   WHAT IT CANNOT SEE: a rule that is wrong on both sides, or right on both sides and not the
+   rule the owner gave. Agreement here is not correctness: the tests in test/portal.test.mjs
+   say what the answer must BE, case by case, and the rule itself is read off the handbook and
+   the comments that quote the owner -- a second reader took a team missing from a day's
+   current file for a team whose file had not arrived, and it took reading db/RUN-ME-032's
+   header ("a team missing from it owes nothing on it, full stop") to see that the function
+   was following the rule and the proposal was not.
+
    What it draws on purpose, and refuses to pass without: customers who are in a day's file and
    are not that day's (the fault the first version of the card had); customers on the initial
    deck only, and on the current deck only; customers with no disbursement date (counted once,
    on the last day that carried them) and ones that gain a date during the week; a date carried
-   by the current row alone; a day's deck uploaded twice (the later upload wins, the earlier is
+   by the current row alone, and a current row whose date DISAGREES with the initial row's (the
+   current row's is read); a day's deck uploaded twice (the later upload wins, the earlier is
    not read); a deck stamped with another weekday; a day whose initial deck is in and whose
-   current deck is not (not measured -- never "everyone cleared"); a team-day with both decks
-   and nobody on cycle (zeros, not a missing row); the same customer under two teams; arrears
-   left empty; a team filter.
+   current deck is not (not measured -- never "everyone cleared"); a team missing from a
+   current deck that exists (cleared, the whole-book rule); A CALLER WHOSE OWN TEAMS ARE ALL
+   MISSING FROM A CURRENT DECK THE COMPANY HOLDS (measured, and cleared -- the same answer the
+   admin gets, where db/RUN-ME-057 answered "not uploaded"); a team-day with both decks and
+   nobody on cycle (zeros, not a missing row); the same customer under two teams; rows that
+   name no team; arrears left empty; a team filter.
 
    It needs a PostgreSQL it can reach with psql and NO defaulter_snapshots table in the
    database it is pointed at: it creates a small one, and everything it does is rolled back.
@@ -33,7 +45,10 @@
    BREAK THE RULE AND SEE IT FAIL before trusting a change to either side. In the mirror: count
    a customer whatever their cycle day, count an undated customer on every day, take Day 2 as
    two days later, read a missing current row as "nothing recovered", let the earlier upload
-   of a day win, or measure a day that has no current deck. Each must come back DIFFERENT. */
+   of a day win, measure a day that has no current deck, ask "is there a current deck" of the
+   caller's teams instead of the company, or of each team by itself, read the initial row's
+   date before the current row's, or leave a row with no team out. Each must come back
+   DIFFERENT. */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -41,13 +56,13 @@ import { execFileSync } from 'node:child_process';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const { EXPDF_RECOVERY_RPC } = await import(path.join(ROOT, 'test/snapshot-totals-rpc.mjs'));
-const mirror = EXPDF_RECOVERY_RPC.expdf_cycle_recovery_totals;
+const mirror = EXPDF_RECOVERY_RPC.expdf_team_day_recovery_totals;
 const CASES = Number(process.env.CASES || 300);
 
-const file = fs.readFileSync(path.join(ROOT, 'db/RUN-ME-057-expdf-cycle-recovery-totals.sql'), 'utf8');
-const from = file.indexOf('create or replace function public.expdf_cycle_recovery_totals');
+const file = fs.readFileSync(path.join(ROOT, 'db/RUN-ME-058-expdf-team-day-recovery-totals.sql'), 'utf8');
+const from = file.indexOf('create or replace function public.expdf_team_day_recovery_totals');
 const to = file.indexOf('$$;', from);
-if (from < 0 || to < 0) throw new Error('db/RUN-ME-057 no longer has the function this check reads by name');
+if (from < 0 || to < 0) throw new Error('db/RUN-ME-058 no longer has the function this check reads by name');
 const FUNCTION = file.slice(from, to + 3);
 const TABLE = 'create table public.defaulter_snapshots (ref text, team text, arrears numeric(14,2), disb_date date, '
   + 'snapshot_type text, weekday text, snapshot_date date, upload_batch uuid, created_at timestamptz);';
@@ -71,7 +86,8 @@ const uuid = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
 const lit = v => (v == null ? 'null' : "'" + String(v).replace(/'/g, "''") + "'");
 
 const drawn = { cases: 0, notTheirDay: 0, initialOnly: 0, currentOnly: 0, undatedCounted: 0, undatedThenDated: 0,
-  dateFromCurrent: 0, losingBatch: 0, wrongWeekday: 0, noCurrentDeck: 0, zeroDay: 0, twoTeams: 0, emptyArrears: 0, teamFilter: 0 };
+  dateFromCurrent: 0, datesDisagree: 0, losingBatch: 0, wrongWeekday: 0, noCurrentDeck: 0, teamMissing: 0, callerTeamsMissing: 0, zeroDay: 0,
+  twoTeams: 0, noTeam: 0, emptyArrears: 0, teamFilter: 0 };
 
 function drawCase() {
   const teams = ['T1', 'T2', 'T3', 'T4'].slice(0, 2 + Math.floor(rnd() * 3));
@@ -99,6 +115,7 @@ function drawCase() {
             let disb = c.disb;
             if (c.disb == null && di >= c.gainsDateOn) disb = addDays('2026-06-01', (c.ref.length * 7 + Number(c.ref.slice(1)) * 3) % 21);
             if (disb != null && type === 'initial' && chance(0.12)) disb = null;      // the initial row lost the date: the current row may carry it
+            if (disb != null && type === 'current' && chance(0.12)) disb = addDays(disb, 1 + Math.floor(rnd() * 5));   // the two rows disagree: the current row's is read
             rows.push({ ref: c.ref, team, arrears: chance(0.03) ? null : Math.floor(rnd() * 200) * 500, disb_date: disb,
               snapshot_type: type, weekday, snapshot_date: date, upload_batch: b.id, created_at: b.at, tag });
           }
@@ -116,9 +133,33 @@ function drawCase() {
         weekday: wd, snapshot_date: date, upload_batch: b.id, created_at: b.at, tag: 'twoteams' });
       drawn.twoTeams++;
     }
+    // Rows that name no team: one team of their own (''), measured like any other.
+    if (chance(0.15)) {
+      const b = batch(), disb = chance(0.3) ? null : addDays('2026-06-01', Math.floor(rnd() * 21));
+      for (const ref of ['N1', 'N2']) rows.push({ ref, team: null, arrears: Math.floor(rnd() * 200) * 500, disb_date: disb, snapshot_type: 'initial',
+        weekday: wd, snapshot_date: date, upload_batch: b.id, created_at: b.at, tag: 'noteam' });
+      if (!noCurrentYet && chance(0.6)) { const b2 = batch();
+        rows.push({ ref: 'N1', team: null, arrears: Math.floor(rnd() * 200) * 500, disb_date: disb, snapshot_type: 'current',
+          weekday: wd, snapshot_date: date, upload_batch: b2.id, created_at: b2.at, tag: 'noteam' }); }
+      drawn.noTeam++;
+    }
   });
+  // A team missing from a current deck the company holds -- and, often, a caller who sees
+  // only that team: the company's file is the answer for them too.
+  let only = null;
+  if (chance(0.35)) {
+    const isCur = r => r.snapshot_type === 'current' && r.tag !== 'wrongwd';
+    const d = pick([...new Set(rows.filter(isCur).map(r => r.snapshot_date))].concat([null]));
+    const cand = d == null ? [] : [...new Set(rows.filter(r => r.snapshot_date === d && r.snapshot_type === 'initial' && r.team != null).map(r => r.team))]
+      .filter(t => rows.some(r => r.snapshot_date === d && isCur(r) && r.team !== t));
+    if (cand.length) {
+      const gone = pick(cand);
+      for (let i = rows.length - 1; i >= 0; i--) if (rows[i].snapshot_date === d && rows[i].snapshot_type === 'current' && rows[i].team === gone) rows.splice(i, 1);
+      if (chance(0.6)) only = [gone];
+    }
+  }
   const asked = chance(0.7) ? WEEK.slice() : WEEK.filter(() => chance(0.7));
-  const p_teams = chance(0.5) ? null : teams.filter(() => chance(0.6));
+  const p_teams = only || (chance(0.5) ? null : teams.filter(() => chance(0.6)));
   if (p_teams) drawn.teamFilter++;
   return { rows, p_dates: asked, p_weekdays: asked.map(d => WD[isodow(d) - 1]), p_teams };
 }
@@ -128,7 +169,7 @@ function readSql({ rows, p_dates, p_weekdays, p_teams }) {
     lit(r.weekday), lit(r.snapshot_date), lit(r.upload_batch), lit(r.created_at)].join(',') + ')').join(',\n');
   const sql = 'begin;\n' + TABLE + '\n' + FUNCTION + '\n'
     + (rows.length ? 'insert into public.defaulter_snapshots values\n' + values + ';\n' : '')
-    + 'select snapshot_date, team, initial, current, recovered, customers, undated from public.expdf_cycle_recovery_totals('
+    + 'select snapshot_date, team, initial, current, recovered, customers, undated from public.expdf_team_day_recovery_totals('
     + 'array[' + p_dates.map(lit).join(',') + ']::date[], array[' + p_weekdays.map(lit).join(',') + ']::text[], '
     + (p_teams ? 'array[' + p_teams.map(lit).join(',') + ']::text[]' : 'null') + ');\nrollback;';
   return psql(sql).trim().split('\n').filter(Boolean).map(l => { const f = l.split(SEP);
@@ -138,34 +179,46 @@ const readMirror = ({ rows, p_dates, p_weekdays, p_teams }) => mirror({ defaulte
   .map(r => ({ snapshot_date: String(r.snapshot_date), team: String(r.team), initial: Number(r.initial), current: Number(r.current),
     recovered: Number(r.recovered), customers: Number(r.customers), undated: Number(r.undated) }));
 const canon = list => list.slice().sort((a, b) => (a.snapshot_date + '|' + a.team).localeCompare(b.snapshot_date + '|' + b.team))
-  .map(r => [r.snapshot_date, r.team, r.initial, r.current, r.recovered, r.customers, r.undated].join(' '));
+  .map(r => [r.snapshot_date, JSON.stringify(r.team), r.initial, r.current, r.recovered, r.customers, r.undated].join(' '));
 
 // What a case exercised, read off the rows by the rule's own words (not off either reading).
 function tally(c, answer) {
+  const tk = r => (r.team == null ? '' : r.team);
+  const inScope = r => !c.p_teams || (r.team != null && c.p_teams.includes(r.team));
+  const asked = r => r.tag !== 'wrongwd' && c.p_dates.includes(r.snapshot_date);
+  // THE COMPANY holds a current deck for the day: any team's, any upload of it, whoever asks.
+  const dayFiled = new Set(c.rows.filter(r => asked(r) && r.snapshot_type === 'current').map(r => r.snapshot_date));
   const win = new Map();
-  for (const r of c.rows) { if (r.tag === 'wrongwd') continue;
-    const k = r.snapshot_type + '|' + r.snapshot_date + '|' + r.team, e = win.get(k);
+  for (const r of c.rows) { if (r.tag === 'wrongwd' || !inScope(r)) continue;
+    const k = r.snapshot_type + '|' + r.snapshot_date + '|' + tk(r), e = win.get(k);
     if (!e || r.created_at > e) win.set(k, r.created_at); }
-  const live = c.rows.filter(r => r.tag !== 'wrongwd' && win.get(r.snapshot_type + '|' + r.snapshot_date + '|' + r.team) === r.created_at
-    && c.p_dates.includes(r.snapshot_date) && (!c.p_teams || c.p_teams.includes(r.team)));
+  const live = c.rows.filter(r => asked(r) && inScope(r) && win.get(r.snapshot_type + '|' + r.snapshot_date + '|' + tk(r)) === r.created_at);
   const cur = live.filter(r => r.snapshot_type === 'current');
-  const measured = new Set(cur.map(r => r.snapshot_date));           // a day counts when its current deck was filed at all
+  const teamFiled = new Set(cur.map(r => r.snapshot_date + '|' + tk(r)));
+  const scopeFiled = new Set(cur.map(r => r.snapshot_date));         // a current deck among the CALLER'S teams
   const iniAll = live.filter(r => r.snapshot_type === 'initial');
-  for (const d of new Set(iniAll.map(r => r.snapshot_date))) if (!measured.has(d)) drawn.noCurrentDeck++;
-  const ini = iniAll.filter(r => measured.has(r.snapshot_date));
+  for (const d of new Set(iniAll.map(r => r.snapshot_date))) {
+    if (!dayFiled.has(d)) drawn.noCurrentDeck++;
+    else if (!scopeFiled.has(d)) drawn.callerTeamsMissing++;         // 057 answered nothing here; the admin's answer is the rule
+  }
+  // A team with no current deck on a day the company filed: cleared, the whole-book rule.
+  for (const k of new Set(iniAll.map(r => r.snapshot_date + '|' + tk(r)))) if (!teamFiled.has(k) && dayFiled.has(k.split('|')[0])) drawn.teamMissing++;
+  const ini = iniAll.filter(r => dayFiled.has(r.snapshot_date));
   const curKey = new Map(cur.map(r => [r.snapshot_date + '|' + r.ref, r])), iniKey = new Set(ini.map(r => r.snapshot_date + '|' + r.ref));
+  const dateOf = r => { const c2 = curKey.get(r.snapshot_date + '|' + r.ref); return c2 && c2.disb_date != null ? c2.disb_date : r.disb_date; };
   for (const r of ini) {
     const c2 = curKey.get(r.snapshot_date + '|' + r.ref);
-    const disb = r.disb_date != null ? r.disb_date : (c2 ? c2.disb_date : null);
+    const disb = dateOf(r);
     if (!c2) drawn.initialOnly++;
     if (r.disb_date == null && c2 && c2.disb_date != null) drawn.dateFromCurrent++;
+    if (r.disb_date != null && c2 && c2.disb_date != null && isodow(r.disb_date) !== isodow(c2.disb_date)) drawn.datesDisagree++;
     if (r.arrears == null) drawn.emptyArrears++;
     if (disb != null) { const d1 = isodow(disb), dow = isodow(r.snapshot_date);
       if (!(d1 === dow || ((d1 - 1 + 3) % 7) + 1 === dow)) drawn.notTheirDay++; }
   }
   for (const r of cur) if (!iniKey.has(r.snapshot_date + '|' + r.ref)) drawn.currentOnly++;
-  const undatedRefs = new Set(ini.filter(r => { const c2 = curKey.get(r.snapshot_date + '|' + r.ref); return r.disb_date == null && !(c2 && c2.disb_date != null); }).map(r => r.ref));
-  for (const ref of undatedRefs) if (ini.some(r => r.ref === ref && r.disb_date != null)) drawn.undatedThenDated++;
+  const undatedRefs = new Set(ini.filter(r => dateOf(r) == null).map(r => r.ref));
+  for (const ref of undatedRefs) if (ini.some(r => r.ref === ref && dateOf(r) != null)) drawn.undatedThenDated++;
   for (const a of answer) { if (a.undated > 0) drawn.undatedCounted++; if (a.customers === 0) drawn.zeroDay++; }
 }
 
@@ -176,7 +229,7 @@ for (let n = 1; n <= CASES; n++) {
   if (x.join('\n') !== y.join('\n')) {
     console.error('DIFFERENT on case ' + n + ' (SEED=' + (process.env.SEED || 20261115) + ')\n');
     console.error('asked: ' + c.p_dates.join(',') + ' teams ' + JSON.stringify(c.p_teams) + '\n');
-    console.error('the function (db/RUN-ME-057):\n  ' + x.join('\n  ') + '\n\nthe mirror (test/snapshot-totals-rpc.mjs):\n  ' + y.join('\n  ') + '\n');
+    console.error('the function (db/RUN-ME-058):\n  ' + x.join('\n  ') + '\n\nthe mirror (test/snapshot-totals-rpc.mjs):\n  ' + y.join('\n  ') + '\n');
     console.error('rows:\n' + c.rows.map(r => '  ' + [r.snapshot_date, r.weekday, r.snapshot_type, r.team, r.ref, r.arrears, r.disb_date, r.upload_batch.slice(-4), r.created_at, r.tag].join(' ')).join('\n'));
     process.exit(1);
   }
@@ -184,9 +237,10 @@ for (let n = 1; n <= CASES; n++) {
 }
 // Too few of the hard cases is a pass that proves nothing.
 const need = { notTheirDay: CASES, initialOnly: CASES / 2, currentOnly: CASES / 2, undatedCounted: CASES / 4, undatedThenDated: CASES / 10,
-  dateFromCurrent: CASES / 10, losingBatch: CASES / 2, wrongWeekday: CASES / 10, noCurrentDeck: CASES / 4, zeroDay: CASES / 10, twoTeams: CASES / 10,
-  emptyArrears: CASES / 10, teamFilter: CASES / 4 };
+  dateFromCurrent: CASES / 10, datesDisagree: CASES / 4, losingBatch: CASES / 2, wrongWeekday: CASES / 10, noCurrentDeck: CASES / 4,
+  teamMissing: CASES / 2, callerTeamsMissing: CASES / 10, zeroDay: CASES / 10, twoTeams: CASES / 10, noTeam: CASES / 4, emptyArrears: CASES / 10,
+  teamFilter: CASES / 4 };
 const thin = Object.entries(need).filter(([k, v]) => drawn[k] < v);
 console.log(JSON.stringify(drawn));
 if (thin.length) { console.error('NOT ENOUGH of: ' + thin.map(([k, v]) => k + ' (' + drawn[k] + ' < ' + v + ')').join(', ') + ' -- a pass on these draws proves too little'); process.exit(2); }
-console.log('every one of ' + drawn.cases + ' weeks read alike by db/RUN-ME-057 and its mirror');
+console.log('every one of ' + drawn.cases + ' weeks read alike by db/RUN-ME-058 and its mirror');

@@ -6521,6 +6521,114 @@ reading the function against the week's loop again, not by a reviewer.
 does not open a customer list on a tap; nobody asked. The gap Part 78 flagged in the Exp.Def
 Report's single-day and month readings stands as it was.
 
+## Part 80 — The Expected Defaulters card: the company's book decides the day, the plan is pinned, a failed read says so
+
+16 Nov 2026. #705 (Part 79) went in without a second reader. One was put on it after the merge,
+and came back with two findings and a nit. This Part is what was done with them, including the
+one that was half wrong and was nearly shipped anyway.
+
+**The rule did not change.** A day's Expected Defaulters are the customers on that day's own
+initial file whose cycle day it is; what they recovered is initial less the same day's current,
+per customer, never negative; and a customer the current file does not name has cleared. That
+last sentence covers a whole team too, and it is not this card's to decide:
+
+> "one file, all weekdays together, every time"
+> "a team missing from it owes nothing on it, full stop" — `defaulterBook`, and
+> `db/RUN-ME-032` v8: the trade made after "i bulked paid clients, many of them brother!"
+
+**Finding 1, as the reader wrote it:** "a team whose current file is missing is read as
+recovered in full". The reader had read `api/_lib/snapshots.js` ("a day can also arrive as
+SEVERAL files") and took a team absent from a day's current file for a team whose file had not
+arrived. Half of it was right:
+
+- *Right:* `db/RUN-ME-057` asked "is there a current file for this day" of the teams the caller
+  may see. So the admin read a team missing from the file as cleared, and that team's own
+  viewer read "not uploaded yet". One team, one day, two answers. `db/RUN-ME-058` asks the
+  company's book, as `recovery_standing` always has ("not narrowed by team"): one index probe a
+  day, written as a scalar sub-select so it stays a probe.
+- *Not right:* the proposal that such a team be "not measured". That is the other side of the
+  trade quoted above. **It was built** (a `measured` flag, a "teams not in yet" line on each
+  tile, tests) **and taken out before anything was pushed**, once `db/RUN-ME-032`'s header had
+  been read. The owner had been told in the chat that the fault was real; that was said before
+  the governing rule was read, and was corrected in the chat the same morning.
+
+What the trade costs if a current file ever arrives without a team that still owes was
+measured, for the owner, and is written in the SQL file's header: on a test book with six of
+eighty-four teams absent from a Thursday's current file the day reads 9,282,638 recovered, where
+the teams present recovered 1,567,018. It is the same for "Weekly recovery trend" two cards up.
+Whether that trade still stands is the owner's to say, and for every recovery figure together.
+
+**Finding 2: a failed read was remembered as a missing function.** `expdfRecoveryTotals`
+remembered ANY error as "not installed" for five minutes. The dashboard asks the function twice
+a load (this week; last week, for the arrows), so one timeout of last week's read blanked this
+week's card on every load for five minutes, under a note telling the person to run a file they
+had run. This file already carried that lesson, three screens down, in `recoveryStanding`'s
+note: "I ran it still getting 'run db/RUN-ME-032'". Now only "there is no such function" is
+remembered; any other failure is forgotten at once and its own words go on the card. The card's
+note says one of three things: the file is not run (and that the card fills within five minutes
+of running it); the database did not answer, in its own words; or the read was slow and the
+dashboard did not wait. This week's read now has a budget of its own (four seconds,
+`DASH_EDR_BUDGET_MS`): a statement that outruns its two-second ceiling is retried by `runQuery`
+three times with pauses, seven and a half seconds at worst, and a card is not worth that to the
+most-opened screen.
+
+**The plan could go wrong, and badly.** The planner cannot know how many rows a day's file
+holds: it expects ten or twenty where fifteen thousand arrive, and on a guess that small three
+join methods cost the same on paper. Timed on a test book: 057's text took 19.5 s when the
+planner was denied hash joins; a merge join that matched a day's two files on the date alone
+took 142 s. Against a two-second ceiling either is a card that never answers, and which one a
+live database picks is a coin toss on its statistics. 058 sets `enable_nestloop = off` and
+`enable_mergejoin = off` on the function, which leaves the hash join as the only choice for the
+joins between the week's rows; the read of each day's file is a lateral read and is not
+affected. With the two settings the answer came back in the same time whatever else the planner
+was denied.
+
+**The nit.** When a customer's two rows of a day carry different disbursement dates, 058 reads
+the current row's, as `buildRows_` does, and the initial row's only when the current row has
+none.
+
+**What it cost.** The same two files a day, and seven index probes. On the 2,267,118-row book a
+full week for every team in 0.29 to 0.33 s (057: 0.29 to 0.35 s), one team about 40 ms; on a
+book twice as wide with two uploads kept of every deck, 0.91 to 1.0 s (057: 0.81 to 0.95 s).
+Two calls a dashboard load as before; `test/speed.test.mjs` is unchanged. No read on
+`/api/upload` or `/api/call`.
+
+**Checked.** The parity check read 300 random weeks through the function on a PostgreSQL and
+through the mirror and found no difference, then failed on each of seven deliberate breaks,
+among them asking the caller's teams (057's behaviour) and asking each team by itself (the
+proposal). It now draws a caller whose own teams are all missing from a current file the company
+holds. The header of that check says what it cannot see: a rule that is wrong, or not the
+owner's, on both sides. Four tests in `test/portal.test.mjs` say what the answer must be; the
+two new ones each fail when their fix is taken out. The file was run twice as one batch on a
+book that still held the older functions. The card was drawn in a real browser in each state.
+`BUILD 2026-11-16-a` (the page's comment only; the tile is as it was).
+
+**What the sweep found in other screens, not changed here.** Before the rule above was read, a
+small workflow was sent to look for "absent from the current file read as cleared" elsewhere.
+Its finder reproduced the reading in about a dozen places (`scratchpad/sweep/sweep1.mjs`,
+`sweep2.mjs`; gone with the chat's machine). Read against the whole-book rule most of them are
+the rule: promises, the Legal tab, the credit scorecard, the recovery tile's list, the upload's
+own retirement of the officers' register, and the rows the all-time ghost (Part 71) marks
+CLEARED for a team today's current file does not name. Three look wider than their own Part and
+are listed in `CHAT.md` section 8 for the next change, each to be read against its Part first:
+on the Expected Defaulters tab, in the hours between a day's initial file and its current file,
+a customer who is NEW on today's initial file reads CLEARED with the whole arrears as recovered
+(Parts 75 and 77 speak of a customer who dropped off the current file; this one was never on
+it because it is older than the file that names them); the Exp.Def week view can show the same
+customer twice, as a ghost on a leader's list and on the "no leader on record" board; and that
+board's own test for a filed day is asked of the reader's teams, as 057's was. None of the
+finder's reports was read by a second reader: the three sent to check them stopped on the
+account's usage limit.
+
+**What it cost the owner.** That workflow (two finders, three checkers) was started while the
+owner was waiting for the corrected SQL, after `CHAT.md` section 7 had said twice not to. It
+used up the account's five-hour allowance; the chat stopped at about 03:55 East Africa time and
+did not answer until 08:30, after the owner wrote "Please continue" twice. The corrected SQL
+reached the owner that morning instead of that night.
+
+**Not done.** No tip in the `hints` table. The three items above. The Exp.Def Report's own day
+test is still asked of the reader's teams (it was not this change's to move).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

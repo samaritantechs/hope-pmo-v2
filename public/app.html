@@ -779,7 +779,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-15-b';
+var BUILD = '2026-11-16-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3945,7 +3945,9 @@ VIEWS.dashboard = function(){
          from that day's initial file; the tile says how many they were, what came back from
          them (per customer, never negative), what they still owe, and Rec % over their own
          arrears. The server's note on expdfRecoveryTotals (api/_lib/snapshot-totals.js) has
-         the rule; `edrNote` is set when the database has not answered (db/RUN-ME-057). */
+         the rule (db/RUN-ME-058); `edrNote` is set when the database has not answered, and
+         says which of three things happened: the file is not run, the read failed (the
+         database's own words), or the read was slow and the dashboard did not wait. */
       + trendGrid('Expected Defaulters recovery (Mon–Sun)', 'that day’s own expected list only — on its initial file, Day 1 (disbursement weekday) or Day 2 (three days later) that day · recovered = initial − current per customer, never negative · Rec % of that list’s arrears', 'gEdr',
           d.edrTrend.map(function(x){ return x.uploaded === false
             /* No answer from the database (edrNote) is not "not uploaded": the tile says which. */

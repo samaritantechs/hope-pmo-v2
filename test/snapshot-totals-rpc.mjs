@@ -487,33 +487,42 @@ export const DEFAULTER_GHOST_ROWS_RPC = {
   },
 };
 
-/* expdf_cycle_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-057, clause for clause:
-   the dashboard's team-wide "Expected Defaulters recovery" cards, EACH DAY'S OWN LIST. Of a
-   day's own INITIAL deck (the winning upload per team on that exact date and weekday), the
-   customers whose cycle day it is -- Day 1 the weekday of the disbursement date, Day 2 three
-   days later, Monday 1 to Sunday 7, the formula buildRows_ and expectedDefaulters share. The
-   date is read off the initial row, else off the same customer's row on the same day's current
-   deck. The current deck is looked up for those customers and never iterated on its own: one
-   not found there reads as fully recovered (current 0); one the initial deck never named is
-   not counted, whatever its status says. Recovered is a SUM OF PER-CUSTOMER CLAMPED
-   DIFFERENCES. A customer with no disbursement date on either row is counted ONCE in the dates
-   asked for, on the latest that carried them undated, and not at all if the same customer was
-   counted on a real cycle day among those dates (the Exp.Def week's own rule). A DAY COUNTS
-   WHEN BOTH ITS DECKS WERE FILED ON IT: a date with no current deck at all (among the teams
-   asked for) answers nothing -- no current file yet is not "everyone cleared" -- as in
-   expdfWeekCompute_. A team with an initial deck on a measured day and nobody on cycle answers
-   a row of zeros, never no row.
+/* expdf_team_day_recovery_totals(p_dates, p_weekdays, p_teams) -- db/RUN-ME-058, clause for
+   clause: the dashboard's team-wide "Expected Defaulters recovery" cards, EACH DAY'S OWN LIST.
+   Of a day's own INITIAL deck (the winning upload per team on that exact date and weekday),
+   the customers whose cycle day it is -- Day 1 the weekday of the disbursement date, Day 2
+   three days later, Monday 1 to Sunday 7, the formula buildRows_ and expectedDefaulters share.
+   The date is read off the same day's current row where that row carries one (as buildRows_
+   reads it), else off the initial row. The current deck is looked up for those customers and
+   never iterated on its own: one not found there reads as fully recovered (current 0); one
+   the initial deck never named is not counted, whatever its status says. Recovered is a SUM OF
+   PER-CUSTOMER CLAMPED DIFFERENCES. A customer with no disbursement date on either row is
+   counted ONCE in the dates asked for, on the latest that carried them undated, and not at
+   all if the same customer was counted on a real cycle day among those dates (the Exp.Def
+   week's own rule).
+
+   A DAY COUNTS WHEN THE COMPANY HOLDS A CURRENT DECK FOR IT -- asked of the whole book, never
+   of the teams the caller may see (recovery_standing's own "not narrowed by team"). The
+   current file is the whole book, so a team missing from one that exists has cleared ("a team
+   missing from it owes nothing on it, full stop") for the admin and for that team's own
+   viewer alike; db/RUN-ME-057 asked the caller's teams, and the two read one team two ways. A
+   date with no current deck at all answers nothing -- no current file yet is not "everyone
+   cleared". A team with an initial deck on a measured day and nobody on cycle answers a row
+   of zeros, never no row. A row that names no team is filed under the team ''.
 
    tools/db-checks/expdf-cycle-recovery-parity.mjs reads random decks through this and through
    the real function on a PostgreSQL and fails on the first difference: keep the two in step,
    and break one to see that check fail before trusting a change to either. */
 export const EXPDF_RECOVERY_RPC = {
-  expdf_cycle_recovery_totals(store, a = {}) {
+  expdf_team_day_recovery_totals(store, a = {}) {
     const src = (store.defaulter_snapshots && store.defaulter_snapshots.rows) || [];
     const teams = a.p_teams ? a.p_teams.map(String) : null;
     const dk = v => String(v == null ? '' : v).slice(0, 10);
     const rank = r => String(r.created_at || '') + ' ' + String(r.upload_batch || '');
-    const inScope = r => !teams || teams.includes(String(r.team));
+    // `s.team = any(p_teams)`: a row that names no team is in nobody's named scope.
+    const inScope = r => !teams || (r.team != null && teams.includes(String(r.team)));
+    // coalesce(s.team, ''): a row that names no team is filed under the team ''.
+    const tk = r => (r.team == null ? '' : String(r.team));
     // extract(isodow from date): Monday 1 .. Sunday 7; 0 for no date at all.
     const isodow = v => {
       const t = Date.parse(dk(v) + 'T00:00:00Z');
@@ -528,18 +537,18 @@ export const EXPDF_RECOVERY_RPC = {
       const wins = new Map();                                // team -> winning batch
       for (const r of src) {
         if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || String(r.weekday) !== weekday || !inScope(r)) continue;
-        const k = String(r.team);
+        const k = tk(r);
         const e = wins.get(k);
         if (!e || rank(r) > e.rank) wins.set(k, { rank: rank(r), batch: (r.upload_batch == null ? null : r.upload_batch) });
       }
       const m = new Map();                                    // ref -> row
       for (const r of src) {
         if (r.snapshot_type !== type || dk(r.snapshot_date) !== date || String(r.weekday) !== weekday || !inScope(r)) continue;
-        const e = wins.get(String(r.team));
+        const e = wins.get(tk(r));
         if (!e || (r.upload_batch == null ? null : r.upload_batch) !== e.batch) continue;
         const ref = String(r.ref);
         const c = m.get(ref);
-        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: r.team, ref,
+        if (!c || String(r.created_at || '') > c.created) m.set(ref, { created: String(r.created_at || ''), team: tk(r), ref,
           arrears: n0(r.arrears), disb_date: r.disb_date == null || r.disb_date === '' ? null : r.disb_date });
       }
       return m;
@@ -551,33 +560,33 @@ export const EXPDF_RECOVERY_RPC = {
       if (!d || !wd || seen.has(d + '|' + wd)) continue;
       seen.add(d + '|' + wd); pairs.push({ d, wd });
     }
-    // j / k: every customer of every day's initial deck, with what the current deck says of
-    // them and whether the day is one of their two.
+    // j / k: every customer of every measured day's initial deck, with what the current deck
+    // says of them and whether the day is one of their two.
     const all = [];
     for (const { d, wd } of pairs) {
+      // `filed`: the COMPANY holds a current deck for this day -- any team's, any upload of it,
+      // whoever is asking. No current file at all says nothing about anybody.
+      if (!src.some(r => r.snapshot_type === 'current' && dk(r.snapshot_date) === d && String(r.weekday) === wd)) continue;
       const ini = readDeck('initial', d, wd);
       const cur = readDeck('current', d, wd);
-      // `filed`: a day counts when BOTH its own decks were filed on it (among the teams asked
-      // for). No current deck yet says nothing about anybody -- it is not "everyone cleared".
-      if (!cur.size) continue;
       const dow = isodow(d);
       for (const i of ini.values()) {
         const c = cur.get(i.ref);
-        const d1 = isodow(i.disb_date != null ? i.disb_date : (c ? c.disb_date : null));
+        const d1 = isodow(c && c.disb_date != null ? c.disb_date : i.disb_date);
         const onDay = d1 !== 0 && (d1 === dow || ((d1 - 1 + 3) % 7) + 1 === dow);
         all.push({ date: d, team: i.team, ref: i.ref, ini: i.arrears, cur: c ? c.arrears : 0, d1, onDay });
       }
     }
-    // m: per customer, across the dates asked for.
+    // und: per customer, across the dates asked for.
     const everOnDay = new Set(), lastUndated = new Map();
     for (const r of all) {
       if (r.onDay) everOnDay.add(r.ref);
       if (r.d1 === 0 && (!lastUndated.has(r.ref) || r.date > lastUndated.get(r.ref))) lastUndated.set(r.ref, r.date);
     }
-    // n, then the grouped answer: every team-day with an initial deck, zeros when nobody is kept.
+    // The grouped answer: every team-day with an initial deck on a measured day, zeros when nobody is kept.
     const byKey = new Map();
     for (const r of all) {
-      const k = r.date + '|' + String(r.team);
+      const k = r.date + '|' + r.team;
       const e = byKey.get(k) || byKey.set(k, { snapshot_date: r.date, team: r.team, initial: 0, current: 0, recovered: 0, customers: 0, undated: 0 }).get(k);
       const keep = r.onDay || (r.d1 === 0 && !everOnDay.has(r.ref) && r.date === lastUndated.get(r.ref));
       if (!keep) continue;

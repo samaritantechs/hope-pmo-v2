@@ -291,8 +291,9 @@ const BUDGETS = [
      customers.
 
      UNCHANGED BY db/RUN-ME-057 (2026-11-15): the card now reads each day's own cycle-day
-     list (expdf_cycle_recovery_totals) instead of the whole book -- the same two calls, the
-     same team-day rows back, one function for another. */
+     list instead of the whole book -- the same two calls, the same team-day rows back, one
+     function for another. AND BY db/RUN-ME-058 (2026-11-16, expdf_team_day_recovery_totals):
+     the same two calls again; this week's now waits at most DASH_EDR_BUDGET_MS. */
   ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  40,  5500],
   ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  39,   900],
   /* THE COMPANY'S LINE FOR A SCOPED ORODHA (2026-10-16): "the red conditional format from the whole company is what they

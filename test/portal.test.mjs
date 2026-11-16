@@ -7205,22 +7205,24 @@ test('Expected Defaulters recovery is each day\'s own list from its initial deck
   const dGmo = await run('dashboardFull', {}, GMO, db);
   assert.equal(dGmo.edrTrend.find(x => x.date === TODAY).recovered, 90000);
 
-  // A database without db/RUN-ME-057 run (the EXPDF_RECOVERY_RPC mock left out) reads "not
-  // uploaded yet" on every day and SAYS WHICH FILE, never a failed dashboard load.
+  // A database without db/RUN-ME-058 run (the EXPDF_RECOVERY_RPC mock left out) reads "no
+  // answer yet" on every day and SAYS WHICH FILE, never a failed dashboard load.
   const dNoMigration = await run('dashboardFull', {}, ADMIN, dbWithRpc(t));
   assert.equal(dNoMigration.edrTrend.every(x => x.uploaded === false), true);
   assert.equal(dNoMigration.edrTrendTotal.pct, null);
-  assert.match(String(dNoMigration.edrNote), /RUN-ME-057/);
+  assert.match(String(dNoMigration.edrNote), /RUN-ME-058/);
+  assert.match(String(dNoMigration.edrNote), /five minutes/, 'and how long the card takes to fill once the file is run');
 
-  // AND A DATABASE THAT ONLY HAS THE OLD FUNCTION (RUN-ME-056's expdf_recovery_totals, the
-  // whole book under the Expected Defaulters' name) is the same: the page does not ask it.
+  // AND A DATABASE THAT ONLY HAS THE OLDER FUNCTIONS is the same: the page asks for neither
+  // RUN-ME-056's (the whole book under the Expected Defaulters' name) nor RUN-ME-057's (one
+  // team read two ways, on a plan that could run for minutes).
   let askedOld = 0;
-  const oldOnly = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC,
-    expdf_recovery_totals: () => { askedOld++; return [{ snapshot_date: TODAY, team: 'KONGOWE', initial: 380000, current: 250000, recovered: 160000 }]; } } });
+  const oldRows = () => { askedOld++; return [{ snapshot_date: TODAY, team: 'KONGOWE', initial: 380000, current: 250000, recovered: 160000, customers: 4, undated: 0 }]; };
+  const oldOnly = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, expdf_recovery_totals: oldRows, expdf_cycle_recovery_totals: oldRows } });
   const dOld = await run('dashboardFull', {}, ADMIN, oldOnly);
-  assert.equal(askedOld, 0, 'the old function is never called');
-  assert.equal(dOld.edrTrend.every(x => x.uploaded === false), true, 'and its whole-book figure is never shown');
-  assert.match(String(dOld.edrNote), /RUN-ME-057/);
+  assert.equal(askedOld, 0, 'an older function is never called');
+  assert.equal(dOld.edrTrend.every(x => x.uploaded === false), true, 'and its figure is never shown');
+  assert.match(String(dOld.edrNote), /RUN-ME-058/);
 });
 
 /* EVERY CUSTOMER LANDS ON THEIR OWN DAYS, and the ones with no day are counted once. The week
@@ -7295,6 +7297,123 @@ test('Expected Defaulters recovery: each customer counts on their own cycle days
   assert.equal(d.edrTrendTotal.initial, 322000);
   assert.equal(d.edrTrendTotal.recovered, 99000);
   assert.equal(d.edrTrendTotal.pct, 30.7);
+});
+
+/* THE CURRENT FILE IS THE WHOLE BOOK, FOR EVERYONE WHO READS IT.
+     "one file, all weekdays together, every time"
+     "a team missing from it owes nothing on it, full stop" -- defaulterBook, and RUN-ME-032 v8:
+      the trade made after "i bulked paid clients, many of them brother!"
+   So a team the day's current file does not name has cleared, and its list is recovered in
+   full -- the rule "Weekly recovery trend" reads two cards up. What RUN-ME-057 got wrong was
+   WHO it asked "is there a current file for this day": the teams the caller may see. The admin
+   read MBAGALA below as cleared, and MBAGALA's own viewer read "not uploaded yet" -- one team,
+   one day, two answers. RUN-ME-058 asks the company's book, as recovery_standing does.
+   (A second reader proposed "not measured" for such a team instead. That is the other side of
+   the trade above; it was built, and taken out before it shipped.) */
+test('Expected Defaulters recovery: the day\'s current file is the whole book -- a team missing from it has cleared, and its own viewer reads what the admin reads', async () => {
+  const MBAGALA_ONLY = { code: 'M', name: 'ASHA M', role: 'GMO', teams: ['MBAGALA'], tabs: USER_TABS.slice() };
+  const t = tables();
+  t.defaulter_snapshots = [
+    // KONGOWE is on both of today's files: K1 100,000 -> 60,000.
+    D('K1', 'KONGOWE', 100000, 'initial'), D('K1', 'KONGOWE', 60000, 'current'),
+    // MBAGALA is on today's initial file and NOT on today's current file.
+    D('M1', 'MBAGALA', 100000, 'initial'), D('M2', 'MBAGALA', 200000, 'initial'),
+  ];
+  const db = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } });
+
+  const d = await run('dashboardFull', {}, ADMIN, db);
+  const fri = d.edrTrend.find(x => x.date === TODAY);
+  assert.deepEqual([fri.uploaded, fri.customers, fri.initial, fri.current, fri.recovered], [true, 3, 400000, 60000, 340000],
+    'K1\'s 40,000 and MBAGALA\'s whole 300,000: gone from the book is cleared');
+
+  // MBAGALA's own viewer reads the SAME thing about MBAGALA: the company holds today's
+  // current file, and MBAGALA is not on it.
+  const dM = await run('dashboardFull', {}, MBAGALA_ONLY, db);
+  const friM = dM.edrTrend.find(x => x.date === TODAY);
+  assert.deepEqual([friM.uploaded, friM.customers, friM.initial, friM.current, friM.recovered], [true, 2, 300000, 0, 300000],
+    'not "not uploaded yet": the file exists, whoever is asking');
+  assert.equal(friM.pct, 100);
+
+  // AND WITH NO CURRENT FILE ANYWHERE the day is not measured, for either of them: a file
+  // that does not exist yet says nothing about anybody.
+  const t2 = tables();
+  t2.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.snapshot_type === 'initial');
+  const db2 = fakeDb(t2, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } });
+  for (const who of [ADMIN, MBAGALA_ONLY]) {
+    const dd = await run('dashboardFull', {}, who, db2);
+    const f = dd.edrTrend.find(x => x.date === TODAY);
+    assert.deepEqual([f.uploaded, f.recovered], [false, 0], who.name + ': the morning before the current file is not a day everyone cleared');
+    assert.equal(dd.edrNote, null, 'and the database did answer: there is nothing to run');
+  }
+});
+
+/* WHEN THE CARD HAS NO ANSWER IT SAYS WHY, AND THE THREE REASONS ARE THREE DIFFERENT NEXT STEPS.
+     "I ran it still getting 'run db/RUN-ME-032'" -- the complaint recoveryStanding's own note
+      records, which this card repeated: its read remembered ANY error as "the function is
+      not installed" for five minutes.
+   The dashboard asks the function twice a load (this week; last week, for the arrows). So one
+   failure of LAST week's read blanked THIS week's card on every load for five minutes, under
+   a note telling the person to run a file they had already run. */
+test('Expected Defaulters recovery: a failed read is not a missing function -- it is asked again and says what failed; last week failing costs the arrows, not the card; a slow read is said to be slow', async () => {
+  const t = tables();
+  t.defaulter_snapshots = [
+    D('X1', 'KONGOWE', 100000, 'initial'), D('X1', 'KONGOWE', 40000, 'current'),
+    D('X1', 'KONGOWE', 100000, 'initial', 45, '2026-07-17'), D('X1', 'KONGOWE', 90000, 'current', 45, '2026-07-17'),
+  ];
+  const FN = 'expdf_team_day_recovery_totals';
+  const real = EXPDF_RECOVERY_RPC[FN];
+  const counted = db => { const n = { calls: 0 };
+    return { n, db: { ...db, rpc: (name, args) => { if (name === FN) n.calls++; return db.rpc(name, args); } } }; };
+  // A second LOAD, not a second look at the first one: the dashboard keeps its answer for a
+  // short while, so the later loads are two minutes on.
+  const later = (db, user = ADMIN) => portalApi(db, user, 'dashboardFull', {}, NOW + 2 * 60000);
+
+  // 1. NOT INSTALLED: remembered -- the second load does not ask again -- and the note names the file.
+  const miss = counted(dbWithRpc(t));
+  const dMiss = await run('dashboardFull', {}, ADMIN, miss.db);
+  assert.match(String(dMiss.edrNote), /RUN-ME-058/);
+  assert.equal(miss.n.calls, 2, 'this week and last week, asked once each');
+  const dMiss2 = await later(miss.db);
+  assert.equal(miss.n.calls, 2, 'a function known to be missing is not asked for again on the next load');
+  assert.match(String(dMiss2.edrNote), /RUN-ME-058/);
+
+  // 2. INSTALLED AND FAILING (words the database would use, of a kind that is not retried):
+  //    the note carries them and does NOT tell anyone to run a file; every load asks again.
+  const failing = counted(fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC,
+    [FN]: () => { throw new Error('permission denied for function ' + FN); } } }));
+  const dFail = await run('dashboardFull', {}, ADMIN, failing.db);
+  assert.equal(dFail.edrTrend.every(x => x.uploaded === false), true);
+  assert.match(String(dFail.edrNote), /permission denied/, 'the database\'s own words are on the card');
+  assert.doesNotMatch(String(dFail.edrNote), /RUN-ME/, 'and nobody is told to run a file that is already run');
+  assert.equal(failing.n.calls, 2);
+  const dFail2 = await later(failing.db);
+  assert.equal(failing.n.calls, 4, 'a failure is not remembered: the next load asks again');
+  assert.match(String(dFail2.edrNote), /permission denied/);
+
+  // 3. LAST WEEK'S READ FAILS, THIS WEEK'S ANSWERS: the tiles stand, only the arrows are lost
+  //    -- on this load and on the next.
+  const flaky = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC,
+    [FN]: (store, a) => { if (String(a.p_dates[0]) < MON) throw new Error('permission denied for function ' + FN); return real(store, a); } } });
+  for (const load of [1, 2]) {
+    const dF = load === 1 ? await run('dashboardFull', {}, ADMIN, flaky) : await later(flaky);
+    const fri = dF.edrTrend.find(x => x.date === TODAY);
+    assert.deepEqual([fri.uploaded, fri.recovered, fri.pct, fri.dEdr], [true, 60000, 60, null], 'load ' + load + ': this week stands, no arrow');
+    assert.equal(dF.edrNote, null, 'load ' + load + ': and the card has nothing to apologise for');
+  }
+
+  // 4. SLOW: the dashboard does not wait for the card, and the card says that is what happened.
+  //    A mock that answers LATE, never one that never answers (see the ghost-budget test).
+  process.env.DASH_EDR_BUDGET_MS = '20';
+  try {
+    const slow = fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC,
+      [FN]: (store, a) => new Promise(res => setTimeout(() => res(real(store, a)), 150)) } });
+    const dSlow = await run('dashboardFull', {}, ADMIN, slow);
+    assert.equal(dSlow.edrTrend.every(x => x.uploaded === false), true);
+    assert.match(String(dSlow.edrNote), /slow/);
+    assert.doesNotMatch(String(dSlow.edrNote), /RUN-ME/);
+    assert.ok(dSlow.recTrend && dSlow.perf, 'the rest of the dashboard was drawn');
+    await new Promise(res => setTimeout(res, 200));           // let the late answer land before the test ends
+  } finally { delete process.env.DASH_EDR_BUDGET_MS; }
 });
 
 /* THE MONTH REPORT -- "a chip to open a monthly report that shows the 4 weeks summaries

@@ -1,4 +1,14 @@
 -- =====================================================================================
+-- *** SUPERSEDED BY RUN-ME-058 (16 Nov 2026) -- DO NOT RUN THIS FILE. RUN 058 INSTEAD. ***
+-- The rule below is right and 058 keeps it. Three things about this text are not: it asks
+-- "is there a current file for this day" of the caller's own teams, so an admin and a
+-- one-team viewer could read the same team differently; nothing pins its join method, and
+-- on a bad plan it runs for tens of seconds against a two-second ceiling; and it reads a
+-- customer's disbursement date off the initial row before the current row, where the
+-- Exp.Def Report reads the current row's. RUN-ME-058 is the same read without those, under
+-- a new function name, and DROPS this one. Nothing in the code calls
+-- expdf_cycle_recovery_totals any more. Kept for the record of what was handed over on 15 Nov.
+-- =====================================================================================
 -- RUN-ME-057 -- "EXPECTED DEFAULTERS RECOVERY" ON THE DASHBOARD: EACH DAY'S OWN LIST ONLY
 -- =====================================================================================
 --
