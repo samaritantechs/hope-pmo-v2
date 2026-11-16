@@ -1097,6 +1097,105 @@ test('reading the date order of a whole company deck costs next to nothing', asy
   assert.ok(ms < 3000, 'a 10,000-loan deck took ' + ms + ' ms to read');
 });
 
+/* THE EXPECTED SHEET AND THE DEFAULTERS FOLLOWUP SHEET READ THEIR DATES THE SAME WAY (handbook Part 85).
+
+     "so fix date readings okay? i even seen the error on default lists at disb date columns" -- the owner
+
+   Two lists show a Disb date: Expected Defaulters (from the defaulters decks, tests above) and the Follow-up
+   list, whose register is refreshed by every Current deck AND written by the "Defaulters Followup" upload.
+   That importer read DISB DATE and LAST TRANS with no order, so a Followup file uploaded after a corrected
+   Current deck would have put the swapped dates back. The Expected sheet's five date columns were read the
+   same way. People are made up; the dates are shaped as the loan system writes them (text, M/D/YYYY). */
+const EXPECTED_HEADER = ['REF#', 'DOCKET#', 'FULLNAME', 'CONTACT#', 'GUARANTOR NAME', 'GUARANTOR CONTACT', 'DISB DATE', 'DUE DATE',
+  'FIRST SCHEDULE DATE', 'LAST SCHEDULE DATE', 'LAST TRANS DATE', 'DUE SUMMARY', 'N.C', 'INITIAL INST', 'OTHER INST', 'PAYMENT EXPECTED',
+  "TODAY'S PAYMENT", 'TODAYS STATUS', 'ARREAS', 'TOTAL AMOUNT', 'BALANCE', 'BRANCH', 'TEAM', 'ZONE'];
+const expectedRow = (ref, disb, due, first, last, lastTrans) => [ref, '2-200-00000', 'A MADE UP', '0700000000', 'G MADE UP', '0700000001',
+  disb, due, first, last, lastTrans, '8-9', 1, 45337, 45333, 25000, 0, 'NOT PAID', 31001, 544000, 167000, 'GOBA-TEGETA', 'TEGETA', 'BUNJU A'];
+const EXP_META = { snapshotType: 'today', snapshotDate: '2026-11-16' };
+const FOLLOWUP_HEADER = ['REF#', 'TEAM', 'FULLNAME', 'CONTACT#', 'GUARANTOR NAME', 'G. CONTACT', 'DISB DATE', 'LAST TRANS', 'STATUS', 'D.S', 'D.C',
+  'DS', 'REJESHO', 'ARREAS', 'FU STATUS', 'PROMISE DATE', 'PROMISE AMT', 'LAST COMMENT', 'COMMENT BY', 'COMMENT AT'];
+const followupRow = (ref, disb, lastTrans, promise, commentAt) => [ref, 'TEGETA', 'A MADE UP', '0700000000', 'G MADE UP', '0700000001',
+  disb, lastTrans, 'Defaulter', '8-9', 1, 68, 25000, 31001, 'AMETOA AHADI', promise, 20000, 'made up', 'OFFICER', commentAt];
+
+test('an Expected sheet the loan system wrote month-first is read month-first, every one of its date columns', async () => {
+  const { importExpected, expectedDateOrder } = await import('../api/_lib/importers.js');
+  const rows = [EXPECTED_HEADER,
+    expectedRow('2200000001', '9/7/2026', '11/30/2026', '9/14/2026', '12/7/2026', '11/9/2026')];   // 11/30 and 9/14 can only be month-first
+  assert.equal(expectedDateOrder(rows).dayFirst, false, 'the sheet shows it writes month-first');
+  const [a] = importExpected(rows, EXP_META);
+  assert.equal(a.disb_date, '2026-09-07', 'the seventh of September, not the ninth of July');
+  assert.equal(a.due_date, '2026-11-30');
+  assert.equal(a.first_schedule_date, '2026-09-14');
+  assert.equal(a.last_schedule_date, '2026-12-07', 'ambiguous on its own; read the way the sheet around it is written');
+  assert.equal(a.last_trans_date, '2026-11-09', 'the ninth of November, not the eleventh of September');
+});
+
+test('an Expected sheet written day-first is read day-first, and one with no clue is read as it always was', async () => {
+  const { importExpected, expectedDateOrder } = await import('../api/_lib/importers.js');
+  const dayFirst = [EXPECTED_HEADER, expectedRow('2200000001', '07/09/2026', '30/11/2026', '14/09/2026', '07/12/2026', '09/11/2026')];
+  assert.equal(expectedDateOrder(dayFirst).dayFirst, true);
+  const [d] = importExpected(dayFirst, EXP_META);
+  assert.deepEqual([d.disb_date, d.due_date, d.first_schedule_date, d.last_schedule_date, d.last_trans_date],
+    ['2026-09-07', '2026-11-30', '2026-09-14', '2026-12-07', '2026-11-09']);
+  const noClue = [EXPECTED_HEADER, expectedRow('2200000001', '9/7/2026', '11/10/2026', '9/8/2026', '12/7/2026', '11/9/2026')];
+  assert.equal(expectedDateOrder(noClue).dayFirst, null, 'nothing in it can only be read one way');
+  const [n] = importExpected(noClue, EXP_META);
+  assert.deepEqual([n.disb_date, n.due_date, n.first_schedule_date, n.last_schedule_date, n.last_trans_date],
+    ['2026-07-09', '2026-10-11', '2026-08-09', '2026-07-12', '2026-09-11'], 'the old behaviour, unchanged where nothing says otherwise');
+});
+
+test('an Expected sheet obeys an order the caller already worked out, and still reads when none is handed in', async () => {
+  const { importExpected } = await import('../api/_lib/importers.js');
+  const rows = [EXPECTED_HEADER, expectedRow('2200000001', '9/7/2026', '11/30/2026', '9/14/2026', '12/7/2026', '11/9/2026')];
+  assert.equal(importExpected(rows, { ...EXP_META, dateOrder: { dayFirst: true } })[0].disb_date, '2026-07-09');
+  assert.equal(importExpected(rows, { ...EXP_META, dateOrder: { dayFirst: false } })[0].disb_date, '2026-09-07');
+  assert.equal(importExpected(rows, EXP_META)[0].disb_date, '2026-09-07', 'no order handed in: read off the sheet itself');
+});
+
+test('a Defaulters Followup sheet the loan system wrote month-first is read month-first: Disb date and Last trans come out right', async () => {
+  const { importFollowup, followupDateOrder } = await import('../api/_lib/importers.js');
+  const rows = [FOLLOWUP_HEADER,
+    followupRow('2200000001', '9/7/2026', '11/9/2026', '11/30/2026', '11/12/2026')];                // the promise date can only be month-first
+  assert.equal(followupDateOrder(rows).dayFirst, false);
+  const [a] = importFollowup(rows);
+  assert.equal(a.disb_date, '2026-09-07', 'the seventh of September, a Monday, as on the defaulters deck');
+  assert.equal(a.last_trans, '2026-11-09');
+  assert.equal(a.promise_date, '2026-11-30');
+  assert.equal(a.comment_at, '2026-11-12', 'a bare date in the comment column is read the same way round too');
+});
+
+test('a Defaulters Followup sheet written day-first is read day-first; one with no clue is read as it always was', async () => {
+  const { importFollowup, followupDateOrder } = await import('../api/_lib/importers.js');
+  const dayFirst = [FOLLOWUP_HEADER, followupRow('2200000001', '07/09/2026', '09/11/2026', '30/11/2026', '12/11/2026')];
+  assert.equal(followupDateOrder(dayFirst).dayFirst, true);
+  const [d] = importFollowup(dayFirst);
+  assert.deepEqual([d.disb_date, d.last_trans, d.promise_date, d.comment_at], ['2026-09-07', '2026-11-09', '2026-11-30', '2026-11-12']);
+  const noClue = [FOLLOWUP_HEADER, followupRow('2200000001', '9/7/2026', '11/9/2026', '11/10/2026', '11/12/2026')];
+  assert.equal(followupDateOrder(noClue).dayFirst, null);
+  const [n] = importFollowup(noClue);
+  assert.deepEqual([n.disb_date, n.last_trans, n.promise_date, n.comment_at], ['2026-07-09', '2026-09-11', '2026-10-11', '2026-12-11'],
+    'the old behaviour, unchanged where nothing says otherwise');
+});
+
+test('a Defaulters Followup sheet obeys an order handed in, and importFollowup still takes no second argument', async () => {
+  const { importFollowup } = await import('../api/_lib/importers.js');
+  const rows = [FOLLOWUP_HEADER, followupRow('2200000001', '9/7/2026', '11/9/2026', '11/30/2026', '11/12/2026')];
+  assert.equal(importFollowup(rows, { dateOrder: { dayFirst: true } })[0].disb_date, '2026-07-09');
+  assert.equal(importFollowup(rows, { dateOrder: { dayFirst: false } })[0].disb_date, '2026-09-07');
+  assert.equal(importFollowup(rows)[0].disb_date, '2026-09-07', 'the one-argument call every older caller makes');
+});
+
+test('the three loan-system sheets decide the same customer\'s disbursement date the same way', async () => {
+  /* One loan, three sheets, all month-first: the defaulters deck, the Expected sheet and the Followup sheet
+     must agree on its disbursement date, or the Follow-up list and Expected Defaulters would show two dates
+     for one loan -- the drift this system's "one definition of a rule" order is against. */
+  const { importDefaulters, importExpected, importFollowup } = await import('../api/_lib/importers.js');
+  const d = importDefaulters([REAL_HEADER, deckRow('2200000001', '9/7/2026', '12/7/2026', '12/21/2026', '2026-11-30', '11/11/2026')], DECK_META)[0];
+  const e = importExpected([EXPECTED_HEADER, expectedRow('2200000001', '9/7/2026', '11/30/2026', '9/14/2026', '12/7/2026', '11/9/2026')], EXP_META)[0];
+  const f = importFollowup([FOLLOWUP_HEADER, followupRow('2200000001', '9/7/2026', '11/9/2026', '11/30/2026', '11/12/2026')])[0];
+  assert.deepEqual([d.disb_date, e.disb_date, f.disb_date], ['2026-09-07', '2026-09-07', '2026-09-07']);
+});
+
 test('the defaulter deck: a file with no reference column at all yields nothing, loudly countable', async () => {
   const { importDefaulters } = await import('../api/_lib/importers.js');
   const head = DEF_HEADER.slice();

@@ -54,10 +54,34 @@ export const REF_HEADERS = ['REF#', 'REF', 'REF NO', 'REF #', 'REF NO.', 'REF NU
    is pooled: a ten-thousand-row deck always decides, and a file with no clue at all is read
    exactly as before (day-first) and says so in the upload's answer. */
 const DEFAULTER_DATE_COLUMNS = ['DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE'];
-export function defaultersDateOrder(csvRows) {
+
+/* THE SAME RULE FOR THE TWO OTHER SHEETS THAT CARRY THE LOAN SYSTEM'S DATES.
+
+     "so fix date readings okay? i even seen the error on default lists at disb date columns"
+       -- the owner, 16 Nov 2026, the hour the defaulters fix above was merged
+
+   A list's Disb date column prints what is stored (app.html, `String(v).slice(0, 10)`), so the
+   error the owner saw was the stored date. Two lists show one: Expected Defaulters, from the
+   defaulters decks (fixed above), and the Follow-up list, from `followup_status`. That register is
+   refreshed by every CURRENT defaulters deck (writeFollowupFromDeck, an upsert of the deck's
+   columns) and ALSO written by the "Defaulters Followup" upload, whose importer read the same
+   columns with no order: one Followup file uploaded after a corrected Current deck would have put
+   the swapped Disb date and Last trans back on the list. The Expected sheet (repayment_snapshots)
+   read its five date columns the same way. Handbook Part 85.
+
+   Each sheet's own date columns are pooled exactly as the defaulters deck's are (one export does
+   not switch conventions halfway down), and the rule is still the one that already existed:
+   inferDayFirst. A sheet that PROVES month-first is read month-first; one that proves day-first,
+   or shows no clue, is read exactly as it always was. */
+const EXPECTED_DATE_COLUMNS = ['DISB DATE', 'DUE DATE', 'FIRST SCHEDULE DATE', 'LAST SCHEDULE DATE', 'LAST TRANS DATE'];
+const FOLLOWUP_DATE_COLUMNS = ['DISB DATE', 'LAST TRANS', 'PROMISE DATE', 'COMMENT AT'];
+function pooledDateOrder_(csvRows, columns) {
   const objs = rowsToObjects(csvRows);
-  return { dayFirst: inferDayFirst(objs.flatMap(({ raw: r, h }) => DEFAULTER_DATE_COLUMNS.map(c => col(r, h, c)))) };
+  return { dayFirst: inferDayFirst(objs.flatMap(({ raw: r, h }) => columns.map(c => col(r, h, c)))) };
 }
+export function defaultersDateOrder(csvRows) { return pooledDateOrder_(csvRows, DEFAULTER_DATE_COLUMNS); }
+export function expectedDateOrder(csvRows) { return pooledDateOrder_(csvRows, EXPECTED_DATE_COLUMNS); }
+export function followupDateOrder(csvRows) { return pooledDateOrder_(csvRows, FOLLOWUP_DATE_COLUMNS); }
 
 export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate, dateOrder }) {
   const objs = rowsToObjects(csvRows);
@@ -103,7 +127,9 @@ function wholeOrNull(v) {
   return n == null ? null : Math.round(n);
 }
 
-export function importExpected(csvRows, { snapshotType, snapshotDate }) {
+export function importExpected(csvRows, { snapshotType, snapshotDate, dateOrder }) {
+  // The upload route asks once for its report and hands the answer in (as importDefaulters does).
+  const dayFirst = (dateOrder || expectedDateOrder(csvRows)).dayFirst;
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
     docket_no: textOrNull(col(r, h, 'DOCKET#')),
@@ -111,11 +137,11 @@ export function importExpected(csvRows, { snapshotType, snapshotDate }) {
     contact: normPhone(col(r, h, 'CONTACT#')),
     guarantor_name: textOrNull(col(r, h, 'GUARANTOR NAME')),
     guarantor_contact: normPhone(col(r, h, 'GUARANTOR CONTACT')),
-    disb_date: dateOrNull(col(r, h, 'DISB DATE')),
-    due_date: dateOrNull(col(r, h, 'DUE DATE')),
-    first_schedule_date: dateOrNull(col(r, h, 'FIRST SCHEDULE DATE')),
-    last_schedule_date: dateOrNull(col(r, h, 'LAST SCHEDULE DATE')),
-    last_trans_date: dateOrNull(col(r, h, 'LAST TRANS DATE')),
+    disb_date: dateOrNull(col(r, h, 'DISB DATE'), dayFirst),
+    due_date: dateOrNull(col(r, h, 'DUE DATE'), dayFirst),
+    first_schedule_date: dateOrNull(col(r, h, 'FIRST SCHEDULE DATE'), dayFirst),
+    last_schedule_date: dateOrNull(col(r, h, 'LAST SCHEDULE DATE'), dayFirst),
+    last_trans_date: dateOrNull(col(r, h, 'LAST TRANS DATE'), dayFirst),
     due_summary: dsText(col(r, h, 'DUE SUMMARY')),
     /* N.C -- THE SHEET'S OWN COLUMN, and not the first number of DUE SUMMARY, which is what
        "Count 1" was first built on: "expecting the dc single count are 171, but its 14 on
@@ -139,7 +165,8 @@ export function importExpected(csvRows, { snapshotType, snapshotDate }) {
   })).filter(x => x.ref);
 }
 
-export function importFollowup(csvRows) {
+export function importFollowup(csvRows, { dateOrder } = {}) {
+  const dayFirst = (dateOrder || followupDateOrder(csvRows)).dayFirst;
   return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, 'REF#')),
     team: normTeam(col(r, h, 'TEAM')),
@@ -147,8 +174,8 @@ export function importFollowup(csvRows) {
     contact: normPhone(col(r, h, 'CONTACT#')),
     guarantor_name: textOrNull(col(r, h, 'GUARANTOR NAME')),
     guarantor_contact: normPhone(col(r, h, 'G. CONTACT')),
-    disb_date: dateOrNull(col(r, h, 'DISB DATE')),
-    last_trans: dateOrNull(col(r, h, 'LAST TRANS')),
+    disb_date: dateOrNull(col(r, h, 'DISB DATE'), dayFirst),
+    last_trans: dateOrNull(col(r, h, 'LAST TRANS'), dayFirst),
     status: textOrNull(col(r, h, 'STATUS')),
     ds: dsText(col(r, h, 'D.S')),
     dc: num(col(r, h, 'D.C')),
@@ -156,11 +183,11 @@ export function importFollowup(csvRows) {
     rejesho: num(col(r, h, 'REJESHO')),
     arrears: num(col(r, h, 'ARREAS', 'ARREARS')),
     fu_status: textOrNull(col(r, h, 'FU STATUS')),
-    promise_date: dateOrNull(col(r, h, 'PROMISE DATE')),
+    promise_date: dateOrNull(col(r, h, 'PROMISE DATE'), dayFirst),
     promise_amt: num(col(r, h, 'PROMISE AMT')),
     last_comment: textOrNull(col(r, h, 'LAST COMMENT')),
     comment_by: textOrNull(col(r, h, 'COMMENT BY')),
-    comment_at: dateOrNull(col(r, h, 'COMMENT AT')),
+    comment_at: dateOrNull(col(r, h, 'COMMENT AT'), dayFirst),
   })).filter(x => x.ref);
 }
 
