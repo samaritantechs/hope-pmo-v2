@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 86**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 87**.
 
 ---
 
@@ -82,6 +82,52 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#714 — a customer the day's current deck no longer names stays on every list of that day, as
+  recovered (handbook Part 87).** "how comes tou said "should disappear." yet we are fighting
+  allover to say cleared people shouldnt dissapear for verifications" — the owner, 16 Nov, the
+  third time of the same order (13 Nov: "they should stay there as of recovery so as to know
+  recovery amount from difference of initial to current per each day by team or staff"; 15 Nov:
+  "i expect that customer in initial never to get lost even if cleared its amounts and statuses
+  that change"). **What was wrong:** Parts 69 to 82 each closed one door and left the next, so
+  one customer — on a day's initial file, absent from its current file — read four ways: the
+  dashboard card, recovered in full; the Expected Defaulters tab, in full if never on a current
+  file and 0 with the last arrears if on an earlier one; the Exp.Def Report's day, its card and
+  the phone, CLEARED with recovered 0 and the old arrears (or not listed at all if never on a
+  current file); the report's week, on a board of its own outside every book and total. **The
+  belief behind it was wrong** (Part 82 found it on the tab): the rotation does not need a
+  current-deck row; the customer's row on the day's own initial deck carries the status, days,
+  dates, name and number. **Now one rule, written once in `buildRows_` (`expdf.js`):** given the
+  day's own initial rows, a customer on them whom the day's current deck does not name is a row
+  built from their MORNING row — CLEARED, nothing owed, the whole of the morning's arrears
+  recovered, placed by the rotation off that row, so the leader credited is the leader who held
+  them — on the report's day, the leader's card, the phone's list and strip, and every filed day
+  of the week (Part 78's board is empty by construction); a ghost for a customer on the morning
+  deck is dropped for the morning row (the ghost is an older last-known row); a ghost for a
+  customer NOT on it is Part 71 unchanged; on the tab (`expectedDefaulters`) the same ghost is
+  dropped so the tab agrees. **Only on a whole pair:** the day's initial and current decks must be
+  the same date (a weekday's latest current deck can be last week's, before today's is uploaded),
+  or nobody is marked paid on a comparison that was never made (the answers say which it was:
+  `paired` on the report's day view and in the phone's `diag`). Only customers whose cycle day it
+  is, as ever. **Cost:** no read anywhere — arithmetic over the two decks each screen already
+  reads; `test/call.test.mjs` counts the phone's reads with and without such customers (equal)
+  and `test/speed.test.mjs` counts the five Exp.Def screens with and without twenty-five (equal);
+  the week's initial deck is read for ten columns instead of four, the same rows. **Checked:**
+  eight tests (the old Part 78 test rewritten; one rule on four screens; the unpaired deck; team
+  scoping; three through the real call dispatch; the speed test), and ten deliberate breaks of
+  the rule on the portal side (eight caught, two not changes of behaviour: said in Part 87), three
+  on the phone, two on the zero-read promise — all caught; a first set missed the morning row
+  being placed by the CLEARED override, so a chronic customer on the morning deck was added.
+  `npm test`: 1,580 pass. Server only: `BUILD` and `CALL_BUILD` unchanged. **What the owner will
+  see:** the report's recovered totals, a leader's card and the phone's EXP.DEF % go up by exactly
+  the customers on the morning list and not on the evening's, toward the dashboard card's figure.
+  **The trade it carries:** a team missing from a day's current file reads as recovered in full on
+  the report and the phone too, as on the card since #707 (section 8). **Not done, said
+  plainly:** a reader whose teams are ALL missing from the day's current file (a small team whose
+  last defaulter paid) gets nothing closed — the scope's date is lost when it has no rows
+  (section 8); the hours before the day's current file is in are as they were (the tab still lists
+  a customer new on today's initial file as CLEARED in that gap: section 8); the month view and
+  the old `weekly` baseline are not changed; the page's board for Part 78 (`xd_unassigned`) is
+  dormant code, left for the next change to that page; nothing run on the live book, no SQL.
 - **#713 — the stored swapped dates put right in place, with no re-upload (handbook Part 86;
   `db/RUN-ME-060-repair-swapped-deck-dates.sql`, pasted in full in the chat, 16 Nov).** "we cant
   re-upload now - i hope the system autoupdates whats right brother" — the owner, 16 Nov, the
@@ -424,7 +470,8 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   what i already did... complete whatever asked not partials waiting another promts," the
   owner, 15 Nov: holding a green, tested change back for an extra look it was not asked for is
   exactly the partial-and-waiting pattern this order is against. Standing order recorded in
-  section 2.
+  section 2. **Closed by #714 (Part 87):** the customer is a row of the leader the rotation names,
+  in every total; the board is empty by construction.
 - **4231948032 / Thursday 12 Nov, re-examined, 14 Nov — Parts 69-71 already cover it; nothing
   changed.** Asked why she still does not show on Thursday 12th's own tab in the week view even
   with everything shipped today. Read Parts 69-71 in full rather than guessing: the "keep a
@@ -1656,15 +1703,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   (Monday's list grows from about 3,842 to 4,148 on the 16 Nov file) and about 3,500 expired or
   chronic customers move to their real recycling leader or week: the leaders' lists change, and
   that is the correction. If anything looks wrong, the undo is at the foot of the file.
-- **In flight, from the owner's words of 13, 15 and 16 Nov (section 2): a customer on a day's
-  initial file who is absent from its current file stays, and counts as recovered.** Today the
-  dashboard card counts such a customer recovered in full, while the Exp.Def Report and the phone
-  list them CLEARED with recovered 0 and their last arrears (or not at all when they never were on
-  a current file; the week keeps them on a separate board outside the totals). Closing it credits
-  them to the leader the rotation names, in the day, week and phone lists (zero reads; it raises
-  the report's recovered totals and the phone's EXP.DEF %, to the card's own figure). Being built
-  after #713 (handbook Part 87); if this bullet is still here and no entry in section 4 names it,
-  it was not finished.
+- **The owner, once #714 has deployed:** open one day on the Exp.Def Report and its leaders'
+  cards. The rows marked CLEARED whose recovered equals their initial are the customers the
+  day's current file did not name (section 4, #714); the report's recovered totals and the phone's
+  EXP.DEF % are higher than yesterday's by exactly those. Nothing to run. And the owner's word on
+  the corner left open: a reader whose own teams are ALL missing from the day's current file gets
+  nothing closed (a small team whose last defaulter paid); closing it uses the company's file date
+  (no read) and is the whole-book trade applied to a one-team reader.
 - **The owner**: whether the names `CHAT.md` carried until 16 Nov (staff names and one staff ID in
   the 13 to 15 Nov entries, section 4) matter enough to rewrite the repository's history, which is
   public — a change to the file cannot take them out of it — and whether the older files that hold
@@ -1694,10 +1739,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   tab, in the hours between a day's initial file and its current file, a customer who is NEW on
   today's initial file reads CLEARED with the whole arrears as recovered, because the newest
   current file is the day before's and never named them (`expectedDefaulters`, the branch of
-  Parts 75 and 77, `portal-core.js` about line 1078); (2) the Exp.Def week view can show one
-  customer twice, as a ghost on a leader's list and again on the "no leader on record" board
-  (`expdfWeekCompute_`, about lines 423 to 446); (3) that board's test for a filed day is asked
-  of the reader's teams, as 057's was. **Not faults, by the whole-book rule:** the rows marked
+  Parts 75 and 77, `portal-core.js` about line 1078); (2) and (3), the Exp.Def week view showing one
+  customer twice (a ghost and the "no leader on record" board) and that board's test for a
+  filed day being asked of the reader's teams, **went with the board in #714**. **Not faults, by the whole-book rule:** the rows marked
   CLEARED for a team today's current file does not name, on the phone's list, the Exp.Def
   Report, the Expected Defaulters tab, team progress and the weekly report's Count 1-6.
 - **The owner, only if they want it changed**: the whole-book trade itself. If a current file
@@ -1786,10 +1830,7 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   sees little" in one stroke, and against the standing rule that the code decides what is seen, so
   the owner's word first); the three recycling roles following the access codes the way recovery,
   early collection and collection do (a test pins that a GMO's code changes nothing today); the
-  Exp.Def Report week view
-  crediting its "Cleared, no leader on record for the day" customers to a leader's section, now
-  that the morning row is known to carry what the rotation reads (section 4, #709: it changes
-  the report's totals); the annual deck's zone map following
+  annual deck's zone map following
   the rule that a team's zone is its GMO's (it moves teams between the zones of that slide and
   changes each zone's General %); the staff form filling the zone from the team in the role; a
   Zone box on an access code, to set a person's zone directly whatever Teams & Staff says; a one-tap download of every approved

@@ -2888,6 +2888,92 @@ test('a customer missing from today\'s deck entirely still shows, status CLEARED
   assert.equal(summary.expdf.customers, 2, 'the daily-summary strip counts the ghost too');
 });
 
+/* A CUSTOMER THE DAY'S CURRENT DECK NO LONGER NAMES STAYS ON THE PHONE'S LIST, AS RECOVERED --
+   "how comes tou said 'should disappear.' yet we are fighting allover to say cleared people
+   shouldnt dissapear for verifications", the owner, 16 Nov 2026 (handbook Part 87). The phone's
+   own Exp.Def list and its EXP.DEF % strip are the SACRED path (/api/call): the rule is read off
+   the two decks expdfCore already read, so it costs the phone nothing -- proved below by counting
+   the reads with and without such customers. Two customers here: GONE2, on this morning's initial
+   deck and on no current row today (an older chronic row from ten days ago exists, and would put
+   them in the GMO's book if it governed); NOCUR2, on this morning's deck and on no current file
+   at all. Both are BIKE BEE's by their MORNING row (one day in default). */
+function clearedPhoneDb_(currentDate, { withLeavers = true } = {}) {
+  const t = makeTables();
+  t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE', manager: 'BOSS', gmo: 'GMO GEE' };
+  t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' },
+    { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+  t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
+  const R = (ref, arrears, type, over = {}) => ({ ref, full_name: 'C ' + ref, contact: '0714000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: type, weekday: 'FRI',
+    snapshot_date: type === 'initial' ? '2026-07-24' : currentDate, upload_batch: type === 'initial' ? 'bi' : 'bc',
+    created_at: (type === 'initial' ? '2026-07-24T04:00:00Z' : currentDate + 'T08:00:00Z'), ...over });
+  t.defaulter_snapshots.push(R('ACT3', 300, 'initial'), R('ACT3', 300, 'current'));
+  if (withLeavers) t.defaulter_snapshots.push(
+    R('GONE2', 1200, 'initial'),
+    { ref: 'GONE2', full_name: 'C GONE2', contact: '0714000GONE2', team: 'KONGOWE', arrears: 1500, status: 'Chronic', days_elapsed: 40,
+      disb_date: '2026-07-24', chronic_date: '2026-06-01', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14',
+      upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' },
+    R('NOCUR2', 800, 'initial'));
+  return fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
+}
+test('a customer the day\'s current deck no longer names stays on the phone\'s Exp.Def list, CLEARED, the morning\'s arrears recovered -- and in the strip\'s percentage', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  const db = clearedPhoneDb_('2026-07-24');
+  await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+
+  const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.equal(mine.ok, true);
+  assert.deepEqual(mine.rows.map(r => r.ref), ['ACT3', 'GONE2', 'NOCUR2'],
+    'the customer still owing first; the two who left the current deck sunk below, by the sort the list always had -- and placed by their MORNING row: BIKE BEE, not the GMO an older chronic row says');
+  for (const ref of ['GONE2', 'NOCUR2']) {
+    const r = mine.rows.find(x => x.ref === ref);
+    assert.equal(r.custStatus, 'CLEARED', ref); assert.equal(r.amt, 0, ref + ': nothing owed');
+    assert.equal(r.recovered, r.initial, ref + ': the whole of the morning\'s arrears recovered');
+    assert.ok(r.name && r.contact, ref + ': a name and a number to verify them with');
+    assert.equal(r.fuStatus, 'D1', ref + ': the cycle label the rotation gives them off the morning row');
+  }
+  assert.equal(mine.rows.find(r => r.ref === 'GONE2').initial, 1200); assert.equal(mine.rows.find(r => r.ref === 'NOCUR2').initial, 800);
+  assert.deepEqual([mine.expdf.totals.customers, mine.expdf.totals.initial, mine.expdf.totals.recovered, mine.expdf.totals.arrears], [3, 2300, 2000, 300]);
+  const team = await callApi(db, 'api_callList', ['dBEE', 'expdf', 'team'], NOW);
+  assert.deepEqual(team.rows.map(r => r.ref), ['ACT3', 'GONE2', 'NOCUR2'], 'the team-wide scope agrees');
+
+  const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
+  assert.equal(summary.expdf.customers, 3);
+  assert.equal(summary.expdf.num, 2000, 'GONE2\'s 1,200 and NOCUR2\'s 800: the strip counts what was recovered, as the dashboard\'s card does');
+  assert.equal(summary.expdf.den, 2300, '300 + 1,200 + 800 owed at the start of the day');
+});
+
+test('the phone does not mark anybody paid on a comparison that was never made: a current deck of another date closes nobody', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearSummaryCache(); _clearWidgetCache();
+  // This Friday's initial deck with LAST Friday's current deck: the day's current file has not been uploaded yet.
+  const db = clearedPhoneDb_('2026-07-17');
+  await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+  const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+  assert.ok(!mine.rows.some(r => r.ref === 'NOCUR2'), 'a customer on no current deck is not invented as recovered');
+  assert.ok(!mine.rows.some(r => r.ref === 'GONE2'), 'and the one with an older chronic row reads as that older row made them (the GMO\'s, a ghost), not as paid today');
+  const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
+  assert.ok(summary.expdf.num < 800, 'the strip is not lifted by customers nobody compared: ' + summary.expdf.num);
+});
+
+test('closing the customers who left the current deck costs the phone\'s Exp.Def list no extra read', async () => {
+  const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  const countFor = async withLeavers => {
+    _clearSummaryCache(); _clearWidgetCache();
+    const base = clearedPhoneDb_('2026-07-24', { withLeavers });
+    await callApi(base, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+    let reads = 0;
+    const counting = { from(n) { reads++; return base.from(n); }, rpc(n, a) { reads++; return base.rpc(n, a); }, _dump: n => base._dump(n) };
+    const out = await callApi(counting, 'api_callList', ['dBEE', 'expdf'], NOW);
+    assert.equal(out.ok, true);
+    return { reads, rows: out.rows.length };
+  };
+  const without = await countFor(false), withL = await countFor(true);
+  assert.equal(without.rows, 1); assert.equal(withL.rows, 3, 'two more customers on the list ...');
+  assert.equal(withL.reads, without.reads, '... and not one more read of the database: the rule is arithmetic over the two decks the list already reads');
+});
+
 test('weekday with the standing rule is untouched: Rec IS today, one figure, agreeing with Rec leo', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();

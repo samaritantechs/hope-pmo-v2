@@ -352,50 +352,198 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
    12 Nov/ref 4231948032 case: on that day's own initial deck, absent from that same day's own
    current deck. Unlike the all-time ghost above, this reads only that ONE day's own two files
    -- nothing about today -- so it is deliberately NOT how Thursday 12th itself stays (Part 71's
-   own today-only scope, untouched either way). With no current-row data for that day to assign
-   a role from, it is kept visible and counted, but never credited to a leader:
-   expdfWeekCompute_'s own cells (role|leader|ref keyed, RECYCLE_ROLES-filtered) never see it,
-   so every total in the "sum of its days" test above is unchanged by adding this ref; it comes
-   back on its own, as unassignedCleared, for expdfReport to show separately. */
-test('the expdf week keeps a customer on one day\'s own initial deck but missing that same day\'s own current deck -- unassigned, never guessed, never lost', async () => {
+   own today-only scope, untouched either way).
+
+   HANDBOOK PART 78 KEPT IT ON A BOARD OF ITS OWN, outside every leader's book and every total,
+   because it believed the rotation's role needs fields only a current-deck row has. It does not
+   (Part 82, found on the Expected Defaulters tab; Part 87 here): the customer's row on that
+   same day's initial deck carries them. "how comes tou said 'should disappear.' yet we are
+   fighting allover to say cleared people shouldnt dissapear for verifications" -- the owner,
+   16 Nov 2026. So the customer is a row of the leader the rotation names, on their own cycle
+   days, counted in every total -- and the old board is empty. */
+test('the expdf week keeps a customer on one day\'s own initial deck but missing that same day\'s own current deck -- in their leader\'s book, counted, never lost', async () => {
   const t = expdfWeekTables();
-  // DG1: on Wednesday 2026-07-22's own initial deck only -- no matching current row that day,
-  // and no other day of the week either, so there is nothing anywhere to assign a role from.
   // upload_batch matches the rest of Wednesday's own initial cohort exactly (R()'s own 'bi' +
   // date) -- a different batch string here would make the "latest batch per team+weekday" rule
   // pick a winner between the two and silently drop A1/B1's real Wednesday rows, nothing to do
-  // with the fix under test.
+  // with the rule under test.
+  const onWed = (ref, arrears, disb, days) => ({ ref, full_name: 'C ' + ref, contact: '0714000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: days, disb_date: disb, snapshot_type: 'initial', weekday: 'WED',
+    snapshot_date: '2026-07-22', upload_batch: 'bi2026-07-22', created_at: '2026-07-22T04:00:00Z' });
   t.defaulter_snapshots.push(
-    { ref: 'DG1', full_name: 'C DG1', team: 'KONGOWE', arrears: 5000, status: 'Defaulter', ds: '2/6', dc: 2,
-      days_elapsed: 3, disb_date: '2026-07-20', snapshot_type: 'initial', weekday: 'WED', snapshot_date: '2026-07-22',
-      upload_batch: 'bi2026-07-22', created_at: '2026-07-22T04:00:00Z' });
+    // DG1: on Wednesday's own initial deck only, no matching current row that day -- and Wednesday
+    // IS their cycle day (disbursed a Wednesday: Wed and Sat). Three days in default: bucket 2, the MANAGER's.
+    onWed('DG1', 5000, '2026-07-22', 3),
+    // DG2: the same, but Wednesday is NOT one of their cycle days (disbursed a Monday: Mon and Thu), so
+    // they are nobody's expected defaulter that day, as a customer on the current deck would not be.
+    onWed('DG2', 7000, '2026-07-20', 3));
   const db = fakeDb(t);
   const week = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
 
-  assert.ok(week.unassignedCleared, 'surfaced, not silently dropped');
-  assert.equal(week.unassignedCleared.customers, 1);
-  assert.equal(week.unassignedCleared.initial, 5000);
-  assert.equal(week.unassignedCleared.recovered, 5000, 'fully recovered against its own day\'s baseline -- the absence-is-the-signal rule, same as every other ghost');
-  const row = week.unassignedCleared.rows.find(r => r.ref === 'DG1');
-  assert.ok(row);
-  assert.equal(row.status, 'CLEARED'); assert.equal(row.leader, '(unassigned)');
-  assert.equal(row.role, null); assert.equal(row.phase, null); assert.equal(row.cycle, null);
-  assert.equal(row.team, 'KONGOWE');
-  assert.equal(row.disb_date, '2026-07-20', 'its own day\'s real date, read off its own initial row');
-  assert.deepEqual(row.byDay, { '2026-07-22': { initial: 5000, arrears: 0, recovered: 5000, status: 'CLEARED' } });
+  // The old board is empty: the customer is where the rotation puts them.
+  assert.equal(week.unassignedCleared, null, 'nobody is left on a board with no leader');
+  const mgr = week.sections.find(s => s.role === 'MANAGER').rows.find(r => r.leader === 'BOSS');
+  assert.equal(mgr.customers, 2, 'B1 and DG1');
+  assert.equal(mgr.initial, 2000 + 5000); assert.equal(mgr.recovered, 500 + 5000, "B1's 500 and DG1's whole 5,000");
+  assert.deepEqual(mgr.byDay, { '2026-07-22': 5500 });
+  // The week's grand total carries them: the sibling test's own 1,400 and 4,300, plus DG1's 5,000. DG2 is on nobody's list.
+  assert.equal(week.totals.recovered, 1400 + 5000); assert.equal(week.totals.initial, 4300 + 5000); assert.equal(week.totals.customers, 4);
+  assert.deepEqual(week.totals.byDay, { '2026-07-21': 300, '2026-07-22': 5500, '2026-07-24': 600 });
 
-  // NEVER in any role section's own book, never in the grand total above, never on a named
-  // leader's own card -- there is no leader to credit, and nothing here should invent one.
-  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'GMO', leader: 'GMO GEE', period: 'week' }, NOW);
-  assert.ok(!card.rows.some(r => r.ref === 'DG1'), 'no leader\'s own card shows it either -- there is nobody to credit');
-  assert.equal(week.totals.recovered, 1400, 'the grand total is exactly the sibling test\'s own figure -- DG1 never joins it, by design');
-  assert.equal(week.totals.customers, 3, 'DG1 is not one of the three role-bucketed customers');
+  // THE LEADER'S OWN CARD (tapping BOSS), the week and its Wednesday tab: DG1 is a real row, CLEARED, with a name and a number.
+  const card = await portalApi(db, ADMIN, 'expdfLeader', { role: 'MANAGER', leader: 'BOSS', period: 'week' }, NOW);
+  const row = card.rows.find(r => r.ref === 'DG1');
+  assert.ok(row, 'on BOSS\'s card, not on a board nobody owns');
+  assert.equal(row.status, 'CLEARED'); assert.equal(row.cycle, 'D3', 'the rotation read the MORNING row: three days in default');
+  assert.equal(row.initial, 5000); assert.equal(row.arrears, 0); assert.equal(row.recovered, 5000);
+  assert.equal(row.full_name, 'C DG1'); assert.equal(row.contact, '0714000DG1', 'the name and the number off the morning row, to follow them up with');
+  assert.deepEqual(row.byDay, { '2026-07-22': 5000 });
+  assert.ok(!card.rows.some(r => r.ref === 'DG2'), 'a customer on nobody\'s cycle day that day is not listed that day');
+  const wed = card.dayTabs.find(x => x.date === '2026-07-22');
+  assert.deepEqual(wed.rows.map(r => [r.ref, r.status, r.initial, r.arrears, r.recovered]).sort(),
+    [['B1', 'DEFAULTER', 2000, 1500, 500], ['DG1', 'CLEARED', 5000, 0, 5000]]);
+  assert.equal(wed.totals.recovered, 5500);
+  for (const lead of [['GMO', 'GMO GEE'], ['BIKE', 'BIKE BEE']]) {
+    const other = await portalApi(db, ADMIN, 'expdfLeader', { role: lead[0], leader: lead[1], period: 'week' }, NOW);
+    assert.ok(!other.rows.some(r => r.ref === 'DG1' || r.ref === 'DG2'), 'nobody else is credited for them');
+  }
 
-  // A day view (not a week) does not carry this field at all -- the identical gap sits in
-  // expdfCore's single-day reading too (buildRows_, shared with the phone), flagged, not
-  // reached here (the comment above expdfWeekCompute_).
+  // THE SAME DAY READ AS A DAY (the daily report's own list): one definition, so the week's Wednesday is the daily report's Wednesday.
   const day = await portalApi(db, ADMIN, 'expdfReport', { period: 'day', weekOf: '2026-07-22' }, NOW);
   assert.equal(day.unassignedCleared, null);
+  const dm = day.sections.find(s => s.role === 'MANAGER').rows.find(r => r.leader === 'BOSS');
+  assert.equal(dm.recovered, 5500); assert.equal(dm.initial, 7000); assert.equal(dm.customers, 2);
+});
+
+/* ONE RULE, FOUR SCREENS -- "how comes tou said 'should disappear.' yet we are fighting allover
+   to say cleared people shouldnt dissapear for verifications", the owner, 16 Nov 2026 (handbook
+   Part 87). A customer who is on a day's own initial deck and whom that day's current deck no
+   longer names (paid up and gone from the file, or never on a current file at all) is, on the
+   day, on the Exp.Def Report, on the card behind their leader's name, on the phone's own worklist
+   and on the Expected Defaulters tab: CLEARED, nothing owed, the WHOLE of the morning's arrears
+   recovered, placed by the rotation off the MORNING row -- the dashboard card's own reading of
+   the same customer (RUN-ME-058: "a customer gone from the current file recovered in full"). */
+function clearedStayTables_(currentDate = TODAY) {
+  const t = expdfTables();                       // KONGOWE: GMO GEE / BOSS / BIKE BEE; active BIKE,MANAGER,GMO by two-day buckets
+  t.settings.push({ key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' });
+  const R = (ref, arrears, type, over = {}) => ({ ref, full_name: 'C ' + ref, contact: '0714000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 1, disb_date: '2026-07-21', snapshot_type: type, weekday: 'FRI',
+    snapshot_date: type === 'initial' ? TODAY : currentDate, upload_batch: 'b' + type + (type === 'initial' ? TODAY : currentDate),
+    created_at: (type === 'initial' ? TODAY : currentDate) + (type === 'initial' ? 'T04:00:00Z' : 'T08:00:00Z'), ...over });
+  const old = (ref, arrears) => ({ ref, full_name: 'C ' + ref, contact: '0714000' + ref, team: 'KONGOWE', arrears, status: 'Chronic', ds: '2/6', dc: 2,
+    days_elapsed: 40, disb_date: '2026-07-21', chronic_date: '2026-06-01', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14',
+    upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' });
+  t.defaulter_snapshots = [
+    R('OWE1', 1000, 'initial'), R('OWE1', 600, 'current'),                                   // still owing: BIKE (one day in default)
+    R('PAID1', 800, 'initial'), R('PAID1', 0, 'current', { status: 'PAID' }),                // paid and still on the file: BIKE
+    R('GONE1', 2500, 'initial'),                                                             // on this morning's deck, not on the evening's: BIKE by its morning row ...
+    old('GONE1', 2600),                                                                      // ... though its LAST-KNOWN row (a chronic one, ten days ago) would say MANAGER
+    R('NOCUR1', 4000, 'initial', { days_elapsed: 3 }),                                       // never on any current file: MANAGER (three days in default)
+    R('OFFCYC1', 900, 'initial', { disb_date: '2026-07-22' }),                               // a Wednesday customer: not Friday's to work
+    R('CHR1', 6000, 'initial', { status: 'Chronic', days_elapsed: 40, chronic_date: '2026-07-01' }),   // chronic on the morning deck, on no current row: the CHRONIC rotation's GMO (week 4), where the active one would say BIKE
+    old('OLD1', 15500),                                                                      // gone from every deck for ten days (Part 71): NOT on today's initial deck
+  ];
+  return t;
+}
+const screens_ = async (db, nowMs = NOW) => {
+  const card = async (role, leader) => (await portalApi(db, ADMIN, 'expdfLeader', { role, leader }, nowMs)).rows;
+  const tab = (await portalApi(db, ADMIN, 'expectedDefaulters', {}, nowMs)).rows;
+  const as = n => ({ code: 'X', name: n, role: 'MANAGER', teams: null, tabs: USER_TABS.slice() });
+  return { bike: await card('BIKE', 'BIKE BEE'), mgr: await card('MANAGER', 'BOSS'), gmo: await card('GMO', 'GMO GEE'), tab,
+    mineBike: (await portalApi(db, as('BIKE BEE'), 'expdfMine', {}, nowMs)), mineBoss: (await portalApi(db, as('BOSS'), 'expdfMine', {}, nowMs)),
+    report: await portalApi(db, ADMIN, 'expdfReport', {}, nowMs) };
+};
+test('a customer the day\'s current deck no longer names stays on every list of the day, CLEARED, the morning\'s arrears recovered -- one rule, four screens', async () => {
+  const s = await screens_(fakeDb(clearedStayTables_(), { rpc: DEFAULTER_GHOST_ROWS_RPC }));
+  const by = rows => Object.fromEntries(rows.map(r => [r.ref, r]));
+  const bike = by(s.bike), mgr = by(s.mgr), gmo = by(s.gmo), tab = by(s.tab);
+  assert.equal(s.report.paired, true, 'the answers say the day\'s two decks are the same date: that is what lets the rule apply');
+  assert.equal(s.mineBike.diag.paired, true);
+
+  // GONE1 -- on the morning deck, on no current row today, with an older chronic row in history.
+  assert.deepEqual([bike.GONE1.status, bike.GONE1.initial, bike.GONE1.arrears, bike.GONE1.recovered], ['CLEARED', 2500, 0, 2500],
+    'recovered in full: the day\'s own two files say what happened today, not an older row\'s last-known 2,600');
+  assert.equal(bike.GONE1.cycle, 'D1', 'placed by the MORNING row (one day in default: BIKE BEE), not by the chronic row from ten days ago (MANAGER)');
+  assert.ok(!mgr.GONE1, 'and so not on BOSS\'s book');
+  // NOCUR1 -- never on a current file at all.
+  assert.deepEqual([mgr.NOCUR1.status, mgr.NOCUR1.initial, mgr.NOCUR1.arrears, mgr.NOCUR1.recovered, mgr.NOCUR1.cycle], ['CLEARED', 4000, 0, 4000, 'D3']);
+  // CHR1 -- CHRONIC on the morning deck. The rotation reads the morning row's OWN status (chronic, week 4: the GMO's turn), never the CLEARED the list shows.
+  assert.deepEqual([gmo.CHR1.status, gmo.CHR1.initial, gmo.CHR1.arrears, gmo.CHR1.recovered, gmo.CHR1.cycle], ['CLEARED', 6000, 0, 6000, 'C-W4']);
+  assert.ok(!bike.CHR1 && !mgr.CHR1, 'the active rotation would have said BIKE: the morning row says it is chronic');
+  // The controls: paid-and-on-the-file is as it was; a customer who is NOT on the day's initial deck is the all-time ghost of Part 71, untouched.
+  assert.deepEqual([bike.PAID1.status, bike.PAID1.initial, bike.PAID1.recovered], ['CLEARED', 800, 800]);
+  assert.deepEqual([bike.OWE1.status, bike.OWE1.arrears, bike.OWE1.recovered], ['DEFAULTER', 600, 400]);
+  assert.deepEqual([mgr.OLD1.status, mgr.OLD1.arrears, mgr.OLD1.initial, mgr.OLD1.recovered, mgr.OLD1.cycle], ['CLEARED', 15500, 15500, 0, 'C-W8'],
+    'a ghost for a customer NOT on today\'s initial deck stays exactly what Part 71 made it: its last-known arrears, recovered 0');
+  assert.ok(!bike.OFFCYC1 && !mgr.OFFCYC1, 'a Wednesday customer is not on Friday\'s list: the whole initial deck is not dumped on the day');
+
+  // THE REPORT: the leaders' books above, added.
+  const sec = r => s.report.sections.find(x => x.role === r).totals;
+  assert.deepEqual([sec('BIKE').customers, sec('BIKE').initial, sec('BIKE').recovered, sec('BIKE').arrears], [3, 4300, 3700, 600]);
+  assert.deepEqual([sec('MANAGER').customers, sec('MANAGER').initial, sec('MANAGER').recovered, sec('MANAGER').arrears], [2, 19500, 4000, 15500]);
+  assert.deepEqual([sec('GMO').customers, sec('GMO').initial, sec('GMO').recovered, sec('GMO').arrears], [1, 6000, 6000, 0]);
+  assert.deepEqual([s.report.totals.customers, s.report.totals.initial, s.report.totals.recovered], [6, 29800, 13700]);
+  assert.equal(s.report.unassignedCleared, null);
+
+  // THE WORKLIST (the phone's own list and "my list"): the customer still owing first, the cleared sunk below, nobody missing.
+  assert.deepEqual(s.mineBike.rows.map(r => r.ref), ['OWE1', 'PAID1', 'GONE1']);
+  assert.equal(s.mineBike.totals.recovered, 3700); assert.equal(s.mineBike.totals.initial, 4300);
+  assert.deepEqual(s.mineBoss.rows.map(r => r.ref), ['OLD1', 'NOCUR1'], 'both cleared: the one last seen owing 15,500 sorts above the one recovered in full today, as the list always sorted a cleared row');
+  assert.equal(s.mineBoss.totals.recovered, 4000);
+
+  // THE TAB reads the same customer the same way: status, figures, owner role, cycle and leader.
+  for (const [ref, role, leader, from] of [['OWE1', 'BIKE', 'BIKE BEE', bike], ['PAID1', 'BIKE', 'BIKE BEE', bike], ['GONE1', 'BIKE', 'BIKE BEE', bike],
+    ['NOCUR1', 'MANAGER', 'BOSS', mgr], ['OLD1', 'MANAGER', 'BOSS', mgr], ['CHR1', 'GMO', 'GMO GEE', gmo]]) {
+    const a = from[ref], b = tab[ref];
+    assert.ok(b, ref + ' is on the tab');
+    assert.deepEqual([b.status, b.arrears, b.initial, b.recovered, b.cycle, b.role, b.leader], [a.status, a.arrears, a.initial, a.recovered, a.cycle, role, leader],
+      ref + ': the tab and the leader\'s card are one reading');
+  }
+  assert.equal(tab.OFFCYC1.status, 'CLEARED', 'the tab lists everybody on the morning deck, whatever their day');
+  assert.equal(s.tab.length, Object.keys(tab).length, 'one row each: nobody is listed twice (a ghost and its morning row)');
+
+  // THE WEEK carries the same day: this week has the one filed day, today.
+  const wk = await portalApi(fakeDb(clearedStayTables_(), { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  assert.deepEqual([wk.totals.customers, wk.totals.initial, wk.totals.recovered], [6, 29800, 13700], 'the week is the days added: here the one filed day, read as the day reads it');
+  assert.deepEqual(wk.totals.byDay, { [TODAY]: 13700 });
+  assert.equal(wk.unassignedCleared, null);
+});
+
+/* NOBODY IS MARKED PAID ON A COMPARISON THAT WAS NEVER MADE. A day reading compares the day's
+   initial deck with the day's current one. This weekday's latest current deck can be LAST
+   WEEK'S (on a morning before today's has been uploaded), and a customer missing from it has not
+   cleared -- they have not been compared yet. So the rule applies only when both decks are the
+   same date, on every screen; otherwise each reads exactly as it did before. */
+test('a customer is not marked cleared on a current deck of another date: nobody is told they paid on a comparison that was never made', async () => {
+  const s = await screens_(fakeDb(clearedStayTables_('2026-07-17'), { rpc: DEFAULTER_GHOST_ROWS_RPC }));
+  const mgr = Object.fromEntries(s.mgr.map(r => [r.ref, r])), tab = Object.fromEntries(s.tab.map(r => [r.ref, r]));
+  assert.equal(s.report.paired, false, 'and the answers say so: the day\'s current deck is another date\'s');
+  assert.equal(s.mineBike.diag.paired, false);
+  assert.ok(!s.mineBoss.rows.some(r => r.ref === 'NOCUR1') && !mgr.NOCUR1, 'a customer on no current deck is not invented as recovered on a deck of last week');
+  assert.ok(!s.bike.some(r => r.ref === 'GONE1'), 'not credited to the morning row\'s leader either');
+  // GONE1 stays what the all-time ghost made it (Part 71): its last-known row, chronic, MANAGER, last-known arrears, nothing recovered.
+  assert.deepEqual([mgr.GONE1.status, mgr.GONE1.arrears, mgr.GONE1.recovered, mgr.GONE1.cycle], ['CLEARED', 2600, 0, 'C-W8']);
+  assert.deepEqual([tab.GONE1.status, tab.GONE1.arrears, tab.GONE1.recovered, tab.GONE1.leader], ['CLEARED', 2600, 0, 'BOSS'], 'and the tab reads it the same way');
+  assert.equal(s.report.unassignedCleared, null);
+});
+
+/* WHO MAY SEE THEM: the same team scoping as every other row, applied at the database to both decks. */
+test('a customer who left the current deck is shown only to the teams that may see them', async () => {
+  const t = clearedStayTables_();
+  t.teams[1] = { ...t.teams[1], manager: 'MBA LEAD' };
+  t.defaulter_snapshots.push(
+    { ref: 'MB1', full_name: 'C MB1', contact: '0714000MB1', team: 'MBAGALA', arrears: 3000, status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 3,
+      disb_date: '2026-07-21', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'binitial' + TODAY, created_at: TODAY + 'T04:00:00Z' },
+    { ref: 'MB2', full_name: 'C MB2', contact: '0714000MB2', team: 'MBAGALA', arrears: 100, status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 3,
+      disb_date: '2026-07-21', snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'bcurrent' + TODAY, created_at: TODAY + 'T08:00:00Z' });
+  const db = fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
+  const mba = { code: 'M', name: 'MBA LEAD', role: 'MANAGER', teams: ['MBAGALA'], tabs: USER_TABS.slice() };
+  const mine = await portalApi(db, mba, 'expdfMine', {}, NOW);
+  assert.deepEqual(mine.rows.map(r => r.ref).sort(), ['MB1', 'MB2'], 'MBAGALA\'s own customers, the one who left the current deck included');
+  assert.equal(mine.rows.find(r => r.ref === 'MB1').status, 'CLEARED');
+  const kon = await portalApi(db, { code: 'K', name: 'BOSS', role: 'MANAGER', teams: ['KONGOWE'], tabs: USER_TABS.slice() }, 'expdfMine', {}, NOW);
+  assert.ok(!kon.rows.some(r => /^MB/.test(r.ref)), 'and not KONGOWE\'s');
+  assert.ok(kon.rows.some(r => r.ref === 'NOCUR1'), 'KONGOWE\'s own, the one who left the current deck included');
 });
 
 /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
