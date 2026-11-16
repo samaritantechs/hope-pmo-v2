@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 15 November 2026** — portal `BUILD 2026-11-15-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 79**.
+**As of 16 November 2026** — portal `BUILD 2026-11-16-a` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 80**.
 
 ---
 
@@ -81,6 +81,41 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#707 — the Expected Defaulters card: the company's book decides the day, the plan is
+  pinned, a failed read says so (handbook Part 80). `db/RUN-ME-058` REPLACES `db/RUN-ME-057`.**
+  #705 went in unread; one reader was put on it after the merge (16 Nov) and found two things
+  and a nit. **The rule did not change:** a customer the day's current file does not name has
+  cleared, and so has a whole team it does not name — "one file, all weekdays together, every
+  time", "a team missing from it owes nothing on it, full stop" (`defaulterBook`; RUN-ME-032
+  v8; the trade made after "i bulked paid clients, many of them brother!"). What was wrong:
+  (1) 057 asked "is there a current file for this day" of the caller's own teams, so an admin
+  read a team missing from the file as cleared and that team's own viewer read "not uploaded
+  yet" — 058 asks the company's book, as `recovery_standing` does; (2) nothing pinned the join
+  method, and on a bad plan 057's text ran 19.5 s (a merge-on-date plan 142 s) against a
+  two-second ceiling — 058 allows only hash joins between the week's rows; (3) the read
+  remembered ANY error as "function missing" for five minutes, so one timeout of last week's
+  arrows-only read blanked this week's card under a note saying to run a file already run —
+  now only a missing function is remembered, a failure's own words go on the card, and this
+  week's read waits four seconds at most (`DASH_EDR_BUDGET_MS`); (4) the current row's
+  disbursement date is read before the initial row's, as `buildRows_` reads it. **Nearly
+  shipped and taken out:** the reader took a team missing from a day's current file for a team
+  whose file had not arrived and proposed "not measured"; that was built (a `measured` flag, a
+  "teams not in yet" line) and the owner was told the fault was real — before RUN-ME-032's
+  header had been read. Corrected in the chat the same morning; nothing of it was pushed. What
+  that trade costs if a file ever arrives without a team that still owes is in the SQL file's
+  header (six of eighty-four teams absent: 9,282,638 read as recovered where the teams present
+  recovered 1,567,018) — the same for "Weekly recovery trend", and the owner's to change for
+  every recovery figure together (section 8). **Cost:** the same two files a day and seven
+  index probes: 0.29 to 0.33 s a week for every team on the 2.27-million-row book (057: 0.29 to
+  0.35 s), one team 40 ms; two calls a load as before, `test/speed.test.mjs` unchanged; no read
+  on `/api/upload` or `/api/call`. **Checked:** parity 300 random weeks on a PostgreSQL, seven
+  deliberate breaks each caught; four tests of the card, the two new ones failing when their
+  fix is taken out; the file run twice as one batch; the card drawn in a browser. `npm test`:
+  1,537 pass. `BUILD 2026-11-16-a` (the page's comment only). **A sweep of other screens for
+  the same reading** found about a dozen places; most are the whole-book rule doing its job;
+  three look wider than their own Part and are in section 8, not changed. **What it cost the
+  owner:** a five-agent workflow started while the corrected SQL was owed used up the
+  allowance again; the chat stopped from about 03:55 to 08:30 EAT (section 7).
 - **#705 — the dashboard's Expected Defaulters recovery is each day's own list, not the whole
   book (handbook Part 79).** "This cant be okay" ... "recovered amounts of full cant equal of
   owed expected defs" — the owner, 15 Nov, with "Weekly recovery trend" and "Expected Defaulters
@@ -1253,6 +1288,26 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   green sat unmerged for seven and a half hours, the owner waiting, until "Please continue".
   A review that can stop the chat is never started while a finished change is waiting to be
   merged: merge first (section 2), then have it read if the allowance is there.
+  **And a third time, the next morning (16 Nov).** One reader on the merged #705 came back with
+  real findings and the chat answered. Then, with the corrected SQL owed to the owner, a
+  five-agent workflow (two finders, three checkers) was started to look for the same fault
+  elsewhere: the three checkers died on the allowance and the chat stopped from about 03:55 to
+  08:30 EAT, the owner writing "Please continue" twice. **While the owner is waiting on
+  something, no agent is started at all.** One reader at a time, only when nothing is owed, and
+  its findings are checked by hand on the test database. A standing "use workflows" setting on
+  the session does not change this: the allowance is the owner's, and it has frozen this chat
+  three times.
+- **A reader's finding is read against the rule that governs it before the owner is told it is
+  real.** On 16 Nov a reader reported that a team missing from a day's current file was "read
+  as recovered in full", with a reproduction, and `api/_lib/snapshots.js` seemed to back it
+  ("a day can also arrive as SEVERAL files"). The owner was told the fault was real and a fix
+  was built. The rule that governs the question is elsewhere, in the owner's words:
+  `db/RUN-ME-032`'s header, `defaulterBook`, the upload's retirement note — "one file, all
+  weekdays together, every time", "a team missing from it owes nothing on it, full stop". The
+  reader could not have known; the chat could, and section 2 (14 Nov) already said to look. A
+  reproduction shows what the code does. Only the Part and the owner's words say whether that
+  is wrong. Grep the phrase of the finding ("missing from", "owes nothing", "cleared") across
+  `db/*.sql` headers and `docs/HANDOFF.md` before answering.
 - **A script for the SQL editor is timed on a book of the live book's size first.** One that takes
   seconds on the test machine is made lighter before it is handed over.
 - **A document for the owner's management goes out whole.** On 11 Nov a report was sent with two
@@ -1377,13 +1432,30 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner — first**: run `db/RUN-ME-057-expdf-cycle-recovery-totals.sql` in the SQL editor
-  (pasted in full in the chat, 15 Nov). Until it is run the dashboard's Expected Defaulters
-  recovery card reads "no answer yet" on every day and names this file; once it is, each tile is
-  that day's own expected list (section 4, #705). And, only if the owner wants it changed: the
+- **The owner — first**: run `db/RUN-ME-058-expdf-team-day-recovery-totals.sql` in the SQL
+  editor (pasted in full in the chat, 16 Nov). **Not 057**: 058 replaces it and drops its
+  function, whether or not 057 was run. Until 058 is run the dashboard's Expected Defaulters
+  recovery card reads "no answer yet" on every day and names the file; once it is, each tile is
+  that day's own expected list within five minutes (section 4, #707). And, only if the owner
+  wants it changed: the
   "Weekly recovery trend" TOTAL adds a day that has no file of its own at the standing carried
   forward to it (a Sunday with no upload repeats Saturday in the week's total) — the existing
   rule, which the commission board pays on; nothing was changed.
+- **Next change, each read against its Part first (found by the sweep of 16 Nov, section 4;
+  reproduced by one finder, read by nobody else, not changed):** (1) on the Expected Defaulters
+  tab, in the hours between a day's initial file and its current file, a customer who is NEW on
+  today's initial file reads CLEARED with the whole arrears as recovered, because the newest
+  current file is the day before's and never named them (`expectedDefaulters`, the branch of
+  Parts 75 and 77, `portal-core.js` about line 1078); (2) the Exp.Def week view can show one
+  customer twice, as a ghost on a leader's list and again on the "no leader on record" board
+  (`expdfWeekCompute_`, about lines 423 to 446); (3) that board's test for a filed day is asked
+  of the reader's teams, as 057's was. **Not faults, by the whole-book rule:** the rows marked
+  CLEARED for a team today's current file does not name, on the phone's list, the Exp.Def
+  Report, the Expected Defaulters tab, team progress and the weekly report's Count 1-6.
+- **The owner, only if they want it changed**: the whole-book trade itself. If a current file
+  ever arrives without a team that still owes, every recovery figure reads that team as
+  cleared (section 4, #707, with the measured size of it). Changing it is one rule for every
+  screen, never one card.
 - **The owner**: the North-West/Lake Coast batch run 15 Nov (section 4) — whether Faustine
   Beatus Zachariah (FBZ/0400/2026, already filed in NORTH WEST) is the same person as Phaustine
   Beatus Zakaria on the list (if so, a PLACE by his real staff ID moves/fills him; a script will

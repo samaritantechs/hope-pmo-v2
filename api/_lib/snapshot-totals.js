@@ -849,7 +849,8 @@ function resolved(agg, date) {
       who was told the first time that it was by design. It was not: the rule existed, and the
       card did not follow it.
 
-   db/RUN-ME-057 (expdf_cycle_recovery_totals) is the same read with the missing test. Of a
+   db/RUN-ME-058 (expdf_team_day_recovery_totals; RUN-ME-057 was its first cut, see below) is
+   the same read with the missing test. Of a
    day's own INITIAL file -- "i want the weekly cycle to be facts of the no of defaulters we
    really had, not who remained so the lists per day must come from initial files" -- it keeps
    the customers whose Day 1 or Day 2 is that weekday, by the one formula buildRows_ and
@@ -860,12 +861,23 @@ function resolved(agg, date) {
    absence), a customer the initial file never named not counted at all. A customer with no
    disbursement date has no day and is counted ONCE in the dates one call asks for, on the last
    that carried them -- the Exp.Def week's own rule (handbook Part 54), never once per day.
-   And A DAY COUNTS WHEN BOTH ITS OWN DECKS WERE FILED ON IT, the week's rule again
-   (expdfWeekCompute_): a customer missing from a current deck that exists has cleared, but a
-   current deck that does not exist yet says nothing about anybody -- the morning a day's
-   initial deck is in and its current one is not, the day answers no row and the tile reads
-   "not uploaded yet", where RUN-ME-056's function read the whole day as recovered in full.
-   The SQL file's header has the rest, and the measured cost.
+   And A DAY COUNTS WHEN THE COMPANY HOLDS A CURRENT DECK FOR IT. A current deck that does not
+   exist yet says nothing about anybody (the week's rule, expdfWeekCompute_) -- the morning a
+   day's initial deck is in and its current one is not, the day answers no row and the tile
+   reads "not uploaded yet", where RUN-ME-056's function read the whole day as recovered in
+   full. A current deck that DOES exist is the whole book ("one file, all weekdays together,
+   every time"): a customer it does not name has cleared, and so has a whole TEAM it does not
+   name -- "a team missing from it owes nothing on it, full stop", the trade made after "i
+   bulked paid clients, many of them brother!" (recovery_standing below, RUN-ME-032 v8;
+   defaulterBook in portal-core.js). So "is there a current deck for this day" is asked of the
+   company and never of the caller's teams, as recovery_standing asks it ("not narrowed by
+   team"): RUN-ME-057 asked the caller's teams, and an admin and a one-team viewer read the
+   same team two ways. A SECOND READER PROPOSED THE OPPOSITE of that trade for this card -- a
+   team missing from the current deck as "not measured" -- and it was built and then taken out
+   before it shipped, once RUN-ME-032's header had been read: a card does not get a recovery
+   rule of its own (CLAUDE.md, "one definition of a rule"), and the owner had already chosen.
+   The SQL file's header has the rest, what that trade costs when a file arrives without a
+   team, and the measured cost.
 
    STILL NEVER THE PER-OFFICER FIGURE THE EXP.DEF REPORT SHOWS, and never a second copy of the
    rotation that decides WHO owns which customer (assign.js's assignFor, configurable live from
@@ -876,21 +888,44 @@ function resolved(agg, date) {
    EXACT DATE-AND-WEEKDAY PAIRING, never "the latest upload on or before" -- the day-pairing
    rule recoveryByTeam (below) and recTrend use, for the reason recoveryByTeam's own note gives.
 
-   A NEW FUNCTION NAME ON PURPOSE. A database where RUN-ME-057 has not been run answers null
-   here and the cards say so ("not uploaded yet" on every day, and which file to run) -- they
-   do not go on showing the whole book's recovery under the Expected Defaulters' name off the
-   old function, which RUN-ME-057 drops. Never a failed request, and never the raw-row read
-   this exists to avoid (about thirteen more round trips: db/RUN-ME-056's own costing). */
-export const EXPDF_RECOVERY_TOTALS_FN = 'expdf_cycle_recovery_totals';
-const expdfRecoveryMissing = new WeakMap();        // db -> when it was last found missing
-const EXPDF_RECOVERY_MISSING_TTL_MS = 5 * 60 * 1000;
-export async function expdfRecoveryTotals(db, { dates, weekdays, teams = null } = {}) {
-  if (!db || typeof db.rpc !== 'function' || !dates || !dates.length) return null;
-  const missedAt = expdfRecoveryMissing.get(db);
-  if (missedAt && (Date.now() - missedAt) < EXPDF_RECOVERY_MISSING_TTL_MS) return null;
-  const { data, error } = await rpcAll(db, EXPDF_RECOVERY_TOTALS_FN,
-    { p_dates: dates, p_weekdays: weekdays, p_teams: teamsArg(teams) });
-  if (error) { expdfRecoveryMissing.set(db, Date.now()); return null; }
+   A NEW FUNCTION NAME EVERY TIME THE FUNCTION IS CORRECTED, ON PURPOSE. A database where the
+   current file has not been run answers null here and the cards say so ("no answer yet" on
+   every day, and which file to run) -- they do not go on showing an older answer off an
+   older function (056's whole book; 057's one team read two ways, and its plan that could
+   run for minutes), both of which RUN-ME-058 drops. Never a failed request, and never the raw-row read this exists to
+   avoid (about thirteen more round trips: db/RUN-ME-056's own costing).
+
+   A FUNCTION THAT IS THERE BUT FAILED IS NOT A FUNCTION THAT IS MISSING -- recoveryStanding's
+   own lesson, below, which the first two cuts of this read did not follow: they remembered ANY
+   error as "not installed" for five minutes. The dashboard asks twice a load (this week, and
+   last week for the arrows), so one timeout of last week's read blanked this week's card on
+   every load for five minutes, under a note telling the person to run a file they had run.
+   Now only "there is no such function" is remembered (noteMissing, the five minutes every
+   function here shares); any other failure is forgotten at once -- the next load asks again --
+   and its own words are handed back through `status`, so the card can say what failed.
+
+   `status`, when the caller hands one in, is filled before the answer comes back:
+     status.why  'missing'  the function is not installed (run the file; up to five minutes
+                            after it is run before a server that remembered asks again)
+                 'failed'   it is installed and did not answer; status.msg has the database's
+                            own words
+                 undefined  it answered (rows, or [] for nothing uploaded).
+   A caller whose own budget runs out first sees `why` still unset and knows it was slow. */
+export const EXPDF_RECOVERY_TOTALS_FN = 'expdf_team_day_recovery_totals';
+export const EXPDF_RECOVERY_FILE = 'db/RUN-ME-058-expdf-team-day-recovery-totals.sql';
+export async function expdfRecoveryTotals(db, { dates, weekdays, teams = null, status = null } = {}) {
+  if (!db || typeof db.rpc !== 'function' || !dates || !dates.length) { if (status) status.why = 'missing'; return null; }
+  if (knownMissing(db, EXPDF_RECOVERY_TOTALS_FN)) { if (status) status.why = 'missing'; return null; }
+  let res;
+  try {
+    res = await rpcAll(db, EXPDF_RECOVERY_TOTALS_FN, { p_dates: dates, p_weekdays: weekdays, p_teams: teamsArg(teams) });
+  } catch (e) { res = { data: null, error: e }; }
+  const { data, error } = res;
+  if (error) {
+    if (isMissingFn_(error)) { noteMissing(db, EXPDF_RECOVERY_TOTALS_FN); if (status) status.why = 'missing'; }
+    else if (status) { status.why = 'failed'; status.msg = String((error && error.message) || error).slice(0, 200); }
+    return null;
+  }
   return Array.isArray(data) ? data : [];
 }
 

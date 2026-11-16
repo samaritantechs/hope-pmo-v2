@@ -11,7 +11,7 @@ import { zonesOfTeams, teamsZoned } from './zone.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
-  recoveryByTeam, expdfRecoveryTotals } from './snapshot-totals.js';
+  recoveryByTeam, expdfRecoveryTotals, EXPDF_RECOVERY_FILE } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
@@ -12223,6 +12223,13 @@ async function dashboardProbe(db, user, args, nowMs) {
    morning costs arrows rather than the screen. Overridable for the test that proves it. */
 const DASH_PREV_BUDGET_MS = 6000;
 const dashPrevBudget_ = () => Number(process.env.DASH_PREV_BUDGET_MS) || DASH_PREV_BUDGET_MS;
+/* How long the dashboard will wait on THIS week's Expected Defaulters card. Its database
+   function carries a two-second ceiling of its own, but a statement that outruns a ceiling is
+   retried (runQuery: three tries with pauses -- seven and a half seconds at worst), and one
+   card is not worth that to the most-opened screen. Past this the card says its read was
+   slow and the rest of the dashboard is drawn. Overridable for the test that proves it. */
+const DASH_EDR_BUDGET_MS = 4000;
+const dashEdrBudget_ = () => Number(process.env.DASH_EDR_BUDGET_MS) || DASH_EDR_BUDGET_MS;
 const DASH_MONTH_BUDGET_MS = 3000;
 // Overridable so a test can prove the race below with a stalled fake in milliseconds.
 const dashMonthBudget_ = () => Number(process.env.DASH_MONTH_BUDGET_MS) || DASH_MONTH_BUDGET_MS;
@@ -12299,6 +12306,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
      LAST WEEK rides along as two more week-sized totals reads -- the exact question shape
      this database answers fastest -- because every percentage on the performance strip has
      to say which way it is MOVING, and movement needs the week before. */
+  // Why this week's Expected Defaulters card has no answer, when it has none: filled by the
+  // read itself ('missing' or 'failed' with the database's words), left empty when it answers.
+  const edrSt = {};
   const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, edrWeek, edrPrev, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
@@ -12345,16 +12355,23 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        (RUN-ME-056) counted everybody on the file and so repeated "Weekly recovery trend" under
        another name -- "recovered amounts of full cant equal of owed expected defs", the owner,
        15 Nov 2026. The current deck is only looked up for those customers, never iterated on
-       its own, so one missing from it entirely reads as fully recovered, never invisible. See
-       db/RUN-ME-057 and snapshot-totals.js's own long note on expdfRecoveryTotals for the
-       rest, and for why this never re-reads the whole week's raw decks (expdfWeekCore's own
-       shape: ~13 more round trips) or re-derives the rotation that decides WHO owns a customer
-       a second time, in SQL. THIS week unbounded (the cards' own headline figures), LAST week
-       budgeted exactly like expPrev/defPrev/ecolPrev above, for the identical reason: it
-       exists only to feed the day tiles' own arrows. `null` (not `[]`) is this function's own
-       way of saying "no answer yet" -- a budget timeout and a database without RUN-ME-057 run
-       read identically downstream: no arrow, no guess. */
-    expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(mon, i)), weekdays: WD7, teams: user.teams }),
+       its own, so one missing from it entirely reads as fully recovered, never invisible --
+       and so does a whole team the day's current file does not name: the current file is
+       the whole book ("a team missing from it owes nothing on it, full stop", the rule
+       "Weekly recovery trend" reads two cards up). Whether a day HAS a current file is asked
+       of the company, not of the viewer's teams (db/RUN-ME-058; RUN-ME-057 asked the viewer's
+       teams, and an admin and a one-team viewer read the same team two ways). See that file
+       and snapshot-totals.js's own long note on expdfRecoveryTotals for the rest, and for
+       why this never re-reads the whole week's raw decks (expdfWeekCore's own shape: ~13 more
+       round trips) or re-derives the rotation that decides WHO owns a customer a second
+       time, in SQL. THIS week waits at most dashEdrBudget_() (see its note: a card is
+       not worth a retried timeout to the whole screen); LAST week is budgeted exactly like
+       expPrev/defPrev/ecolPrev above, for the identical reason: it exists only to feed the
+       day tiles' own arrows, and ITS failure is no longer this week's (each read answers for
+       itself). `null` (not `[]`) is this function's way of saying "no answer"; `edrSt` says
+       why for this week's read, so the card names the right next step. */
+    within_(expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(mon, i)), weekdays: WD7, teams: user.teams, status: edrSt }),
+      dashEdrBudget_(), null),
     within_(expdfRecoveryTotals(db, { dates: WD7.map((wd, i) => addDaysKey(prevMon, i)), weekdays: WD7, teams: user.teams }),
       dashPrevBudget_(), null),
     fetchAll(() => onTeams(db.from('loans')
@@ -12440,9 +12457,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const myExpWeek = scoped(user, expWeek), myDefWeek = scoped(user, defWeek);
   const myExpPrev = scoped(user, expPrev), myDefPrev = scoped(user, defPrev);
   const myEcolWeek = scoped(user, ecolWeek), myEcolPrev = scoped(user, ecolPrev);
-  // expdfRecoveryTotals answers null, never [], when it has nothing -- a budget timeout or a
-  // database without RUN-ME-057 run -- so edrTrend/edrTrendTotal below can tell "unmeasured"
-  // from "measured, zero" the same way every other null-capable read on this screen does.
+  // expdfRecoveryTotals answers null, never [], when it has nothing -- a budget that ran out,
+  // a failed read, or a database without RUN-ME-058 run -- so edrTrend/edrTrendTotal below can
+  // tell "unmeasured" from "measured, zero" as every other null-capable read on this screen does.
   const myEdrWeek = scoped(user, edrWeek || []), myEdrPrev = scoped(user, edrPrev || []);
   const myLoans = scoped(user, loansAll);
   /* Uploaded rows, plus the ones the rule finds -- with an uploaded row winning for the same
@@ -12988,11 +13005,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       of per-customer CLAMPED differences, a customer gone from the current deck recovered in
       full -- and a day whose current deck has not been filed at all answers no row, so its
       tile reads "not uploaded yet" rather than a whole list recovered (the Exp.Def week's own
-      "both decks filed" rule); `pct` is over that list's own initial arrears -- "opnly expeef is against total
+      "both decks filed" rule, asked of the company's book and not of the viewer's teams);
+      `pct` is over that list's own initial arrears -- "opnly expeef is against total
       arrea of the day given". See snapshot-totals.js's own long note on expdfRecoveryTotals.
       Each day's own arrow is against the SAME WEEKDAY last week (#690's own rule), the
       identical shape ecolTrend/colTrend/recTrend already carry. `edrWeek`/`edrPrev` are null,
-      never [], when there is no answer (budget timeout or RUN-ME-057 not run) --
+      never [], when there is no answer (a budget, a failed read, or RUN-ME-058 not run) --
       myEdrWeek/myEdrPrev fold that to [] above, so every day here reads `uploaded: false`
       exactly as an unmeasured day already does everywhere else on this screen, and `edrNote`
       says which file the card is waiting for rather than leaving seven empty tiles to speak
@@ -13022,13 +13040,25 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     return { initial, current, recovered, pct,
       dEdr: (edrTrend.some(x => x.uploaded) && myEdrPrev.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
   })();
-  /* NO ANSWER IS SAID, NOT LEFT AS SEVEN EMPTY TILES. `edrWeek` is null only when the database
-     gave nothing for THIS week -- db/RUN-ME-057 not run there yet, or its read failed (its own
-     two-second ceiling included) -- and this week's read carries no budget of ours to run out.
-     A week with the function installed and nothing uploaded is [], and says nothing here. */
-  const edrNote = edrWeek === null
-    ? 'Kadi ya Expected Defaulters haijajibiwa na database: endesha db/RUN-ME-057-expdf-cycle-recovery-totals.sql kwenye SQL editor (kama imeshaendeshwa, usomaji umechelewa: fungua upya).'
-      + ' / The Expected Defaulters card got no answer from the database: run db/RUN-ME-057-expdf-cycle-recovery-totals.sql in the SQL editor (if it has been run, the read timed out: reload).'
+  /* NO ANSWER IS SAID, NOT LEFT AS SEVEN EMPTY TILES -- AND IT SAYS WHICH KIND. `edrWeek` is
+     null only when THIS week's read gave nothing, and the three reasons have three different
+     next steps: the function is not installed (run the file, then allow five minutes: a
+     server that has just been told "no such function" does not ask again sooner); it is
+     installed and failed (the database's own words, and reload -- "I ran it still getting
+     'run db/RUN-ME-032'" is the complaint recoveryStanding's note records, and this card
+     earned it too by telling people to run a file they had run); or it was slow and the
+     screen did not wait. A week with the function installed and nothing uploaded is [], and
+     says nothing here. */
+  const edrWhy = edrWeek !== null ? null : (edrSt.why || 'slow');
+  const edrNote = edrWhy === 'missing'
+    ? 'Kadi ya Expected Defaulters haijajibiwa na database: endesha ' + EXPDF_RECOVERY_FILE + ' kwenye SQL editor. Ikishaendeshwa, kadi hujaa ndani ya dakika tano.'
+      + ' / The Expected Defaulters card got no answer from the database: run ' + EXPDF_RECOVERY_FILE + ' in the SQL editor. Once it is run the card fills within five minutes.'
+    : edrWhy === 'failed'
+    ? 'Kadi ya Expected Defaulters: database haikujibu -- ' + (edrSt.msg || '') + '. Fungua upya.'
+      + ' / The Expected Defaulters card: the database did not answer -- ' + (edrSt.msg || '') + '. Reload.'
+    : edrWhy === 'slow'
+    ? 'Kadi ya Expected Defaulters: usomaji umechelewa na dashibodi haikuusubiri. Fungua upya.'
+      + ' / The Expected Defaulters card: its read was slow and the dashboard did not wait for it. Reload.'
     : null;
 
   /* ---- team performance: numbers WITH the leader names beside them ---- */
