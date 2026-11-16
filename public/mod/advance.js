@@ -189,6 +189,10 @@ VIEWS.advappr = function(){
     if (state === 'pending') {
       S.pickKey = 'id';
       S.rows = pend;
+      /* A TICK BELONGS TO A REQUEST THAT IS STILL PENDING. One decided since it was ticked -- by this desk a moment ago, or by
+         another -- drops its tick here, so the count on the bar is what the next save will really send. */
+      if (S.pick) { var live = {}; pend.forEach(function(r){ live[String(r.id)] = true; });
+        Object.keys(S.pick).forEach(function(k){ if (!live[k]) delete S.pick[k]; }); }
       S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
         {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
         col('zone','Zone'), {key:'amount', label:'Kiasi / Amount', kind:'money'}, col('app_date','Tarehe ya ombi / App date','date'),
@@ -266,12 +270,22 @@ function advBulk_(approval){
   var com = (($('#advBulkCom') || {}).value || '').trim();
   if (approval === 'Disapproved' && !com){ toast('Andika sababu ya kukataa kwenye kisanduku cha maoni. / Write the reason in the comment box to disapprove.', true); return; }
   if (!confirm((approval === 'Approved' ? 'Idhinisha' : 'Kataa') + ' ' + ids.length + '? / ' + (approval === 'Approved' ? 'Approve' : 'Disapprove') + ' ' + ids.length + ' request(s)?')) return;
+  /* ONE PRESS, ONE SAVE, AND THE SCREEN SAYS IT IS SAVING: "ticking multiple advance requests to approve at once fails unless
+     one by one". A big tick used to take long enough to be pressed twice, and when it failed the list stayed as it was, so
+     nobody could see that part of it HAD been saved. The buttons are off until the answer is back, and whatever the answer is
+     the list is read again -- what is still Pending afterwards is what was not saved. */
+  var btns = [document.getElementById('advApproveMany'), document.getElementById('advRejectMany')];
+  btns.forEach(function(b){ if (b) b.disabled = true; });
+  toast('Inahifadhi ' + ids.length + '… / Saving ' + ids.length + '…');
   srv('advDecide', { updates: ids.map(function(id){ return { id: id, approval: approval, comment: com }; }) })
     .then(function(r){
+      var sk = r.skipped || [];
       toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
-        + (r.skipped && r.skipped.length ? ' · ' + r.skipped.join('; ') : '') + '.', !!(r.skipped && r.skipped.length));
+        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length);
       pickClear_(); render({ force:true }); })
-    .catch(function(e){ toast(String(e.message||e), true); });
+    .catch(function(e){
+      toast(String(e.message||e) + ' — orodha imesomwa upya: yaliyobaki Pending hayakuhifadhiwa. / the list was read again: what is still Pending was not saved.', true);
+      render({ force:true }); });
 }
 /* Wired by wireForms (app.html) after every paint, like the devices module: the bar is rebuilt with each render. */
 function wireAdvDesk(){

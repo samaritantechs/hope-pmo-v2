@@ -247,3 +247,30 @@ test('customer service: one shared code, names off the call-agents roster, no zo
   const r = await portalApi(db, CS, 'leaveRequest', { staffName: 'HAPPY AGENT', startDate: '2026-11-16', endDate: '2026-11-16', reason: 'LIKIZO' }, NOW);
   assert.equal(r.zone, null, 'customer service requests carry no zone, like advance\'s');
 });
+
+/* MANY TICKS, FEW TRIPS -- the leave desk's bulk save is the advance desk's, and failed the same
+   way on a big tick ("ticking multiple advance requests to approve at once fails unless one by
+   one", the owner, 16 Nov 2026): every ticked id in one address, then a trip to the database
+   for each request. Read in chunks and saved one statement a chunk, like advance's. */
+test('the desk: a big tick is saved in a few statements, never one a request', async () => {
+  const db0 = fakeDb(tables());
+  await portalApi(db0, FO, 'leaveRequest', { staffId: 'S1', startDate: '2026-11-16', endDate: '2026-11-16', reason: 'LIKIZO' }, NOW);
+  const rows = db0._dump('leave_requests');
+  const proto = rows[0];
+  const N = 130;
+  const uid = i => '00000000-0000-4000-8000-' + String(i).padStart(12, '0');
+  for (let i = 2; i <= N; i++) rows.push({ ...proto, id: uid(i), staff_id: 'X' + i, staff_name: 'STAFF ' + i });
+  let writes = 0; const lists = [];
+  const db = { ...db0, from(name) {
+    const q = db0.from(name);
+    if (name !== 'leave_requests') return q;
+    const inn = q.in.bind(q), upd = q.update.bind(q);
+    q.in = (c, v) => { if (c === 'id') lists.push(v.length); return inn(c, v); };
+    q.update = patch => { writes++; return upd(patch); };
+    return q; } };
+  const out = await portalApi(db, GMO, 'leaveDecide', { updates: rows.map(r => ({ id: r.id, approval: 'Approved', comment: 'sawa' })) }, NOW);
+  assert.deepEqual([out.approved, out.disapproved, out.skipped.length], [N, 0, 0]);
+  assert.equal(writes, 3, '130 requests are three statements, where they were 130');
+  assert.ok(Math.max(...lists) <= 60, 'no address carries more than sixty ids: ' + Math.max(...lists));
+  assert.equal(db0._dump('leave_requests').filter(r => r.approval === 'Approved' && r.decided_by === 'JUMA G').length, N);
+});

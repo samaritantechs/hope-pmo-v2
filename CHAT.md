@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 16 November 2026** — portal `BUILD 2026-11-16-a` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 80**.
+**As of 16 November 2026** — portal `BUILD 2026-11-16-b` · call app `CALL_BUILD 2026-11-11-b` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 81**.
 
 ---
 
@@ -81,6 +81,32 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#708 — the advance desk, and the leave desk, save a big tick in a few trips (handbook
+  Part 81).** "someone is saying ticking multiple advance requests to approve at once fails
+  unless one by one" — the owner, 16 Nov. **The page was not the fault:** a new kept check
+  (`tools/browser-checks/portal-advance-bulk.mjs`) ticks three, then three hundred, in a real
+  browser and watches the one call go out with every id; the Android app shows the confirm
+  question too. **The server could not carry a big tick:** `advDecide` read the ticked rows
+  with every id in one address (a uuid is thirty-seven bytes of URL; three hundred are eleven
+  thousand, and gateways commonly refuse about eight) and then saved each request with its own
+  trip, one after another, inside the page's forty-five seconds; when that failed, part was
+  already saved and the list on screen did not show it. Now the rows are read sixty ids at a
+  time and saved one statement a chunk for each answer and comment, `where id in (chunk) and
+  approval in (as it was read)`: three hundred ticks are ten trips where they were three
+  hundred and one, a request somebody else decided meanwhile is left as they decided it, and a
+  chunk refused after others were saved answers "N NOT SAVED, tick them again" instead of
+  throwing the saved ones away. `leaveDecide` is the same code and got the same change. On the
+  page: the buttons are off and the screen says "Saving N…" while it runs; the list is read
+  again after any answer; a tick of a request no longer pending is dropped. **Not known:** the
+  person's screen and the words of the red message were not seen, so which limit they met, and
+  with how many ticks, is not known; three ticks worked before and work now; the address limit
+  is from the code and common gateways, not tried on the live one. **Cost:** a bulk decision
+  was one read and N writes, now one of each for every sixty requests; nothing on
+  `/api/upload` or `/api/call`. **Checked:** tests (150 ticks are three statements; the race;
+  two answers; a refused chunk), each failing with the chunking out; the browser check's 36
+  points with 8 and with 300 requests. `BUILD 2026-11-16-b`. **Not done:** the phone
+  register's bulk actions (a list of IMEIs in one address) and the imprest approvals were not
+  looked at.
 - **#707 — the Expected Defaulters card: the company's book decides the day, the plan is
   pinned, a failed read says so (handbook Part 80). `db/RUN-ME-058` REPLACES `db/RUN-ME-057`.**
   #705 went in unread; one reader was put on it after the merge (16 Nov) and found two things
@@ -1441,6 +1467,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   "Weekly recovery trend" TOTAL adds a day that has no file of its own at the standing carried
   forward to it (a Sunday with no upload repeats Saturday in the week's total) — the existing
   rule, which the commission board pays on; nothing was changed.
+- **The owner, only if it still happens**: if somebody still cannot approve SEVERAL advance
+  requests at once after `BUILD 2026-11-16-b` (section 4, #708), the words of the red message
+  on their screen and roughly how many they had ticked. Three at once was tested and works.
 - **Next change, each read against its Part first (found by the sweep of 16 Nov, section 4;
   reproduced by one finder, read by nobody else, not changed):** (1) on the Expected Defaulters
   tab, in the hours between a day's initial file and its current file, a customer who is NEW on

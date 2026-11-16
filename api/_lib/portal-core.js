@@ -2432,6 +2432,78 @@ async function advQueue(db, user, { zone } = {}, nowMs = Date.now()) {
     noZoneTeams, approvals: ADV_APPROVALS.slice(1),
     desk, unrouted, routingOn: routing.on, routingNote: routing.on ? null : ADV_ROUTE_NOTE };
 }
+/* =======================================================================================
+   MANY TICKS, FEW TRIPS -- the bulk save of the advance desk and of the leave desk.
+
+     "someone is saying ticking multiple advance requests to approve at once fails unless one
+      by one" -- the owner, 16 Nov 2026
+
+   The page was sending every ticked id, correctly (tools/browser-checks/portal-advance-bulk.mjs
+   ticks three, then three hundred, and watches the one call go out). What could not carry a
+   big tick was this side, in two ways that both grow with the number ticked and neither of
+   which one request at a time ever meets:
+
+     THE IDS RIDE IN THE ADDRESS. A PostgREST filter is part of the URL, and a request id is a
+     uuid: thirty-seven bytes each with its comma. A hundred fit in under four thousand; three
+     hundred make an address of eleven thousand, and gateways refuse an address at about
+     eight. The READ of the ticked rows was one such address, however many were ticked.
+
+     EACH REQUEST WAS SAVED WITH ITS OWN TRIP. One `update ... where id = x` after another:
+     a tick of two hundred was two hundred trips in a row, inside a request the page gives up
+     on after forty-five seconds -- and gives up on with part of the batch already saved,
+     which is the worst answer a save can give (CLAUDE.md, on an upload that finished and
+     reported a failure).
+
+   So the ids are read in chunks that always fit, and the save is ONE statement a chunk for
+   each answer-and-comment: `update ... where id in (chunk) and approval in (as it was read)`.
+   Three hundred ticks are ten trips where they were three hundred and one.
+
+   "and approval in (as it was read)" is the rule "a request is decided once" held at the
+   database: a request somebody else decided between this desk's read and its save is left as
+   they decided it, and named in `skipped`. The spelling is the row's own, as stored -- .in()
+   is exact-case, and nothing here assumes 'Pending' is spelt one way in every row.
+
+   A CHUNK THAT FAILS AFTER OTHERS WERE SAVED DOES NOT THROW THE SAVED ONES AWAY. The answer
+   says how many were saved and what stopped the rest; only a batch of which nothing was saved
+   fails as a whole. */
+const DECIDE_CHUNK = 60;
+/** The rows of `table` with these ids, read a chunk at a time. null when the table is not there
+    (the caller's own `read` decides that, as it does for every other read of the table). */
+async function decideRead_(db, table, ids, read) {
+  const uniq = [...new Set(ids)];
+  const out = [];
+  for (let i = 0; i < uniq.length; i += DECIDE_CHUNK) {
+    const part = await read(() => db.from(table).select('*').in('id', uniq.slice(i, i + DECIDE_CHUNK)));
+    if (part === null) return null;
+    out.push(...part);
+  }
+  return out;
+}
+/** Writes the answers in `todo` ([{ r: the row as read, u: { approval, comment } }]) and says
+    which rows were written: { done: Set of ids, failed: the database's words if a chunk was
+    refused after some were saved }. Throws only when the very first write is refused. */
+async function decideWrite_(db, table, todo, user, at) {
+  const groups = new Map();                    // one answer and one comment = one statement a chunk
+  for (const x of todo) {
+    const k = x.u.approval + '\u0000' + (x.u.comment == null ? '' : x.u.comment);
+    (groups.get(k) || groups.set(k, { approval: x.u.approval, comment: x.u.comment, items: [] }).get(k)).items.push(x);
+  }
+  const done = new Set();
+  for (const g of groups.values()) {
+    for (let i = 0; i < g.items.length; i += DECIDE_CHUNK) {
+      const part = g.items.slice(i, i + DECIDE_CHUNK);
+      const { data, error } = await db.from(table)
+        .update({ approval: g.approval, comment: g.comment, decided_by: user.name, decided_at: at })
+        .in('id', part.map(x => x.r.id)).in('approval', [...new Set(part.map(x => x.r.approval))]).select('id');
+      if (error) {
+        if (!done.size) throw new Error(error.message);
+        return { done, failed: String(error.message || error).slice(0, 200) };
+      }
+      for (const d of (data || [])) done.add(String(d.id));
+    }
+  }
+  return { done, failed: null };
+}
 /** Bulk decide: Approved or Disapproved, with a comment, on requests routed to this desk
     (advSees_: the zone for the role rule and the legacy rows, the person for a supervisor,
     everything for an admin) that are still pending. The sheet's bulkUpdateAdvances. */
@@ -2444,14 +2516,15 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db), settingGet(db, ADV_MONTHS_KEY)]);
   const { zones } = advZones_(user, teamRows);
   const ms = advMonthState_(monthsRaw, todayKey(nowMs).slice(0, 7), nowMs);
-  const rows = await advRead_(() => db.from('advance_requests').select('*').in('id', updates.map(u => u.id)));
+  const rows = await decideRead_(db, 'advance_requests', updates.map(u => u.id), advRead_);
   if (rows === null) throw badRequest(ADV_NOTE);
   const by = new Map(rows.map(r => [String(r.id), r]));
   const at = new Date(nowMs).toISOString();
-  let approved = 0, disapproved = 0; const skipped = []; let refused = null;
+  const skipped = []; let refused = null; const todo = []; const taken = new Set();
   for (const u of updates) {
     const r = by.get(u.id);
     if (!r) { skipped.push(u.id + ': no longer there'); continue; }
+    if (taken.has(u.id)) continue;                       // the same request ticked twice is one decision
     /* A request that is not this desk's is REFUSED, not fatal to the rest: "GMO ... still appears
        Pending" -- one stray tick in a bulk save used to stop the loop after the rows before it and
        leave every row after it undecided, with only a 403 to say so. The ones that are this
@@ -2464,10 +2537,17 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
     if (K(r.approval) === K(ADV_EXPIRED) || advStale_(r, ms.month)) { skipped.push(`${r.staff_name}: expired -- its month (${advMonthEat_(r.submitted_at)}) ended undecided; they can ask again this month`); continue; }
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval} -- a request is decided once`); continue; }
     if (advClosed_(r, ms)) { skipped.push(`${r.staff_name}: closed -- ${advMonthEat_(r.submitted_at) < ms.month ? 'its month (' + advMonthEat_(r.submitted_at) + ') is over' : 'this month is finalized'}`); continue; }
-    const { error } = await db.from('advance_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
-    if (error) throw new Error(error.message);
-    if (u.approval === 'Approved') approved++; else disapproved++;
+    taken.add(u.id); todo.push({ r, u });
   }
+  // The save: one statement a chunk (see MANY TICKS, FEW TRIPS above), then what was written is counted.
+  const { done, failed } = todo.length ? await decideWrite_(db, 'advance_requests', todo, user, at) : { done: new Set(), failed: null };
+  let approved = 0, disapproved = 0, unsaved = 0;
+  for (const { r, u } of todo) {
+    if (done.has(String(r.id))) { if (u.approval === 'Approved') approved++; else disapproved++; }
+    else if (failed) unsaved++;
+    else skipped.push(`${r.staff_name}: decided by somebody else a moment ago -- a request is decided once`);
+  }
+  if (failed) skipped.push(`${unsaved} NOT SAVED, tick them again -- the database refused: ${failed}`);
   if (refused && !(approved + disapproved) && updates.length === 1) throw refused;     // one request, not yours: the refusal itself
   return { updated: approved + disapproved, approved, disapproved, skipped };
 }
@@ -2843,24 +2923,32 @@ async function leaveDecide(db, user, p, nowMs = Date.now()) {
   const [teamRows, routing] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db)]);
   const { zones } = advZones_(user, teamRows);
   const today = todayKey(nowMs);
-  const rows = await leaveRead_(() => db.from('leave_requests').select('*').in('id', updates.map(u => u.id)));
+  const rows = await decideRead_(db, 'leave_requests', updates.map(u => u.id), leaveRead_);
   if (rows === null) throw badRequest(LEAVE_NOTE);
   const by = new Map(rows.map(r => [String(r.id), r]));
   const at = new Date(nowMs).toISOString();
-  let approved = 0, disapproved = 0; const skipped = []; let refused = null;
+  const skipped = []; let refused = null; const todo = []; const taken = new Set();
   for (const u of updates) {
     const r = by.get(u.id);
     if (!r) { skipped.push(u.id + ': no longer there'); continue; }
+    if (taken.has(u.id)) continue;                       // the same request ticked twice is one decision
     let why = null;
     if (r.zone && !advZoneOk_(zones, r.zone) && advRouteOf_(routing, r).kind !== 'supervisor') why = forbidden(`You do not have access to zone ${r.zone}.`);
     else if (!advSees_(routing, user, zones, r)) why = forbidden(`Ombi la ${r.staff_name} halijaelekezwa kwako. / ${r.staff_name}'s request is not routed to your desk (it goes to: ${advRouteLabel_(advRouteOf_(routing, r), r.zone)}).`);
     if (why) { refused = refused || why; skipped.push(`${r.staff_name}: ${why.message}`); continue; }
     if (K(r.approval) === K(LEAVE_EXPIRED) || leaveStale_(r, today)) { skipped.push(`${r.staff_name}: expired -- its start date (${r.start_date}) came and went undecided; they can ask again`); continue; }
     if (K(r.approval) !== 'PENDING') { skipped.push(`${r.staff_name}: already ${r.approval} -- a request is decided once`); continue; }
-    const { error } = await db.from('leave_requests').update({ approval: u.approval, comment: u.comment, decided_by: user.name, decided_at: at }).eq('id', r.id);
-    if (error) throw new Error(error.message);
-    if (u.approval === 'Approved') approved++; else disapproved++;
+    taken.add(u.id); todo.push({ r, u });
   }
+  // The save: one statement a chunk (see MANY TICKS, FEW TRIPS above advDecide), then what was written is counted.
+  const { done, failed } = todo.length ? await decideWrite_(db, 'leave_requests', todo, user, at) : { done: new Set(), failed: null };
+  let approved = 0, disapproved = 0, unsaved = 0;
+  for (const { r, u } of todo) {
+    if (done.has(String(r.id))) { if (u.approval === 'Approved') approved++; else disapproved++; }
+    else if (failed) unsaved++;
+    else skipped.push(`${r.staff_name}: decided by somebody else a moment ago -- a request is decided once`);
+  }
+  if (failed) skipped.push(`${unsaved} NOT SAVED, tick them again -- the database refused: ${failed}`);
   if (refused && !(approved + disapproved) && updates.length === 1) throw refused;
   return { updated: approved + disapproved, approved, disapproved, skipped };
 }
