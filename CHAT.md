@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 85**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 86**.
 
 ---
 
@@ -59,6 +59,7 @@ Given since, and written nowhere else:
 | 14 Nov 2026 | "if there is sql text to run always provide it right away not waiting me to dream bro" | **Any SQL waiting to be run is pasted in full, in the chat, the moment it comes up — never just named by file.** Said after a chat pointed at `db/RUN-ME-055` by name (twice) without ever pasting its text. Applies to a migration already sitting in the repo waiting on the owner (RUN-ME-05x and the like) the same as a freshly filled staff-change script: if the owner would have to go find or ask for the text, that is the failure this order is against. |
 | 14 Nov 2026 | "dont just bring things up and kill the whole system better pass through the old chat brother" · "before fixing anything becase all these have their rules there already" · "Please never fix my system by making up a new rule unless we building something new to it - everything that was there has taken days anmd nights man" | **A surprising result is read against the rule that already governs it before anything is called a gap.** Said when a chat treated a deliberately-scoped, three-times-reviewed design decision (Parts 69-71: the ghost rescue reaches only *today*, never a past day, on purpose) as a newly-found bug worth fixing. `docs/HANDOFF.md`'s own Parts are the record of that reasoning — read the Part behind a screen before proposing a change to it, and if the existing rule already explains what is being seen, say so and stop, rather than inventing a new one beside it. A new rule is for new ground, never a patch for old ground that already has one. |
 | 15 Nov 2026 | "i said i cant be re-asking or re-prompting what i already did - i dont expect these - {merge it bro} complete whatever asked not partials waiting another promts. man my head is done" | **A chat's own caution is not a reason to hold a green, tested change back.** Said after a chat opened #703 as a draft "for a second look" nobody asked for. The existing rule already covered this ("Merge now... I never said that rule," 11 Nov) — this restates it for a chat's own extra-care instinct, not only a time-of-day one: once `npm test` and CI both read clean, merge it the same session, the same as anything else. A real blocker (a merge conflict, a failing test, a question only the owner can answer) is still said once and acted on; "I'd like someone to look this over first" is not one of those and is never grounds to leave work half-delivered, waiting on a prompt that should not have to come. |
+| 16 Nov 2026 | "how comes tou said "should disappear." yet we are fighting allover to say cleared people shouldnt dissapear for verifications" · "we cant re-upload now - i hope the system autoupdates whats right brother" | **A customer on a day's initial file does not disappear from that day's lists, because they cleared or because the current file no longer names them.** Said after an answer used the words "should disappear" about such a customer; the owner had ordered the opposite on 13 Nov ("they should stay there as of recovery so as to know recovery amount from difference of initial to current per each day by team or staff") and 15 Nov ("i expect that customer in initial never to get lost even if cleared its amounts and statuses that change"), section 4, #693, #703, #709. A screen that drops such a customer, or lists them as recovered 0, is the gap to close, not a design to defend. **And the owner cannot always upload a file again:** when the fault is in what an upload stored, the cure is one that works on what is stored (RUN-ME-060, section 4, #713), never "upload it again". |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -81,6 +82,67 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#713 — the stored swapped dates put right in place, with no re-upload (handbook Part 86;
+  `db/RUN-ME-060-repair-swapped-deck-dates.sql`, pasted in full in the chat, 16 Nov).** "we cant
+  re-upload now - i hope the system autoupdates whats right brother" — the owner, 16 Nov, the
+  evening #711 and #712 merged. **What it does:** changes DISB DATE, EXPIRE DATE and CHRONIC DATE
+  of defaulter deck rows whose stored dates are the day/month swap of what the loan system sent,
+  and nothing else, for the days its first two lines name (today, to begin with), at most 20,000
+  rows a run; safe to run again, and it says how many rows still wait (`still_to_do_run_again`).
+  **How it knows, with nothing guessed:** two witnesses the date bug never touched, both measured
+  on the real 16 Nov file (10,372 loans, April 2024 to November 2026): a loan expires 91 days
+  after it was disbursed and turns chronic 14 days after it expires (10,372 of 10,372), and DAYS
+  ELAPSED is the days from the disbursement date to the deck's day less 2 (10,372 of 10,372; 1 or
+  2 across the decks of the owner's loan), which names the real disbursement date to within a few
+  days while a swapped one is at least 27 days away. **A row is changed only when its three dates
+  as stored do not fit all of that and exactly one reading of them (each date as stored, or with
+  its day and month exchanged) fits all of it.** A restructured loan, a row with a date or DAYS
+  ELAPSED missing, a row where no reading or two fit: left as it is. **The first form was wrong and
+  the test found it:** with the 91-and-14 pattern alone, a loan whose expiry was moved by the days
+  a swap moves its disbursement date (30, for 4 March and 3 April) fit it under a swapped date —
+  150 rows of the test book changed to something that is not the truth; DAYS ELAPSED, the second
+  witness, rejects it. **Checked:** over what the old importer stored for the real file, 8,296
+  loans had a wrong date, all 8,296 were put right to what the file says, none changed wrongly,
+  and the 2,076 already right were left alone; the kept check `tools/db-checks/deck-date-repair.mjs`
+  on a PostgreSQL (3,000 loans, 85,905 deck rows, fifteen days, loans made to fool the rule): 47,120
+  repaired, none changed to anything but the truth, no right date made wrong, a second run changed
+  0, forty runs of 3,000 ended where one big run did, the file's own undo put every row back (the
+  same md5), and with the DAYS ELAPSED lines taken out the same check sees 1,770 rows changed
+  wrongly and refuses to pass; `test/deck-date-repair.test.mjs` pins the file's safety lines in
+  `npm test`. **Cost:** reads the named days through the `snapshot_date` index and writes only the
+  rows it changes (14,935 rows in 1.4 s on a test book of 297,015 deck rows with the live table's
+  two trigram indexes); a log table nothing reads (`defaulter_date_repair_log`: the old and new
+  dates, and the undo at the foot of the file); a 50-second statement limit and a 3-second lock
+  limit, so a run that is cut off changes nothing; nothing on `/api/upload` or `/api/call`; no
+  `BUILD` change. **Not done, said plainly:** LAST TRANS DATE was swapped the same way and has no
+  pattern to be checked against, so it is NOT repaired here (tonight's Current upload, and every
+  file from now on, carries it right and refreshes the Follow-up list); the Expected sheet's dates
+  (`repayment_snapshots`, read by no screen) are not touched; **nobody has run it on the live book**
+  (a chat cannot): the figures above are the real file's, on a test book. **What the owner has to
+  do:** section 8, first bullet.
+- **Staff registry, 16 Nov — three people from one WhatsApp paste, all run by the owner and
+  resolved (no name is committed, and none is in this file).** (1) A Lake Coast field officer
+  whose form said F.O, filed in the registry under a manager's role on Buzwagi A (the 15 Nov
+  conflict below): a PLACE wrote the form's role and team, and the person now reads `Field Officer
+  - BUZWAGI A`. (2) A manager of Himo (North Coast) who said he cannot see his name: the script
+  answered MOVED to `Manager - HIMO` and the team carries its own ZONE, so the registry row is not
+  what is wrong; the advance request tab offers a name by the VIEWER's role words and zone, so the
+  likelier cause is an access code (the role or teams it carries, so that the desk reads no zone
+  for it), and the owner was told where to look. Not known, not changed on a guess. (3) A new
+  Northern-zone field officer: the first script found him ALREADY IN THE REGISTRY under a
+  placeholder role (the form's "Northern zone" is not a filed zone; NORTH is), so a PLACE with the
+  role `Field Officer` and the sender's word NORTH moved him: now Field Officer in NORTH, Active.
+  A TIN and an NSSF sent as "on process" were left out of the scripts, as always.
+- **`CHAT.md` named staff, and no longer does (16 Nov).** The repository is public and section 2
+  says no staff name is committed, yet the entries of 13 to 15 Nov named officers and carried a
+  staff ID. They are rewritten without a name (the same facts); the names remain in git history,
+  which a change to this file cannot rewrite. **Older files from before the order still hold
+  names and were not touched:** `api/_lib/annual-holders-data.js` (first names of the managers a
+  team had, for the annual deck) and the fixtures of `test/importers.test.mjs` (names and account
+  numbers that may be real; nobody has checked). Whether they stay, and whether the history is
+  rewritten, is the owner's (section 8). Also corrected in the 15 Nov entry below: a PLACE writes
+  the role and team its row carries and fills only the EMPTY details; it is a NEW that finds the
+  person and changes nothing.
 - **#712 — the Expected and Follow-up uploads read the file's own date order too (handbook Part
   85).** "so fix date readings okay? i even seen the error on default lists at disb date
   columns" — the owner, 16 Nov, the hour #711 was merged. **The page was not the fault:** a list's
@@ -102,7 +164,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   breaks each caught; `npm test` 1,568 pass. **Not done, said plainly:** stored rows keep their
   swapped dates (the Follow-up list is put right for a customer by the next Current deck they are
   on, today's once it is uploaded again; past days by their own files); **an exact repair of the
-  stored rows exists in principle and is not built** (section 8); the complaints and restructures
+  stored rows was not built here: it is #713, above**; the complaints and restructures
   sheets (the company's own forms, not the loan system's export) read their dates with no order
   and nobody has reported them; `migrate/` reads month-first by construction and is not wrong.
 - **#711 — the defaulters upload read the loan system's month-first dates day-first (handbook
@@ -132,7 +194,8 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   reading taken out; `npm test` 1,557 pass. **What the owner has to do:** rows already in the
   book keep their swapped dates (only the file knows which), so **upload today's Initial AND
   Current files again after the deploy** (a newer upload replaces the older whole), and earlier
-  days only if the week's figures must be exact; when they are re-read about a third of the
+  days only if the week's figures must be exact (**since #713 the stored dates are put right in
+  place and no upload is needed**); when they are put right about a third of the
   customers move to their real days and the leaders' lists change. **Not done, said plainly:**
   (1) after the re-read, the loan of the question is a Monday customer absent from the current
   file, and **the screens still disagree about such a customer** — the dashboard card counts it
@@ -313,25 +376,26 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   on, 4 genuinely not in the registry under any name close enough to trust.** The 11-row script
   delivered the same day (section 7's own rule: a list with names only is asked as MOVE, never
   PLACE/NEW, so a non-match honestly reports NOT FOUND instead of silently creating a second
-  person) came back: **MOVED** clean — Lyashimba Ezekiel Lyashimba (Katoro A), Mathias Robert
-  Fumakule and Hamisi Nyota Hamisi (both Buzwagi B, Lake Coast); **ADDED** clean — Ahadi Geofrey
-  Simtanda (Runzewe, North-West). **NOT FOUND, no match close enough to trust** — January Jacob
-  Joseph, Amosi Joseph, Epitas Bitangisake Mtahilaja, Eliud Moses Erasto: none of the nearest
-  names the fuzzy match itself surfaced share enough to act on; these are genuinely missing from
-  the registry under any spelling this round could find, or are filed under data (a phone, an
-  account) nobody sent. **One real candidate, not acted on**: Phaustine Beatus Zakaria did not
-  match the fuzzy ranks at all (two of three names changed: P→F, "Zakaria"→"Zacharia"), but the
-  registry already holds Faustine Beatus Zachariah (FBZ/0400/2026) in NORTH WEST — the exact
-  zone this batch was moving people into, with the middle name identical and the other two one
-  Swahili spelling-variant apart. Flagged for the owner, not merged on a guess (section 7's own
-  rule: a script never merges two staff records on a name alone). **Two role conflicts, not
-  touched** — Edwin Cosmas Chiwango and Ansigar Rogatus Fussi both came back ALREADY IN THE
-  REGISTRY, each already filed under a DIFFERENT role than their form gave (Edwin: registry
-  "Manager - Buzwagi A" vs form "Field Officer"; Ansigar, found by his bank account one letter
-  off his filed name: registry "Field Officer" vs form "Area Manager"). PLACE only ever fills
-  what is EMPTY, never overwrites an existing role, so neither was touched — correctly, since a
-  script cannot know which of a promotion, a demotion or two different people sharing a name is
-  the true story. Both left exactly as filed; see section 8.
+  person) came back: **MOVED** clean — three officers (one to Katoro A, two to Buzwagi B, Lake
+  Coast); **ADDED** clean — one officer (Runzewe, North-West). **NOT FOUND, no match close enough
+  to trust** — four names: none of the nearest names the fuzzy match itself surfaced share enough
+  to act on; these are genuinely missing from the registry under any spelling this round could
+  find, or are filed under data (a phone, an account) nobody sent. **One real candidate, not
+  acted on**: one name on the list did not match the fuzzy ranks at all (two of three names
+  changed by a spelling variant), but the registry already holds a person in NORTH WEST — the
+  exact zone this batch was moving people into — with the middle name identical and the other two
+  one Swahili spelling-variant apart. Flagged for the owner, not merged on a guess (section 7's
+  own rule: a script never merges two staff records on a name alone). **Two role conflicts** —
+  two officers came back ALREADY IN THE REGISTRY from a NEW, each filed under a DIFFERENT role
+  than their form gave (one: registry "Manager - Buzwagi A" vs form "Field Officer", **settled 16
+  Nov**: the GMO sent the form again, the owner ran a PLACE, and the officer reads "Field Officer -
+  BUZWAGI A"; the other, found by his bank account one letter off his filed name: registry "Field
+  Officer" vs form "Area Manager", still open). **Corrected 16 Nov:** this entry first said "PLACE
+  only ever fills what is EMPTY, never overwrites an existing role". That is wrong: a PLACE (and a
+  MOVE) writes the role and team the row carries and fills only the EMPTY details; it is a NEW that
+  finds the person and changes nothing. The names are in the owner's messages of 15 Nov and not in
+  this file ("No staff name is committed": an earlier form of this entry wrote them, and it was
+  removed on 16 Nov; they remain in git history).
 - **#703 (merged) — the Exp.Def week keeps a day's own initial-only customer too,
   unassigned, never guessed (handbook Part 78).** "as i said we have initial of a day, i expect
   that customer in initial never to get lost even if cleared its amounts and statuses that
@@ -574,7 +638,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   of them, with no team at all ("MANAGER"); all eight move onto "Team Lindi" / "Team Ruangwa" /
   "Team Newala" / "Team Nachingwea," the way every other team in the registry is named, zone
   unchanged (SOUTH WEST, already right). The ninth was found not by name at all but by his bank
-  account number -- the registry already holds him as "Anorld Onesfolo Ntongani," two letters
+  account number -- the registry already holds him under a spelling two letters
   off his own name in each of two words; PLACE does not touch that spelling, the same as the
   first run did not, and nothing here decides for the owner whether the two spellings are one
   person -- they plainly are, by the account number alone, but a script still never corrects a
@@ -724,10 +788,10 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   Whatever took the customer off that one day's export happened upstream, in the loan system,
   for a reason outside what a chat can see or guess at from here. Not investigated further.
 - **Staff registry, 13 Nov (second)** — "Hajioni kwenye kuomba salary advance" ("From baiki
-  recovery to Fo Chamwino"), for FRANK MICHAEL MWELUE, with his phone, CRDB account, 20-digit
+  recovery to Fo Chamwino"), for one officer, with his phone, CRDB account, 20-digit
   NIDA and TIN — the same flag as the four officers already filed that morning ("Staff
-  registry, 13 Nov" below), sent as its own message. PLACE, run by the owner: MOVED
-  (`FMM/4044/2026`). The result shows his zone was never wrong (MORO-DOM, both before and
+  registry, 13 Nov" below), sent as its own message. PLACE, run by the owner: MOVED.
+  The result shows his zone was never wrong (MORO-DOM, both before and
   after) and he was already on Team Chamwino — what actually changed is the ROLE WORD,
   `Bike Recovery - Team Chamwino` to `Field Officer - CHAMWINO`, confirmed against the code
   rather than assumed (`advRoleWords_` / `advRoleSame_`, `api/_lib/portal-core.js`): the
@@ -735,8 +799,8 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   `ADV_ROLE_ALIAS` ('TEAM'/'TEAMS'/'FO'/'OFFICER' alias to FIELD OFFICER) — 'BIKE' and
   'RECOVERY' alias to nothing, so a Field-Officer-signed-in code could never see a staff filed
   under that exact wording, whatever zone or team the row carried. NSSF, sent as "On Process",
-  is left out of the script as always — one more number waiting on section 8, beside Kassim
-  Shabani Muhidini's and Sylvester Erick Maundi's. Tested twice against a synthetic registry
+  is left out of the script as always — one more number waiting on section 8, beside two
+  others'. Tested twice against a synthetic registry
   before it was handed over. The name is in no file of the repository.
 - **#693** — a customer who pays in full stays on the Exp.Def Report, not just on the worklist
   (handbook Part 69). "When a customer of expected defaulter pays full amount and no longer a
@@ -825,7 +889,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   means). The Chamwino/Moro Center/Kihonda block was sent to the group twice (tagged once
   to the P.M.O Supervisor, once to the owner): read as one message, not eight more people.
   Left as ASK, not guessed: a transfer named by one name only, with no surname and no
-  destination team ("Nyenje kahamia kutoka bunda"). Not filed at all, for lack of a surname
+  destination team ("<first name> kahamia kutoka bunda"). Not filed at all, for lack of a surname
   or team: a confirmation that somebody already has a month of work and has been paid. Two
   of the PLACE rows carry a TIN and an NSSF number still "on process" — left out of the
   script rather than written as that literal text; worth a follow-up once issued. The filled
@@ -1579,20 +1643,33 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner — first, after #711 and #712 deploy:** upload **today's Initial and Current defaulters
-  files again** (16 Nov; both, Current included, because a day's cycle days are read off the current
-  file's dates first, and because it is the Current file that refreshes the Follow-up list's Disb
-  date and Last trans, section 4, #712). Rows already in the book keep their swapped dates; only the file knows
-  which. Tomorrow's files are read right by themselves. Earlier days of this week only if the
-  week's Expected Defaulters figures must be exact. When today's files are re-read, about a third
-  of the customers move to their real days (Monday's list grows from about 3,842 to 4,148 on
-  the 16 Nov file) and about 3,500 expired or chronic customers move to their real recycling
-  leader or week: the leaders' lists change, and that is the correction. And the owner's word on
-  what comes next (section 4, #711, "Not done"): a customer that was on a day's initial file and
-  is absent from its current file is counted recovered in full by the dashboard card and as
-  recovered 0 (or not listed) by the Exp.Def Report and the phone. Closing it credits such a
-  customer to the leader the rotation names, in the day, week and phone lists (zero reads; it
-  raises the report's recovered totals and the phone's EXP.DEF %, to the card's own figure).
+- **The owner — first: run `db/RUN-ME-060-repair-swapped-deck-dates.sql`** (pasted in full in the
+  chat, 16 Nov; section 4, #713) as a new query in the SQL editor, away from an upload (an evening
+  upload deletes the rows of the files it replaces), and read its one row: `repaired_now`,
+  `still_to_do_run_again` (**run it again until that is 0**) and `left_alone_no_single_reading`.
+  It puts the stored swapped DISB, EXPIRE and CHRONIC dates of today's decks right in place, so
+  **today's files need not be uploaded again.** For the days before (the Exp.Def Report of a past
+  week, the dashboard card's arrows against last week), change the first date on its first lines
+  to the first day to put right and run it again. LAST TRANS DATE is not repaired: tonight's
+  Current upload sets it right on the Follow-up list, and every file from tomorrow is right by
+  itself. When the dates are put right about a third of the customers move to their real days
+  (Monday's list grows from about 3,842 to 4,148 on the 16 Nov file) and about 3,500 expired or
+  chronic customers move to their real recycling leader or week: the leaders' lists change, and
+  that is the correction. If anything looks wrong, the undo is at the foot of the file.
+- **In flight, from the owner's words of 13, 15 and 16 Nov (section 2): a customer on a day's
+  initial file who is absent from its current file stays, and counts as recovered.** Today the
+  dashboard card counts such a customer recovered in full, while the Exp.Def Report and the phone
+  list them CLEARED with recovered 0 and their last arrears (or not at all when they never were on
+  a current file; the week keeps them on a separate board outside the totals). Closing it credits
+  them to the leader the rotation names, in the day, week and phone lists (zero reads; it raises
+  the report's recovered totals and the phone's EXP.DEF %, to the card's own figure). Being built
+  after #713 (handbook Part 87); if this bullet is still here and no entry in section 4 names it,
+  it was not finished.
+- **The owner**: whether the names `CHAT.md` carried until 16 Nov (staff names and one staff ID in
+  the 13 to 15 Nov entries, section 4) matter enough to rewrite the repository's history, which is
+  public — a change to the file cannot take them out of it — and whether the older files that hold
+  names (`api/_lib/annual-holders-data.js`, the fixtures of `test/importers.test.mjs`) stay as they
+  are. Nothing was done about either.
 - **The owner, with RUN-ME-058**: run `db/RUN-ME-059-leaders-codes-vs-sheet-read-only.sql` (pasted in
   full in the chat, 16 Nov; it changes nothing) and say, person by person, which list is right —
   the code or the sheet (section 4, #710). The managers it lists under "1 CODE LACKS TEAMS" are the
@@ -1627,15 +1704,15 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   ever arrives without a team that still owes, every recovery figure reads that team as
   cleared (section 4, #707, with the measured size of it). Changing it is one rule for every
   screen, never one card.
-- **The owner**: the North-West/Lake Coast batch run 15 Nov (section 4) — whether Faustine
-  Beatus Zachariah (FBZ/0400/2026, already filed in NORTH WEST) is the same person as Phaustine
-  Beatus Zakaria on the list (if so, a PLACE by his real staff ID moves/fills him; a script will
-  not merge the two on a name alone); whose role is right for Edwin Cosmas Chiwango (registry:
-  Manager - Buzwagi A; form: Field Officer) and for Ansigar Rogatus Fussi (registry: Field
-  Officer; form: Area Manager) — neither was touched, since PLACE only fills what is empty; and
-  whether January Jacob Joseph, Amosi Joseph, Epitas Bitangisake Mtahilaja and Eliud Moses Erasto
-  are new staff never yet filed, or existing staff under spellings too different for this round's
-  fuzzy match to trust — a phone number or account for any of the four would settle it.
+- **The owner**: the North-West/Lake Coast batch run 15 Nov (section 4; the names are in that
+  day's messages, not in this file) — whether the officer on the list whose name matched nobody is
+  the person the registry already holds in NORTH WEST under a spelling two names apart (if so, a
+  PLACE by the real staff ID moves/fills him; a script will not merge the two on a name alone);
+  whose role is right for the officer filed "Field Officer" whose form says "Area Manager" (a
+  PLACE with the role would write the form's; one conflict of the two, the Buzwagi A officer, was
+  settled 16 Nov); and whether the four names not found are new staff never yet filed, or
+  existing staff under spellings too different for this round's fuzzy match to trust — a phone
+  number or account for any of the four would settle it.
 - **The owner**: whether the weekday pills (Mon 3888 … Sun 2493, section 4) actually moved once
   Expected Defaulters could load again — `db/RUN-ME-055` is now run (confirmed 14 Nov: the index,
   the function, and `db/RUN-ME-056`'s own function all read back) and the screen's 45-second hang
@@ -1648,14 +1725,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   the matching birth/start date and the voter's-registration number standing in for a NIDA.
 - **The owner, with Demit — first of all**: which database is the book (section 5). The move
   waits on it. The owner has the questions for Demit, in order, in the report of 11 Nov.
-- **The owner**: the staff-registry batch of 13 Nov (section 4) — Nyenje's full name and
-  destination team (only a first name and "moved from Bunda" was given); once the script is
-  run, whether the Kihonda Area team and the "South East" zone wording resolved or need their
-  exact Teams & Staff spelling; the TIN/NSSF numbers for Kassim Shabani Muhidini and
-  Sylvester Erick Maundi, both "on process" and left out of the script, once issued; and the
-  NSSF number for Frank Michael Mwelue (also "on process"), from the same day's second batch;
-  and the NSSF number for the new Kigoma-team hire (also "on process"), from the same day's
-  third batch.
+- **The owner**: the staff-registry batch of 13 Nov (section 4) — the full name and
+  destination team of the officer named by a first name only (and "moved from Bunda"); once the
+  script is run, whether the Kihonda Area team and the "South East" zone wording resolved or need
+  their exact Teams & Staff spelling; the TIN/NSSF numbers for two officers, both "on process"
+  and left out of the script, once issued; and the NSSF number for the officer of the same day's
+  second batch (also "on process"); and the NSSF number for the new Kigoma-team hire (also "on
+  process"), from the same day's third batch.
 - **The owner**: the NSSF numbers for thirteen of the nineteen South West staff (13 Nov, fourth
   batch), sent as "PROCESSING"/"ON PROCESS," once issued (the other three, sent as "NILL," are
   not expecting one). And whether the seven new teams named 13 Nov (Lindi, Ruangwa, Tandahimba,
@@ -1663,10 +1739,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   with their own GMO and ZONE -- the staff are filed and zoned (South West or Lake Coast, by the
   owner's own word), but none of the seven teams are yet rows there at all, so anything that
   reads that sheet directly for a team, the advance desk's own routing chief among them, does
-  not yet recognize them. Also from the South West PLACE follow-up (fifth batch): whether
-  "Anorld Onesfolo Ntongani," already in the registry under his bank account number, and
-  "Anold Onesphoro Ntongani," the spelling this round's message gave, are the one person a
-  script would not decide on its own -- if so, which spelling to keep.
+  not yet recognize them (16 Nov: Buzwagi A and HIMO were seen on Teams & Staff, each with a
+  zone, by what the staff script answered; the rest are unknown). Also from the South West PLACE
+  follow-up (fifth batch): whether the officer already in the registry under his bank account
+  number, and the spelling this round's message gave, are the one person a script would not
+  decide on its own -- if so, which spelling to keep.
 - **Demit / the server**: the list in `docs/DEPLOY.md` section 6.
 - **The owner**: the CS Supervisor's two staff of 12 Nov (section 4) — for the one with the full
   form, new hire or existing staff with a gap (and if new, the role and team, or the zone
@@ -1704,11 +1781,7 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: an exact repair of the stored swapped
-  dates (section 4, #712: for a loan on today's re-uploaded Current deck, copy its right dates
-  onto the same loan's older rows where the old value is exactly the day/month swap of the new
-  one; nothing guessed, but a bulk update of the hottest table, to be cut into small statements,
-  and it restates past days' Exp.Def figures); a leader's own Exp.Def list reaching
+- **Offered, never asked for — do not start without a yes**: a leader's own Exp.Def list reaching
   every customer the rotation hands them, whatever teams their code holds (the cure for "the manager
   sees little" in one stroke, and against the standing rule that the code decides what is seen, so
   the owner's word first); the three recycling roles following the access codes the way recovery,
