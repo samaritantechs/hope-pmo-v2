@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 81**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 82**.
 
 ---
 
@@ -81,6 +81,25 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#709 — Expected Defaulters: a cleared customer keeps their owner role, recycling leader and
+  cycle (handbook Part 82).** "Don't clean owner role, recycling leader & cycle for 'cleared'
+  customers at expected defaulters because the disb date still gives us where to place them
+  for the 3 columns - we need those 3 filled for followup purposes" — the owner, 16 Nov. The
+  rows that came empty were the ones added for a customer on this morning's initial file who is
+  on no current row (Part 75): role, phase and cycle empty, leader "(unassigned)", and no name
+  or number either, on the belief that the rotation needs fields only a current row has. It
+  does not: the initial file is imported by the same importer as the current one, so the
+  morning row carries the status, the days elapsed and the dates `assignFor` reads. Every row
+  of the list is now built by one function (`rowOf`); the three columns are where the rotation
+  places the customer today, the name, number, D.S and D.C are the morning row's, and a leader
+  finds the customer under "My list". CLEARED, nothing owed and the whole morning's arrears
+  recovered stand as before. **Cost:** nine more columns of rows already read; no read added;
+  `test/speed.test.mjs` unchanged. **Checked:** the row laid beside the same customer on the
+  current file reads the same role, cycle, phase and leader; both tests fail with the columns
+  emptied again. `npm test`: 1,539 pass. Server only; `BUILD` unchanged. **Not done:** the
+  Exp.Def Report week view's separate board "Cleared, no leader on record for the day" (the
+  same reasoning could credit those customers to a leader inside the report: it changes the
+  report's totals and was not asked).
 - **#708 — the advance desk, and the leave desk, save a big tick in a few trips (handbook
   Part 81).** "someone is saying ticking multiple advance requests to approve at once fails
   unless one by one" — the owner, 16 Nov. **The page was not the fault:** a new kept check
@@ -1562,7 +1581,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: the annual deck's zone map following
+- **Offered, never asked for — do not start without a yes**: the Exp.Def Report week view
+  crediting its "Cleared, no leader on record for the day" customers to a leader's section, now
+  that the morning row is known to carry what the rotation reads (section 4, #709: it changes
+  the report's totals); the annual deck's zone map following
   the rule that a team's zone is its GMO's (it moves teams between the zones of that slide and
   changes each zone's General %); the staff form filling the zone from the team in the role; a
   Zone box on an access code, to set a person's zone directly whatever Teams & Staff says; a one-tap download of every approved

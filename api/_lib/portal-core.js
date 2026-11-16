@@ -991,8 +991,14 @@ async function expectedDefaulters(db, user, _args, nowMs) {
        current rows below, which have a real disbursement date sitting on this exact row (the
        column is on defaulter_snapshots itself, not gated to snapshot_type = 'current') and
        never needed guessing at all. It adds one deck read (the date, then its rows) to a screen
-       that is not the upload or the call app; the speed budget below says so. */
-    defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs), columns: 'ref, team, arrears, disb_date' }),
+       that is not the upload or the call app; the speed budget below says so.
+       AND, 16 Nov 2026, WHAT THE ROTATION AND THE CALLER NEED OF THAT SAME ROW -- status, days
+       elapsed, the chronic and expire dates, the name, the number, D.S, D.C, the balance -- for
+       the customers who are on this deck and on no current row (below): "Don't clean owner
+       role, recycling leader & cycle for cleared customers". The same rows as before, more
+       columns of each: no read is added. */
+    defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs),
+      columns: 'ref, team, arrears, disb_date, full_name, contact, status, days_elapsed, chronic_date, expire_date, ds, dc, balance' }),
   ]);
   const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
@@ -1020,34 +1026,39 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      the intent; "can wait forever" never was. */
   const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
   const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), ghostReportBudgetMs_());
+  /* ONE SHAPE FOR EVERY ROW OF THIS LIST: a row of the current deck, a ghost, and (below) a
+     customer who is only on today's initial deck. Whatever file the row came off, its two
+     days are read off its disbursement date and its OWNER ROLE, RECYCLING LEADER and CYCLE off
+     the rotation (assignFor) -- the one rule, read off the row's own fields, never a second
+     way of placing somebody. `over` is what a caller knows better than the row does. */
+  const rowOf = (d, over) => {
+    const primary = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
+    const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
+    const a = assignFor(d, strat, nowMs);
+    const s = K(d.status);
+    const team = teamBy[K(d.team)] || {};
+    const { initial, recovered } = recoveryOf(baseBy, d.ref, num(d.arrears));
+    const arrears = num(d.arrears);
+    // CLEARED needs isSettled(arrears), not merely "the status text didn't match" -- a blank
+    // or unrecognised status is not evidence of payment (settled.js, written after a real
+    // customer sat on an officer's phone owing one shilling while the expected book had her
+    // overpaid). The same gate buildRows_ uses, read once, not two rules that could drift.
+    return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
+      arrears, initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
+      // A ghost row (absent from today's deck entirely) is CLEARED unconditionally -- the
+      // same rule buildRows_ follows for the identical reason.
+      status: d._ghost ? 'CLEARED' : (s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))))),
+      disb_date: d.disb_date,
+      primary, secondary,
+      primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
+      phase: a.phase, role: a.role, cycle: a.label,
+      leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)', ...(over || {}) };
+  };
   const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
     .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
       || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
-    .map(d => {
-      const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
-      const primary = raw;
-      const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
-      const a = assignFor(d, strat, nowMs);
-      const s = K(d.status);
-      const team = teamBy[K(d.team)] || {};
-      const { initial, recovered } = recoveryOf(baseBy, d.ref, num(d.arrears));
-      const arrears = num(d.arrears);
-      // CLEARED needs isSettled(arrears), not merely "the status text didn't match" -- a blank
-      // or unrecognised status is not evidence of payment (settled.js, written after a real
-      // customer sat on an officer's phone owing one shilling while the expected book had her
-      // overpaid). The same gate buildRows_ uses, read once, not two rules that could drift.
-      return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
-        arrears, initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
-        // A ghost row (absent from today's deck entirely) is CLEARED unconditionally -- the
-        // same rule buildRows_ follows for the identical reason.
-        status: d._ghost ? 'CLEARED' : (s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
-          : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))))),
-        disb_date: d.disb_date,
-        primary, secondary,
-        primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
-        phase: a.phase, role: a.role, cycle: a.label,
-        leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)' };
-    });
+    .map(d => rowOf(d));
   /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" --
      the owner, 14 Nov 2026 -- the same order buildRows_ (expdf.js) answers, read here too so
      the two stay the one rule they already are (#696's own note on this pair: "one rule, read
@@ -1057,10 +1068,22 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      this team's history; a ref whose very first appearance is today's own initial deck -- never
      once on a current-type row, ever -- is the one case even that cannot reach, and it was
      simply absent from `def.rows`+`ghosts` to begin with. Added additively, never replacing a
-     row the filter above already built. NEVER A FABRICATED ROLE OR LEADER: assignFor needs
-     fields that live only on a current-deck row, which this ref has never had, so role/phase/
-     cycle stay null and leader reads '(unassigned)' -- the same honest sentinel this screen
-     already uses for "a team with nobody in that role", now also meaning "nobody to credit".
+     row the filter above already built.
+
+     THE THREE COLUMNS ARE FILLED -- "Don't clean owner role, recycling leader & cycle for
+     'cleared' customers at expected defaulters because the disb date still gives us where to
+     place them for the 3 columns - we need those 3 filled for followup purposes" -- the owner,
+     16 Nov 2026. This row was first sent with role, phase and cycle empty and the leader
+     '(unassigned)', on the belief that the rotation "needs fields that live only on a
+     current-deck row". It does not, and it is the mistake about disb_date (next paragraph)
+     made a second time: the initial file is imported by the same importer as the current one
+     (importDefaulters), so the customer's own row on this morning's file carries the status,
+     the days elapsed and the chronic and expire dates assignFor reads, and the name and the
+     number a caller needs. So the row is built by rowOf, like every other row of this list:
+     the owner role, the recycling leader and the cycle are where the rotation places this
+     customer today, and a leader finds them on "My list". What is known better than the
+     morning row says it: nothing is owed now, and the whole of the morning's arrears came
+     back. The balance is the morning's, the last one anybody was told.
 
      THE REAL disb_date, NOT A GUESS -- "i already said that we already know their days due
      disb date column but you just distract me man" -- the owner, 14 Nov 2026. A first cut here
@@ -1080,13 +1103,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     if (seenRefs.has(ref)) continue;
     seenRefs.add(ref);
     const initial = num(r.arrears);
-    const primary = r.disb_date ? isoWeekday(Date.parse(String(r.disb_date) + 'T00:00:00Z')) : 0;
-    const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
-    rows.push({ ref: r.ref, full_name: null, contact: null, team: r.team,
-      arrears: 0, initial, recovered: initial, balance: null, ds: null, dc: null,
-      status: 'CLEARED', disb_date: r.disb_date || null, primary, secondary,
-      primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
-      phase: null, role: null, cycle: null, leader: '(unassigned)' });
+    rows.push(rowOf(r, { arrears: 0, initial, recovered: initial, status: 'CLEARED', disb_date: r.disb_date || null }));
   }
   // Each customer counts on BOTH of their days, so the distribution sums to 2x the headcount.
   // Day 0 holds anyone whose loan carries no disbursement date: they cannot be placed on a

@@ -6696,6 +6696,53 @@ not stay ticked. `BUILD 2026-11-16-b`; `CALL_BUILD` untouched.
 (of IMEIs) in one address, and the imprest approvals were not looked at: neither was reported
 and neither was changed.
 
+## Part 82 — Expected Defaulters: a cleared customer keeps their owner role, recycling leader and cycle
+
+> "Don't clean owner role, recycling leader & cycle for 'cleared' customers at expected
+> defaulters because the disb date still gives us where to place them for the 3 columns - we
+> need those 3 filled for followup purposes" — the owner, 16 Nov 2026
+
+**Which customers.** The Expected Defaulters tab shows three kinds of cleared customer. One who
+settled and is still on the current file, and one who is gone from today's file but was on a
+current file before (the all-time ghost, Part 71), have always carried the three columns. The
+third kind did not: a customer who is on this morning's initial file and on no current row at
+all (Part 75). That row was sent with Owner role, Cycle and phase empty and the Recycling
+leader "(unassigned)" — and with no name, no phone number, no D.S and no balance either.
+
+**Why it was empty, and why that was wrong.** Part 75 said the rotation "needs fields that
+live only on a current-deck row". It does not. The initial file is imported by the same
+importer as the current one (`importDefaulters`, one function for both): the customer's own
+row on the morning's file carries the status, the days elapsed and the chronic and expire
+dates that `assignFor` reads, and the name and the number. It is the mistake Part 77 records
+about the disbursement date ("i already said that we already know their days due disb date
+column"), made a second time about the columns beside it. The owner saw it on the screen.
+
+**What changed.** `expectedDefaulters` reads thirteen columns of today's initial file where it
+read four (the same rows, the same one read). Every row of the list is now built by one
+function, `rowOf`: a row of the current file, a ghost, and this customer. So the owner role,
+the recycling leader and the cycle are where the rotation places the customer today, read off
+their own row, and a leader finds them under "My list". The name, the number, D.S and D.C are
+the morning row's. What is known better than the morning row is said over it: the status is
+CLEARED, nothing is owed now, and the whole of the morning's arrears came back. The balance is
+the morning's, the last one anybody was told.
+
+**What it cost.** No read added and no row more: nine more columns of rows already read, on a
+screen that is not the upload or the call app. `test/speed.test.mjs` is unchanged.
+
+**Checked.** The test of this row now lays it beside the same customer on the current file and
+requires the same owner role, cycle, phase and leader (forty-five days in default is the
+MANAGER's turn; KONGOWE's manager is BOSS), and the same name, number, D.S and D.C. A customer
+with no disbursement date has no day and still has the three columns. Both tests fail with
+the columns emptied again. `npm test`: 1,539 pass. Server only: `BUILD` and `CALL_BUILD` are
+unchanged, and the page was not touched, so it was not drawn in a browser.
+
+**Not done.** The Exp.Def Report's week view keeps its separate board, "Cleared, no leader on
+record for the day" (Part 78). The same reasoning could give those customers a leader and
+credit them inside the report's sections; that changes the report's totals, and was not asked.
+The morning hours noted in `CHAT.md` section 8 (a customer new on today's initial file reading
+CLEARED before today's current file is in) are as they were: such a customer now at least
+carries a name, a number and a leader.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
