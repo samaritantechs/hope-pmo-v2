@@ -13136,6 +13136,84 @@ test('approval tab in the sidebar: only the people the routing makes approvers, 
   const noCols = fakeDb(tables(), { missingColumns: { roles: ['approver_role', 'approver_code'], access_codes: ['supervisor'] } });
   assert.deepEqual(await withoutIdleApprovalTab(noCols, { role: 'CREDIT', code: 'C9' }, tabs), tabs, 'a database without RUN-ME-045 hides nothing');
 });
+/* MANY TICKS, FEW TRIPS.
+     "someone is saying ticking multiple advance requests to approve at once fails unless one
+      by one" -- the owner, 16 Nov 2026
+   The page sends every ticked id in one call (tools/browser-checks/portal-advance-bulk.mjs).
+   The server used to read them in ONE address -- a uuid is thirty-seven bytes of URL, three
+   hundred are eleven thousand -- and then save each with a trip of its own, one after another,
+   inside a request the page gives up on after forty-five seconds. Neither is met by one
+   request at a time, which is why one by one worked. */
+test('advance desk: a big tick is read and saved in chunks -- a few trips, never one a request -- and what somebody else decided meanwhile is left as they decided it', async () => {
+  const N = 150;
+  const uid = i => '00000000-0000-4000-8000-' + String(i).padStart(12, '0');
+  const book = () => {
+    const t = tables();
+    t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+    t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' }, { role: 'GMO', tabs: ['advreq', 'advappr'], approver_role: 'GMO' });
+    t.access_codes.push({ code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+    t.advance_requests = Array.from({ length: N }, (_, i) => ({ id: uid(i + 1), submitted_at: '2026-07-1' + (i % 9) + 'T08:00:00Z', staff_id: 'S' + (i + 1),
+      staff_name: 'STAFF ' + (i + 1), staff_role: 'Field Officer', req_role: 'FIELD OFFICER', zone: 'DAR EAST', amount: 50000, approval: 'Pending', app_date: '2026-07-10' }));
+    return t;
+  };
+  const gmo = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] };
+  // Every trip to the table is counted, and the length of every id list that rides in an address.
+  const watched = (base, hooks = {}) => {
+    const seen = { reads: 0, writes: 0, lists: [] };
+    const db = { ...base, from(name) {
+      const q = base.from(name);
+      if (name !== 'advance_requests') return q;
+      const inn = q.in.bind(q), upd = q.update.bind(q), sel = q.select.bind(q);
+      q.in = (c, v) => { if (c === 'id') seen.lists.push(v.length); return inn(c, v); };
+      q.select = (...a) => { if (q.mode !== 'update') seen.reads++; return sel(...a); };
+      q.update = patch => { seen.writes++; const stub = hooks.onWrite ? hooks.onWrite(seen.writes) : null; return stub || upd(patch); };
+      return q; } };
+    return { db, seen };
+  };
+  const all = approval => Array.from({ length: N }, (_, i) => ({ id: uid(i + 1), approval, comment: 'sawa' }));
+
+  // 1. A HUNDRED AND FIFTY TICKS: all saved, in three statements, and no address carries more than sixty ids.
+  const a = watched(fakeDb(book()));
+  const out = await portalApi(a.db, gmo, 'advDecide', { updates: all('Approved') }, NOW);
+  assert.deepEqual([out.approved, out.disapproved, out.skipped.length], [N, 0, 0]);
+  assert.equal(a.seen.writes, 3, '150 requests are three statements, where they were 150');
+  assert.ok(a.seen.reads <= 6, 'and the read is a chunk at a time: ' + a.seen.reads);
+  assert.ok(a.seen.lists.length && Math.max(...a.seen.lists) <= 60, 'no address carries more than sixty ids: ' + Math.max(...a.seen.lists));
+  const saved = a.db._dump('advance_requests');
+  assert.equal(saved.filter(r => r.approval === 'Approved' && r.decided_by === 'GMO D' && r.comment === 'sawa' && r.decided_at).length, N, 'every one decided, by this desk, with the comment');
+
+  // 2. SOMEBODY ELSE DECIDED ONE BETWEEN THIS DESK'S READ AND ITS SAVE: theirs stands, and the answer says so.
+  const base2 = fakeDb(book());
+  const b = watched(base2, { onWrite: n => { if (n === 1) Object.assign(base2._dump('advance_requests')[1], { approval: 'Disapproved', decided_by: 'SOMEBODY ELSE' }); return null; } });
+  const out2 = await portalApi(b.db, gmo, 'advDecide', { updates: all('Approved').slice(0, 3) }, NOW);
+  assert.deepEqual([out2.approved, out2.updated], [2, 2]);
+  assert.match(out2.skipped.join(' | '), /STAFF 2: decided by somebody else a moment ago -- a request is decided once/);
+  const row2 = base2._dump('advance_requests')[1];
+  assert.deepEqual([row2.approval, row2.decided_by], ['Disapproved', 'SOMEBODY ELSE'], 'a request is decided once: the first decision is not overwritten');
+
+  // 3. TWO ANSWERS IN ONE CALL keep their own comments, and the same request ticked twice is one decision.
+  const c = watched(fakeDb(book()));
+  const out3 = await portalApi(c.db, gmo, 'advDecide', { updates: [
+    { id: uid(1), approval: 'Approved', comment: 'ndiyo' }, { id: uid(2), approval: 'Disapproved', comment: 'hapana' },
+    { id: uid(3), approval: 'Approved', comment: 'ndiyo' }, { id: uid(1), approval: 'Approved', comment: 'ndiyo' }] }, NOW);
+  assert.deepEqual([out3.approved, out3.disapproved, out3.skipped.length], [2, 1, 0]);
+  assert.equal(c.seen.writes, 2, 'one statement for each answer-and-comment');
+  const rows3 = c.db._dump('advance_requests');
+  assert.deepEqual(rows3.slice(0, 3).map(r => [r.approval, r.comment]), [['Approved', 'ndiyo'], ['Disapproved', 'hapana'], ['Approved', 'ndiyo']]);
+
+  // 4. THE DATABASE REFUSES THE SECOND CHUNK: the first sixty are saved and the answer SAYS SO -- it does not
+  //    report a failure over a save that half happened. (A mock that answers with an error, never one that hangs.)
+  const refuse = { in() { return this; }, select() { return this; }, then(res, rej) { return Promise.resolve({ data: null, error: { message: 'boom' } }).then(res, rej); } };
+  const d = watched(fakeDb(book()), { onWrite: n => (n === 2 ? refuse : null) });
+  const out4 = await portalApi(d.db, gmo, 'advDecide', { updates: all('Approved') }, NOW);
+  assert.equal(out4.approved, 60);
+  assert.match(out4.skipped.join(' | '), /90 NOT SAVED, tick them again -- the database refused: boom/);
+  assert.equal(d.db._dump('advance_requests').filter(r => r.approval === 'Pending').length, 90, 'and the ninety are still Pending, to be ticked again');
+  //    Refused at the very first statement, nothing was saved: that is a failure, and it is thrown.
+  const e = watched(fakeDb(book()), { onWrite: () => refuse });
+  await assert.rejects(() => portalApi(e.db, gmo, 'advDecide', { updates: all('Approved') }, NOW), /boom/);
+  assert.equal(e.db._dump('advance_requests').filter(r => r.approval === 'Pending').length, N);
+});
 /* CLOSED MONTHS, FINALIZE AND THE TEMPORARY REOPEN -- "GMO cant decide twice, cant decide on final decision (we have to put [finalized
    button at report for finance manager to finalize]) / closed [when its not current month, so previous months without even finalization
    are automatic finalized]" and "so when finalize is clicked even requesting is closed for current month unless add a temp-reopen

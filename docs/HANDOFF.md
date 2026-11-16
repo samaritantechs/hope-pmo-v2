@@ -6629,6 +6629,73 @@ reached the owner that morning instead of that night.
 **Not done.** No tip in the `hints` table. The three items above. The Exp.Def Report's own day
 test is still asked of the reader's teams (it was not this change's to move).
 
+## Part 81 — The advance desk, and the leave desk, save a big tick in a few trips
+
+> "someone is saying ticking multiple advance requests to approve at once fails unless one by
+> one" — the owner, 16 Nov 2026
+
+**What was looked at, in the order it was ruled out.**
+
+- *The page.* A new kept check, `tools/browser-checks/portal-advance-bulk.mjs`, drives the real
+  page in a browser at a laptop's and a phone's size: it ticks three requests and presses
+  Approve (one call goes out, carrying the three ids), then ticks all with three hundred
+  pending (one call, every id once). The page was sending what was ticked.
+- *The app.* The Android app's web view shows the "Approve 3 request(s)?" question like a
+  browser does (its `WebChromeClient` leaves JavaScript dialogs alone), so the press is not
+  swallowed there.
+- *The server.* `advDecide` was right for any number of requests and could not carry a big
+  one, in two ways that both grow with the number ticked and that one request at a time never
+  meets. It read the ticked rows with every id in ONE address: a PostgREST filter is part of
+  the URL and a request id is a uuid, thirty-seven bytes each with its comma, so a hundred
+  ticks are under four thousand bytes and three hundred are eleven thousand, where gateways
+  commonly refuse an address at about eight. And it saved each request with a trip of its own,
+  one after another, inside a request the page gives up on after forty-five seconds. When that
+  happened part of the batch was already saved, the page said only that it had failed, and the
+  list on screen stayed as it was.
+
+**What is not known.** The person's screen was not seen and neither were the words of the red
+message, so which of the two limits they met is not known, nor how many they had ticked. A
+tick of three worked before this change and works after it. The address limit was worked out
+from the code and from what gateways commonly allow; a chat cannot reach the live one to try
+it. If somebody still cannot approve a FEW at once, the words of the red message are what is
+needed.
+
+**What changed, on the server** (`MANY TICKS, FEW TRIPS`, above `advDecide`). The ticked rows
+are read sixty ids at a time (`decideRead_`). The save is ONE statement a chunk for each answer
+and comment (`decideWrite_`): `update ... where id in (chunk) and approval in (as it was
+read)`. Three hundred ticks are ten trips where they were three hundred and one. The second
+half of that `where` is "a request is decided once", held at the database: a request somebody
+else decided between this desk's read and its save is left as they decided it and is named in
+the answer. The spelling compared is the row's own as stored, because `.in()` is exact-case. A
+chunk the database refuses after others were saved does not throw the saved ones away: the
+answer says how many were saved and "N NOT SAVED, tick them again", with the database's words;
+only a batch of which nothing was saved fails as a whole. The same request ticked twice is one
+decision. `leaveDecide` is the same code and got the same change.
+
+**What changed, on the page** (`public/mod/advance.js`, `public/mod/leave.js`). While a bulk
+save runs, both buttons are off and the screen says "Saving N…": a slow save could be pressed
+twice. Whatever the answer, the list is read again, so what is still Pending afterwards is
+what was not saved. A tick belongs to a request that is still pending: one decided since drops
+its tick, so the count on the bar is what the next press will send. A long list of skipped
+requests is shortened on the toast to the first six and a count.
+
+**What it cost.** A bulk decision was one read and N writes; it is now one read and one write
+for every sixty requests (for each distinct answer and comment). Nothing else reads more, and
+nothing on `/api/upload` or `/api/call` is touched.
+
+**Checked.** `test/portal.test.mjs`: a hundred and fifty ticks are three statements and no
+address carries more than sixty ids; a request somebody else decided meanwhile is not
+overwritten; two answers in one call keep their own comments; a refused second chunk leaves
+sixty saved, ninety Pending and says so; a refused first chunk is a failure. `test/leave.test.mjs`:
+a hundred and thirty are three statements. Both fail with the chunking taken out. The browser
+check passes its thirty-six points with eight requests and with three hundred, and includes a
+save that fails part-way: the two that were saved leave the list and only the two that were
+not stay ticked. `BUILD 2026-11-16-b`; `CALL_BUILD` untouched.
+
+**Not done.** No tip in the `hints` table. The phone register's bulk actions also put a list
+(of IMEIs) in one address, and the imprest approvals were not looked at: neither was reported
+and neither was changed.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

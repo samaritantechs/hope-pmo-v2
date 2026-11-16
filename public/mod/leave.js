@@ -157,6 +157,9 @@ VIEWS.leaveappr = function(){
     if (state === 'pending') {
       S.pickKey = 'id';
       S.rows = pend;
+      // A tick belongs to a request that is still pending: one decided since drops its tick (as on the advance desk).
+      if (S.pick) { var live = {}; pend.forEach(function(r){ live[String(r.id)] = true; });
+        Object.keys(S.pick).forEach(function(k){ if (!live[k]) delete S.pick[k]; }); }
       S.cols = [col('submitted_at','Imetumwa / Submitted','dt'), col('staff_name','Jina / Name'), col('staff_id','ID'),
         {key:'staff_role', label:'Wadhifa / Role', get:function(r){ return r.staff_role || r.req_role || ''; }},
         col('zone','Zone')].concat(dayCols).concat([col('reason','Sababu / Reason'), col('cover_name','Kaimu / Cover'),
@@ -222,12 +225,19 @@ function leaveBulk_(approval){
   var com = (($('#lvBulkCom') || {}).value || '').trim();
   if (approval === 'Disapproved' && !com){ toast('Andika sababu ya kukataa kwenye kisanduku cha maoni. / Write the reason in the comment box to disapprove.', true); return; }
   if (!confirm((approval === 'Approved' ? 'Idhinisha' : 'Kataa') + ' ' + ids.length + '? / ' + (approval === 'Approved' ? 'Approve' : 'Disapprove') + ' ' + ids.length + ' request(s)?')) return;
+  // One press, one save, and the screen says it is saving; whatever the answer, the list is read again (see advBulk_ in the advance module).
+  var btns = [document.getElementById('lvApproveMany'), document.getElementById('lvRejectMany')];
+  btns.forEach(function(b){ if (b) b.disabled = true; });
+  toast('Inahifadhi ' + ids.length + '… / Saving ' + ids.length + '…');
   srv('leaveDecide', { updates: ids.map(function(id){ return { id: id, approval: approval, comment: com }; }) })
     .then(function(r){
+      var sk = r.skipped || [];
       toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
-        + (r.skipped && r.skipped.length ? ' · ' + r.skipped.join('; ') : '') + '.', !!(r.skipped && r.skipped.length));
+        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length);
       pickClear_(); render({ force:true }); })
-    .catch(function(e){ toast(String(e.message||e), true); });
+    .catch(function(e){
+      toast(String(e.message||e) + ' — orodha imesomwa upya: yaliyobaki Pending hayakuhifadhiwa. / the list was read again: what is still Pending was not saved.', true);
+      render({ force:true }); });
 }
 /* Wired by wireBar (app.html) after every paint, like the advance module -- one function for
    every button this module draws, on any of its three tabs, the same way wireAdvDesk also
