@@ -5,13 +5,17 @@
 --   "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters? is it still in the expected
 --    defaulter reports for the recovered amounts?" -- the owner, 16 Nov 2026
 --
--- What the answer means, state by state (docs/HANDOFF.md Part 84):
---   A on both files       counted everywhere: the Exp.Def Report, the Expected Defaulters tab, the phone, the dashboard card.
---   B left the current file  (on that day's initial file, absent from its current file, seen on an earlier current file)
---                         the dashboard card counts it recovered IN FULL; the Exp.Def Report, the tab and the phone list it
---                         CLEARED with recovered 0 (the last known arrears stay on the row). See Part 84, "Not done".
---   C initial file only   the Exp.Def Report (day) and the phone do not list it; the tab and the card count it in full.
--- Q2b matters: a loan that carries two different disbursement dates (a day/month swap) is on the wrong days in the portal.
+-- What the answer means, state by state (docs/HANDOFF.md Parts 84, 87, 88 and 89):
+--   A on both files          counted everywhere: the Exp.Def Report, the Expected Defaulters tab, the phone, the dashboard card.
+--   B / C on that day's initial file, NOT on its current file (B: seen on an earlier current file; C: never on any)
+--                            CLEARED, the whole of the morning's arrears recovered, on every screen -- the report's day, the leader's
+--                            card, the phone and the dashboard card -- but only (1) on a day that is the customer's own cycle day
+--                            (Q2) and (2) once that day's CURRENT file is filed (Q3 says "NOT filed yet" until it is: with no pair
+--                            nothing is marked cleared).
+--   not on the initial file  not an expected defaulter of that day (a customer in default only on the evening's file joins the next
+--                            day's list).
+-- Q2 and Q2b matter most: a loan that carries two different disbursement dates (a day/month swap) sits on the wrong days of the week;
+-- db/RUN-ME-060 puts the stored swapped dates right in place (Part 86).
 --
 --
 -- Q1 was the customer on that day's INITIAL file?   Q2 which day is theirs (the date the portal reads, and every

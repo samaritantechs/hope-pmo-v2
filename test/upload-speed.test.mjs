@@ -319,6 +319,59 @@ test('reading the date order adds no trip to an Expected or a Followup upload', 
   assert.ok(cf.stat().trips <= FOLLOWUP_SHEET_TRIPS, 'a 40-row Followup file cost ' + cf.stat().trips + ' round trips (budget ' + FOLLOWUP_SHEET_TRIPS + ')');
 });
 
+/* =====================================================================================
+   THE COMPANY'S OWN FOUR SHEETS READ THEIR DATES THE WAY THEIR FILE WRITES THEM -- THROUGH THE REAL HANDLER.
+   =====================================================================================
+     "just study the dates if the position of month starts then day or vice versa trim the same for the rest
+      not to stay contradicted.. since that I think affects multiple lists in the system so pass through
+      how you cumpute uploaded dates bro" -- the owner, 16 Nov 2026 (handbook Part 89)
+
+   Complaints, restructures, call registrations and call history were the last uploads that read a slash
+   date with no look at the file around it, and a stamp with a clock came back null and was replaced by the
+   moment of the upload. importers.test.mjs pins the reading; this pins that the ROUTE stores what the file
+   means for each of the four, and that reading the order costs the database nothing. */
+const COMPANY_SHEETS = [
+  { type: 'complaints', table: 'complaints',
+    rows: n => [['TIMESTAMP', 'REF#', 'COMPLAINANT', 'RESOLVED AT'], ['9/7/2026 10:15:00', '2200000001', 'A MADE UP', '9/8/2026 09:00:00'], ['11/16/2026 14:02:00', '2200000002', 'B MADE UP', ''],
+      ...Array.from({ length: n }, (_, k) => ['9/7/2026 10:15:00', '23' + String(k).padStart(8, '0'), 'C' + k, ''])],
+    first: r => [r.created_at, r.resolved_at], means: ['2026-09-07', '2026-09-08'] },
+  { type: 'restructures', table: 'restructures',
+    rows: n => [['TIMESTAMP', 'REF#', 'FULLNAME', 'START DATE', 'APPROVED AT'], ['9/7/2026', '2200000001', 'A MADE UP', '10/1/2026', '9/8/2026'], ['11/16/2026', '2200000002', 'B MADE UP', '', ''],
+      ...Array.from({ length: n }, (_, k) => ['9/7/2026', '23' + String(k).padStart(8, '0'), 'C' + k, '', ''])],
+    first: r => [r.created_at, r.start_date, r.approved_at], means: ['2026-09-07', '2026-10-01', '2026-09-08'] },
+  { type: 'call-users', table: 'call_users',
+    rows: n => [['USER ID', 'NAME', 'PHONE', 'REGISTERED AT', 'LAST SYNC'], ['U1', 'A MADE UP', '0700000001', '9/7/2026 10:15:00', '11/16/2026 08:00:00'],
+      ...Array.from({ length: n }, (_, k) => ['V' + k, 'C' + k, '071' + String(k).padStart(7, '0'), '9/7/2026 10:15:00', ''])],
+    first: r => [r.registered_at, r.last_sync], means: ['2026-09-07', '2026-11-16'] },
+  { type: 'call-logs', table: 'call_logs',
+    rows: n => [['LOG ID', 'USER ID', 'PHONE', 'CALL DATE', 'CALL TIME', 'SYNCED AT'], ['L1', 'U1', '0700000001', '9/7/2026', '10:15', '9/7/2026 18:00:00'], ['L2', 'U1', '0700000002', '11/16/2026', '11:00', '11/16/2026 18:00:00'],
+      ...Array.from({ length: n }, (_, k) => ['M' + k, 'U1', '071' + String(k).padStart(7, '0'), '9/7/2026', '10:15', ''])],
+    first: r => [r.call_date, r.synced_at], means: ['2026-09-07', '2026-09-07'] },
+];
+for (const s of COMPANY_SHEETS) {
+  test(`a ${s.type} upload is stored on the days its file means -- month-first, as the file itself shows`, async () => {
+    const c = countingDb(baseTables({ [s.table]: [] }));
+    const res = await callUpload(c.db, { code: 'A', type: s.type, meta: { date: '2026-11-16' }, rows: s.rows(0) });
+    assert.equal(res.body.ok, true, res.body.error);
+    const stored = c.dump(s.table);
+    const row = stored.find(r => (r.ref || r.user_id || r.id) && String(s.first(r)[0]).slice(0, 10) === s.means[0]) || stored[0];
+    assert.deepEqual(s.first(row).map(v => (v == null ? v : String(v).slice(0, 10))), s.means, `${s.type}: the seventh of September, not the ninth of July`);
+  });
+}
+test('reading the date order adds no trip to a complaints, restructures, registrations or call-history upload', async () => {
+  /* Arithmetic over rows already in hand: no read and no write is added. Measured on this fixture (a 40-row
+     file) and identical on the code before this change and after it: complaints 7, restructures 7, call-users 8
+     (one row read: the team list), call-logs 7 trips; bounded with headroom so a read added to any of the four
+     fails here with its own count. */
+  const budget = { complaints: 10, restructures: 10, 'call-users': 11, 'call-logs': 10 };
+  for (const s of COMPANY_SHEETS) {
+    const c = countingDb(baseTables({ [s.table]: [] }));
+    const res = await callUpload(c.db, { code: 'A', type: s.type, meta: { date: '2026-11-16' }, rows: s.rows(40) });
+    assert.equal(res.body.ok, true, res.body.error);
+    assert.ok(c.stat().trips <= budget[s.type], `a 40-row ${s.type} upload cost ${c.stat().trips} round trips (budget ${budget[s.type]})`);
+  }
+});
+
 test('sameAsToday runs on the LAST slice only, not on every slice of a big file', async () => {
   const tables = baseTables();
   for (let i = 0; i < 900; i++) {

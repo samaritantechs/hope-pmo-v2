@@ -1281,9 +1281,24 @@ function xlsxReady_(){
     s.addEventListener('error', function(){ clearTimeout(t); fail(); });
   });
 }
+/* A CSV IS READ AS THE TEXT IT IS (handbook Part 89).
+
+     "just study the dates if the position of month starts then day or vice versa ... pass through how
+      you cumpute uploaded dates" -- the owner, 16 Nov 2026
+
+   Left to itself the spreadsheet reader works out what a CSV cell MEANS: a text that looks like a date
+   becomes a real date -- by JavaScript's rule, month first -- and a text that looks like a number
+   becomes a number. In a CSV the loan system or a sheet wrote day-first, `9/7/2026` (the ninth of July)
+   came out as the seventh of September while `16/11/2026`, which cannot be read that way, stayed text:
+   one file, two orders, decided here in the browser before the server ever saw it. `3/6` in D.S became
+   the sixth of March 2001, a bank account lost its leading zero, and a twenty-digit number lost its
+   last digits. The server already reads a file's dates by the file's own order (inferDayFirst, one rule
+   in one place), and every importer was written for the text a CSV holds; so for a CSV the cells go
+   to it exactly as written. An Excel file is read as it always was: its date cells are real dates and
+   go as ISO (below), its text cells go as text. */
 function readWorkbook(file){
   return xlsxReady_().then(function(){ return file.arrayBuffer(); }).then(function(buf){
-    return XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true });
+    return XLSX.read(new Uint8Array(buf), { type: 'array', cellDates: true, raw: /\.csv$/i.test(String(file && file.name || '')) });
   });
 }
 function sheetToRows(wb, sn){

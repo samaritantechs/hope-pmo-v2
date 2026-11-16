@@ -7020,7 +7020,9 @@ not reporting it, the Followup order forgetting its promise-date evidence), each
 - **The company's own forms are not touched.** The complaints and restructures sheets
   (`importComplaints`, `importRestructures`: RESOLVED AT, START DATE, APPROVED AT, TIMESTAMP) are
   written by the company's forms, not the loan system's export, and read their dates with no
-  order. Nothing here says they are wrong; nobody has reported them.
+  order. Nothing here says they are wrong; nobody has reported them. **(Done in Part 89, on the
+  owner's order to pass through every upload's dates: these two and the call-app sheets now read
+  by their own file's order too.)**
 - **The older copy under `migrate/` does not have this fault**, so it is not changed: its date parser
   reads `a/b/yyyy` as month first by construction (`migrate/lib/parse.js`), the loan system's order.
 - The order is read per request (a part of a big sheet carries its own evidence), as in Part 84.
@@ -7309,6 +7311,124 @@ holds), `BUILD` and `CALL_BUILD` unchanged.
 **What the owner has to do.** Nothing to run. After the deploy, the report's Rec % for a day, and the phone's EXP.DEF %, rise
 toward the dashboard card's tile for the same day by exactly the customers who entered default after the morning file; with
 no ghosts drawn they should read the same.
+
+## Part 89 — One file, one date order: every upload reads its dates by what its own file shows, and the browser reads none by a rule of its own
+
+> "I can't see 2209966593 on cleared yet., just study the dates if the position of month starts then day or
+> vice versa trim the same for the rest not to stay contradicted.. since that I think affects multiple lists in
+> the system so pass through how you cumpute uploaded dates bro" — the owner, 16 Nov 2026, the evening Parts
+> 87 and 88 were merged
+
+**The order.** A file writes all its dates one way round: day first or month first. The file shows which, in the
+dates that can only be read one way (`16/11/2026`, `11/16/2026`), and that decides every date in the file,
+including `9/7/2026`, which on its own is the ninth of July or the seventh of September. Nothing between the file
+and the book may read a date by a rule of its own. Parts 84 and 85 did this for the loan system's three sheets;
+this Part is the pass through every other upload, and it found four sheets and one more reader.
+
+**How an uploaded date is read, from the file to the book.**
+
+1. **The Upload page** (`public/upload.html`). An Excel file's real date cells go as ISO (`yyyy-mm-dd`, with the clock
+   only if the cell has one: unambiguous); its text cells go as the text they hold (the loan system writes every date as
+   text, `M/D/YYYY`). **A CSV file now goes as the text it holds** (below: this was the one reader that decided a date
+   before the server did).
+2. **The server** (`dateOrNull` and `stampOrNull`, `api/_lib/parse.js`; the order from `inferDayFirst`). ISO is read as it
+   is. A slash date with a part over twelve decides itself. When both parts are twelve or under, the order of the file
+   decides: every date of the sheet's date columns is pooled, one unambiguous value is enough, the larger pile of
+   evidence wins, an exact tie gives none. A sheet with no evidence at all is read day-first, as it always was (the loan
+   sheet adds two more tie-breakers: the tighter span, then the day nearest the upload). The decks and the Expected and
+   Followup sheets say in their answer which way round they were read, and say so in words when they had to guess.
+3. **The order is decided per request.** A big file travels in slices of up to 2,000 rows (never fewer than 250), each
+   carrying the header, and each slice's evidence decides its own. A real deck has thousands of dates in a slice; a slice
+   without one unambiguous date is not a thing that happens at that size. Said, not changed (below).
+
+**Every upload that reads a date, and what is pooled for it.** (`ORDER_CASES` in `test/importers.test.mjs` holds every one
+to the same rule; the source scan in the same file fails if a fifteenth is added without it.)
+
+| Upload (type) | Importer | Date columns pooled for the order |
+|---|---|---|
+| Defaulters Current / Initial | `importDefaulters` | DISB, EXPIRE, CHRONIC, DUE, LAST TRANS DATE (Part 84) |
+| Expected (today, tomorrow, yesterday, initial) | `importExpected` | DISB, DUE, FIRST SCHEDULE, LAST SCHEDULE, LAST TRANS DATE (Part 85) |
+| Defaulters Followup | `importFollowup` | DISB DATE, LAST TRANS, PROMISE DATE, COMMENT AT (Part 85) |
+| Comments | `importComments` | TIMESTAMP, with its clock in EAT; PROMISE DATE follows it |
+| Loan pipeline | `importLoans` | every date column of the stage; then the tighter span, then the day nearest the upload |
+| Received payments | `importReceivedPayments` | PAYMENT DATE (or PAID AT, DATE PAID, DATE, TRANSACTION DATE) |
+| Demand notices | `importDemandNotices` | NOTICE DATE and TIMESTAMP together |
+| PMO deductions | `importDeductions` | TIMESTAMP, TAREHE ALIYOPOKEA, TAREHE YA UGUNDUZI |
+| Staff registry | `importStaffRegistry` | REG-DATE, BIRTH DATE (the birth date is read off the NIDA first) |
+| Advance requests | `importAdvances` | TIMESTAMP, APPLICATION DATE |
+| **Complaints** (this Part) | `importComplaints` | TIMESTAMP (or DATE), RESOLVED AT |
+| **Restructures** (this Part) | `importRestructures` | START DATE, APPROVED AT, TIMESTAMP |
+| **Call-app registrations** (this Part) | `importCallUsers` | REGISTERED AT, LAST SYNC |
+| **Call history** (this Part) | `importCallLogs` | CALL DATE, SYNCED AT |
+
+The summaries (Expected and Defaulters) read no date from their rows: the report's day is the date box, or the file's own
+`Filters` End Date, which is ISO. Teams, access codes, roles, abnormal payments, settings and hints carry no dates.
+
+**What was found.**
+
+1. **Four sheets read every slash date with no look at the file around it** (complaints, restructures, call-app
+   registrations, call history): Part 85 named the first two as "the company's own forms", "nobody has reported them", and
+   left them. In a file that writes month-first, a `9/7/2026` came out as the ninth of July beside a `11/16/2026` in the
+   same sheet. Now each pools its own date columns and reads by `inferDayFirst`, exactly as the other ten do; a sheet that
+   shows no clue, or proves day-first, is read as it always was.
+2. **A stamp with a clock was replaced by the moment of the upload, silently.** `dateOrNull` wants a bare date, so a spreadsheet's
+   `24/09/2026 10:15` came back null, and these four then stored `new Date()` instead. They now take the date part first
+   (`dateCell_`, the notices importer's own rule, written for the same fault).
+3. **The Upload page's own reader decided the dates of a CSV before the server saw them.** Measured on the real reader the page
+   loads (SheetJS 0.18.5, `cellDates: true`), in a real browser: a CSV cell that looks like a date becomes a real date by
+   JavaScript's rule, month first, and a cell that looks like a number becomes a number. In a **day-first** CSV `9/7/2026` (the
+   ninth of July) went to the server as `2026-09-07` and `2/3/2027` as `2027-02-03`, while `16/11/2026` and `21/12/2026`, which
+   cannot be read that way, stayed text and were read day-first: **one file, two orders, decided in the browser**. In the same
+   CSV, `3/6` in D.S became `3/6/01` (the sixth of March 2001), an account `0152826626000` lost its leading zero, and
+   `12345678901234567890` came out as `12345678901234567000`. A month-first CSV came out right on its dates by luck (JavaScript's
+   rule happens to be the loan system's) and wrong on D.S and the accounts. Now `readWorkbook` reads a `.csv` with
+   `raw: true`: the cells go to the server as the text the file holds, which is what every importer was written for (they take
+   "the raw parsed CSV rows": text), and the server's rule is the only one. An Excel file is read as it
+   always was (verified: the same real date cell and the same text cells before and after).
+
+**What it costs.** CPU only. No read and no write is added anywhere: the four sheets' uploads cost the same round trips on
+the code before this change and after it (complaints 7, restructures 7, call-users 8, call-logs 7, measured on a 40-row
+file), `/api/call` is not touched, and a CSV is read faster in the browser, because no value is worked out (a deck-sized CSV of 10,372 rows by 25 columns: about 0.3 s with `raw` against 0.75 s without, measured with the same reader in Node). **The one trade, said plainly:** a
+month-first CSV whose every date has both parts twelve or under, with no other evidence in the file, used to come out right by
+JavaScript's luck and is now read like any other sheet with no evidence (day-first; the loan sheet's two tie-breakers apply
+to it). Every real deck carries thousands of dates and cannot be in that case. `BUILD` and `CALL_BUILD` are unchanged:
+`upload.html` is its own page, served `no-cache`, so the next load of it is the new one.
+
+**Checked.** Importer tests for each of the four sheets (month-first, day-first, no clue, a clock, ISO, the evidence in
+any one date column alone); one table that holds **all fourteen** importers to the one rule in three states each (a sheet
+that proves month-first, one that proves day-first, one that shows nothing); a source scan that fails if any call of
+`dateOrNull` or `stampOrNull` under `api/` is not handed an order (it also reads a deliberately bad snippet, so it can
+fail); the four sheets through the **real upload handler** (stored on the days the file means, and no added trip: budgets
+beside the measured counts); a source pin of the page's CSV read in `test/pages.test.mjs`; and
+`tools/browser-checks/upload-csv-dates.mjs`, which loads the real page with the real reader and posts a day-first CSV,
+a month-first CSV and an Excel file: 12 points pass on the new page (in UTC and in the office's timezone) and **6 fail on the
+page as it was**. **Twenty-two deliberate breaks, each caught:** every one of the four sheets' dates read with no order,
+the clock left in, each evidence column dropped from the pool, the pool ignoring a list of header spellings, six of the
+older importers losing their order, and a new importer that reads a date with no order (only the source scan sees it).
+
+**2209966593, the customer who started this.** From the owner's own file of 16 Nov it is a Monday customer (disbursed
+`9/7/2026`, the seventh of September), and the book held the ninth of July (Thursday and Sunday) until Part 84. It is
+CLEARED on a list only when three things are true together, and a chat cannot see the live book to say which is not: (1) its
+stored disbursement date is the right one (`db/RUN-ME-060` puts the stored dates right in place; until it is run, Monday is
+not its day); (2) it is on that Monday's initial file that counts (not replaced by a later upload of its team); (3) Monday's
+current file is filed (until then nothing is marked cleared: Part 87). `db/TEMPLATE-where-is-this-customer-read-only.sql`
+answers all three in one read, and was given to the owner filled in for this loan and this day, in full, in the chat.
+
+**Not done, said plainly.**
+
+- **The order is still per request.** A slice of a big file decides on its own evidence. Carrying the first slice's decision to
+  the others would add state to the upload request for a case that cannot occur at 250 rows or more of real dates; it is
+  not built, and the answer already says per request which way round was read.
+- **Rows already stored keep their dates.** The decks' swapped DISB, EXPIRE and CHRONIC dates are put right by RUN-ME-060 (Part
+  86); LAST TRANS DATE is not (tonight's Current deck refreshes it on the Follow-up list). Nothing was run on the live book.
+- **A file re-saved in a spreadsheet program may carry real dates that program already read in its own order**; nothing in the
+  file can reveal that. The reliable file is the one the loan system wrote, uploaded as it came.
+- **The four sheets' answers do not say which way round they were read** (the decks, the Expected and the Followup sheets do):
+  the notices, deductions, advances, staff and payments importers never did, and this Part keeps them alike.
+- `migrate/` (the first import from the old sheets) reads `a/b/yyyy` month-first by construction (Part 85) and was not changed.
+
+**What the owner has to do.** Nothing new. Run the probe for 2209966593 (it changes nothing), and `db/RUN-ME-060` if it has not
+been run (`CHAT.md` section 8). After this deploys, a CSV and an Excel file of the same sheet read the same dates.
 
 ---
 
