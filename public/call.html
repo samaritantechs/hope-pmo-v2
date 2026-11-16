@@ -853,7 +853,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-11-b';
+var CALL_BUILD = '2026-11-16-a';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1764,7 +1764,12 @@ function drawExpdfStrip_(){
     : (S.expdf.byLeader || []);
   var m = mc_;
   var notes = (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
-    + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '');
+    + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
+    /* "that manager in their code ain't seeing them, they getting just a little like two": Teams & Staff
+       names this person on teams their own access code does not hold, so the customers the rotation hands
+       them there are not on this list. The code decides what is seen; the screen says why it is short. */
+    + ((S.expdf.outside && S.expdf.outside.length) ? '<div class="xnote">Jina lako liko kwenye timu ambazo code yako haizioni ('
+        + esc(S.expdf.outside.join(', ')) + ') \u2014 wateja wako wa timu hizo hawaonekani hapa. Mwambie msimamizi aziongeze kwenye code yako.</div>' : '');
   /* A BIKE OFFICER'S FOUR FIGURES ARE IN THE TOP BAR (drawBikeStrip_), on every tab. Printing them again in a card right
      above it would be the same numbers twice on a small screen, so for them the card carries only what the bar cannot say --
      a warning that the figures cannot be trusted yet -- and is not there at all when there is none. */

@@ -13,8 +13,8 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 16 November 2026** — portal `BUILD 2026-11-16-b` · call app `CALL_BUILD 2026-11-11-b` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 82**.
+**As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 83**.
 
 ---
 
@@ -81,6 +81,38 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#710 — a leader's own list, and the teams their own code cannot see (handbook Part 83).**
+  "gmo or opm is seeing expected defaulters of gmo or manager where that manager in their code
+  ain't seeing them, they getting just a little like two yet a Manager's gmo sees the manager
+  has many ... so make sure the distribution is okay" — the owner, 16 Nov. **The distribution is
+  one rule and is not what differs:** a new test reads every leader of every role off the GMO's
+  report and then the same person's own list with a code that holds their teams — the same
+  customers, arrears and recovery to the shilling. **What differs is who is reading.** The
+  GMO's code holds the zone; the manager's holds what the owner typed on it, and the owner's rule
+  ("the teams i set in access codes are the ones correct") is that the code decides what is seen
+  and the sheet never widens it. When the sheet names a manager on six teams and her code holds
+  two, the report credits her six teams and her screen shows two — reproduced as 12 on the
+  report, 4 on her phone, 16 of 48 on the portal — and nothing said why. **That rule is not
+  changed; the silence is.** The portal's Expected Defaulters and the phone's Exp.Def strip name
+  the teams the sheet gives the person that their code does not hold (`outside`, from teams
+  already read); the Exp.Def Report has an **Off code** column and a note on each board, said
+  only where exactly one access code carries the leader's name; one person is one row
+  (`leaderKey` in `api/_lib/leader-scope.js`: runs of blanks as one — `MARY  M` and `MARY M`
+  were two rows of the report and the manager's own list found only one of them; a name that
+  differs in a WORD is not merged, a person settles that). **`db/RUN-ME-059-leaders-codes-vs-
+  sheet-read-only.sql`** (pasted in full in the chat, 16 Nov) lists every such person off the
+  live book: codes that lack teams the sheet names them on, codes with extra teams, sheet names
+  no code carries (with the closest codes), two codes of one name; no access code is printed.
+  **Cost:** no read added; `/api/upload` untouched; on `/api/call` arithmetic over teams already
+  held; the report reads the codes `weekWork` already read, one column wider; `test/
+  speed.test.mjs` unchanged. **Checked:** 9 new tests, 7 deliberate breaks each caught; two
+  kept browser checks (`portal-expdef-offcode.mjs`, 28 points; `call-expdef-offcode.mjs`, 10);
+  the query on a PostgreSQL 16 copy of the table shapes, 3 ms. `npm test`: 1,548 pass. `BUILD
+  2026-11-16-c`, `CALL_BUILD 2026-11-16-a`. **Not done:** nothing widens a leader's list past
+  their code (offered, section 8); the bike share of a team that names no bike officer is
+  nobody's by the existing rotation (the report already says so); the phone's list is today's
+  cycle and the report's week/month are the whole book, by design; whether this is what the
+  live book has could not be seen from here.
 - **#709 — Expected Defaulters: a cleared customer keeps their owner role, recycling leader and
   cycle (handbook Part 82).** "Don't clean owner role, recycling leader & cycle for 'cleared'
   customers at expected defaulters because the disb date still gives us where to place them
@@ -1477,6 +1509,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner, with RUN-ME-058**: run `db/RUN-ME-059-leaders-codes-vs-sheet-read-only.sql` (pasted in
+  full in the chat, 16 Nov; it changes nothing) and say, person by person, which list is right —
+  the code or the sheet (section 4, #710). The managers it lists under "1 CODE LACKS TEAMS" are the
+  ones who "get just a little"; the Exp.Def Report now shows the same people in its **Off code**
+  column. Code right: edit the team on Teams & Staff (the rotation then moves their customers).
+  Sheet right: add the teams to the person's code under Settings → Roles & access. Nothing here
+  was guessed, and nothing was written.
 - **The owner — first**: run `db/RUN-ME-058-expdf-team-day-recovery-totals.sql` in the SQL
   editor (pasted in full in the chat, 16 Nov). **Not 057**: 058 replaces it and drops its
   function, whether or not 057 was run. Until 058 is run the dashboard's Expected Defaulters
@@ -1581,7 +1620,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: the Exp.Def Report week view
+- **Offered, never asked for — do not start without a yes**: a leader's own Exp.Def list reaching
+  every customer the rotation hands them, whatever teams their code holds (the cure for "the manager
+  sees little" in one stroke, and against the standing rule that the code decides what is seen, so
+  the owner's word first); the three recycling roles following the access codes the way recovery,
+  early collection and collection do (a test pins that a GMO's code changes nothing today); the
+  Exp.Def Report week view
   crediting its "Cleared, no leader on record for the day" customers to a leader's section, now
   that the morning row is known to carry what the rotation reads (section 4, #709: it changes
   the report's totals); the annual deck's zone map following

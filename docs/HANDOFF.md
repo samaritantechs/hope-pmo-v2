@@ -6743,6 +6743,103 @@ The morning hours noted in `CHAT.md` section 8 (a customer new on today's initia
 CLEARED before today's current file is in) are as they were: such a customer now at least
 carries a name, a number and a leader.
 
+## Part 83 — A leader's own list, and the teams their own code cannot see
+
+> "There were also some lalamentions that gmo or opm is seeing expected defaulters of gmo or
+> manager where that manager in their code ain't seeing them, they getting just a little like
+> two yet a Manager's gmo sees the manager has many or opm sees o has many so make sure the
+> distribution is okay" — the owner, 16 Nov 2026
+
+**What was checked first: is the distribution one rule?** It is. Who a defaulter is handed to is
+`assignFor` (the clock) read through the teams sheet's `gmo` / `manager` / `bike` columns, in
+one place (`buildRows_`, `api/_lib/expdf.js`), for the phone's list, the portal's lists and the
+report alike. A new test (`test/leader-scope.test.mjs`, "THE DISTRIBUTION IS ONE RULE") reads
+every leader of every role off the GMO's report and then reads the same person's own list with a
+code that holds their teams: the same customers, the same arrears, the same recovery, to the
+shilling. So the difference the owner heard about is not in how customers are handed out. It is
+in **who is reading**.
+
+**What differs.** The GMO's code holds the whole zone. The manager's code holds what the owner
+typed on it. And the owner's rule, written down twice already, is that **the code decides what a
+person sees and the sheet never widens it** ("the teams i set in access codes are the ones
+correct": `scopeFor` in `call-core.js` for the phone, `overlayCodes_` in `portal-core.js` for the
+boards). The rotation's leader for each team comes from the teams sheet; the person's own view
+comes from their code. When the sheet names a manager on six teams and her code holds two, the
+report credits her with the customers of six teams and her own screen shows the customers of
+two — one third. Reproduced exactly so: 12 customers on the GMO's report, 4 on the manager's
+phone, 16 of 48 on the portal. Nothing on either screen said why. A spelling difference does
+the same thing a different way: `MARY  M` on two teams and `MARY M` on four was two rows of the
+report that looked alike, and the manager's own list found only the four.
+
+**The owner's rule is not changed.** What was wrong was the silence — "Say what was not done" —
+so each of the screens now says it, with no new read (`api/_lib/leader-scope.js`):
+
+- **The leader's own list says which teams it cannot show.** The portal's Expected Defaulters
+  carries a red note, in Swahili and English, naming the teams where Teams & Staff names the
+  person as GMO / MANAGER / BIKE and their own code does not hold the team (`outside`, from the
+  teams already read for the screen). The phone's Exp.Def strip says the same in Swahili
+  (`expdf.outside`, from the teams `expdfCore` had already read; `CALL_BUILD 2026-11-16-a`). It
+  is empty for anybody whose code holds every team they lead, for a code with no teams (every
+  team), and for a team-code handset, which `scopeFor` already widens to the teams the sheet
+  names it on.
+- **The report marks the leader.** The three boards of the Exp.Def Report have an **Off code**
+  column — "4 · T3, T4, T5 +1": how many teams of the book credited to this leader their own
+  access code does not hold, and the first three — and each board says how many leaders it is
+  true of. Said only where exactly one access code carries the leader's name; a leader with no
+  code (a bike officer on a team code), with two codes of one name, or whose code holds every
+  team gets nothing. It is read off the codes `weekWork` already fetched for the week's calls,
+  one more column of that read (`name, teams` where it was `name`).
+- **One person is one row.** The report keyed a leader on the raw cell, so `MARY  M` and
+  `MARY M` were two rows; the card behind a name (`expdfLeader`) and the leader's own list were
+  already blank-tolerant in places and exact in others. One function now decides it —
+  `leaderKey`: capitals, runs of blanks as one, as `normTeam` files a team and `zone.js`
+  compares a GMO — used by the report's row key, the card, the phone's own list
+  (`expdfMine`), the portal's `iAmLeader` and the page's "My list" filter. A name that differs
+  in a **word** (`MARY M` / `MARY MWITA`) is deliberately not merged: that is two spellings of a
+  person, which only a person can settle, and a script never merges two records on a name.
+- **`db/RUN-ME-059-leaders-codes-vs-sheet-read-only.sql`** lists every such person off the live
+  book in one read-only query, so they can be put right one by one: (1) CODE LACKS TEAMS — the
+  managers who "get just a little", with the teams missing; (2) CODE HAS EXTRA TEAMS; (3) NO CODE
+  BY THIS NAME, with the codes sharing a word with the name, for a person to judge; (4) TWO CODES,
+  ONE NAME. No access code is printed — names and roles only — because the answer is pasted
+  into a chat. Run against a made-up book of the real table shapes on PostgreSQL 16: 3 ms.
+
+**Which list is right is the owner's to say, person by person** — and was not guessed. If the
+code is right, the sheet is corrected on Teams & Staff and the rotation moves that person's
+customers to whoever the sheet then names. If the sheet is right, the teams are added to the
+code under Settings → Roles & access. A test (`the access codes decide who holds which team`)
+already pins that a GMO's code changes nothing on the sheet's side, so the rotation was never
+made to follow the codes for these three roles; that is the owner's decision to change, not a
+fix.
+
+**What it cost.** No read added anywhere. `/api/upload` is untouched. On `/api/call` it is
+arithmetic over the teams `expdfCore` already held (one array, scanned once per list). The
+report reads the same codes one column wider. `test/speed.test.mjs` is unchanged and green.
+`BUILD 2026-11-16-c`, `CALL_BUILD 2026-11-16-a`.
+
+**Checked.** Nine new tests, each breakage-checked: the report keyed on the raw cell again,
+`expdfMine` saying nothing, `weekWork` never finding the code, the portal's `iAmLeader` and the
+phone's own list on the exact compare again, and the phone list ignoring the cycle day — every
+one turns a test red. Two kept browser checks: `tools/browser-checks/portal-expdef-offcode.mjs`
+(28 points at laptop and phone width: the manager's note, "My list" counts with and without a
+double blank, the report's column and board note, and nothing said where nothing is true) and
+`tools/browser-checks/call-expdef-offcode.mjs` (10 points: the strip's note, and none where the
+list is whole). `npm test`: 1,548 pass.
+
+**Not done, and why.**
+
+- **Nothing widens a leader's own list past their code's teams.** That would be the cure for
+  "the manager sees little" in one stroke, and it is against the owner's standing rule that the
+  code decides. Offered in `CHAT.md` section 8; not started without a yes.
+- **Where a team names no bike officer, the bike share of its customers is nobody's.** The
+  report already says so ("some teams name nobody", `(unassigned)`), by the existing rotation
+  (`ASSIGN_ACTIVE`, one setting for every team). Reordering it for such teams is the owner's.
+- **The phone's list is today's cycle; the report's week and month are the whole book.** By
+  design (Parts 31, 54, 60): on the day view the report and the phone are the same list, which
+  the new test pins. A GMO reading the week against a manager reading today will still see more.
+- **Whether this is what the live book has** could not be seen from here — a chat cannot run SQL.
+  RUN-ME-059 answers it in one run.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

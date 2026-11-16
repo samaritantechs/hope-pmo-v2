@@ -779,7 +779,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-16-b';
+var BUILD = '2026-11-16-c';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4541,7 +4541,12 @@ VIEWS.expdfrep = function(){
       + d.sections.map(function(sec){
           return board('xd_'+sec.role, 'Kwa ' + sec.role + ' / By ' + sec.role,
             money(sec.rows.length) + ' named · ' + money(sec.totals.customers) + ' customers'
-              + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : ''),
+              + (sec.unassigned ? ' · timu bila kiongozi / some teams name nobody' : '')
+              /* "that manager in their code ain't seeing them": leaders whose OWN access code does not
+                 hold teams of the book credited to them here -- the Off code column says which. */
+              + (sec.offCode ? ' · ' + sec.offCode + (sec.offCode === 1 ? ' kiongozi hawezi kuona timu zake zote kwenye code yake' : ' viongozi hawawezi kuona timu zao zote kwenye code zao')
+                  + ' / ' + sec.offCode + ' leader' + (sec.offCode === 1 ? '' : 's')
+                  + ' cannot see all their teams on their own code' : ''),
             sec.rows,
             [{key:'opm', label:'OPM', kind:'text', title:'OPM wa timu anazoshikilia / The OPM of the teams this leader holds',
               cls:function(r){ return r.opm==='(unassigned)'?'bad':''; }},
@@ -4554,6 +4559,13 @@ VIEWS.expdfrep = function(){
               cls:function(r){ return r.leader==='(unassigned)'?'bad':''; }}]
             .concat([
              col('teams','Teams','num'), col('customers','Customers','num'),
+             /* OFF CODE: the teams of this leader's book that their OWN access code does not hold, so the
+                customers credited to them here are customers their own screen cannot show -- "that manager in
+                their code ain't seeing them, they getting just a little like two yet a Manager's gmo sees the
+                manager has many". Blank where their code holds every team (or no single code carries their name). */
+             {key:'offCode', label:'Off code', kind:'text', title:'Timu za kitabu chake ambazo code yake ya kuingia haizioni, kwa hiyo hawezi kuona wateja hao. / Teams of this leader\u2019s book that their own access code does not hold, so they cannot see those customers.',
+              get:function(r){ var a = r.offCode || []; return a.length ? a.length + ' · ' + a.slice(0, 3).join(', ') + (a.length > 3 ? ' +' + (a.length - 3) : '') : ''; },
+              cls:function(r){ return r.offCode && r.offCode.length ? 'bad' : ''; }},
              {key:'calls', label:'Calls', kind:'num', title:'Simu za portfolio wiki hii kwa wateja wa orodha yake, wadhamini wao na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE); namba moja kwa siku ni simu moja. / Portfolio calls this week to the customers on their list, their guarantors and the other numbers recorded under ANA NAMBA NYINGINE; one number per day is one call.',
               cls:function(r){ return r.inCalls===false ? 'mut' : (r.calls>0 ? 'good' : ''); }},
              {key:'talk', label:'Talk', kind:'dur', title:'Muda wa simu hizo / Talk time of those calls'},
@@ -4778,9 +4790,12 @@ VIEWS.defexp = function(){
 
        Anyone who is not named as a GMO / MANAGER / BIKE on any team sees exactly what
        they saw before: everything in their scope, no toggle. */
-    var meK = String(d.me||'').trim().toUpperCase();
+    // A name is compared with runs of blanks as one (leaderKey on the server): 'MARY  M' on a team
+    // and 'MARY M' on a code are one leader.
+    var nameK = function(v){ return String(v||'').trim().toUpperCase().replace(/\s+/g,' '); };
+    var meK = nameK(d.me);
     var mineAll = meK ? d.rows.filter(function(r){
-      return String(r.leader||'').trim().toUpperCase() === meK; }) : [];
+      return nameK(r.leader) === meK; }) : [];
     var who = S.args.who || (d.iAmLeader ? 'mine' : 'all');
     S.args.who = who;
     var book = (who === 'mine' && d.iAmLeader) ? mineAll : d.rows;
@@ -4816,6 +4831,19 @@ VIEWS.defexp = function(){
             + '<span style="margin-left:8px;color:var(--mut);font-size:12px">'
               + esc(d.me) + ' · mzunguko / recycling leader</span>')
         : '')
+      /* "that manager in their code ain't seeing them, they getting just a little like two yet a
+         Manager's gmo sees the manager has many": Teams & Staff names this person on teams their
+         own access code does not hold. The rotation hands them customers there and the Exp.Def
+         Report counts them -- this list cannot show them, because the code decides what is seen.
+         Said here, in the words of the one who is looking at a short list. */
+      + ((d.outside && d.outside.length)
+          ? '<div class="note bad"><b>' + d.outside.length + '</b> timu zina jina lako kwenye Teams &amp; Staff lakini code yako haizioni: <b>'
+            + esc(d.outside.join(', ')) + '</b>. Wateja wako wa timu hizo hawaonekani hapa ingawa ripoti ya Exp.Def inakuhesabia.'
+            + ' Mwambie msimamizi aziongeze kwenye code yako.'
+            + ' / Your name is on <b>' + d.outside.length + '</b> team' + (d.outside.length === 1 ? '' : 's')
+            + ' in Teams &amp; Staff that your access code does not hold, so your customers there are not on this list although'
+            + ' the Exp.Def Report counts them to you. Ask an admin to add them to your code.</div>'
+          : '')
       + (d.iAmLeader && who==='mine' && !mineAll.length
           ? '<div class="note">Hakuna wateja waliopangwa kwako kwenye orodha ya leo.'
             + ' / No customers are assigned to you in today’s deck — press'
