@@ -7430,6 +7430,87 @@ answers all three in one read, and was given to the owner filled in for this loa
 **What the owner has to do.** Nothing new. Run the probe for 2209966593 (it changes nothing), and `db/RUN-ME-060` if it has not
 been run (`CHAT.md` section 8). After this deploys, a CSV and an Excel file of the same sheet read the same dates.
 
+## Part 90 — The files are not in different orders; the routes they took are: one loan stored both ways, and a check for every file
+
+> "They might be in different orders per file so check starting with the defaulters one I sent" — the owner, 16 Nov 2026,
+> the hour Part 89 was merged, with the probe for loan 2209966593 pasted under it.
+
+**What the probe showed.** The same loan, read off the book for the 14 days up to 16 Nov: its disbursement date is the ninth of
+July (the swapped one) on **every current deck** and on **nine of the fourteen initial decks**, and the seventh of September (the
+right one, the Monday it was disbursed) on the other **five initial decks** (6, 7, 10, 14 and 15 Nov). So the book holds the loan
+both ways, and the owner's reading was that the files must differ in order. They do not.
+
+**What was checked, file by file** (the four files the owner has sent in this chat; counts only, no name, phone or account is
+written anywhere):
+
+| File | How it writes its dates | Order | Independent witness | Read now |
+|---|---|---|---|---|
+| **Defaulters, 16 Nov** (10,372 loans) | every date a TEXT cell; DISB, EXPIRE, CHRONIC, LAST TRANS `M/D/YYYY`; DUE DATE an ISO text (617) or "No due date" (9,755) | **month-first in all four columns**: month-first-only values 6,107 / 5,978 / 6,363 / 6,064, **day-first-only values 0** | the loan system's own pattern (91 days, 14 days, DAYS ELAPSED): **10,372 of 10,372** rows | right |
+| **Defaulters, 11 Nov** (one team, 202 loans) | the same | month-first (125 month-first-only in DISB DATE, 0 day-first-only) | the pattern: **202 of 202** (42 of 202 read with no order) | right |
+| **Approved (Processed), 11 Nov** (12 loans) | APPROVED DATE `M/D/YYYY` text | month-first (9 only-month-first, 3 either) | the file's own Filters window, 28 Sep to 2 Oct: **12 of 12 inside read month-first, 0 of 12 read day-first** | right |
+| **Leave form responses** (Google Form export) | real date cells, shown `m/d/yy` | nothing to order: a real date is unambiguous | | right |
+
+The 16 Nov deck was also cut into the slices the Upload page cuts it into (five of 2,000 rows, one of 372) and each slice read on
+its own: every slice decides month-first, on 869 to 4,765 unambiguous values each, and every one of the 10,372 rows reads exactly as the
+whole file reads. The order being decided per request (Part 89, "not done") is a non-issue at the size of a real deck.
+
+**What explains the book, reproduced on the real 16 Nov file.** The same file can reach the server three ways, and before Parts 84 and 89
+each stored something different:
+
+| Route | What was stored | Customers with all four dates right (of 10,372) | D.S |
+|---|---|---|---|
+| **Excel file as the loan system wrote it** (text cells) → the importer of that day (no order, day-first) | disbursement, expiry and chronic dates swapped wherever both numbers were twelve or under | **1,256**; 3,883 disbursement dates wrong | untouched |
+| **The same sheet saved as a CSV**, chosen on the page as it was before Part 89 | the page's own reader turned every text date into a real date, month first (JavaScript's rule): dates RIGHT, by luck | **10,372** | **spoilt on all 10,372** (`7-12` became `7/12/01`; a phone lost its leading zero) |
+| Either, after Parts 84 and 89 | dates read by the file's own order; a CSV goes as text | **10,372** | untouched |
+
+That is the mixture the probe found: **the current decks come as Excel files and read swapped on every day; the five initial decks
+that read right were most likely CSV (or saved copies); the nine that read swapped were Excel as the loan system wrote it.** The old
+importer, run on this very file, stores for 2209966593 exactly what the probe shows on 16 Nov (disbursed 9 July, expiring 12 July,
+chronic 21 December: two dates swapped and one, which could not be swapped, right, in one row). This model **fits; it was not seen**:
+what the book says about each upload is in db/RUN-ME-061 (below), and the D.S of a CSV upload is its signature. The call app already
+shows a spoilt D.S as `7/12` (`dsFmt`), so the fault was known as a display problem, never as a sign of how a file arrived.
+
+**What it costs the owner's question.** Loan 2209966593 is a Monday customer whose 16 Nov rows (initial 04:51) still say Thursday
+and Sunday, so Monday is not its day and nothing can show it as CLEARED on Monday: **`db/RUN-ME-060` has not been run for 16 Nov** (a
+row it would repair is exactly a row that fits the pattern when its dates are exchanged, and this one does). Tomorrow's files and
+tonight's Current file read right by themselves; what is stored is put right by RUN-ME-060, and **no re-upload is needed**.
+
+**New: db/RUN-ME-061-deck-uploads-date-audit-read-only.sql.** Read-only. One line per upload of the decks in the last seven days (the
+window is the first lines of the file): its rows, how many fit the pattern as stored, how many fit only with day and month exchanged
+(what RUN-ME-060 would repair), how many fit neither, how many lack a date or DAYS ELAPSED, and the shapes of the D.S column (a pair `7-12`,
+a date `7/12/01`, anything else). The pattern and the swap are RUN-ME-060's, word for word (`test/deck-upload-audit.test.mjs` fails if the
+two files part company). **What the real file must show:** stored the old way, the 16 Nov initial upload reads **2,076 fit as stored and 8,296 fit
+only if swapped** (and 10,372 rows if all of them were written); a CSV on the old page reads all rows fit and all D.S date-like; an upload
+after the fix reads all fit and all D.S pairs. **Cost:** a read of the deck rows of the days named, through the snapshot_date index: 207,439 rows
+in 0.43 s on a PostgreSQL (`tools/db-checks/deck-upload-audit.mjs`, which compares every line with a count made in JavaScript, shows the book is
+unchanged afterwards, and fails when the file is broken on purpose).
+
+**New: tools/file-date-audit.mjs.** For a file the owner sends: per date column, how the cells are written and how much of the file proves
+its order; for a deck, how many rows fit the loan system's pattern read as the importer reads now and read with no order; for an approved
+report, how many dates fall inside the file's own Filters window each way round; and the one loan the owner names. It needs SheetJS 0.18.5 (the top of
+the file says how to fetch it); `test/file-date-audit.test.mjs` pins what it counts. **A file the owner sends is checked with it before anything
+is said about the file** (`CHAT.md` section 7).
+
+**Checked.** Sixteen deliberate breaks of the query and the tool (a write added, the compiler left on, the 91 days loosened, the exchanged reading
+without its DAYS ELAPSED witness, the swap drifting from the repair's, the window dropped, a line per day, the D.S count gone, the figures taken out
+of the header; the evidence turned round, a real date cell told as text, the pattern at 90 days, the chronic gap unchecked, the DAYS ELAPSED window
+widened, the window test month-first only, an ISO date unread), each caught. No code that runs for a user changed: `BUILD` and `CALL_BUILD` unchanged.
+
+**Not done, said plainly.**
+
+- **No real file of any other upload was available.** Expected, Followup, Received payments, Comments, Complaints, Restructures, Notices, Deductions,
+  Staff, Advances and the call-app sheets are each read by their own file's evidence (Parts 84 to 89), but none was checked against a real file. The
+  Followup sheet mixes columns that come from the loan system (DISB DATE, LAST TRANS) with ones the staff type (PROMISE DATE, COMMENT AT), and the
+  order is pooled across them: a sheet whose columns differ in order is the one case pooling could misread. Not seen, not changed. **One real file of
+  each, checked with the tool, answers it** (`CHAT.md` section 8).
+- The stored D.S of a CSV upload is not repaired (`7/12/01` stays); it reads right on the call app (`dsFmt`) and every file from now on is right.
+- A file saved in a spreadsheet program may hold real dates that program read in its own order: the pattern (RUN-ME-061 for what is stored, the tool for a
+  file) is the only witness; nothing in the order rule can see it.
+- Nothing was run on the live book (a chat cannot).
+
+**What the owner has to do.** Run `db/RUN-ME-060` for 16 Nov (it is in the chat; away from an upload), then `db/RUN-ME-061` and say what it shows; and send
+one real file of each other upload kind to be checked.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
