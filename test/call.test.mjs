@@ -2908,6 +2908,8 @@ function clearedPhoneDb_(currentDate, { withLeavers = true } = {}) {
     snapshot_date: type === 'initial' ? '2026-07-24' : currentDate, upload_batch: type === 'initial' ? 'bi' : 'bc',
     created_at: (type === 'initial' ? '2026-07-24T04:00:00Z' : currentDate + 'T08:00:00Z'), ...over });
   t.defaulter_snapshots.push(R('ACT3', 300, 'initial'), R('ACT3', 300, 'current'));
+  // NEW2: on the EVENING deck only -- it entered default after the morning deck was filed (handbook Part 88).
+  t.defaulter_snapshots.push(R('NEW2', 900, 'current'));
   if (withLeavers) t.defaulter_snapshots.push(
     R('GONE2', 1200, 'initial'),
     { ref: 'GONE2', full_name: 'C GONE2', contact: '0714000GONE2', team: 'KONGOWE', arrears: 1500, status: 'Chronic', days_elapsed: 40,
@@ -2935,6 +2937,10 @@ test('a customer the day\'s current deck no longer names stays on the phone\'s E
   }
   assert.equal(mine.rows.find(r => r.ref === 'GONE2').initial, 1200); assert.equal(mine.rows.find(r => r.ref === 'NOCUR2').initial, 800);
   assert.deepEqual([mine.expdf.totals.customers, mine.expdf.totals.initial, mine.expdf.totals.recovered, mine.expdf.totals.arrears], [3, 2300, 2000, 300]);
+  // "Should the report and the phone also leave out customers who fall into default after the morning file ... all count the same people?" --
+  // "YES", the owner, 16 Nov 2026 (Part 88): NEW2 is on the evening deck only, so it is not on the day's list, and the strip says how many it left out.
+  assert.ok(!mine.rows.some(r => r.ref === 'NEW2'), 'a customer who entered default after the morning deck is not on today\'s list: they join tomorrow\'s');
+  assert.deepEqual(mine.expdf.diag.enteredAfter, { customers: 1, arrears: 900 }, 'and the answer says how many were left out, so a shorter list is explained');
   const team = await callApi(db, 'api_callList', ['dBEE', 'expdf', 'team'], NOW);
   assert.deepEqual(team.rows.map(r => r.ref), ['ACT3', 'GONE2', 'NOCUR2'], 'the team-wide scope agrees');
 
@@ -2952,6 +2958,8 @@ test('the phone does not mark anybody paid on a comparison that was never made: 
   await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
   const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
   assert.ok(!mine.rows.some(r => r.ref === 'NOCUR2'), 'a customer on no current deck is not invented as recovered');
+  assert.ok(mine.rows.some(r => r.ref === 'NEW2'), 'and nobody is left out on a comparison that was never made: the older current deck\'s defaulter stays on the list, as it always did');
+  assert.equal(mine.expdf.diag.enteredAfter, null);
   assert.ok(!mine.rows.some(r => r.ref === 'GONE2'), 'and the one with an older chronic row reads as that older row made them (the GMO\'s, a ghost), not as paid today');
   const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
   assert.ok(summary.expdf.num < 800, 'the strip is not lifted by customers nobody compared: ' + summary.expdf.num);

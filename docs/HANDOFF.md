@@ -7234,7 +7234,8 @@ exactly the customers this Part closes.
   changed: their baselines are older mornings.
 - **The page's board for Part 78** (`xd_unassigned`, `public/app.html`) stays as dormant code and leaves with the
   next change to that page; no `BUILD` bump was made for it.
-- **Two customers the card and the report are still built to read differently.** The first enters default after the morning
+- **Two customers the card and the report are still built to read differently. (The first: done in Part 88, the owner said
+  YES the same evening.)** The first enters default after the morning
   deck (on the current deck, never on that day's initial deck): the card does not count them (Part 74: "the lists per day must
   come from initial files"), while the report and the phone list them with their current arrears as their initial and
   recovered 0, which enlarges the denominator of their Rec %. On the card's own test data one such customer reads 50.0% on the
@@ -7248,6 +7249,66 @@ exactly the customers this Part closes.
 
 **What the owner has to do.** Nothing to run. After the deploy, open one day on the Exp.Def Report and its leaders'
 cards: the rows marked CLEARED whose recovered equals their initial are the customers the day's current file did not name.
+
+## Part 88 — The report and the phone list the morning deck's customers, as the dashboard card does: a customer who enters default after it is not on that day
+
+> "Should the report and the phone also leave out customers who fall into default after the morning
+> file, so the dashboard card, the report and the phone all count the same people?" — "YES" — the
+> owner, 16 Nov 2026, answering the question Part 87 ended on.
+
+**What it was.** After Part 87 the report's day matched the dashboard card's tile in recovered, to the
+shilling, and differed in customers, initial and Rec % by one kind of customer: somebody in default on the
+day's current file who was never on the day's initial file, that is, who **entered default after the morning
+file**. The card counts the initial deck's customers only (Part 74: "the lists per day must come from initial
+files"). The report and the phone also listed the evening's new defaulters, with their current arrears as their
+"initial" and recovered 0, which enlarged the denominator of the Rec %. On the card's own test data the card read
+3 customers, 180,000 owed at the start, 90,000 recovered, 50.0%; the report read 4, 279,999, 90,000, 32.1%.
+
+**The rule (`buildRows_`, `api/_lib/expdf.js`).** When the day's two decks are a pair (Part 87: the same date, both
+here), a customer on the current deck whom the morning deck never named is **not a row of the day**: nobody's expected
+defaulter of this day, they join tomorrow's list, on tomorrow's initial deck. It is the same on the report's day view,
+the card behind a leader's name, the phone's list and its EXP.DEF % strip, and every filed day of the week. The same
+test data now reads 3, 180,000, 90,000, 50.0 on both.
+
+- **Said, not silent:** the answers carry `enteredAfter` (`{ customers, arrears }`: how many customers in default on the
+  current deck were left out, and what they owe), on the report's day view and in the phone's `diag`; null when there is
+  no pair, because then nothing is left out. A big number on a day is also the signature of a team missing from that
+  day's initial file (below). The page does not draw it: this is a server change and `BUILD` is unchanged.
+- **No pair, no change:** with no initial deck, or a current deck of another date, every defaulter of the current deck
+  is listed, as it always was.
+- **Left alone on purpose.** (1) **The Expected Defaulters tab** is the weekly-cycle book of every defaulter, not a day's
+  list: a customer in default now is on it, owing, as a defaulter is; the owner named the report and the phone. (2) **The
+  all-time ghost** (Part 71, ordered on 13 Nov: "should reflect to alltime data past present and future") is not that
+  customer and is not touched: it stays a row, CLEARED, with its last-known arrears, and it is still counted in the figures
+  of the report and the phone (a reviewed decision: "both counted in the week grand total"). The card does not carry ghosts.
+  **That is now the only thing the three differ on.** Whether ghosts should stay listed but leave the report's and the
+  phone's figures is a new question, since "count the same people" and "should reflect to alltime data" pull two ways
+  (`CHAT.md` section 8).
+
+**What it costs.** No read, and fewer rows. The consequence to know: if a team is missing from a day's initial file while
+the day's current file carries it, every customer of that team reads as having entered default after the morning, and
+leaves the day's lists of a reader who holds several teams (a one-team reader needs their own team's initial rows to be
+paired, so is not touched). That is the whole-book rule applied to the initial file, as `db/RUN-ME-032` already says ("a
+team missing from it owes nothing on it, full stop"), and `enteredAfter` is where it shows.
+
+**Checked.** The tests of Parts 87 now carry a customer who entered default after the morning: absent from every leader's card,
+from both worklists and from the report's figures, counted in `enteredAfter`, still on the Expected Defaulters tab; kept on the
+older current deck when the decks are not a pair; the card-versus-report parity test draws one more customer and still reads the
+same numbers on both; through the real call dispatch for the phone. **Five deliberate breaks of the rule, each caught:** the
+customer left on the day, nobody counted as left out, the all-time ghost left out too, left out on a current deck of another
+date, and the week keeping a day's later entrants. `npm test`: 1,581 pass. No read added to `/api/call` (the existing count test
+holds), `BUILD` and `CALL_BUILD` unchanged.
+
+**Not done, said plainly.**
+
+- The ghosts' place in the figures (above): not asked.
+- The Expected Defaulters tab keeps a customer who entered default after the morning file (above): not asked.
+- The page does not draw `enteredAfter`.
+- Nothing was run on the live book (a chat cannot), and there is no SQL.
+
+**What the owner has to do.** Nothing to run. After the deploy, the report's Rec % for a day, and the phone's EXP.DEF %, rise
+toward the dashboard card's tile for the same day by exactly the customers who entered default after the morning file; with
+no ghosts drawn they should read the same.
 
 ---
 

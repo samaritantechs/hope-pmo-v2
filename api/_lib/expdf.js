@@ -107,7 +107,21 @@ async function monthFirstInitial_(db, user, from, to) {
    customer's LAST-KNOWN row from some earlier day, with its own older arrears and recovered 0,
    while the day's own two files say what really happened on THIS day. A ghost for a customer
    who is NOT on the day's initial deck stays exactly what it was (Part 71). No read is added
-   here: `morning` is the deck both callers already read. */
+   here: `morning` is the deck both callers already read.
+
+   AND THE LIST IS THE MORNING DECK'S, NOT THE EVENING'S -- "Should the report and the phone also
+   leave out customers who fall into default after the morning file, so the dashboard card, the
+   report and the phone all count the same people?" -- "YES", the owner, 16 Nov 2026 (handbook
+   Part 88). When `morning` is handed in (the day's two decks are a pair), a customer on the
+   current deck whom the morning deck never named entered default AFTER it was filed: they are
+   nobody's expected defaulter of THIS day -- they join tomorrow's list, on tomorrow's initial
+   deck -- exactly as the dashboard card has read them since Part 74 ("the lists per day must come
+   from initial files"). They are counted in `left` (customers and arrears) so a screen can say
+   how many were left out, and are not rows. A reading with no pair (no initial deck, or a
+   current deck of another date) keeps every defaulter of the current deck, as it always did.
+   The all-time ghost is not that customer and is not touched: it was ordered on 13 Nov
+   ("should reflect to alltime data past present and future") and stays a row, CLEARED, with its
+   last-known arrears. Returns { rows, left }. */
 function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
   const dayIdx = isoWeekday(ms);
   const onMorning = morning && morning.length ? new Set(morning.map(d => K(d.ref))) : null;
@@ -159,9 +173,18 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
         opm: (team[ROLE_COLS.OPM] || '(unassigned)'), ...(over || {}) };
   };
   const seenRows = scoped(user, curRows);
+  const left = { customers: 0, arrears: 0 };      // in default on the current deck, never named by the morning deck: entered default after it
   const rows = seenRows
-    .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
-      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
+    .filter(d => {
+      if (d._ghost) return true;
+      const s = K(d.status), inDefault = s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT');
+      if (onMorning) {
+        if (onMorning.has(K(d.ref))) return true;
+        if (inDefault) { left.customers += 1; left.arrears += num(d.arrears); }
+        return false;
+      }
+      return inDefault || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref));
+    })
     // The day's own two files say what happened to a customer on the morning deck; a ghost is only their last-known row from some earlier day.
     .filter(d => !(d._ghost && onMorning && onMorning.has(K(d.ref))))
     .map(d => make(d));
@@ -177,7 +200,7 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
       rows.push(make(r, { arrears: 0, initial, recovered: initial, status: 'CLEARED' }));
     }
   }
-  return rows;
+  return { rows, left };
 }
 
 /* THE ALL-TIME GHOST -- "Checked loan system -- customer not there on thurrsday deck 12th nov
@@ -343,8 +366,11 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
      baseline really is the day's own (not a week's or a month's first deck, whose customers'
      placement would be a stale morning's). Zero reads: both decks were read above. */
   const paired = base === dayIni && dayIni.rows.length > 0 && curSnap.rows.length > 0 && !!curSnap.date && curSnap.date === dayIni.date;
-  const rows = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs, paired ? dayIni.rows : null);
-  return { rows, dayIdx, weekday: wd, date: curSnap.date, paired, hasBaseline: base.rows.length > 0, baseDate: base.date,
+  const built = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs, paired ? dayIni.rows : null);
+  const rows = built.rows;
+  return { rows, dayIdx, weekday: wd, date: curSnap.date, paired,
+    // How many customers the current deck has in default that the day's morning deck never named (Part 88): left out of the day, and said so. Null with no pair: nothing was left out.
+    enteredAfter: paired ? built.left : null, hasBaseline: base.rows.length > 0, baseDate: base.date,
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day'),
     // The teams sheet, as already read above: expdfMine names the teams that give its caller a book their own code cannot see.
     teams: teamRows };
@@ -478,7 +504,7 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
       if (ghosts.length) curRows = cur.rows.concat(ghosts);
     }
     // ini.rows IS the day's own initial deck and cur.rows the day's own current one (both read onDate d, both here): a whole pair.
-    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at, ini.rows);
+    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at, ini.rows).rows;
     const list = periodRows_({ rows: built }, { daily: true, day: null, keepUndated: false });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
@@ -661,7 +687,7 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
       dated: dated.length, onToday: mine.filter(r => r.onToday).length, undated: undated.length,
       deckWeekday: core.weekday, deckDate: core.date, noCycleDates,
       // Whether the day's initial and current decks are the same date: only then does a customer the current deck no longer names read as recovered (Part 87).
-      paired: !!core.paired },
+      paired: !!core.paired, enteredAfter: core.enteredAfter || null },
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
     // Who is carrying what, so anyone looking at the list can see the split without leaving it.
     byLeader: Object.values(scopeRows.reduce((m, r) => {
@@ -935,7 +961,7 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
   // and this is always empty (answered as null, which the page does not draw). Kept so an older page finds nothing, not an error.
   const unassignedCleared = core.unassignedCleared || [];
   return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
-    ...(core.paired === undefined ? {} : { paired: core.paired }),     // a day reading: were the day's two decks the same date (Part 87)
+    ...(core.paired === undefined ? {} : { paired: core.paired, enteredAfter: core.enteredAfter }),     // a day reading: were the day's two decks the same date (Part 87), and how many customers entered default after the morning deck and so are not on the day (Part 88)
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     days: core.days || null,                                   // a week: which days were added, and which were not filed
     sections, totals: sumExpdf(all),
