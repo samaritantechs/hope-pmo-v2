@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -1625,4 +1625,46 @@ test('speed: a week uploaded twice is not read twice', async () => {
     `${migrated.toLocaleString()} rows with the totals function and ${plain.toLocaleString()} without.` +
     `\n  If this rose, something on the commission screen is reading raw defaulter rows again.` +
     `\n  It should read nothing but the summed deck rows the dashboard reads.`);
+});
+
+/* CUSTOMERS WHO LEFT THE DAY'S CURRENT DECK COST NOTHING TO KEEP (handbook Part 87).
+   "how comes tou said 'should disappear.' yet we are fighting allover to say cleared people
+   shouldnt dissapear for verifications" -- the owner, 16 Nov 2026. A customer on a day's initial
+   deck that the day's current deck no longer names now stays on the day's report, the leader's
+   card, the week and the Expected Defaulters tab as recovered, and on the phone's own list. The
+   rule is arithmetic over the two decks every one of those screens already reads (the day's own
+   initial rows, whole, and its current ones), so twenty-five more customers must not be one more
+   round trip on any of them. Measured with and without the twenty-five, in the migrated world
+   (the ghost function answers on both sides). The row budgets above are unchanged. */
+test('speed: customers who left the day\'s current deck are not one more round trip on the Exp.Def screens', async () => {
+  const book = withLeavers => {
+    const t = bigBook();
+    t.teams = [{ team: 'TEAM01', gmo: 'GMO 1', manager: 'MGR 1', bike: 'BIKE 1', recovery: 'REC 1', expected: 'EXP 1' }];
+    t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
+    const R = (ref, arrears, type, date, wd) => ({ ref, full_name: 'C' + ref, contact: '0714' + ref, team: 'TEAM01', arrears,
+      status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 1, disb_date: '2026-07-21', snapshot_type: type, weekday: wd,
+      snapshot_date: date, upload_batch: 'b' + type + date, created_at: date + (type === 'initial' ? 'T04:00:00Z' : 'T18:00:00Z') });
+    t.defaulter_snapshots = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']]
+      .flatMap(([wd, date]) => {
+        const rows = [];
+        for (let i = 0; i < 40; i++) rows.push(R('K' + i, 1000, 'initial', date, wd), R('K' + i, 600, 'current', date, wd));
+        if (withLeavers) for (let i = 0; i < 25; i++) rows.push(R('L' + i, 900, 'initial', date, wd));    // on the morning deck, not on the evening's
+        return rows;
+      });
+    return t;
+  };
+  const world = { rpc: { ...SNAPSHOT_TOTALS_RPC, ...DEFAULTER_GHOST_ROWS_RPC } };
+  const screens = [['the report, a day', 'expdfReport', {}], ['the report, a week', 'expdfReport', { period: 'week' }],
+    ['the card behind a name, a day', 'expdfLeader', { role: 'BIKE', leader: 'BIKE 1' }],
+    ['the card behind a name, a week', 'expdfLeader', { role: 'BIKE', leader: 'BIKE 1', period: 'week' }],
+    ['the Expected Defaulters tab', 'expectedDefaulters', {}]];
+  for (const [label, fn, args] of screens) {
+    const a = counting(book(false), world), b = counting(book(true), world);
+    const without = await portalApi(a.db, ADMIN, fn, args, NOW), withL = await portalApi(b.db, ADMIN, fn, args, NOW);
+    assert.equal(b.stat().trips, a.stat().trips, `${label}: ${b.stat().trips} round trips with the customers who left the current deck, ${a.stat().trips} without -- the rule must not cost a read`);
+    // ... and the comparison is not vacuous: the twenty-five really are on the screen (a report counts its customers; a card and the tab list them).
+    const listed = x => fn === 'expdfReport' ? x.totals.customers : new Set(JSON.stringify(x).match(/"ref":"[KL]\d+"/g) || []).size;
+    assert.equal(listed(without), 40, label + ': forty customers without');
+    assert.equal(listed(withL), 65, label + ': the twenty-five who left the current deck are listed with them');
+  }
 });

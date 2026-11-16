@@ -6383,6 +6383,10 @@ and proves a day (not week) reading of the same screen carries no `unassignedCle
 all, flagging the known, deliberately out-of-scope gap rather than leaving it unexplained.
 `npm test`: 1,534 pass. No read on `/api/upload` or `/api/call`.
 
+**Closed by Part 87.** The board, and the belief behind it (that the rotation needs a current-deck row), are gone: a
+customer on a day's initial deck whom that day's current deck does not name is a row of their leader's book, on
+the cycle days the rotation names, counted in every total, on the week and on the day alike. The board is empty by construction.
+
 ## Part 79 — The dashboard's Expected Defaulters recovery is each day's own list, not the whole book
 
 > "i dont think all the amount we recover per day is of expected defaulters only - these widgets
@@ -6739,7 +6743,7 @@ unchanged, and the page was not touched, so it was not drawn in a browser.
 **Not done.** The Exp.Def Report's week view keeps its separate board, "Cleared, no leader on
 record for the day" (Part 78). The same reasoning could give those customers a leader and
 credit them inside the report's sections; that changes the report's totals, and was not asked.
-The morning hours noted in `CHAT.md` section 8 (a customer new on today's initial file reading
+**(Asked, and done, in Part 87.)** The morning hours noted in `CHAT.md` section 8 (a customer new on today's initial file reading
 CLEARED before today's current file is in) are as they were: such a customer now at least
 carries a name, a number and a leader.
 
@@ -6945,7 +6949,7 @@ out. `npm test`: 1,557 pass.
   a row built from the morning's own row (Part 82's `rowOf`), arrears 0 and recovered equal to
   the morning's arrears, credited to the leader the rotation names, in the day view, the week
   view and the phone; it changes the report's recovered totals and the phone's EXP.DEF %, so it
-  is the owner's to say.
+  is the owner's to say. **(Said, on 16 Nov, in his own words, and done in Part 87.)**
 - `importExpected` and `importFollowup` read their dates the old way too. **Corrected in Part 85:**
   this bullet first said that nothing reads the dates they store. That was right for the Expected
   sheet and wrong for the Defaulters Followup sheet, whose Disb date and Last trans the Follow-up
@@ -7105,6 +7109,128 @@ does not, it refuses to pass. `test/deck-date-repair.test.mjs` pins the safety l
 
 **What the owner has to do.** Run the file (pasted in the chat) as a new query, then read its one row of
 numbers. Run it away from an upload (an evening upload deletes the rows of the files it replaces).
+
+## Part 87 — A customer the day's current deck no longer names stays on every list of that day, as recovered
+
+> "how comes tou said "should disappear." yet we are fighting allover to say cleared people
+> shouldnt dissapear for verifications" — the owner, 16 Nov 2026, after an answer about a customer
+> who was on a day's initial file and not on its current one. The same order a third time:
+> "they should stay there as of recovery so as to know recovery amount from difference of initial
+> to current per each day by team or staff" (13 Nov); "i expect that customer in initial never
+> to get lost even if cleared its amounts and statuses that change" (15 Nov).
+
+**What was wrong.** Parts 69 to 82 each closed one door for such a customer and left the next one
+open, so the screens read the same customer four ways (Part 84, "Not done", measured on the real
+loan the owner asked about). A customer on a day's initial file and absent from that day's current
+file read:
+
+- on the **dashboard card** (`RUN-ME-058`): recovered in full;
+- on the **Expected Defaulters tab**: recovered in full if they never were on a current file;
+  recovered 0 with their last arrears still showing if they were on an earlier one (Part 71's ghost);
+- on the **Exp.Def Report's day view, the card behind a leader's name and the phone**: CLEARED with
+  recovered 0 and the old arrears if they were on an earlier current file, and **not listed at all**
+  if they never were on one;
+- on the **report's week**: on a board of their own ("Cleared, no leader on record for the day",
+  Part 78), outside every leader's book and every total.
+
+**Why it was left that way, and why it need not be.** Part 78, and the comment on `buildRows_`, said
+the rotation's role and cycle need fields (`days_elapsed`, `chronic_date`, `expire_date`) that
+exist only on a current-deck row. Part 82 found, on the tab, that this is not so: the initial file
+is imported by the same importer as the current one, so the customer's own row on the day's initial
+deck carries the status, the days elapsed, the dates, the name and the number. The same fact is read
+here, where the rule is written once.
+
+**The rule, written once (`buildRows_`, `api/_lib/expdf.js`).** `buildRows_` is handed the day's own
+initial rows (`morning`) when the day's two decks are a whole pair. Then every customer on that deck
+has a row:
+
+- one on the current deck reads as before (Part 69);
+- one the current deck does not name is built from their morning row by the same function:
+  **CLEARED, nothing owed, the whole of the morning's arrears recovered**, placed by the rotation off
+  the morning row (its own status, days and dates: `assignFor` reads the row, never the CLEARED the
+  list shows), so the leader a day's list credits is the leader who held them that day;
+- a ghost (Part 71, `ghostRowsFor_`) for a customer who is on the morning deck is dropped for the
+  morning row: the ghost is the customer's last-known row from an earlier day, and the day's own two
+  files say what happened on this day;
+- a ghost for a customer who is **not** on the day's initial deck is exactly what Part 71 made it.
+
+This is "a team missing from it owes nothing on it, full stop" (`defaulterBook`; `RUN-ME-032`) and the
+dashboard card's own reading, applied to the report and the phone: one rule on every screen.
+
+**Where it applies.**
+
+- `expdfCore`, the day reading: the phone's list (`expdfMine`), the report's day view and the card
+  behind a leader's name, when the decks are a pair (below).
+- `expdfWeekCompute_`, each filed day of the week: both decks are read for the day (`onDate`), so a
+  pair by construction. The day's initial deck is now read for ten columns instead of four (the
+  name, the number and what the rotation reads), the same rows. Part 78's board is empty by
+  construction: it stays in the answer as `[]`, and the page draws nothing for it.
+- `expectedDefaulters`, the tab: a ghost for a customer on the morning deck is dropped, so the loop
+  that builds a row from the morning row (Parts 75, 77, 82) reads them too. The tab now agrees with
+  the report about a customer who was on an earlier current file: recovered in full, not 0.
+- Cycle days are as ever: the report and the phone list the customers whose cycle day it is, so the
+  whole of a morning deck is not handed to every day; the tab lists everybody on it.
+
+**The pair: nobody is marked paid on a comparison that was never made.** A day reading compares the
+day's initial deck with the day's current one. This weekday's latest current deck can be last week's
+(on a morning before today's current file is uploaded), and a customer missing from it has not
+cleared, they have not been compared. `expdfCore` hands the morning rows over only when both decks are
+here, are the same date, and the baseline is the day's own (not a week's or a month's first deck, whose
+morning would place the customer stale). The tab asks the same of its ghosts. Otherwise every screen
+reads as it did. The answer says which it was (`paired`, on the report's day view and in the phone's
+`diag`), so a customer who is not shown as recovered can be explained by a day whose current file is not in yet.
+
+**What the owner will see.** The Exp.Def Report's recovered totals (day and week), a leader's card and the
+phone's EXP.DEF % go up, by exactly the customers who were on the morning list and are not on the
+evening's, at their full morning arrears: toward the dashboard card's own figure for the same day. (The
+loan the owner asked about on 16 Nov, once its date is right and Monday's current file is in: a CLEARED
+row with its whole 31,001 recovered on the report and the phone, as the card always counted it.) A customer
+who used to be missing from a leader's list now stands at the bottom of it, CLEARED, with a name and a number
+to verify them by.
+
+**The trade it carries, plainly.** If a day's current file ever arrives without a team that still owes, those
+customers now read as recovered in full on the report and the phone, as they have on the dashboard card since
+Part 80 and in every recovery figure since `RUN-ME-032`. It is one rule for every screen, so changing it is the
+owner's, for all of them together (`CHAT.md` section 8).
+
+**What it cost.** No read anywhere: the rule is arithmetic over the two decks each of these screens already
+reads. The phone's day reading is the sacred path, and `test/call.test.mjs` counts its reads with and without
+such customers: the same number. `test/speed.test.mjs` counts the five Exp.Def screens (report day and week,
+the card day and week, the tab) with and without twenty-five of them: the same round trips on each. No row
+budget moved. The week's initial deck is read for ten columns instead of four, the same rows.
+
+**Checked.** Eight tests. `test/portal.test.mjs`: the old Part 78 test rewritten (the week keeps the customer
+in their leader's book, in every total, with a name and a number, and not a customer whose cycle day it is not);
+one rule on four screens (the report, the card, the phone's worklist and the tab read the same customer the same
+way: a customer gone from the current deck with an older chronic row, one never on a current file, one chronic
+on the morning deck, one paid and still on the file, one ghost who is not on the morning deck, one of another
+cycle day; and the week agreeing with the day); the unpaired deck (nothing closes); who may see them (team
+scoping). `test/call.test.mjs`: through the real call dispatch, the list, the team scope and the daily summary's
+EXP.DEF % with and without the migration's ghost function; the unpaired deck; and the read count.
+`test/speed.test.mjs`: the five screens. **Each rule was broken on purpose and the tests failed:** ten breaks on
+the portal side (eight caught; two are not changes of behaviour: the viewer's-teams filter on rows the database has
+already scoped, and an empty-deck check the date check makes redundant); a first set did not catch the morning row
+being placed by the CLEARED override instead of its own status, so a chronic customer on the morning deck was
+added and it did; three on the phone, two on the zero-read promise. `npm test`: 1,580 pass.
+
+**Not done, said plainly.**
+
+- **A reader whose teams are all missing from the day's current file** (a small team whose last defaulter
+  paid): `latestSnapshot` gives no date for an empty scope, so nothing closes for them; the admin and anyone
+  holding other teams see the customers. Closing it needs the company's file date (no read), and it is the
+  whole-book trade applied to a one-team reader, so the owner's to say.
+- **The hours before the day's current file is in:** nothing closes, as before, and the tab still lists a
+  customer who is new on today's initial file as CLEARED in that gap (Parts 75 and 77; `CHAT.md` section 8). Not touched.
+- **The month view of the report and `expdfCore`'s old `weekly` baseline** (Monday's deck, the month's first) are not
+  changed: their baselines are older mornings.
+- **The page's board for Part 78** (`xd_unassigned`, `public/app.html`) stays as dormant code and leaves with the
+  next change to that page; no `BUILD` bump was made for it.
+- **A customer who changed team between the two decks**, read by someone who holds the first team and not the second,
+  counts as recovered for the first team's leader (the second team's rows are not in that reader's read). Rare; not handled.
+- Nothing was run on the live book (a chat cannot), and there is no SQL.
+
+**What the owner has to do.** Nothing to run. After the deploy, open one day on the Exp.Def Report and its leaders'
+cards: the rows marked CLEARED whose recovered equals their initial are the customers the day's current file did not name.
 
 ---
 

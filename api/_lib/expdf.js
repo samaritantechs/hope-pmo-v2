@@ -82,15 +82,36 @@ async function monthFirstInitial_(db, user, from, to) {
    (0 arrears sorts last) rather than vanishing -- confirmation that they cleared, not a gap
    nobody can account for.
 
-   A customer with no current row at all (genuinely absent from the file, not merely a
-   different status) is the one case this cannot reach -- the rotation's own role/phase needs
-   fields (days_elapsed, chronic_date, expire_date) that exist only on a current-deck row. */
-function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
+   A CUSTOMER WITH NO ROW ON THE DAY'S CURRENT DECK AT ALL -- "how comes tou said 'should
+   disappear.' yet we are fighting allover to say cleared people shouldnt dissapear for
+   verifications", the owner, 16 Nov 2026 (and 13 Nov: "they should stay there as of recovery
+   so as to know recovery amount from difference of initial to current per each day by team or
+   staff"; 15 Nov: "i expect that customer in initial never to get lost even if cleared its
+   amounts and statuses that change"). This used to be the one case a row could not be built
+   for, on the belief that the rotation's own role/phase needs fields (days_elapsed,
+   chronic_date, expire_date) that exist only on a current-deck row. THEY DO NOT (handbook Part
+   82 found it on the Expected Defaulters tab): the initial file is imported by the same importer
+   as the current one, so the customer's own row on the DAY'S INITIAL DECK carries the status,
+   the days elapsed, the dates, the name and the number the rotation and the caller read.
+
+   So `morning` -- the day's own initial rows, handed in ONLY when the day's two decks are a
+   whole pair (the same date; expdfCore and the week's loop decide that, below) -- gives every
+   customer on that deck a row: one still on the current deck reads as before; one the current
+   deck no longer names (paid up and gone from the file, or never on a current file at all) is
+   built from their morning row by the same function, CLEARED, nothing owed, the WHOLE of the
+   morning's arrears recovered -- "a team missing from it owes nothing on it, full stop"
+   (defaulterBook; db/RUN-ME-032) and the dashboard card's own reading of the same customer
+   (RUN-ME-058). Where the rotation places them is where it places them off the morning row,
+   so the leader the day's list credits is the leader who held them. A ghost (ghostRowsFor_)
+   for a customer who is on that morning deck is dropped for the morning row: the ghost is the
+   customer's LAST-KNOWN row from some earlier day, with its own older arrears and recovered 0,
+   while the day's own two files say what really happened on THIS day. A ghost for a customer
+   who is NOT on the day's initial deck stays exactly what it was (Part 71). No read is added
+   here: `morning` is the deck both callers already read. */
+function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
   const dayIdx = isoWeekday(ms);
-  return scoped(user, curRows)
-    .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
-      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
-    .map(d => {
+  const onMorning = morning && morning.length ? new Set(morning.map(d => K(d.ref))) : null;
+  const make = (d, over) => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
       const primary = raw;
       const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
@@ -135,8 +156,28 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms) {
         // The leader's number as Teams & Staff carries it (gmo_no / manager_no / bike_no), the
         // surest link to their HOPE Calls account when the two spell the name differently.
         leaderPhone: team[ROLE_COLS[a.role] + '_no'] || null,
-        opm: (team[ROLE_COLS.OPM] || '(unassigned)') };
-    });
+        opm: (team[ROLE_COLS.OPM] || '(unassigned)'), ...(over || {}) };
+  };
+  const seenRows = scoped(user, curRows);
+  const rows = seenRows
+    .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+      || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
+    // The day's own two files say what happened to a customer on the morning deck; a ghost is only their last-known row from some earlier day.
+    .filter(d => !(d._ghost && onMorning && onMorning.has(K(d.ref))))
+    .map(d => make(d));
+  if (onMorning) {
+    const live = new Set(seenRows.filter(d => !d._ghost).map(d => K(d.ref)));   // on the day's own current deck
+    const seen = new Set();
+    for (const r of scoped(user, morning)) {
+      const ref = K(r.ref);
+      if (live.has(ref) || seen.has(ref)) continue;
+      seen.add(ref);
+      const initial = Object.prototype.hasOwnProperty.call(baseBy, ref) ? baseBy[ref] : num(r.arrears);
+      // The rotation reads the MORNING row (make's own assignFor, before `over`): where it places the customer is where it placed them.
+      rows.push(make(r, { arrears: 0, initial, recovered: initial, status: 'CLEARED' }));
+    }
+  }
+  return rows;
 }
 
 /* THE ALL-TIME GHOST -- "Checked loan system -- customer not there on thurrsday deck 12th nov
@@ -293,8 +334,17 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   const curRowsAll = ghosts.length ? curSnap.rows.concat(ghosts) : curSnap.rows;
 
   const dayIdx = isoWeekday(nowMs);
-  const rows = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs);
-  return { rows, dayIdx, weekday: wd, date: curSnap.date, hasBaseline: base.rows.length > 0, baseDate: base.date,
+  /* THE DAY'S OWN PAIR -- the only time "the current deck no longer names them" means "they
+     cleared". A day reading compares the day's initial deck with the day's current one; when the
+     current deck read is some OTHER date's (this weekday's latest current deck can be last
+     week's, on a morning before today's has been uploaded), a customer missing from it has not
+     cleared, they simply have not been compared yet, and nobody is marked paid on that. So the
+     morning rows go to buildRows_ only when both decks are here, are the same date, and the
+     baseline really is the day's own (not a week's or a month's first deck, whose customers'
+     placement would be a stale morning's). Zero reads: both decks were read above. */
+  const paired = base === dayIni && dayIni.rows.length > 0 && curSnap.rows.length > 0 && !!curSnap.date && curSnap.date === dayIni.date;
+  const rows = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs, paired ? dayIni.rows : null);
+  return { rows, dayIdx, weekday: wd, date: curSnap.date, paired, hasBaseline: base.rows.length > 0, baseDate: base.date,
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day'),
     // The teams sheet, as already read above: expdfMine names the teams that give its caller a book their own code cannot see.
     teams: teamRows };
@@ -336,7 +386,10 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
    nothing on /api/upload or /api/call reads this. The month keeps its first-deck baseline (a
    month of decks is not a request's worth of reads); say if it should follow. */
 const WD_ = ['', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
-const INI_COLS_ = ['ref', 'arrears', 'team', 'disb_date'];  // disb_date: a day-ghost's own cycle day (below) -- the day-ghost rows below read it
+/* The day's initial deck is read for what a customer who left the current deck needs to stand as a row of the day
+   (Part 87): the name and number, and the status, days elapsed and dates the rotation places them by. The same
+   rows as before, ten columns of each instead of four -- no read is added. */
+const INI_COLS_ = ['ref', 'full_name', 'contact', 'team', 'arrears', 'disb_date', 'status', 'days_elapsed', 'chronic_date', 'expire_date'];
 const CUR_COLS_ = ['ref', 'full_name', 'contact', 'guarantor_name', 'guarantor_contact', 'team', 'arrears', 'other_inst', 'ds', 'dc',
   'disb_date', 'status', 'days_elapsed', 'chronic_date', 'expire_date'];
 /** The week, kept for a minute per set of teams (answer-cache.js): the report pays for the days
@@ -370,41 +423,29 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   // (Found on review, before this shipped: proved with a customer whose days_elapsed crosses a
   // bucket boundary mid-week, counted on both the BIKE and the MANAGER board for one week.)
   const undatedSeen = new Map(), seenAsDated = new Set();
-  /* A DAY-GHOST IS THAT DAY'S OWN FACT, NEVER TODAY'S -- "i expect that customer in initial
-     never to get lost even if cleared its amounts and statuses that change," 14 Nov 2026, after
-     Thursday 12 Nov's own initial deck was shown (by direct SQL) to carry ref 4231948032
-     (15,500, Chronic) with no matching row on Thursday's own current deck -- the harder case
-     Part 69/70 named and left, asked for now across the whole week, not only today.
+  /* A CUSTOMER THE DAY'S CURRENT DECK NO LONGER NAMES STAYS ON THAT DAY'S LIST (handbook Part
+     87, which closes Part 78). "i expect that customer in initial never to get lost even if
+     cleared its amounts and statuses that change," 14 Nov 2026, after Thursday 12 Nov's own
+     initial deck was shown (by direct SQL) to carry ref 4231948032 (15,500, Chronic) with no
+     matching row on Thursday's own current deck; and, 16 Nov, "how comes tou said 'should
+     disappear.' yet we are fighting allover to say cleared people shouldnt dissapear for
+     verifications".
 
-     This is deliberately NOT the all-time ghost below (ghostRowsFor_/db/RUN-ME-055), and the
-     two must never be confused: the all-time ghost answers "missing from the LATEST data right
-     now" and is reached only through the week's own TODAY iteration, on purpose (Part 71 --
-     "the one thing this feature's own design refuses to do anywhere else" is judge a past day
-     by a fact only true today). Read against that rule, Thursday 12th is correctly excluded,
-     re-confirmed 14 Nov: the gap is real, but closing it is not the all-time ghost's to do.
+     Part 78 kept such a day-ghost VISIBLE on a board of its own ("Cleared, no leader on record
+     for the day", `unassignedCleared`) and OUT of every leader's book and every total, because
+     it believed the rotation's own role needs fields only a CURRENT-type row has. It does not
+     (see buildRows_): the customer's row on that same day's initial deck, already read below for
+     the baseline, carries them. So each day hands buildRows_ the day's own initial rows
+     (`morning`), and a customer the day's current deck does not name stands as a row of the day
+     like any other -- CLEARED, nothing owed, the morning's arrears recovered -- on the cycle
+     days the rotation names for them, credited to the leader it names, counted in the totals.
+     The old board is therefore empty by construction (still answered, as `[]`, so a page that
+     asks for it finds nothing rather than an error).
 
-     A day-ghost instead reads ONLY that one day's own two files: a ref on day d's own initial
-     deck, absent from day d's own current deck -- nothing about today, nothing about any other
-     day, so it can never contradict Part 71's own scope, and it costs no new read (ini.rows and
-     cur.rows for day d are already fetched below). What it cannot do honestly is name who
-     should be credited: buildRows_'s assignFor needs fields (days_elapsed, chronic_date,
-     expire_date) that live only on a CURRENT-type row, and a day-ghost has none for day d by
-     definition -- reaching back to find the ref's own current-type row as of some earlier day
-     is real, separate work (a new, date-bounded database lookup; RUN-ME-055 has no date
-     parameter and answers only "right now"), not guessed at here. So a day-ghost is kept
-     VISIBLE and its recovery COUNTED -- role, phase and cycle null, leader '(unassigned)',
-     exactly the shape Part 75 already uses on expectedDefaulters for the identical "no
-     current-row data to assign from" case -- kept OUT of `cells` (never fed through
-     periodRows_'s RECYCLE_ROLES filter, which would silently drop a null role) and returned
-     separately as `unassignedCleared`, so expdfReport can show it on its own rather than
-     attributing a guess to a name.
-
-     Scoped to this function's own per-day loop only -- buildRows_, expdfCore and expdfMine (the
-     sacred /api/call path) are untouched, and so is expectedDefaulters (Part 75's own, separate
-     fix). The identical gap sits in expdfCore's single-day and month readings too (used by
-     expdfReport's day/month views) -- flagged, not fixed here: closing it there means touching
-     buildRows_ or expdfCore directly, which the phone shares, a bigger and separate decision. */
-  const unassignedCells = new Map();
+     This reads ONLY that one day's own two files -- nothing about today, nothing about any other
+     day -- so it can never contradict Part 71's own scope (an all-time ghost is judged by a fact
+     only true today and reaches the week only through its TODAY iteration, below), and it costs
+     no new read (ini.rows and cur.rows for day d are the two decks already fetched). */
   /* THE GHOST IS TODAY'S OWN FACT, NOT THE WEEK'S -- found on review, before this shipped: the
      week's per-day loop below never merged ghost rows at all, so a customer gone from the deck
      entirely (ghostRowsFor_, above) was visible on the Exp.Def Report's day and month views but
@@ -426,25 +467,6 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
     const baseBy = {};
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
-    // The day-ghost pass (see the comment above) -- read before curRows gains the all-time
-    // ghost's own additions below, so a same-day comparison is never confused with that
-    // different mechanism's own rows.
-    const curRefsToday = new Set(cur.rows.map(r => K(r.ref)));
-    for (const r of ini.rows) {
-      const ref = K(r.ref);
-      if (curRefsToday.has(ref) || !teamAllowed(user, r.team)) continue;
-      const primary = r.disb_date ? isoWeekday(Date.parse(String(r.disb_date) + 'T00:00:00Z')) : 0;
-      const secondary = primary ? ((primary - 1 + 3) % 7) + 1 : 0;
-      const initial = num(r.arrears);
-      const dayCell = { initial, arrears: 0, recovered: initial, status: 'CLEARED' };
-      const c = unassignedCells.get(ref);
-      if (!c) unassignedCells.set(ref, { ref: r.ref, full_name: null, contact: null, team: r.team,
-        arrears: 0, initial, recovered: initial, status: 'CLEARED', disb_date: r.disb_date || null,
-        primary, secondary, primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
-        role: null, phase: null, cycle: null, leader: '(unassigned)',
-        days: 1, byDay: { [d]: dayCell } });
-      else { c.byDay[d] = dayCell; c.initial += initial; c.recovered += initial; c.days += 1; }
-    }
     let curRows = cur.rows;
     if (d === today && ghostTeams) {
       // GHOST_REPORT_BUDGET_MS, not 0: this is the portal's own report, never the sacred call
@@ -455,7 +477,8 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
       const ghosts = await ghostRowsFor_(db, ghostTeams, cur.rows.map(r => r.ref), ghostReportBudgetMs_());
       if (ghosts.length) curRows = cur.rows.concat(ghosts);
     }
-    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at);
+    // ini.rows IS the day's own initial deck and cur.rows the day's own current one (both read onDate d, both here): a whole pair.
+    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at, ini.rows);
     const list = periodRows_({ rows: built }, { daily: true, day: null, keepUndated: false });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
@@ -485,7 +508,7 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
   const lastAt = lastM ? Date.parse(lastM.date + 'T09:00:00Z') : (last === today ? nowMs : Date.parse(last + 'T09:00:00Z'));
   return { rows: [...cells.values()], dayIdx: isoWeekday(lastAt), weekday: WD_[isoWeekday(lastAt)], date: lastM ? lastM.date : null,
     hasBaseline: measured.length > 0, baseDate: first ? first.date : null, baseline: 'week', days,
-    unassignedCleared: [...unassignedCells.values()] };
+    unassignedCleared: [] };       // Part 78's board: empty by construction since Part 87 (see the comment above the loop)
 }
 
 /* =======================================================================================
@@ -636,7 +659,9 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
        many of today's rows carry no cycle day and are shown on every day until one is read. */
     diag: { deck: core.rows.length, assigned: assigned.length, mine: mine.length,
       dated: dated.length, onToday: mine.filter(r => r.onToday).length, undated: undated.length,
-      deckWeekday: core.weekday, deckDate: core.date, noCycleDates },
+      deckWeekday: core.weekday, deckDate: core.date, noCycleDates,
+      // Whether the day's initial and current decks are the same date: only then does a customer the current deck no longer names read as recovered (Part 87).
+      paired: !!core.paired },
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
     // Who is carrying what, so anyone looking at the list can see the split without leaving it.
     byLeader: Object.values(scopeRows.reduce((m, r) => {
@@ -904,13 +929,13 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
       unassigned: rows.filter(r => r.leader === '(unassigned)').length,
       offCode: rows.filter(r => r.offCode).length };
   });
-  // A week only (see the comment above expdfWeekCompute_): a customer on some day's own initial
-  // deck, absent that SAME day's own current deck, with no current-row data anywhere to say
-  // whose book they were in -- never guessed at. Kept out of every role section and the grand
-  // total above, which stay exactly what they were; reported here on its own so the recovery
-  // is counted somewhere rather than silently lost.
+  // Part 78's board, "Cleared, no leader on record for the day": a customer on some day's own initial deck and
+  // not on that same day's current one used to stand here, outside every book and every total, for want of a role.
+  // Since Part 87 the morning's own row gives them one, so they stand in their leader's book and the totals above
+  // and this is always empty (answered as null, which the page does not draw). Kept so an older page finds nothing, not an error.
   const unassignedCleared = core.unassignedCleared || [];
   return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
+    ...(core.paired === undefined ? {} : { paired: core.paired }),     // a day reading: were the day's two decks the same date (Part 87)
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     days: core.days || null,                                   // a week: which days were added, and which were not filed
     sections, totals: sumExpdf(all),

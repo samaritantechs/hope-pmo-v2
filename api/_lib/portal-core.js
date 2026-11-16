@@ -1056,9 +1056,22 @@ async function expectedDefaulters(db, user, _args, nowMs) {
       phase: a.phase, role: a.role, cycle: a.label,
       leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)', ...(over || {}) };
   };
+  /* A GHOST FOR A CUSTOMER WHO IS ON TODAY'S INITIAL DECK IS THAT DECK'S OWN ROW, NOT THE GHOST --
+     "how comes tou said 'should disappear.' yet we are fighting allover to say cleared people
+     shouldnt dissapear for verifications", the owner, 16 Nov 2026 (handbook Part 87). A ghost is
+     the customer's LAST-KNOWN row from some earlier day (its own older arrears, recovered 0);
+     when the day's initial deck names them and the day's current deck does not, the day's own
+     two files say what happened on THIS day -- nothing owed, the morning's arrears recovered --
+     which is what the loop below reads for a customer with no current row at all, and what the
+     Exp.Def Report and the phone now read (buildRows_, expdf.js: the same rule, one definition).
+     Only when the two decks are a whole pair, the same date: a current deck of an earlier date
+     has not been compared with this morning yet, and the ghost stands as it did. */
+  const paired = def.rows.length > 0 && iniSnap.rows.length > 0 && !!def.date && def.date === iniSnap.date;
+  const onMorning = paired ? new Set(iniSnap.rows.map(r => K(r.ref))) : null;
   const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
     .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
       || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
+    .filter(d => !(d._ghost && onMorning && onMorning.has(K(d.ref))))
     .map(d => rowOf(d));
   /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" --
      the owner, 14 Nov 2026 -- the same order buildRows_ (expdf.js) answers, read here too so
