@@ -7197,7 +7197,10 @@ owner's, for all of them together (`CHAT.md` section 8).
 reads. The phone's day reading is the sacred path, and `test/call.test.mjs` counts its reads with and without
 such customers: the same number. `test/speed.test.mjs` counts the five Exp.Def screens (report day and week,
 the card day and week, the tab) with and without twenty-five of them: the same round trips on each. No row
-budget moved. The week's initial deck is read for ten columns instead of four, the same rows.
+budget moved. The week's initial deck is read for ten columns instead of four, the same rows. **CPU, measured at the live
+book's size** (10,372 customers on the morning deck, 4,000 of them gone from the current deck, the whole book read): the
+phone's list takes about 15 ms more on the web server (43 ms against 28 ms, the test database being in memory); a leader's
+own book is a fortieth of that. Nothing on the database.
 
 **Checked.** Eight tests. `test/portal.test.mjs`: the old Part 78 test rewritten (the week keeps the customer
 in their leader's book, in every total, with a name and a number, and not a customer whose cycle day it is not);
@@ -7211,7 +7214,13 @@ EXP.DEF % with and without the migration's ghost function; the unpaired deck; an
 the portal side (eight caught; two are not changes of behaviour: the viewer's-teams filter on rows the database has
 already scoped, and an empty-deck check the date check makes redundant); a first set did not catch the morning row
 being placed by the CLEARED override instead of its own status, so a chronic customer on the morning deck was
-added and it did; three on the phone, two on the zero-read promise. `npm test`: 1,580 pass.
+added and it did; three on the phone, two on the zero-read promise. `npm test`: 1,580 pass. **A ninth test, added the same
+evening (#715), pins the dashboard card and the report to one reading:** for a day, in every state a customer can be in (owing,
+owing more, paid and still on the file, gone from the current deck with an older row in history, never on a current file, and a
+customer of another cycle day), the card (`RUN-ME-058`, in the database) and the report (`buildRows_`, in the server) give the
+same customers, the same arrears, the same recovery and the same percentage, for the day and for the week of that day; three
+deliberate breaks of the rule each turn it red by itself. They were two implementations of one rule and drifted for weeks over
+exactly the customers this Part closes.
 
 **Not done, said plainly.**
 
@@ -7225,6 +7234,14 @@ added and it did; three on the phone, two on the zero-read promise. `npm test`: 
   changed: their baselines are older mornings.
 - **The page's board for Part 78** (`xd_unassigned`, `public/app.html`) stays as dormant code and leaves with the
   next change to that page; no `BUILD` bump was made for it.
+- **Two customers the card and the report are still built to read differently.** The first enters default after the morning
+  deck (on the current deck, never on that day's initial deck): the card does not count them (Part 74: "the lists per day must
+  come from initial files"), while the report and the phone list them with their current arrears as their initial and
+  recovered 0, which enlarges the denominator of their Rec %. On the card's own test data one such customer reads 50.0% on the
+  card and 32.1% on the report, and the recovered figure is the same to the shilling. The second is the all-time ghost (Part
+  71), which only the report and the phone carry. Part 74 left it to the owner whether "the lists per day come from initial
+  files" should extend to the report and the phone; his words of 13 to 16 Nov are about the other side (a customer on the
+  initial deck never lost) and say nothing of this one. Not changed (`CHAT.md` section 8).
 - **A customer who changed team between the two decks**, read by someone who holds the first team and not the second,
   counts as recovered for the first team's leader (the second team's rows are not in that reader's read). Rare; not handled.
 - Nothing was run on the live book (a chat cannot), and there is no SQL.
