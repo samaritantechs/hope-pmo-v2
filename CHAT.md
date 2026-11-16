@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 89**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 90**.
 
 ---
 
@@ -62,6 +62,7 @@ Given since, and written nowhere else:
 | 16 Nov 2026 | "how comes tou said "should disappear." yet we are fighting allover to say cleared people shouldnt dissapear for verifications" · "we cant re-upload now - i hope the system autoupdates whats right brother" | **A customer on a day's initial file does not disappear from that day's lists, because they cleared or because the current file no longer names them.** Said after an answer used the words "should disappear" about such a customer; the owner had ordered the opposite on 13 Nov ("they should stay there as of recovery so as to know recovery amount from difference of initial to current per each day by team or staff") and 15 Nov ("i expect that customer in initial never to get lost even if cleared its amounts and statuses that change"), section 4, #693, #703, #709. A screen that drops such a customer, or lists them as recovered 0, is the gap to close, not a design to defend. **And the owner cannot always upload a file again:** when the fault is in what an upload stored, the cure is one that works on what is stored (RUN-ME-060, section 4, #713), never "upload it again". |
 | 16 Nov 2026 | "Should the report and the phone also leave out customers who fall into default after the morning file, so the dashboard card, the report and the phone all count the same people?" — "YES" | **A day's list is its initial deck's customers, on the dashboard card, the report and the phone alike.** A customer in default on a day's current file who was never on its initial file entered default after the morning: they are nobody's expected defaulter of that day and join the next day's list (section 4, #716). Only when the day's two files are a pair (the same date). **Not asked, so not changed:** the Expected Defaulters tab (the weekly-cycle book of every defaulter, not a day's list) and the all-time ghost (13 Nov, Part 71), which is the one thing the three still differ on (section 8). |
 | 16 Nov 2026 | "just study the dates if the position of month starts then day or vice versa trim the same for the rest not to stay contradicted.. since that I think affects multiple lists in the system so pass through how you cumpute uploaded dates bro" | **One file, one date order: decided by what the file itself shows, applied to every date in it, by every upload; nothing between the file and the server may read a date by a rule of its own.** `inferDayFirst` is the one rule (a value with a part over twelve decides itself; the file's unambiguous values decide the rest; no evidence at all reads day-first, as it always did). A new importer reads its dates through it (`test/importers.test.mjs` fails on a date read with no order), and the Upload page passes a CSV on as the text it holds (handbook Part 89; section 4, #717). |
+| 16 Nov 2026 | "They might be in different orders per file so check starting with the defaulters one I sent" | **A file's order is read off that file, and a file the owner sends is checked before anything is said about it.** Never take one file's order for another's, and never say a file is day-first or month-first from memory: run `tools/file-date-audit.mjs` on it (the evidence per date column, and a witness that is not the order rule itself: the loan system's 91-and-14-days pattern for a deck, the file's own Filters window for an approved report). Checked that evening: the four files the owner had sent are all month-first (or real dates); what differed was the route the files took to the book (handbook Part 90; section 4, #718). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -84,6 +85,32 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#718 — the files are not in different orders; the routes they took are (handbook Part 90).** "They might be
+  in different orders per file so check starting with the defaulters one I sent" — the owner, 16 Nov, with the
+  probe for 2209966593 pasted under it: the loan's disbursement date is the swapped ninth of July on every current
+  deck and on nine of fourteen initial decks, and the right seventh of September on the other five. **Checked, file
+  by file, with counts only:** the 16 Nov deck (10,372 loans) is month-first in all four date columns (0 day-first-only
+  values against 6,107 month-first-only in DISB DATE), and 10,372 of 10,372 rows fit the loan system's own pattern as
+  the importer reads it now (2,076 read with no order); the 11 Nov deck (202) the same (202 of 202; 42 with no order);
+  the Approved (Processed) report is month-first (all 12 dates inside the file's own Filters window read month-first,
+  none read day-first); the leave form holds real dates. The 16 Nov deck cut into the page's slices decides month-first
+  in every slice (869 to 4,765 unambiguous values each). **The mixture in the book is the route, reproduced on the real
+  file:** an Excel file as the loan system wrote it, read by the importer of that day, stores 1,256 of 10,372 customers
+  right (3,883 disbursement dates wrong); the same sheet saved as a CSV and chosen on the page as it was stores all
+  10,372 right by luck (the page's reader read the text month-first) and **spoils D.S on all of them** (`7-12` became
+  `7/12/01`), so the five initial decks that read right were most likely CSV or saved copies. A model that fits, not
+  seen. **The loan's own answer:** its 16 Nov rows still say Thursday and Sunday, so `db/RUN-ME-060` has not been run
+  for 16 Nov; nothing else is wrong with it. **New:** `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (one line
+  per upload of the last seven days: rows, fit as stored, fit only if swapped, neither, missing, and the shapes of D.S;
+  the real file stored the old way must read 2,076 and 8,296; 207,439 rows in 0.43 s; `tools/db-checks/
+  deck-upload-audit.mjs` compares every line with a count made in JavaScript and shows the book is unchanged) and
+  `tools/file-date-audit.mjs` (the per-file check, needs SheetJS 0.18.5: the top of the file says how). **Cost:** none
+  to the system: no code that runs for a user changed, no `BUILD` bump, nothing on `/api/upload` or `/api/call`.
+  **Checked:** 9 tests of the query and the tool; sixteen deliberate breaks, each caught; `npm test`: 1,602 pass.
+  **Not done, said plainly:** no real file of Expected, Followup, Received payments, Comments, Complaints,
+  Restructures, Notices, Deductions, Staff, Advances or the call-app sheets was available, so none was checked against a
+  real file (the Followup sheet pools loan-system columns with staff-typed ones: the one case pooling could misread, not
+  seen, not changed); a spoilt D.S is not repaired (the call app shows it as `7/12`); nothing run on the live book.
 - **#717 — every upload reads its dates by its own file's order, and the browser reads none of its own
   (handbook Part 89).** "I can't see 2209966593 on cleared yet., just study the dates if the position of
   month starts then day or vice versa trim the same for the rest not to stay contradicted.. since that I
@@ -1733,6 +1760,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   about a quarter of an hour); when it is not, say that it was not read.
 - **A zone has the name Teams & Staff files it under.** A GMO's word for a zone and the filed
   one can differ. Scripts and screens read the teams table; never type a zone from a message.
+- **A file the owner sends is checked with `tools/file-date-audit.mjs` before anything is said about it** (handbook Part 90).
+  Its date columns, its order and a witness that is not the order rule: the loan system's own pattern for a deck, the Filters
+  window for an approved report. The route a file took (Excel text, a CSV, real dates) changes what is stored whatever the
+  file's order is: read what the book holds with `db/RUN-ME-061` before blaming the file. Ask the owner for ONE real file of
+  each upload kind whose order has not been seen (section 8); a file's own words about itself are the best evidence there is.
 - **Ask for the exports before writing a dig.** The loan system exports Approved (Processed) and
   Defaulters for one team and any dates, with balances. On 11 Nov an SQL dig that took 70 ms on a
   test book of the live book's size ended in "upstream timeout" in the SQL editor; the owner's
@@ -1778,12 +1810,17 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   (Monday's list grows from about 3,842 to 4,148 on the 16 Nov file) and about 3,500 expired or
   chronic customers move to their real recycling leader or week: the leaders' lists change, and
   that is the correction. If anything looks wrong, the undo is at the foot of the file.
-- **The owner: run the read-only probe for 2209966593** (pasted in full in the chat, 16 Nov; it changes
-  nothing: `db/TEMPLATE-where-is-this-customer-read-only.sql` filled in for the loan and the day
-  `2026-11-16`) and say which answer reads wrong. **Q2**: its stored disbursement date, still the ninth of
-  July means RUN-ME-060 has not reached that day. **Q3**: "a current file for that day is NOT filed yet"
-  means nothing can be marked cleared until it is. **Q1**: not on the initial file that counts. A chat cannot
-  see the live book, so which of the three it is was not known (section 4, #717).
+- **The owner: 2209966593 is answered (the probe came back 16 Nov): its stored disbursement date on 16 Nov is still
+  the swapped ninth of July, so `db/RUN-ME-060` has not been run for that day.** Run it (first bullet; away from an
+  upload); the loan then falls on Monday and, absent from Monday's current file, shows CLEARED, recovered in full (the
+  day's current file is filed). Then run `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (pasted in full in the
+  chat, 16 Nov; it changes nothing) and say what it shows: for the 16 Nov initial upload it must read about 10,372 rows,
+  **2,076 fit as stored and 8,296 fit only if swapped**; an upload with every D.S date-like (`7/12/01`) was a CSV on the
+  old page (section 4, #718).
+- **The owner: send ONE real file of each of these, so each is checked against a real file** (a few rows are enough; no
+  need to hide anything, none of it is written down): Expected (today or initial), Defaulters Followup, Received payments,
+  Comments, Complaints, Restructures, Demand notices, PMO deductions, Staff registry, Advance requests. The Defaulters (two)
+  and Approved (Processed) files, and the leave form, are checked.
 - **The owner, once #714 has deployed:** open one day on the Exp.Def Report and its leaders'
   cards. The rows marked CLEARED whose recovered equals their initial are the customers the
   day's current file did not name (section 4, #714); the report's recovered totals and the phone's
