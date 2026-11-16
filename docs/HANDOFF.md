@@ -7026,6 +7026,86 @@ again. The Current file is the one that puts the Follow-up list's Disb date and 
 refreshes the register); both put Expected Defaulters right. A Followup or an Expected sheet needs
 uploading again only if somebody is reading what it stored.
 
+## Part 86 — The stored swapped dates, put right in place with the loan system's own pattern (RUN-ME-060)
+
+> "we cant re-upload now - i hope the system autoupdates whats right brother" — the owner, 16 Nov
+> 2026, the evening Parts 84 and 85 were merged
+
+**What happens without it.** After Parts 84 and 85 every file uploaded is read the right way round;
+the rows stored before keep their swapped dates. The evening's usual Current upload replaces the day's
+current deck (the newest upload of a team and a day wins) and refreshes the Follow-up register for
+everyone on it, and every file from the next morning is right. What nobody uploads again is **that
+morning's Initial deck** (04:51 on 16 Nov), which decides the cycle day and the recycling leader of a
+customer who left the current file (Parts 75 and 82), and **the past days**.
+
+**What was found, on the real file of 16 Nov (10,372 loans, disbursed April 2024 to November 2026).**
+
+- A loan expires **91 days** after it was disbursed and turns chronic **14 days** after it expires:
+  10,372 of 10,372, in every status.
+- **DAYS ELAPSED**, a plain number the date bug never touched, is the days from the disbursement date
+  to the deck's day less a small offset: **exactly 2 for 10,372 of 10,372** (8,888 Chronic, 1,138
+  Partial Defaulter, 346 Expired). On the history of the one loan the owner asked about the offset is 1
+  or 2 across fourteen decks (an Initial file is one day older than a Current one). So it names the real
+  disbursement date to within a few days, while a swapped date is **at least 27 days** away from it.
+- The rule that follows (`db/RUN-ME-060-repair-swapped-deck-dates.sql`): a row is changed **only when
+  its three dates, as stored, do not fit all of that, and exactly one reading of them fits all of it**
+  (each date as stored, or with its day and month exchanged; the disbursement date 0 to 3 days from what
+  DAYS ELAPSED says). Anything else is left exactly as it is.
+- Run over what the old importer stored for that real file: 8,296 loans had a wrong date, **all 8,296
+  were put right to what the file says, none was changed wrongly**, and the 2,076 whose dates were
+  already right were left alone.
+- **The first form of the rule, with the pattern alone (91 and 14), was wrong, and the test found it.**
+  A loan whose expiry was moved by exactly the number of days a day-and-month swap moves its
+  disbursement date (30 for March the fourth and April the third) fits the pattern under a swapped
+  disbursement date: 150 rows of a first test book were changed to something that is not the truth.
+  Nothing like such a loan exists among the 10,372 real ones, but that is not a reason to leave it
+  possible: DAYS ELAPSED is the second, independent witness that rejects it.
+
+**What it is.** A script run by hand, like every migration: it creates `defaulter_date_repair_log` (row
+level security on; nothing reads it) and changes DISB DATE, EXPIRE DATE and CHRONIC DATE of defaulter
+deck rows, **for the days its first lines name (today, to begin with), at most 20,000 rows a run**. It
+is safe to run again (a repaired row fits and is not touched twice) and it says how many rows still wait
+(`still_to_do_run_again`). Each row changed is logged with its old and new dates; the undo is at the
+bottom of the file. It is cut off after 50 seconds and rolls back whole, and it gives up after 3 seconds
+of waiting for a lock instead of holding up an upload's housekeeping.
+
+**What it cost.** It reads the days named through the `snapshot_date` index (`EXPLAIN`: a bitmap scan of
+exactly the day's rows) and writes only the rows it changes: about 15,000 a day on the shape of the 16
+Nov deck. On a test book of 297,015 deck rows with the live table's two trigram indexes, **14,935 rows
+were changed in 1.4 seconds**, and the whole fifteen days in six runs of up to 30,000 rows of one to two
+seconds each. Nothing on `/api/upload` or `/api/call`; no code reads the log table. A busier machine
+and a colder cache are slower: the limit and the cut-off are there for that, and a run that is cut off
+changes nothing.
+
+**Checked.** `tools/db-checks/deck-date-repair.mjs`, a kept check in the repository's way (run by hand
+on a scratch PostgreSQL, everything rolled back): 3,000 loans and 85,905 deck rows over fifteen days
+and thirty uploads (some whole uploads right, as the owner's book shows), with the loans meant to fool
+the repair: expiries moved by 29 to 31 and 59 to 61 days onto a swapped date, by 17 and 45 days,
+DAYS ELAPSED that says nothing true, a loan with no chronic date, one with no DAYS ELAPSED. It runs the
+file itself. **47,120 rows repaired; none changed to anything but the truth; no right date made wrong;
+a run after the last changed 0; forty runs of 3,000 rows ended where one big run did; the file's own
+undo put back every row (the book's md5 is the same).** Then it breaks the file on purpose: without
+the DAYS ELAPSED witness it changes **1,770** rows to something that is not the truth, and when it
+does not, it refuses to pass. `test/deck-date-repair.test.mjs` pins the safety lines of the file in
+`npm test`.
+
+**What this does NOT do.**
+
+- **LAST TRANS DATE** was swapped the same way and has no pattern to check it against: not repaired
+  (tonight's Current upload and every file from now on carry it right, and refresh the Follow-up list).
+- Rows with a missing date or no DAYS ELAPSED, loans whose expiry was moved, and any row where no
+  reading or two readings fit, stay as they are.
+- The Expected sheet's dates (`repayment_snapshots`, read by no screen) and the Follow-up register are
+  not touched here: the register is refreshed from every Current deck.
+- **Which days are repaired is the owner's:** today's run puts the morning's Initial deck right. To put
+  the week before right (the Exp.Def Report of a past week, the dashboard card's arrows against last
+  week), the first date of the query is changed and it is run again until nothing waits.
+- Nobody has run it against the live book: a chat cannot. The numbers above are the real file's, on a
+  test book.
+
+**What the owner has to do.** Run the file (pasted in the chat) as a new query, then read its one row of
+numbers. Run it away from an upload (an evening upload deletes the rows of the files it replaces).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
