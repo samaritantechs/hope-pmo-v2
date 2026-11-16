@@ -198,6 +198,58 @@ test('an Expected sheet carrying N.C stores it, and a database without the colum
    produces -- it is the one, unique shape of the Leo/Kesho "other type" read. Before the fix
    this ran on every slice of a file that had to be sent as several requests; the guard below
    sends the SAME file as three slices and fails if that query shows up more than once. */
+/* =====================================================================================
+   A DEFAULTERS DECK'S DATES ARE READ THE WAY ROUND THE FILE WRITES THEM -- THROUGH THE REAL HANDLER.
+   =====================================================================================
+     "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters?" -- the owner
+
+   The loan system writes every date month-first (`9/7/2026`, a seventh of September), and the
+   importer read each one both of whose numbers were twelve or under as day-first: 3,883 of the
+   10,372 disbursement dates in the real file of 16 Nov were stored swapped, so a third of the
+   customers sat on the wrong two days of the week. importers.test.mjs pins the reading; this
+   pins that the ROUTE hands the decision in, stores what the file means, and says which way it
+   read -- and that a deck costs the database nothing more for it. */
+test('a defaulters deck written month-first is stored as the file means it, and the answer says so', async () => {
+  const header = ['REF#', 'FULLNAME', 'DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE', 'STATUS', 'D.S', 'D.C', 'DAYS ELAPSED', 'ARREAS', 'TEAM'];
+  const rows = [header,
+    ['2200000001', 'A MADE UP', '9/7/2026', '12/7/2026', '12/21/2026', '2026-11-30', '11/11/2026', 'Partial Defaulter', '8-9', 1, 68, 31001, 'TEAM1'],
+    ['2200000002', 'B MADE UP', '5/28/2026', '8/27/2026', '9/10/2026', 'No due date', '11/10/2026', 'Defaulter', '3-6', 3, 45, 9000, 'TEAM1']];
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, { code: 'A', type: 'defaulters-initial', meta: { date: '2026-11-16' }, rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.defaulterDateOrder, 'month/day, as the file itself showed');
+  const stored = c.dump('defaulter_snapshots');
+  const a = stored.find(r => r.ref === '2200000001');
+  assert.equal(a.disb_date, '2026-09-07', 'the seventh of September, a Monday -- not the ninth of July');
+  assert.equal(a.expire_date, '2026-12-07');
+  assert.equal(a.chronic_date, '2026-12-21');
+  assert.equal(a.weekday, 'MON', '16 Nov 2026 is a Monday');
+  assert.ok(!/DAY\/MONTH because nothing/.test(res.body.message || ''), 'a deck that decided says nothing alarming');
+});
+
+test('a defaulters deck that gives no clue is read day-first as it always was, and the answer says that it guessed', async () => {
+  const header = ['REF#', 'FULLNAME', 'DISB DATE', 'EXPIRE DATE', 'STATUS', 'ARREAS', 'TEAM'];
+  const rows = [header, ['2200000001', 'A MADE UP', '9/7/2026', '12/7/2026', 'Defaulter', 5000, 'TEAM1']];
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, { code: 'A', type: 'defaulters-current', meta: { date: '2026-11-16' }, rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.match(res.body.defaulterDateOrder, /^assumed day\/month/);
+  assert.match(res.body.message, /read as DAY\/MONTH because nothing in it said which way round/);
+  assert.equal(c.dump('defaulter_snapshots')[0].disb_date, '2026-07-09', 'the old reading, unchanged where nothing says otherwise');
+});
+
+test('reading the date order adds no trip to a defaulters upload', async () => {
+  const header = ['REF#', 'FULLNAME', 'DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'STATUS', 'ARREAS', 'TEAM'];
+  const body = i => ({ code: 'A', type: 'defaulters-initial', meta: { date: '2026-11-16' },
+    rows: [header, ...Array.from({ length: 40 }, (_, k) => ['22' + String(k + i).padStart(8, '0'), 'C' + k, '9/7/2026', '12/7/2026', '12/21/2026', 'Defaulter', 1000 + k, 'TEAM1'])] });
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, body(0));
+  assert.equal(res.body.ok, true, res.body.error);
+  const { trips } = c.stat();
+  // Arithmetic over rows already in hand: the same trips a deck cost before it. Measured at 20 on this fixture, with headroom.
+  assert.ok(trips <= 24, 'a 40-row defaulters deck cost ' + trips + ' round trips (budget 24)');
+});
+
 test('sameAsToday runs on the LAST slice only, not on every slice of a big file', async () => {
   const tables = baseTables();
   for (let i = 0; i < 900; i++) {

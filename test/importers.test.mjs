@@ -1003,6 +1003,100 @@ test('the defaulter deck: CUSTOMER NO is never mistaken for the reference', asyn
   assert.equal(r.ref, '2-209-72865');
 });
 
+/* =====================================================================================
+   THE DATES OF A DEFAULTER DECK ARE READ THE WAY ROUND THE FILE WRITES THEM.
+   =====================================================================================
+     "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters?" -- the owner,
+     16 Nov 2026
+
+   It was on the file, and a Monday customer: the loan system wrote its disbursement date as
+   `9/7/2026` beside an expiry of `12/7/2026` and a chronic date of `12/21/2026` -- month first.
+   The importer read it as the ninth of July (a Thursday), so the portal put the customer on the
+   wrong two days of the week. Over that real file: 3,883 of 10,372 disbursement dates stored with
+   day and month swapped, 3,683 loans on the wrong cycle days, 3,461 expired or chronic customers
+   handed to the wrong recycling leader or week. These rows are shaped as that file carries them
+   (every date a TEXT cell, M/D/YYYY); the people are made up. */
+const REAL_HEADER = ['REF#', 'DOCKET#', 'FULLNAME', 'CONTACT#', 'GUARANTOR NAME', 'GUARANTOR CONTACT', 'DISB DATE', 'EXPIRE DATE',
+  'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE', 'STATUS', 'D.S', 'D.C', 'DAYS ELAPSED', 'INITIAL INST', 'OTHER INST', 'PAYMENT EXP.',
+  'T.PAYMENT', 'ARREAS', 'BALANCE', 'BRANCH', 'TEAM', 'ZONE', 'NEAREST LANDMARK'];
+const deckRow = (ref, disb, expire, chronic, due, last) => [ref, '2-200-00000', 'A MADE UP', '0700000000', 'G MADE UP', '0700000001', disb, expire, chronic, due, last,
+  'Partial Defaulter', '8-9', 1, 68, 45337, 45333, 544000, 377000, 31001, 167000, 'GOBA-TEGETA', 'TEGETA', 'BUNJU A', ''];
+const DECK_META = { snapshotType: 'initial', weekday: 'MON', snapshotDate: '2026-11-16' };
+const isoWd = d => { const w = new Date(d + 'T00:00:00Z').getUTCDay(); return w === 0 ? 7 : w; };
+
+test('a deck the loan system wrote month-first is read month-first: 9/7/2026 is the seventh of September, a Monday', async () => {
+  const { importDefaulters, defaultersDateOrder } = await import('../api/_lib/importers.js');
+  const rows = [REAL_HEADER,
+    deckRow('2200000001', '9/7/2026', '12/7/2026', '12/21/2026', '2026-11-30', '11/11/2026'),      // every date here could be read either way, but the chronic date and the file around it cannot
+    deckRow('2200000002', '5/28/2026', '8/27/2026', '9/10/2026', 'No due date', '11/10/2026')];     // a twenty-eighth: only month-first
+  assert.equal(defaultersDateOrder(rows).dayFirst, false, 'the file shows it writes month-first');
+  const [a, b] = importDefaulters(rows, DECK_META);
+  assert.equal(a.disb_date, '2026-09-07', 'not the ninth of July');
+  assert.equal(isoWd(a.disb_date), 1, 'a Monday: Day 1 Monday, Day 2 Thursday -- and 16 Nov 2026 is a Monday');
+  assert.equal(a.expire_date, '2026-12-07', 'three months after the disbursement, as a loan of this kind expires');
+  assert.equal(a.chronic_date, '2026-12-21');
+  assert.equal(a.due_date, '2026-11-30', 'an ISO date is never ambiguous and is left alone');
+  assert.equal(a.last_trans_date, '2026-11-11');
+  assert.deepEqual([b.disb_date, b.expire_date, b.chronic_date, b.due_date, b.last_trans_date],
+    ['2026-05-28', '2026-08-27', '2026-09-10', null, '2026-11-10'], '"No due date" is no date');
+});
+
+test('a deck written day-first is read day-first, by the same rule', async () => {
+  const { importDefaulters, defaultersDateOrder } = await import('../api/_lib/importers.js');
+  const rows = [REAL_HEADER,
+    deckRow('2200000001', '07/09/2026', '07/12/2026', '21/12/2026', '2026-11-30', '11/11/2026'),   // 21/12 can only be a twenty-first
+    deckRow('2200000002', '28/05/2026', '27/08/2026', '10/09/2026', 'No due date', '10/11/2026')];
+  assert.equal(defaultersDateOrder(rows).dayFirst, true);
+  const [a, b] = importDefaulters(rows, DECK_META);
+  assert.equal(a.disb_date, '2026-09-07');
+  assert.equal(a.expire_date, '2026-12-07');
+  assert.equal(a.last_trans_date, '2026-11-11', '11/11 is the eleventh of November whichever way round it is read');
+  assert.equal(b.last_trans_date, '2026-11-10', '10/11 day-first is the tenth of November, not the eleventh of October');
+});
+
+test('the order is read from ALL the deck\'s date columns together: one clear value anywhere decides every date', async () => {
+  const { importDefaulters, defaultersDateOrder } = await import('../api/_lib/importers.js');
+  // No disbursement date in this deck can only be read one way; one chronic date can.
+  const rows = [REAL_HEADER,
+    deckRow('2200000001', '9/7/2026', '12/7/2026', '3/4/2026', '2026-11-30', '11/9/2026'),
+    deckRow('2200000002', '1/2/2026', '3/4/2026', '12/21/2026', 'No due date', '8/6/2026')];
+  assert.equal(defaultersDateOrder(rows).dayFirst, false);
+  const [a, b] = importDefaulters(rows, DECK_META);
+  assert.equal(a.disb_date, '2026-09-07');
+  assert.equal(b.disb_date, '2026-01-02', 'January the second, not the first of February');
+});
+
+test('a deck with no clue at all is read exactly as it always was (day-first), and says so', async () => {
+  const { importDefaulters, defaultersDateOrder } = await import('../api/_lib/importers.js');
+  const rows = [REAL_HEADER, deckRow('2200000001', '9/7/2026', '12/7/2026', '3/4/2026', '2026-11-30', '11/9/2026')];
+  assert.equal(defaultersDateOrder(rows).dayFirst, null, 'nothing in it can only be read one way');
+  const [a] = importDefaulters(rows, DECK_META);
+  assert.equal(a.disb_date, '2026-07-09', 'the old behaviour, unchanged where nothing says otherwise');
+});
+
+test('a deck is scanned for its date order ONCE when the caller already knows it', async () => {
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const rows = [REAL_HEADER, deckRow('2200000001', '9/7/2026', '12/7/2026', '12/21/2026', '2026-11-30', '11/11/2026')];
+  // The upload route asks once, for its answer, and hands the decision in: the importer obeys it.
+  assert.equal(importDefaulters(rows, { ...DECK_META, dateOrder: { dayFirst: true } })[0].disb_date, '2026-07-09');
+  assert.equal(importDefaulters(rows, { ...DECK_META, dateOrder: { dayFirst: false } })[0].disb_date, '2026-09-07');
+});
+
+test('reading the date order of a whole company deck costs next to nothing', async () => {
+  /* The real 16 Nov deck is 10,372 loans and the whole importer took about 100 ms for it, of which the
+     order was about 16. The upload then spends seconds writing. A loose ceiling: it is here to stop the
+     order ever being asked per ROW (which would be a quadratic read), not to time the machine. */
+  const { importDefaulters } = await import('../api/_lib/importers.js');
+  const rows = [REAL_HEADER];
+  for (let i = 0; i < 10000; i++) rows.push(deckRow('22' + String(i).padStart(8, '0'), ((i % 12) + 1) + '/' + ((i % 28) + 1) + '/2026', '12/7/2026', '12/21/2026', 'No due date', '11/11/2026'));
+  const t0 = Date.now();
+  const out = importDefaulters(rows, DECK_META);
+  const ms = Date.now() - t0;
+  assert.equal(out.length, 10000);
+  assert.equal(out[1].disb_date, '2026-02-02', 'month-first: the second of February');
+  assert.ok(ms < 3000, 'a 10,000-loan deck took ' + ms + ' ms to read');
+});
+
 test('the defaulter deck: a file with no reference column at all yields nothing, loudly countable', async () => {
   const { importDefaulters } = await import('../api/_lib/importers.js');
   const head = DEF_HEADER.slice();

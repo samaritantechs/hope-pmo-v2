@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 83**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 84**.
 
 ---
 
@@ -81,6 +81,51 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#711 — the defaulters upload read the loan system's month-first dates day-first (handbook
+  Part 84).** "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters? is it
+  still in the expected defaulter reports for the recovered amounts?" — the owner, 16 Nov, who
+  ran a read-only query and then sent the file itself. **It was on the file, and it is a Monday
+  customer** (disbursed `9/7/2026`, month-first, so Monday 7 September: Monday and Thursday);
+  **the book held 9 July** (Thursday and Sunday), so it was never on a Monday list. The loan
+  system writes every date M/D/YYYY as text; `importDefaulters` read `dateOrNull(value)` with no
+  order, so every date with both numbers 12 or under was stored with day and month swapped. **The
+  scale, on the real 10,372-loan file:** 37% of every date column; 3,683 loans on the wrong cycle
+  days; Monday's list missing 1,204 real Monday customers and carrying 898 that are not;
+  **3,461 of 9,234 expired or chronic customers handed to the wrong recycling leader or week**
+  (their owner is read off weeks since the expiry or chronic date). This is a large part of why
+  leaders' lists never matched what their GMO or OPM expected. **The rule already existed**
+  ("Day/month order is read off the file, not assumed": `inferDayFirst`, used by the comment,
+  payment, notice, application and loan importers) and the defaulters importer, the most
+  important one, never got it. Now `defaultersDateOrder` pools the evidence of the deck's five
+  date columns and every date is read that way; only a deck that PROVES month-first reads
+  differently (a deck with no clue, or one that proves day-first, is read as before); the upload
+  answers `defaulterDateOrder`, and says so in its message only when it had to guess. **Cost:**
+  CPU only, about 16 ms on the real deck; no read, no write, same 20 trips on the test
+  database; `/api/call` untouched; `BUILD`/`CALL_BUILD` unchanged. **Checked:** the real file
+  through the real importer before and after (3,883 swapped dates → 0; wrong cycle days 3,683 →
+  0; rotation changes 3,461 → 0; Monday 3,842 against 4,148 → 4,148 against 4,148); six
+  importer tests and three through the real upload handler, three of them failing with the
+  reading taken out; `npm test` 1,557 pass. **What the owner has to do:** rows already in the
+  book keep their swapped dates (only the file knows which), so **upload today's Initial AND
+  Current files again after the deploy** (a newer upload replaces the older whole), and earlier
+  days only if the week's figures must be exact; when they are re-read about a third of the
+  customers move to their real days and the leaders' lists change. **Not done, said plainly:**
+  (1) after the re-read, the loan of the question is a Monday customer absent from the current
+  file, and **the screens still disagree about such a customer** — the dashboard card counts it
+  recovered in full; the Expected Defaulters tab does when it never was on a current file; the
+  Exp.Def Report and the phone list it CLEARED with recovered 0 (and its last arrears) when it
+  was on an earlier current file, and not at all when it never was (the week keeps it on a
+  separate board outside the totals): found while answering, a design change that moves the
+  report's recovered totals and the phone's EXP.DEF %, so the owner's to say (section 8); (2)
+  `importExpected` and `importFollowup` read dates the old way (nothing reads what they store);
+  (3) the order is read per request, so a last slice of a few loans may carry no evidence and
+  reads day-first (and says so). **A reusable read-only probe is kept:**
+  `db/TEMPLATE-where-is-this-customer-read-only.sql` (a loan number and a day: on which files,
+  on whose list, and every disbursement date it has carried). A first version of it flagged the
+  rows of the upload that counts as "superseded", because it compared single rows and an upload
+  is written in chunks with different timestamps; the owner ran it on the real book and the
+  answer was wrong in that column (and only that one). It decides the winner as the portal does,
+  by the newest row's batch, and was re-tested on an upload written in two chunks.
 - **#710 — a leader's own list, and the teams their own code cannot see (handbook Part 83).**
   "gmo or opm is seeing expected defaulters of gmo or manager where that manager in their code
   ain't seeing them, they getting just a little like two yet a Manager's gmo sees the manager
@@ -1509,6 +1554,19 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner — first, after #711 deploys:** upload **today's Initial and Current defaulters files
+  again** (16 Nov; both, Current included, because a day's cycle days are read off the current
+  file's dates first). Rows already in the book keep their swapped dates; only the file knows
+  which. Tomorrow's files are read right by themselves. Earlier days of this week only if the
+  week's Expected Defaulters figures must be exact. When today's files are re-read, about a third
+  of the customers move to their real days (Monday's list grows from about 3,842 to 4,148 on
+  the 16 Nov file) and about 3,500 expired or chronic customers move to their real recycling
+  leader or week: the leaders' lists change, and that is the correction. And the owner's word on
+  what comes next (section 4, #711, "Not done"): a customer that was on a day's initial file and
+  is absent from its current file is counted recovered in full by the dashboard card and as
+  recovered 0 (or not listed) by the Exp.Def Report and the phone. Closing it credits such a
+  customer to the leader the rotation names, in the day, week and phone lists (zero reads; it
+  raises the report's recovered totals and the phone's EXP.DEF %, to the card's own figure).
 - **The owner, with RUN-ME-058**: run `db/RUN-ME-059-leaders-codes-vs-sheet-read-only.sql` (pasted in
   full in the chat, 16 Nov; it changes nothing) and say, person by person, which list is right —
   the code or the sheet (section 4, #710). The managers it lists under "1 CODE LACKS TEAMS" are the

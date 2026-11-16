@@ -6840,6 +6840,118 @@ list is whole). `npm test`: 1,548 pass.
 - **Whether this is what the live book has** could not be seen from here — a chat cannot run SQL.
   RUN-ME-059 answers it in one run.
 
+## Part 84 — The importer read the loan system's month-first dates day-first: a third of the customers were on the wrong days
+
+> "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters? is it still in
+> the expected defaulter reports for the recovered amounts?" — the owner, 16 Nov 2026, who then
+> sent the file that was uploaded that morning (`in_Defaulters_2026-11-16_4.xlsx`)
+
+**The answer to the owner's question, from the file and the database.** The loan **was on
+today's initial file** (a row of the Data sheet: Partial Defaulter, D.S 8-9, 68 days elapsed,
+arrears 31,001, balance 167,000). It is **a Monday customer**: the file writes its disbursement
+date as `9/7/2026`, and the file writes every date month-first (its expiry is `12/7/2026`, its
+chronic date `12/21/2026`, and the same sheet carries `5/28/2026` and `11/24/2026`), so that is
+**Monday 7 September 2026**: Day 1 Monday, Day 2 Thursday. The database held it as **9 July**
+(a Thursday: Day 1 Thursday, Day 2 Sunday), so the portal never put it on a Monday list. And it
+is on no current file of 16 Nov, so no Expected Defaulters figure carried its 31,001 that day.
+
+**What was wrong.** `importDefaulters` read every date with `dateOrNull(value)` and no order.
+Where a date can only be read one way (`5/28/2026`: a twenty-eighth) the parser is right
+whatever it assumes. Where both numbers are twelve or under it falls back to day-first, "the
+sheets' own d/m" — and the loan system's export is not that. So `9/7/2026` became the ninth of
+July. Every one of those stored dates was a perfectly valid date, which is why nothing looked
+wrong for three months: the Mon–Sun pills added up, the lists were full, and the tests asserted
+nothing about a date (the importer's own fixture row carries `7/9/2026` and never checked what
+it became).
+
+**Measured with the repository's own importer over the real file (10,372 loans, 85 teams):**
+
+| date column | ambiguous (both parts 12 or under, not equal) | stored swapped |
+|---|---|---|
+| DISB DATE | 3,883 (37.4%) | 3,883 |
+| EXPIRE DATE | 3,974 (38.3%) | 3,974 |
+| CHRONIC DATE | 3,694 (35.6%) | 3,694 |
+| LAST TRANS DATE | 3,791 (36.7%) | 3,791 |
+
+- **Cycle days:** 3,683 of the 10,372 loans (35.5%) sat on the wrong two days of the week.
+  Customers per weekday (Mon..Sun) read by the portal 3,842 / 2,418 / 2,210 / 3,900 / 3,778 /
+  2,141 / 2,455; as the file means them 4,148 / 2,082 / 2,183 / 4,162 / 3,970 / 2,240 / 1,959.
+  **Monday's list:** 1,204 real Monday customers were left off it, and 898 customers who are not
+  Monday's were on it.
+- **The recycling rotation:** an expired or chronic customer's owner is read off weeks since
+  `expire_date` or `chronic_date` (`assignFor`). Of 9,234 such customers, **3,461 were handed to
+  a different recycling leader or a different week** by the swap (3,221 chronic, 240 expired).
+  This is a large part of why a leader's list and what a GMO or OPM expected never matched.
+- The same loan, in the live book, carried **both** dates: five of the fifteen initial rows
+  between 3 and 16 Nov stored 7 September and the rest, and every current row, stored 9 July.
+  Why those five were read right is not known (presumably the file carried real date cells or
+  ISO text that day); the system could not see the difference either way.
+
+**The rule already existed, and was used everywhere except here.** "Day/month order is read off
+the file, not assumed. `23/07` can only be day-first, `07/23` can only be month-first ... The
+whole column is examined: one unambiguous value anywhere in the file decides every value in it"
+(`inferDayFirst`, `api/_lib/parse.js`; the comment, payment, notice and application importers
+and `loansDateOrder` all use it). The defaulters importer, the most important one, never got it.
+
+**What changed.** `defaultersDateOrder(rows)` (`api/_lib/importers.js`) pools the evidence of the
+deck's five date columns (one export writes them all alike) and `importDefaulters` hands the
+answer to every `dateOrNull`. Only a deck that PROVES month-first behaves differently: a deck with
+no clue at all, and a deck that proves day-first, are read exactly as before. The upload route
+asks once for its answer and hands it in (a deck is scanned once) and says which way it read:
+`defaulterDateOrder` in the response ("month/day, as the file itself showed"), and a sentence in
+`message` **only** when the deck gave no clue and day/month was assumed (the page keeps only the
+last slice's message, so a sentence per decided deck would read as noise). `public/upload.html`
+and the call app are untouched: `BUILD` and `CALL_BUILD` stay `2026-11-16-c` / `2026-11-16-a`.
+
+**What it cost.** CPU only: about 16 ms to read the order of the real 10,372-row deck (the
+importer takes about 100 ms of which that is 16; the upload then spends seconds writing). No
+read, no write, no extra round trip (a 40-row deck costs the same 20 trips on the test
+database, and a new test holds that). `/api/call` is untouched.
+
+**Checked.** The real file through the real importer, before and after: 3,883 disbursement dates
+stored differently from what the file means, now 0 (and 0 in each of the other three columns);
+cycle days wrong for 3,683 loans, now 0; Monday 3,842 against 4,148, now 4,148 against 4,148;
+rotation changed by the swap for 3,461, now 0; the loan itself stored as 2026-09-07. Six new
+importer tests (the real row's shape, month-first and day-first, evidence pooled across columns,
+no clue = the old reading, the caller's decision obeyed, a 10,000-loan deck read in well under
+a second) and three through the real upload handler (stored as the file means, the answer says
+so, the no-clue answer says it guessed); three of the importer tests fail with the reading taken
+out. `npm test`: 1,557 pass.
+
+**What this does NOT do — and what the owner has to do.**
+
+- **Rows already in the book keep their swapped dates.** Nothing rewrites history: an ambiguous
+  stored date looks like any other, and only the file knows. **Today's Initial and Current files
+  have to be uploaded again after this deploys** (a newer upload of the team and the day
+  replaces the older one whole): both, because the cycle days of a day are read off the current
+  file's dates first. Tomorrow's files are read right by themselves. Earlier days of this week
+  only if the week's Expected Defaulters figures have to be exact; the week and the dashboard
+  card compare a day's own two files, so a day uploaded before the fix and a day uploaded after
+  it are on different readings of the same customers. **When today's files are re-read, about a
+  third of the customers move to their real days and about 3,500 expired or chronic customers
+  move to their real recycling leader or week: leaders' lists and Monday's count change.**
+- **The loan of the question, once re-read, is a Monday customer that is absent from the
+  current file — and the screens still do not agree about such a customer** (found while
+  answering, not changed here). Run on the real code, a customer who is on a day's own initial
+  file and absent from its current file reads: on the **dashboard card**, recovered in full (the
+  whole-book rule, Parts 74 and 80); on the **Expected Defaulters tab**, recovered in full if it
+  never was on a current file, but **recovered 0 with its last arrears still showing** if it was
+  on an earlier one; on the **Exp.Def Report (day and week) and the phone**, listed CLEARED with
+  **recovered 0** and the old arrears if it was on an earlier current file (Part 71's ghost,
+  whose numbers were written for a customer last seen long ago, not for one that was on this
+  morning's file), and **not listed at all** if it never was on one (Part 78: the week keeps it
+  on a separate board outside the totals). `db/TEMPLATE-where-is-this-customer-read-only.sql`
+  tells which of those a given loan is in, in one read. Closing it means giving such a customer
+  a row built from the morning's own row (Part 82's `rowOf`), arrears 0 and recovered equal to
+  the morning's arrears, credited to the leader the rotation names, in the day view, the week
+  view and the phone; it changes the report's recovered totals and the phone's EXP.DEF %, so it
+  is the owner's to say.
+- `importExpected` and `importFollowup` read their dates the old way too. Nothing reads the
+  dates they store today (checked); not changed, not checked against a real file.
+- The date order is read per request, as the comment importer's is: a deck is sent in slices of
+  up to 2,000 loans and each slice carries its own evidence, which a big slice always has. A
+  last slice of a few loans may carry none and then reads day-first (and says so in its answer).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
