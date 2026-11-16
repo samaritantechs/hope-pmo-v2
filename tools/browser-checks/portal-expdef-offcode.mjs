@@ -161,6 +161,11 @@ for (const [viewport, label] of [[{ width: 1366, height: 800 }, 'laptop'], [{ wi
   check(label + ': the GMO\'s own board says nothing of the kind', (txt.match(/cannot see all their teams/g) || []).length === 1);
   check(label + ': no script error on the report', p.errs.length === 0, p.errs.join(' | '));
   await p.shot('gmo-report');
+  // The new column sorts like every other header of a board, in place, without a script error.
+  await p.page.evaluate(() => { var th = document.querySelector('#xd_MANAGER th[data-bsort="offCode"]'); if (th) th.click(); });
+  await p.page.waitForTimeout(200);
+  txt = await p.text();
+  check(label + ': pressing the Off code header sorts the board in place', /4 · T3, T4, T5 \+1/.test(txt) && p.errs.length === 0, p.errs.join(' | '));
   await p.page.close();
 
   situation = 'whole';

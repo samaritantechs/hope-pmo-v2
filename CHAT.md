@@ -106,7 +106,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   **Cost:** no read added; `/api/upload` untouched; on `/api/call` arithmetic over teams already
   held; the report reads the codes `weekWork` already read, one column wider; `test/
   speed.test.mjs` unchanged. **Checked:** 9 new tests, 7 deliberate breaks each caught; two
-  kept browser checks (`portal-expdef-offcode.mjs`, 28 points; `call-expdef-offcode.mjs`, 10);
+  kept browser checks (`portal-expdef-offcode.mjs`, 30 points; `call-expdef-offcode.mjs`, 10);
   the query on a PostgreSQL 16 copy of the table shapes, 3 ms. `npm test`: 1,548 pass. `BUILD
   2026-11-16-c`, `CALL_BUILD 2026-11-16-a`. **Not done:** nothing widens a leader's list past
   their code (offered, section 8); the bike share of a team that names no bike officer is

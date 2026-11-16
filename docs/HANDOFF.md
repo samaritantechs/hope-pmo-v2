@@ -6821,8 +6821,8 @@ report reads the same codes one column wider. `test/speed.test.mjs` is unchanged
 `expdfMine` saying nothing, `weekWork` never finding the code, the portal's `iAmLeader` and the
 phone's own list on the exact compare again, and the phone list ignoring the cycle day — every
 one turns a test red. Two kept browser checks: `tools/browser-checks/portal-expdef-offcode.mjs`
-(28 points at laptop and phone width: the manager's note, "My list" counts with and without a
-double blank, the report's column and board note, and nothing said where nothing is true) and
+(30 points at laptop and phone width: the manager's note, "My list" counts with and without a
+double blank, the report's column, its sort and board note, and nothing said where nothing is true) and
 `tools/browser-checks/call-expdef-offcode.mjs` (10 points: the strip's note, and none where the
 list is whole). `npm test`: 1,548 pass.
 
