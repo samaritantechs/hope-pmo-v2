@@ -546,6 +546,46 @@ test('a customer who left the current deck is shown only to the teams that may s
   assert.ok(kon.rows.some(r => r.ref === 'NOCUR1'), 'KONGOWE\'s own, the one who left the current deck included');
 });
 
+/* THE DASHBOARD CARD AND THE EXP.DEF REPORT READ ONE DAY THE SAME WAY (handbook Part 87). "This
+   cant be okay ... recovered amounts of full cant equal of owed expected defs" and "we are fighting
+   allover" -- the owner, 15 and 16 Nov 2026: the card (RUN-ME-058, in the database) and the report
+   (buildRows_, in the server) are two implementations of one rule, and they drifted for weeks over
+   exactly the customers this change closed. For the same customers they now give the same
+   customers, the same arrears, the same recovery and the same percentage -- pinned here so the
+   next drift turns `npm test` red instead of a screen in the field.
+
+   The population is the card's own: customers on the day's initial deck on their cycle day, in
+   every state a customer can be in -- still owing, owing MORE (clamped to 0, never negative), paid
+   and still on the file, gone from the current deck with an older row in history, never on a
+   current file -- and one who is on both decks but not Friday's (a Wednesday customer). What the
+   two are BUILT to differ on is left out on purpose and named in Part 87: a customer who enters
+   default after the morning deck (on the current deck, not the initial: the card does not count
+   them, Part 74; the report lists them) and the all-time ghost (Part 71, the report only). */
+test('the dashboard card and the Exp.Def Report agree on a day: the same customers, arrears, recovery and percentage -- for every state a customer can be in', async () => {
+  const t = tables();
+  const row = (ref, arrears, type, over = {}) => ({ ...D(ref, 'KONGOWE', arrears, type), ...over });
+  t.defaulter_snapshots = [
+    row('P1', 100000, 'initial'), row('P1', 40000, 'current'),                                  // a real recovery
+    row('P2', 50000, 'initial'), row('P2', 80000, 'current'),                                   // owes MORE: clamped to 0 on both
+    row('P3', 30000, 'initial'), row('P3', 0, 'current', { status: 'PAID' }),                   // paid, still on the file
+    row('P4', 20000, 'initial'),                                                                 // gone from the current deck ...
+    { ...row('P4', 21000, 'current', { status: 'Chronic' }), snapshot_date: '2026-07-14', weekday: 'TUE', upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' },   // ... with an older row in history
+    row('P5', 10000, 'initial'),                                                                 // never on a current file
+    row('P6', 200000, 'initial', { disb_date: '2026-07-22' }), row('P6', 130000, 'current', { disb_date: '2026-07-22' }),   // a Wednesday customer: not Friday's
+  ];
+  const card = (await run('dashboardFull', {}, ADMIN, fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } }))).edrTrend.find(x => x.date === TODAY);
+  const rep = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expdfReport', {}, NOW);
+  // The figures themselves, worked by hand: P1 + P2 + P3 + P4 + P5 are Friday's.
+  assert.deepEqual([card.customers, card.initial, card.current, card.recovered, card.pct], [5, 210000, 120000, 120000, 57.1]);
+  assert.deepEqual([rep.totals.customers, rep.totals.initial, rep.totals.arrears, rep.totals.recovered, rep.totals.pct], [5, 210000, 120000, 120000, 57.1],
+    'the report reads the same day the same way as the card');
+  assert.equal(rep.unassignedCleared, null);
+  // ... and the week of that one filed day is the same figure on both.
+  const week = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expdfReport', { period: 'week' }, NOW);
+  const cardWeek = (await run('dashboardFull', {}, ADMIN, fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } }))).edrTrendTotal;
+  assert.deepEqual([week.totals.initial, week.totals.recovered, week.totals.pct], [cardWeek.initial, cardWeek.recovered, cardWeek.pct]);
+});
+
 /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" -- the
    owner, 14 Nov 2026. ghostRowsFor_ (the test above) rescues a ref missing from today's
    current deck that has SOME current-type row anywhere in this team's history -- its own join

@@ -82,6 +82,20 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#715 — the dashboard card and the Exp.Def Report pinned to one reading; the cost measured; the one
+  difference left, named (handbook Part 87 addendum).** After #714 merged, the report's day was laid
+  beside the card's tile on the card's own test data: **recovered is the same to the shilling (90,000)**, and
+  the percentage is not (50.0% on the card, 32.1% on the report) because one customer who entered default
+  after the morning deck is on the current file and not on the day's initial file: the card does not count
+  them (Part 74), the report and the phone list them with their current arrears as their initial. Not
+  changed: whether "the lists per day come from initial files" extends to the report and the phone is the
+  owner's to say (section 8). A new test (`test/portal.test.mjs`) pins the card and the report to the same
+  customers, arrears, recovery and percentage for a day and its week, in every state a customer can be in;
+  three deliberate breaks of #714's rule each turn it red by itself. **Cost of #714, measured at the live
+  book's size** (10,372 customers on the morning deck, 4,000 gone from the current one): about 15 ms of CPU
+  on the web server for a reading of the whole book, a fortieth of it for one leader; nothing on the
+  database. `npm test`: 1,581 pass. Tests and words only: no code of the system changed, `BUILD` and
+  `CALL_BUILD` unchanged.
 - **#714 — a customer the day's current deck no longer names stays on every list of that day, as
   recovered (handbook Part 87).** "how comes tou said "should disappear." yet we are fighting
   allover to say cleared people shouldnt dissapear for verifications" — the owner, 16 Nov, the
@@ -1744,6 +1758,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   filed day being asked of the reader's teams, **went with the board in #714**. **Not faults, by the whole-book rule:** the rows marked
   CLEARED for a team today's current file does not name, on the phone's list, the Exp.Def
   Report, the Expected Defaulters tab, team progress and the weekly report's Count 1-6.
+- **The owner, only if they want it changed**: the report and the phone still list a customer who
+  entered default after the morning deck (on the current file, never on the day's initial file) with their
+  current arrears as their "initial"; the dashboard card does not count them (Part 74). Recovered agrees
+  to the shilling, the Rec % does not (50.0 on the card against 32.1 on the report, on the card's own test
+  data). Making the report and the phone follow the card is one rule for both (the lists per day come from
+  the initial deck, a leader's list included) and is the owner's to say; nothing was changed (section 4, #715).
 - **The owner, only if they want it changed**: the whole-book trade itself. If a current file
   ever arrives without a team that still owes, every recovery figure reads that team as
   cleared (section 4, #707, with the measured size of it). Changing it is one rule for every
