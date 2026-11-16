@@ -405,16 +405,23 @@ test('the expdf week keeps a customer on one day\'s own initial deck but missing
    never once on a current-type row, is the one case even that cannot reach (the RPC's own
    candidate-walk finds the ref, but the join behind it returns nothing for it). Added here,
    additively: a customer on today's own initial deck still shows, status CLEARED, counted in
-   every total, but never credited to a real leader -- assignFor needs fields that live only on
-   a current-deck row, which this ref has never had, so role/phase stay null and leader reads
-   the honest '(unassigned)' sentinel this screen already uses for "nobody to credit". Checked
+   every total.
+
+   AND WITH ITS OWNER ROLE, RECYCLING LEADER AND CYCLE -- "Don't clean owner role, recycling
+   leader & cycle for 'cleared' customers at expected defaulters because the disb date still
+   gives us where to place them for the 3 columns - we need those 3 filled for followup
+   purposes", the owner, 16 Nov 2026. It was first sent with all three empty, on the belief
+   that the rotation needs fields only a current-deck row has. The initial file is imported
+   by the same importer as the current one: the customer's own row on the morning's file
+   carries the status, the days elapsed and the dates assignFor reads, and the name and the
+   number. So the row reads what the same customer would read off the current deck. Checked
    here only -- expectedDefaulters is the one screen in this system that lists every customer
    rather than one leader's own book (buildRows_ and its own callers, api/_lib/expdf.js, are
    ALL structured around a role: the phone's list, the role-based report, even the week's own
    internal bookkeeping key every row by role|leader|ref, so a roleless customer has nowhere to
    go there regardless; extending this same fix to that side was tried and found to change
    nothing reachable, so it was not kept). */
-test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, unassigned, on their OWN real days from disb_date', async () => {
+test('expected defaulters: a customer missing from the current deck, with no current row ever, still shows -- status CLEARED, with their owner role, recycling leader and cycle, on their OWN real days from disb_date', async () => {
   const t = tables();
   const before = await portalApi(fakeDb(tables(), { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
   // D()'s own default disb_date is 2026-07-21, a Tuesday -> Day 1 Tue, Day 2 Fri (its own
@@ -429,9 +436,17 @@ test('expected defaulters: a customer missing from the current deck, with no cur
   assert.equal(row.arrears, 0, 'nothing current to report');
   assert.equal(row.initial, 20000, 'its own day\'s initial baseline');
   assert.equal(row.recovered, 20000, 'fully recovered -- the same absence-is-the-signal rule the ghost already follows');
-  assert.equal(row.leader, '(unassigned)', 'never a fabricated leader -- there is no real current-row data to read a cycle from');
-  assert.equal(row.phase, null);
-  assert.equal(row.role, null);
+  // THE THREE COLUMNS, AND WHO TO RING. What they must read is said by the same customer, with
+  // the same file fields, ON THE CURRENT DECK: one rotation, whichever file the row came off.
+  const t2 = tables();
+  t2.defaulter_snapshots.push(D('NOCUR1', 'KONGOWE', 20000, 'initial'), D('NOCUR1', 'KONGOWE', 20000, 'current'));
+  const onDeck = (await portalApi(fakeDb(t2, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW)).rows.find(r => r.ref === 'NOCUR1');
+  assert.equal(onDeck.status, 'DEFAULTER', 'the comparison row really is an ordinary row of the current deck');
+  assert.deepEqual([row.role, row.cycle, row.phase, row.leader], [onDeck.role, onDeck.cycle, onDeck.phase, onDeck.leader],
+    'owner role, cycle and recycling leader: exactly where the rotation places the same customer off the current deck');
+  assert.deepEqual([row.role, row.cycle, row.leader], ['MANAGER', 'D45', 'BOSS'], 'forty-five days in default is the MANAGER\'s turn, and KONGOWE\'s manager is BOSS');
+  assert.deepEqual([row.full_name, row.contact, row.ds, row.dc], [onDeck.full_name, onDeck.contact, onDeck.ds, onDeck.dc], 'and the name and the number to follow them up with');
+  assert.ok(row.full_name && row.contact, 'neither is empty');
   assert.equal(row.disb_date, '2026-07-21', 'the real date, read off its own initial row, not invented');
   assert.equal(row.primary, 2); assert.equal(row.primaryName, 'Tue');
   assert.equal(row.secondary, 5); assert.equal(row.secondaryName, 'Fri');
@@ -455,6 +470,9 @@ test('expected defaulters: a never-once-current customer whose own initial row A
   assert.equal(r.status, 'CLEARED');
   assert.equal(r.primary, 0); assert.equal(r.secondary, 0);
   assert.equal(d.dist[0], 1, 'the one honest fallback left -- no real date anywhere on this ref, not even on its own initial row');
+  // No date means no DAY. It does not mean nobody: the rotation reads the days in default, and
+  // the three columns are filled for this customer as for any other.
+  assert.deepEqual([r.role, r.cycle, r.leader], ['MANAGER', 'D45', 'BOSS']);
 });
 
 /* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
