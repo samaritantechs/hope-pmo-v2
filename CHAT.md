@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 88**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 89**.
 
 ---
 
@@ -61,6 +61,7 @@ Given since, and written nowhere else:
 | 15 Nov 2026 | "i said i cant be re-asking or re-prompting what i already did - i dont expect these - {merge it bro} complete whatever asked not partials waiting another promts. man my head is done" | **A chat's own caution is not a reason to hold a green, tested change back.** Said after a chat opened #703 as a draft "for a second look" nobody asked for. The existing rule already covered this ("Merge now... I never said that rule," 11 Nov) — this restates it for a chat's own extra-care instinct, not only a time-of-day one: once `npm test` and CI both read clean, merge it the same session, the same as anything else. A real blocker (a merge conflict, a failing test, a question only the owner can answer) is still said once and acted on; "I'd like someone to look this over first" is not one of those and is never grounds to leave work half-delivered, waiting on a prompt that should not have to come. |
 | 16 Nov 2026 | "how comes tou said "should disappear." yet we are fighting allover to say cleared people shouldnt dissapear for verifications" · "we cant re-upload now - i hope the system autoupdates whats right brother" | **A customer on a day's initial file does not disappear from that day's lists, because they cleared or because the current file no longer names them.** Said after an answer used the words "should disappear" about such a customer; the owner had ordered the opposite on 13 Nov ("they should stay there as of recovery so as to know recovery amount from difference of initial to current per each day by team or staff") and 15 Nov ("i expect that customer in initial never to get lost even if cleared its amounts and statuses that change"), section 4, #693, #703, #709. A screen that drops such a customer, or lists them as recovered 0, is the gap to close, not a design to defend. **And the owner cannot always upload a file again:** when the fault is in what an upload stored, the cure is one that works on what is stored (RUN-ME-060, section 4, #713), never "upload it again". |
 | 16 Nov 2026 | "Should the report and the phone also leave out customers who fall into default after the morning file, so the dashboard card, the report and the phone all count the same people?" — "YES" | **A day's list is its initial deck's customers, on the dashboard card, the report and the phone alike.** A customer in default on a day's current file who was never on its initial file entered default after the morning: they are nobody's expected defaulter of that day and join the next day's list (section 4, #716). Only when the day's two files are a pair (the same date). **Not asked, so not changed:** the Expected Defaulters tab (the weekly-cycle book of every defaulter, not a day's list) and the all-time ghost (13 Nov, Part 71), which is the one thing the three still differ on (section 8). |
+| 16 Nov 2026 | "just study the dates if the position of month starts then day or vice versa trim the same for the rest not to stay contradicted.. since that I think affects multiple lists in the system so pass through how you cumpute uploaded dates bro" | **One file, one date order: decided by what the file itself shows, applied to every date in it, by every upload; nothing between the file and the server may read a date by a rule of its own.** `inferDayFirst` is the one rule (a value with a part over twelve decides itself; the file's unambiguous values decide the rest; no evidence at all reads day-first, as it always did). A new importer reads its dates through it (`test/importers.test.mjs` fails on a date read with no order), and the Upload page passes a CSV on as the text it holds (handbook Part 89; section 4, #717). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -83,6 +84,40 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#717 — every upload reads its dates by its own file's order, and the browser reads none of its own
+  (handbook Part 89).** "I can't see 2209966593 on cleared yet., just study the dates if the position of
+  month starts then day or vice versa trim the same for the rest not to stay contradicted.. since that I
+  think affects multiple lists in the system so pass through how you cumpute uploaded dates bro" — the
+  owner, 16 Nov. **The customer:** a chat cannot see the live book, so the answer was the read-only probe
+  (`db/TEMPLATE-where-is-this-customer-read-only.sql`, filled in for the loan and the day and pasted in
+  full in the chat; its header is now brought up to Parts 87 and 88): it is CLEARED on a day's list only
+  when its stored disbursement date is right (RUN-ME-060), it is on that day's initial file that counts,
+  and that day's current file is filed. Which of the three was not known. **The pass:** every
+  `dateOrNull` and `stampOrNull` under `api/` was listed and the Upload page's own reading was measured.
+  Found: (1) four sheets that read slash dates with no order (complaints, restructures, call-app
+  registrations, call history; Part 85 had named the first two and left them); (2) the same four turned a
+  stamp with a clock into the moment of the upload, silently; (3) **the Upload page's own reader (SheetJS,
+  `cellDates: true`) decided a CSV's dates itself, month first, before the server's rule saw them:** in a
+  day-first CSV `9/7/2026` went on as the seventh of September while `16/11/2026` stayed text (one file, two
+  orders), `3/6` in D.S became the sixth of March 2001, an account lost its leading zero, a twenty-digit
+  number its last digits (seen in a real browser with the real reader). **Now:** the four pool their own date
+  columns through `inferDayFirst` and drop the clock first (`dateCell_`), reading exactly as before where a
+  file shows no clue; `readWorkbook` reads a `.csv` with `raw: true`, so a CSV goes to the server as the text
+  it holds and the server's rule is the only one (an Excel file is read as it was; `public/upload.html`, no
+  `BUILD` bump: its own page, served no-cache). **Cost:** CPU only, no read or write added; the four
+  uploads cost the same trips as before (7, 7, 8, 7 on a 40-row file); `/api/call` untouched; a deck-sized
+  CSV reads in about 0.3 s in the browser instead of 0.75 s. **The one trade:** a month-first CSV whose
+  every date has both parts twelve or under and nothing else to show it (never a real deck) is read
+  day-first like any sheet with no evidence. **Checked:** importer tests for the four; one table that holds
+  all fourteen importers to the rule in three states each; a source scan that fails if any date is read under
+  `api/` with no order; the four through the real upload handler; a source pin of the page's CSV read;
+  `tools/browser-checks/upload-csv-dates.mjs` on the real reader in a real browser (12 points pass; 6 fail on
+  the page as it was); 22 deliberate breaks, each caught; `npm test`: 1,592 pass. **Not done, said plainly:**
+  the order is still decided per request (a slice of a big file carries thousands of dates; nothing is
+  carried between slices); stored rows keep their dates (RUN-ME-060 for the decks; LAST TRANS DATE not
+  repaired); a file re-saved in a spreadsheet program may carry real dates that program already read in its
+  own order, which nothing in it can reveal; the four sheets' answers do not say which order they read;
+  nothing run on the live book.
 - **#716 — the report and the phone list the day's morning deck, as the dashboard card does (handbook
   Part 88).** "Should the report and the phone also leave out customers who fall into default after
   the morning file, so the dashboard card, the report and the phone all count the same people?" —
@@ -1743,6 +1778,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   (Monday's list grows from about 3,842 to 4,148 on the 16 Nov file) and about 3,500 expired or
   chronic customers move to their real recycling leader or week: the leaders' lists change, and
   that is the correction. If anything looks wrong, the undo is at the foot of the file.
+- **The owner: run the read-only probe for 2209966593** (pasted in full in the chat, 16 Nov; it changes
+  nothing: `db/TEMPLATE-where-is-this-customer-read-only.sql` filled in for the loan and the day
+  `2026-11-16`) and say which answer reads wrong. **Q2**: its stored disbursement date, still the ninth of
+  July means RUN-ME-060 has not reached that day. **Q3**: "a current file for that day is NOT filed yet"
+  means nothing can be marked cleared until it is. **Q1**: not on the initial file that counts. A chat cannot
+  see the live book, so which of the three it is was not known (section 4, #717).
 - **The owner, once #714 has deployed:** open one day on the Exp.Def Report and its leaders'
   cards. The rows marked CLEARED whose recovered equals their initial are the customers the
   day's current file did not name (section 4, #714); the report's recovered totals and the phone's

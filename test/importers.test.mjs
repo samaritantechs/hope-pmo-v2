@@ -1873,3 +1873,168 @@ test('the STAFF_FUNDS DATABASE and ADVANCE REQUESTS tabs import as they are', ()
   assert.equal(st('Expired'), 'Expired'); assert.equal(st('expired'), 'Expired'); assert.equal(st('Muda umeisha / Expired'), 'Expired');
   assert.equal(st('waiting'), 'Pending'); assert.equal(st(''), 'Pending');
 });
+
+/* =====================================================================================
+   EVERY UPLOAD READS ITS DATES THE WAY ROUND ITS OWN FILE WRITES THEM (handbook Part 89).
+   =====================================================================================
+     "just study the dates if the position of month starts then day or vice versa trim the same for
+      the rest not to stay contradicted.. since that I think affects multiple lists in the system so
+      pass through how you cumpute uploaded dates bro" -- the owner, 16 Nov 2026
+
+   Three sheets had the rule (Parts 84, 85) and ten others already did; four did not. This is the one
+   place every upload that reads a date is held to it: a sheet whose own cells PROVE month-first reads
+   its ambiguous `9/7/2026` as the seventh of September; one that proves day-first, or shows no clue,
+   reads it as the ninth of July, as it always did. And a table of the fourteen can only stay true if a
+   fifteenth cannot be added without it, so the last test reads the source: no call in api/ may read a
+   date without handing it the order. People are made up. */
+const IMP = await import('../api/_lib/importers.js');
+const clock_ = d => (d ? d + ' 12:00' : '');                 // a timestamp column's clock: noon in the office, the same day in UTC
+const COMPLAINT_H = ['TIMESTAMP', 'REF#', 'TEAM', 'COMPLAINANT', 'PHONE', 'CATEGORY', 'CHANNEL', 'DETAILS', 'STATUS', 'RESOLUTION', 'BY', 'RESOLVED BY', 'RESOLVED AT'];
+const complaintRow = (stamp, resolved, n = 1) => [stamp, '22000000' + n, 'TEAM1', 'A MADE UP', '0700000000', 'Service', 'Phone', 'made up', 'Resolved', 'made up', 'OFFICER', 'OFFICER', resolved];
+const RESTRUCTURE_H = ['TIMESTAMP', 'REF#', 'TEAM', 'FULLNAME', 'CONTACT#', 'GUARANTOR', 'G.CONTACT', 'ARREARS', 'DC', 'FIRST INST', 'REMAINING', 'INTEREST ON', 'INTEREST AMT',
+  'TOTAL', 'INSTALLMENTS', 'INST AMT', 'START DATE', 'STATUS', 'REQUESTED BY', 'APPROVED BY', 'APPROVED AT', 'REJECT REASON', 'NOTES'];
+const restructureRow = (stamp, start, approved, n = 1) => [stamp, '22000000' + n, 'TEAM1', 'A MADE UP', '0700000000', 'G MADE UP', '0700000001', 31001, 3, 10000, 5000, 'Balance', 10,
+  20000, 4, 5000, start, 'Approved', 'OFFICER', 'OFFICER', approved, '', 'made up'];
+const CALL_USER_H = ['USER ID', 'NAME', 'TEAM', 'ROLE', 'LEADER', 'LEADER TEAMS', 'DEVICE ID', 'PHONE', 'REGISTERED AT', 'LAST SYNC', 'LAST TS'];
+const callUserRow = (registered, lastSync, n = 1) => ['U' + n, 'A MADE UP', 'TEAM1', 'Field Officer', 'NO', '', 'DEV' + n, '070000000' + n, registered, lastSync, 5];
+const CALL_LOG_H = ['LOG ID', 'USER ID', 'OFFICER', 'TEAM', 'PHONE', 'DIRECTION', 'CALL DATE', 'CALL TIME', 'DURATION', 'PORTFOLIO', 'MATCH', 'REF#', 'CUSTOMER', 'SYNCED AT', 'OUTCOME', 'CATEGORY'];
+const callLogRow = (callDate, synced, n = 1) => ['L' + n, 'U1', 'OFFICER', 'TEAM1', '0700000000', 'OUT', callDate, '10:15', 60, 'YES', 'ref', '22000000' + n, 'A MADE UP', synced, 'CONNECTED', 'DEFAULTER'];
+
+test('a complaints sheet written month-first is read month-first, and a stamp with a clock is its own day -- not the moment of the upload', () => {
+  const out = IMP.importComplaints([COMPLAINT_H,
+    complaintRow('9/7/2026 10:15:00', '9/8/2026 09:00:00', 1),                  // both could be read either way ...
+    complaintRow('11/16/2026 14:02:00', '', 2)]);                                // ... the sixteenth of November cannot
+  assert.deepEqual([out[0].created_at, out[0].resolved_at, out[1].created_at, out[1].resolved_at], ['2026-09-07', '2026-09-08', '2026-11-16', null]);
+  const day = IMP.importComplaints([COMPLAINT_H, complaintRow('9/7/2026 10:15:00', '9/8/2026', 1), complaintRow('16/11/2026 14:02:00', '', 2)]);
+  assert.deepEqual([day[0].created_at, day[0].resolved_at], ['2026-07-09', '2026-08-09'], 'a file that proves day-first is read day-first, as it always was');
+  const clue = IMP.importComplaints([COMPLAINT_H, complaintRow('9/7/2026 10:15:00', '9/8/2026', 1)]);
+  assert.deepEqual([clue[0].created_at, clue[0].resolved_at], ['2026-07-09', '2026-08-09'], 'no clue at all: the old reading, unchanged');
+  // The clock used to make dateOrNull return null, and the row was stamped with the moment of the upload.
+  const clocked = IMP.importComplaints([COMPLAINT_H, complaintRow('24/09/2026 10:15:00', '25/09/2026 08:00:00', 1)]);
+  assert.deepEqual([clocked[0].created_at, clocked[0].resolved_at], ['2026-09-24', '2026-09-25']);
+  // The XLSX path hands a real date over as ISO, with or without a clock: unchanged.
+  const iso = IMP.importComplaints([COMPLAINT_H, complaintRow('2026-09-07T10:15:00', '2026-09-08', 1)]);
+  assert.deepEqual([iso[0].created_at, iso[0].resolved_at], ['2026-09-07', '2026-09-08']);
+  // The sheet may call its timestamp DATE.
+  assert.equal(IMP.importComplaints([['DATE', 'REF#', 'COMPLAINANT'], ['9/7/2026', '2200000001', 'A MADE UP'], ['11/16/2026', '2200000002', 'B MADE UP']])[0].created_at, '2026-09-07');
+  // The evidence may sit in either date column: here only RESOLVED AT proves it.
+  assert.equal(IMP.importComplaints([COMPLAINT_H, complaintRow('9/7/2026 10:15:00', '', 1), complaintRow('', '11/16/2026', 2)])[0].created_at, '2026-09-07');
+});
+
+test('a restructures sheet written month-first is read month-first, every one of its dates', () => {
+  const out = IMP.importRestructures([RESTRUCTURE_H,
+    restructureRow('9/7/2026', '10/1/2026', '9/8/2026', 1),
+    restructureRow('11/16/2026', '', '', 2)]);
+  assert.deepEqual([out[0].created_at, out[0].start_date, out[0].approved_at, out[1].created_at], ['2026-09-07', '2026-10-01', '2026-09-08', '2026-11-16']);
+  const day = IMP.importRestructures([RESTRUCTURE_H, restructureRow('9/7/2026', '10/1/2026', '9/8/2026', 1), restructureRow('16/11/2026', '', '', 2)]);
+  assert.deepEqual([day[0].created_at, day[0].start_date, day[0].approved_at], ['2026-07-09', '2026-01-10', '2026-08-09']);
+  const clue = IMP.importRestructures([RESTRUCTURE_H, restructureRow('9/7/2026', '10/1/2026', '9/8/2026', 1)]);
+  assert.deepEqual([clue[0].created_at, clue[0].start_date, clue[0].approved_at], ['2026-07-09', '2026-01-10', '2026-08-09'], 'no clue: unchanged');
+  // The evidence may sit in ANY of its date columns: here only the approval date proves it.
+  const viaApproved = IMP.importRestructures([RESTRUCTURE_H, restructureRow('9/7/2026', '10/1/2026', '', 1), restructureRow('', '', '11/16/2026', 2)]);
+  assert.deepEqual([viaApproved[0].created_at, viaApproved[0].start_date], ['2026-09-07', '2026-10-01']);
+  assert.equal(IMP.importRestructures([RESTRUCTURE_H, restructureRow('24/09/2026 10:15:00', '', '', 1)])[0].created_at, '2026-09-24', 'a clock does not turn the stamp into now');
+});
+
+test('the call-app sheets (registrations and call history) are read the way their file writes its dates', () => {
+  const users = IMP.importCallUsers([CALL_USER_H, callUserRow('9/7/2026 10:15:00', '11/16/2026 08:00:00', 1)]);
+  assert.deepEqual([users[0].registered_at, users[0].last_sync], ['2026-09-07', '2026-11-16'], 'the sixteenth of November in the SAME row decides the seventh of September');
+  const usersDay = IMP.importCallUsers([CALL_USER_H, callUserRow('9/7/2026 10:15:00', '16/11/2026 08:00:00', 1)]);
+  assert.deepEqual([usersDay[0].registered_at, usersDay[0].last_sync], ['2026-07-09', '2026-11-16']);
+  assert.equal(IMP.importCallUsers([CALL_USER_H, callUserRow('9/7/2026', '', 1)])[0].registered_at, '2026-07-09', 'no clue: unchanged');
+  assert.equal(IMP.importCallUsers([CALL_USER_H, callUserRow('9/7/2026', '', 1), callUserRow('11/16/2026', '', 2)])[0].registered_at, '2026-09-07', 'the evidence may be in the registration date alone');
+  assert.equal(IMP.importCallLogs([CALL_LOG_H, callLogRow('9/7/2026', '', 1), callLogRow('', '11/16/2026 18:00:00', 2)])[0].call_date, '2026-09-07', 'or, for the call history, in the sync stamp alone');
+  const logs = IMP.importCallLogs([CALL_LOG_H, callLogRow('9/7/2026', '9/7/2026 18:00:00', 1), callLogRow('11/16/2026', '11/16/2026 18:00:00', 2)]);
+  assert.deepEqual([logs[0].call_date, logs[0].synced_at, logs[1].call_date], ['2026-09-07', '2026-09-07', '2026-11-16']);
+  const logsDay = IMP.importCallLogs([CALL_LOG_H, callLogRow('9/7/2026', '9/7/2026 18:00:00', 1), callLogRow('16/11/2026', '16/11/2026 18:00:00', 2)]);
+  assert.deepEqual([logsDay[0].call_date, logsDay[0].synced_at], ['2026-07-09', '2026-07-09']);
+  assert.equal(IMP.importCallLogs([CALL_LOG_H, callLogRow('9/7/2026', '', 1)])[0].call_date, '2026-07-09', 'no clue: unchanged');
+  // A call row whose date cannot be read is still dropped, as before; a good ISO row is untouched.
+  assert.equal(IMP.importCallLogs([CALL_LOG_H, callLogRow('not a date', '', 1), callLogRow('2026-09-07', '2026-09-07T18:00:00Z', 2)]).length, 1);
+});
+
+/* One table, every upload that reads a date. Each case is a two-row sheet: the first row carries the
+   ambiguous date in every date column the importer reads, the second row the date that proves the
+   file's order (or nothing). `dates` is what the first row stores, read back as plain dates. */
+const ORDER_CASES = [
+  { name: 'defaulters deck', run: (a, p) => { const o = IMP.importDefaulters([REAL_HEADER, deckRow('2200000001', a, a, a, 'No due date', a), deckRow('2200000002', p, p, p, 'No due date', p)], DECK_META)[0];
+      return [o.disb_date, o.expire_date, o.chronic_date, o.last_trans_date]; } },
+  { name: 'Expected sheet', run: (a, p) => { const o = IMP.importExpected([EXPECTED_HEADER, expectedRow('2200000001', a, a, a, a, a), expectedRow('2200000002', p, p, p, p, p)], EXP_META)[0];
+      return [o.disb_date, o.due_date, o.first_schedule_date, o.last_schedule_date, o.last_trans_date]; } },
+  { name: 'Defaulters Followup sheet', run: (a, p) => { const o = IMP.importFollowup([FOLLOWUP_HEADER, followupRow('2200000001', a, a, a, a), followupRow('2200000002', p, p, p, p)])[0];
+      return [o.disb_date, o.last_trans, o.promise_date, o.comment_at]; } },
+  { name: 'comments', run: (a, p) => { const o = IMP.importComments([V1_HEADER, [clock_(a), 'A1', 'GOBA', 'X', 'c1', '', a, '', 'BY', '', ''], [clock_(p), 'B1', 'GOBA', 'Y', 'c2', '', p, '', 'BY', '', '']])[0];
+      return [o.created_at, o.promise_date]; } },
+  { name: 'loans', run: (a, p) => [IMP.importLoans([LOAN_H, loanRow(a, 1), loanRow(p, 2)], 'approved')[0].approved_date] },
+  { name: 'received payments', run: (a, p) => { const row = d => ['A MADE UP', 'T' + d, '2201403386', '79500', 'RID', d, 'processed', 'error000', '255675218973', 'TIGO', 'SENDER', 'BR', 'TEMEKE', '0686852827'];
+      return [IMP.importReceivedPayments([RCV_HEADER, row(a), row(p)])[0].paid_at]; } },
+  { name: 'demand notices', run: (a, p) => { const H = ['NoticeID', 'Timestamp', 'AccessCode', 'LegalOfficer', 'REF#', 'CustName', 'Contact', 'NoticeDate', 'NoticeDays', 'FineAmount', 'TotalDemand', 'ArrearsAtNotice', 'CurrentArrears', 'Difference', 'Status', 'Team', 'OtherInst'];
+      const row = (n, d) => ['N' + n, clock_(d), 'L1', 'JOHN LEGAL', '220000000' + n, 'A MADE UP', '774711656', d, 7, 100, 200, 300, 400, 0, 'Reduced', 'CHANIKA', 0];
+      const o = IMP.importDemandNotices([H, row(1, a), row(2, p)])[0]; return [o.notice_date, o.created_at]; } },
+  { name: 'PMO deductions', run: (a, p) => { const H = ['TIMESTAMP', 'PMO DEPT', 'PMO NAME', 'TEAM', 'JINA LA MTEJA', 'REF NO YA MTEJA', 'JINA LA STAFF MTUHUMIWA', 'KIASI ALICHOKULA', 'TAREHE ALIYOPOKEA', 'TAREHE YA UGUNDUZI / KIKAO'];
+      const row = (n, d) => [clock_(d), 'DEPT', 'REPORTER', 'TEAM1', 'A MADE UP', '220000000' + n, 'STAFF A', 1000, d, d];
+      const o = IMP.importDeductions([H, row(1, a), row(2, p)])[0]; return [o.submitted_at, o.received_date, o.discovery_date]; } },
+  { name: 'staff registry', run: (a, p) => { const H = ['ID', 'STAFF NAME', 'REG-DATE', 'BIRTH DATE'];
+      const o = IMP.importStaffRegistry([H, ['A/1/2026', 'A MADE UP', a, a], ['B/2/2026', 'B MADE UP', p, p]])[0]; return [o.reg_date, o.birth_date]; } },
+  { name: 'advance requests', run: (a, p) => { const H = ['TIMESTAMP', 'STAFF NAME', 'APPLICATION DATE', 'REQUESTED'];
+      const o = IMP.importAdvances([H, [clock_(a), 'A MADE UP', a, '50000'], [clock_(p), 'B MADE UP', p, '50000']])[0]; return [o.submitted_at, o.app_date]; } },
+  { name: 'complaints', run: (a, p) => { const o = IMP.importComplaints([COMPLAINT_H, complaintRow(clock_(a), a, 1), complaintRow(clock_(p), p, 2)])[0]; return [o.created_at, o.resolved_at]; } },
+  { name: 'restructures', run: (a, p) => { const o = IMP.importRestructures([RESTRUCTURE_H, restructureRow(a, a, a, 1), restructureRow(p, p, p, 2)])[0]; return [o.created_at, o.start_date, o.approved_at]; } },
+  { name: 'call-app registrations', run: (a, p) => { const o = IMP.importCallUsers([CALL_USER_H, callUserRow(a, a, 1), callUserRow(p, p, 2)])[0]; return [o.registered_at, o.last_sync]; } },
+  { name: 'call history', run: (a, p) => { const o = IMP.importCallLogs([CALL_LOG_H, callLogRow(a, a, 1), callLogRow(p, p, 2)])[0]; return [o.call_date, o.synced_at]; } },
+];
+const day10_ = v => String(v == null ? '' : v).slice(0, 10);
+
+test('every upload that reads a date reads one ambiguous cell the way the file\'s own unambiguous cell says', () => {
+  for (const c of ORDER_CASES) {
+    const month = c.run('9/7/2026', '11/16/2026').map(day10_);          // the sixteenth of November can only be a month-first date
+    assert.deepEqual(month, month.map(() => '2026-09-07'), `${c.name}: a file that proves month-first is read month-first, in every date column it has`);
+    const day = c.run('9/7/2026', '16/11/2026').map(day10_);            // ... and this one only a day-first date
+    assert.deepEqual(day, day.map(() => '2026-07-09'), `${c.name}: a file that proves day-first is read day-first`);
+    const none = c.run('9/7/2026', '').map(day10_);
+    assert.deepEqual(none, none.map(() => '2026-07-09'), `${c.name}: nothing in the file says -- the old reading, unchanged`);
+    assert.ok(month.length >= 1 && month.every(v => /^\d{4}-\d{2}-\d{2}$/.test(v)), `${c.name}: every date it reads came back as a date`);
+  }
+  assert.equal(ORDER_CASES.length, 14, 'every importer that reads a date is in the table');
+});
+
+/* The rule is the one the importers share. A fifteenth sheet that read `dateOrNull(cell)` with no order
+   would be read day-first whatever its file said -- exactly how the defaulters deck went wrong for months,
+   and nothing in the suite would have noticed. So the SOURCE is read: every call of dateOrNull and
+   stampOrNull anywhere under api/ must be handed the order as a second argument. */
+function callsWithoutOrder_(src, file) {
+  const bad = [];
+  let seen = 0;
+  for (const m of src.matchAll(/\b(dateOrNull|stampOrNull)\(/g)) {
+    let i = m.index + m[0].length, depth = 1, commas = 0, quote = null;
+    for (; i < src.length && depth > 0; i++) {
+      const ch = src[i];
+      if (quote) { if (ch === '\\') i++; else if (ch === quote) quote = null; continue; }
+      if (ch === '\'' || ch === '"' || ch === '`') quote = ch;
+      else if (ch === '(' || ch === '[' || ch === '{') depth++;
+      else if (ch === ')' || ch === ']' || ch === '}') depth--;
+      else if (ch === ',' && depth === 1) commas++;
+    }
+    seen++;
+    if (commas < 1) bad.push(`${file}:${src.slice(0, m.index).split('\n').length}: ${m[0]}...)`);
+  }
+  return { bad, seen };
+}
+test('no code under api/ reads a date without handing it the order its file shows', async () => {
+  const { readFileSync, readdirSync } = await import('node:fs');
+  const root = new URL('../api/', import.meta.url).pathname;
+  const walk = dir => readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(dir + e.name + '/') : e.name.endsWith('.js') ? [dir + e.name] : []);
+  let seen = 0; const bad = [];
+  for (const f of walk(root)) {
+    if (f.endsWith('/_lib/parse.js')) continue;                           // the definitions
+    const r = callsWithoutOrder_(readFileSync(f, 'utf8'), f.slice(root.length));
+    seen += r.seen; bad.push(...r.bad);
+  }
+  assert.deepEqual(bad, [], 'a date read with no order is read day-first whatever its file says (handbook Part 89)');
+  assert.ok(seen >= 40, `the scan found only ${seen} date reads -- it has stopped finding them`);
+  // And the scan itself can fail: it sees a bare call, a call whose order is in a nested argument, and one inside a quoted string.
+  assert.equal(callsWithoutOrder_("x = dateOrNull(col(r, h, 'A', 'B'))", 't').bad.length, 1, 'commas inside the cell reader are not an order');
+  assert.equal(callsWithoutOrder_("x = dateOrNull(col(r, h, 'A (b, c)'), order)", 't').bad.length, 0, 'an order after a cell reader, with brackets and commas inside a quoted header');
+  assert.equal(callsWithoutOrder_("x = stampOrNull(dateCell_(v))\ny = dateOrNull(v, dayFirst)", 't').bad.length, 1);
+});

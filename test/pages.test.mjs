@@ -2055,6 +2055,23 @@ test('the loan-stage picker no longer offers Pending Disbursement or Disbursed L
   }
 });
 
+/* A CSV IS READ AS THE TEXT IT IS (handbook Part 89). "just study the dates if the position of month
+   starts then day or vice versa ... pass through how you cumpute uploaded dates" -- the owner, 16 Nov
+   2026. Left to itself the browser's spreadsheet reader turned every CSV cell that looks like a date into
+   a real date by JavaScript's rule (month first) and every cell that looks like a number into a number:
+   in a day-first CSV `9/7/2026` became the seventh of September while `16/11/2026` stayed text, `3/6` in
+   D.S became the sixth of March 2001, an account lost its leading zero. This is the source-level pin;
+   the real reader is exercised in a browser by tools/browser-checks/upload-csv-dates.mjs. */
+test('the Upload page reads a CSV as text, so the server alone decides which way round its dates go', () => {
+  const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
+  const read = up.match(/function readWorkbook\(file\)\{[\s\S]*?\n\}/);
+  assert.ok(read, 'readWorkbook moved -- update the extractor');
+  assert.ok(/XLSX\.read\(new Uint8Array\(buf\), \{ type: 'array', cellDates: true, raw: \/\\\.csv\$\/i\.test\(/.test(read[0]),
+    'a CSV is read raw: its cells go to the server as the text the file holds');
+  assert.ok(/cellDates: true/.test(read[0]), 'an Excel file still reads its date cells as dates (they go as ISO)');
+  assert.equal([...up.matchAll(/XLSX\.read\(/g)].length, 1, 'a second spreadsheet read appeared on the page: it needs the same treatment');
+});
+
 test('the upload page says what a re-upload does per kind, from the key the server writes on', () => {
   const up = readFileSync(join(PUBLIC, 'upload.html'), 'utf8');
   const map = up.match(/var TYPE_BEHAVIOUR = \{([\s\S]*?)\};/);

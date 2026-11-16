@@ -75,9 +75,14 @@ const DEFAULTER_DATE_COLUMNS = ['DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE
    or shows no clue, is read exactly as it always was. */
 const EXPECTED_DATE_COLUMNS = ['DISB DATE', 'DUE DATE', 'FIRST SCHEDULE DATE', 'LAST SCHEDULE DATE', 'LAST TRANS DATE'];
 const FOLLOWUP_DATE_COLUMNS = ['DISB DATE', 'LAST TRANS', 'PROMISE DATE', 'COMMENT AT'];
+/* The pooled evidence of a sheet's date columns: what inferDayFirst makes of every value in them.
+   A column is a header name, or a list of the spellings its header goes by (the first one the
+   sheet has is read), as `col` takes them. */
+function dayFirstOf_(objs, columns) {
+  return inferDayFirst(objs.flatMap(({ raw: r, h }) => columns.map(c => col(r, h, ...[].concat(c)))));
+}
 function pooledDateOrder_(csvRows, columns) {
-  const objs = rowsToObjects(csvRows);
-  return { dayFirst: inferDayFirst(objs.flatMap(({ raw: r, h }) => columns.map(c => col(r, h, c)))) };
+  return { dayFirst: dayFirstOf_(rowsToObjects(csvRows), columns) };
 }
 export function defaultersDateOrder(csvRows) { return pooledDateOrder_(csvRows, DEFAULTER_DATE_COLUMNS); }
 export function expectedDateOrder(csvRows) { return pooledDateOrder_(csvRows, EXPECTED_DATE_COLUMNS); }
@@ -656,8 +661,30 @@ export function importAbnormal(csvRows) {
     .map(x => ({ id: abnormalId(x), ...x }));
 }
 
+/* THE COMPANY'S OWN SHEETS READ THEIR DATES THE SAME WAY AS EVERY OTHER UPLOAD (handbook Part 89).
+
+     "just study the dates if the position of month starts then day or vice versa trim the same for
+      the rest not to stay contradicted.. since that I think affects multiple lists in the system so
+      pass through how you cumpute uploaded dates" -- the owner, 16 Nov 2026
+
+   The complaints, restructures, call-users and call-history sheets were the last four that read a
+   slash date with no look at the file around it, so a `9/7/2026` in a file that writes month-first
+   (it has an `11/16/2026` in it) came out as the ninth of July beside the sixteenth of November.
+   Now each sheet's own date columns are pooled and read by the one rule that already existed
+   (`inferDayFirst`: one unambiguous value anywhere decides every value in the file); a sheet that
+   shows no clue, or proves day-first, is read exactly as it always was. And a date that carries a
+   clock ("24/09/2026 10:15", what a spreadsheet's timestamp column exports) is read by its date part
+   (`dateCell_`, below, the notices importer's own): `dateOrNull` wants a bare date and gave null for
+   it, which these four then replaced with THE MOMENT OF THE UPLOAD without saying so. */
+const COMPLAINT_DATE_COLUMNS = [['TIMESTAMP', 'DATE'], 'RESOLVED AT'];
+const RESTRUCTURE_DATE_COLUMNS = ['START DATE', 'APPROVED AT', 'TIMESTAMP'];
+const CALL_USER_DATE_COLUMNS = ['REGISTERED AT', 'LAST SYNC'];
+const CALL_LOG_DATE_COLUMNS = ['CALL DATE', 'SYNCED AT'];
+
 export function importComplaints(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = dayFirstOf_(objs, COMPLAINT_DATE_COLUMNS);
+  return objs.map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
     team: normTeam(col(r, h, 'TEAM')),
     complainant: textOrNull(col(r, h, 'COMPLAINANT')),
@@ -669,13 +696,15 @@ export function importComplaints(csvRows) {
     resolution: textOrNull(col(r, h, 'RESOLUTION')),
     logged_by: textOrNull(col(r, h, 'BY')),
     resolved_by: textOrNull(col(r, h, 'RESOLVED BY')),
-    resolved_at: dateOrNull(col(r, h, 'RESOLVED AT')),
-    created_at: dateOrNull(col(r, h, 'TIMESTAMP', 'DATE')) || new Date().toISOString(),
+    resolved_at: dateOrNull(dateCell_(col(r, h, 'RESOLVED AT')), dayFirst),
+    created_at: dateOrNull(dateCell_(col(r, h, 'TIMESTAMP', 'DATE')), dayFirst) || new Date().toISOString(),
   })).filter(x => x.complainant);
 }
 
 export function importRestructures(csvRows) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = dayFirstOf_(objs, RESTRUCTURE_DATE_COLUMNS);
+  return objs.map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
     team: normTeam(col(r, h, 'TEAM')),
     full_name: textOrNull(col(r, h, 'FULLNAME')),
@@ -691,14 +720,14 @@ export function importRestructures(csvRows) {
     total: num(col(r, h, 'TOTAL')),
     installments: num(col(r, h, 'INSTALLMENTS')),
     inst_amt: num(col(r, h, 'INST AMT')),
-    start_date: dateOrNull(col(r, h, 'START DATE')),
+    start_date: dateOrNull(dateCell_(col(r, h, 'START DATE')), dayFirst),
     status: textOrNull(col(r, h, 'STATUS')) || 'Pending',
     requested_by: textOrNull(col(r, h, 'REQUESTED BY')),
     approved_by: textOrNull(col(r, h, 'APPROVED BY')),
-    approved_at: dateOrNull(col(r, h, 'APPROVED AT')),
+    approved_at: dateOrNull(dateCell_(col(r, h, 'APPROVED AT')), dayFirst),
     reject_reason: textOrNull(col(r, h, 'REJECT REASON')),
     notes: textOrNull(col(r, h, 'NOTES')),
-    created_at: dateOrNull(col(r, h, 'TIMESTAMP')) || new Date().toISOString(),
+    created_at: dateOrNull(dateCell_(col(r, h, 'TIMESTAMP')), dayFirst) || new Date().toISOString(),
   })).filter(x => x.ref);
 }
 
@@ -929,7 +958,9 @@ export function importAdvances(csvRows) {
     access codes). TEAM is nulled unless it is a real team -- it is a FOREIGN KEY. */
 export function importCallUsers(csvRows, knownTeams) {
   const known = new Set((knownTeams || []).map(t => String(t).trim().toUpperCase()));
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => {
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = dayFirstOf_(objs, CALL_USER_DATE_COLUMNS);
+  return objs.map(({ raw: r, h }) => {
     const team = normTeam(col(r, h, 'TEAM'));
     const lt = String(col(r, h, 'LEADER TEAMS') || '').trim();
     return {
@@ -941,8 +972,8 @@ export function importCallUsers(csvRows, knownTeams) {
       leader_teams: (!lt || lt.toUpperCase() === 'ALL') ? null : lt.split(/[;,]/).map(s => s.trim()).filter(Boolean),
       device_id: textOrNull(col(r, h, 'DEVICE ID')),
       phone: normPhone(col(r, h, 'PHONE')),
-      registered_at: dateOrNull(col(r, h, 'REGISTERED AT')) || new Date().toISOString(),
-      last_sync: dateOrNull(col(r, h, 'LAST SYNC')),
+      registered_at: dateOrNull(dateCell_(col(r, h, 'REGISTERED AT')), dayFirst) || new Date().toISOString(),
+      last_sync: dateOrNull(dateCell_(col(r, h, 'LAST SYNC')), dayFirst),
       last_ts: num(col(r, h, 'LAST TS')) || null,
     };
   }).filter(x => x.user_id && x.phone);
@@ -955,21 +986,23 @@ export function importCallLogs(csvRows) {
     const k = String(v == null ? '' : v).trim().toUpperCase();
     return allowed.includes(k) ? k : null;
   };
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+  const objs = rowsToObjects(csvRows);
+  const dayFirst = dayFirstOf_(objs, CALL_LOG_DATE_COLUMNS);
+  return objs.map(({ raw: r, h }) => ({
     id: textOrNull(col(r, h, 'LOG ID')),
     user_id: textOrNull(col(r, h, 'USER ID')),
     officer: textOrNull(col(r, h, 'OFFICER')),
     team: normTeam(col(r, h, 'TEAM')),
     phone: normPhone(col(r, h, 'PHONE')),
     direction: pick(col(r, h, 'DIRECTION'), ['IN', 'OUT']),
-    call_date: dateOrNull(col(r, h, 'CALL DATE')),
+    call_date: dateOrNull(dateCell_(col(r, h, 'CALL DATE')), dayFirst),
     call_time: timeOrNull(col(r, h, 'CALL TIME')),
     duration: num(col(r, h, 'DURATION')),
     portfolio: String(col(r, h, 'PORTFOLIO') || '').trim().toUpperCase() === 'YES',
     match_type: textOrNull(col(r, h, 'MATCH')),
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
     customer: textOrNull(col(r, h, 'CUSTOMER')),
-    synced_at: dateOrNull(col(r, h, 'SYNCED AT')) || new Date().toISOString(),
+    synced_at: dateOrNull(dateCell_(col(r, h, 'SYNCED AT')), dayFirst) || new Date().toISOString(),
     outcome: pick(col(r, h, 'OUTCOME'), ['CONNECTED', 'MISSED', 'REJECTED', 'BLOCKED']),
     category: pick(col(r, h, 'CATEGORY'), ['EXPECTED', 'DEFAULTER']),
   })).filter(x => x.id && x.call_date);
