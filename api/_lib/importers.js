@@ -29,19 +29,53 @@ function rowsToObjects(csvRows) {
 export const REF_HEADERS = ['REF#', 'REF', 'REF NO', 'REF #', 'REF NO.', 'REF NUMBER',
   'REFERENCE', 'REFERENCE NO', 'LOAN REF', 'LOAN REF#'];
 
-export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate }) {
-  return rowsToObjects(csvRows).map(({ raw: r, h }) => ({
+/* WHICH WAY ROUND A DEFAULTERS DECK WRITES ITS DATES -- read off the file, never assumed.
+
+     "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters?" -- the owner,
+     16 Nov 2026
+
+   It was on the file, and it is a Monday customer: the loan system wrote its disbursement date
+   as `9/7/2026`, next to an expiry of `12/7/2026` and a chronic date of `12/21/2026` -- month
+   first, the American way, which is how this company's export writes every date. The importer
+   read `9/7/2026` as the ninth of July. Where a date can only be read one way (`5/28/2026`, a
+   twenty-eighth) the parser reads it right whatever it assumes; where both numbers are twelve or
+   under it fell back to day-first, "the sheets' own d/m", and the loan system's export is not
+   that. Measured over the real file of 16 Nov (10,372 loans): 3,883 disbursement dates were
+   stored with the day and the month swapped (37%), 3,683 loans were on the wrong cycle days, and
+   3,461 expired or chronic customers (their owner is read off weeks since the expiry or chronic
+   date) were handed to a different recycling leader or week. Each stored date was a perfectly
+   valid date, so nothing looked wrong.
+
+   The rule for this is already written and already used by the comment, payment, notice and
+   application importers: ONE UNAMBIGUOUS VALUE ANYWHERE IN THE FILE DECIDES EVERY VALUE IN IT,
+   because a single export does not switch conventions halfway down (inferDayFirst, parse.js; the
+   handbook's "Day/month order is read off the file, not assumed"). The defaulters importer was
+   the one that never got it. A deck's five date columns come from one export, so their evidence
+   is pooled: a ten-thousand-row deck always decides, and a file with no clue at all is read
+   exactly as before (day-first) and says so in the upload's answer. */
+const DEFAULTER_DATE_COLUMNS = ['DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE'];
+export function defaultersDateOrder(csvRows) {
+  const objs = rowsToObjects(csvRows);
+  return { dayFirst: inferDayFirst(objs.flatMap(({ raw: r, h }) => DEFAULTER_DATE_COLUMNS.map(c => col(r, h, c)))) };
+}
+
+export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate, dateOrder }) {
+  const objs = rowsToObjects(csvRows);
+  // The upload route asks once for its report and hands the answer in, so a deck is scanned once;
+  // anybody else gets the same answer from the same function.
+  const dayFirst = (dateOrder || defaultersDateOrder(csvRows)).dayFirst;
+  return objs.map(({ raw: r, h }) => ({
     ref: textOrNull(col(r, h, ...REF_HEADERS)),
     docket_no: textOrNull(col(r, h, 'DOCKET#', 'DOCKET #')),
     full_name: textOrNull(col(r, h, 'FULLNAME', 'FULL NAME')),
     contact: normPhone(col(r, h, 'CONTACT#', 'CONTACT #')),
     guarantor_name: textOrNull(col(r, h, 'GUARANTOR NAME')),
     guarantor_contact: normPhone(col(r, h, 'GUARANTOR CONTACT')),
-    disb_date: dateOrNull(col(r, h, 'DISB DATE')),
-    expire_date: dateOrNull(col(r, h, 'EXPIRE DATE')),
-    chronic_date: dateOrNull(col(r, h, 'CHRONIC DATE')),
-    due_date: dateOrNull(col(r, h, 'DUE DATE')),
-    last_trans_date: dateOrNull(col(r, h, 'LAST TRANS DATE')),
+    disb_date: dateOrNull(col(r, h, 'DISB DATE'), dayFirst),
+    expire_date: dateOrNull(col(r, h, 'EXPIRE DATE'), dayFirst),
+    chronic_date: dateOrNull(col(r, h, 'CHRONIC DATE'), dayFirst),
+    due_date: dateOrNull(col(r, h, 'DUE DATE'), dayFirst),
+    last_trans_date: dateOrNull(col(r, h, 'LAST TRANS DATE'), dayFirst),
     status: textOrNull(col(r, h, 'STATUS')),
     ds: dsText(col(r, h, 'D.S')),
     dc: num(col(r, h, 'D.C')),
