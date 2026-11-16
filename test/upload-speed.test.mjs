@@ -250,6 +250,75 @@ test('reading the date order adds no trip to a defaulters upload', async () => {
   assert.ok(trips <= 24, 'a 40-row defaulters deck cost ' + trips + ' round trips (budget 24)');
 });
 
+/* =====================================================================================
+   THE EXPECTED SHEET AND THE FOLLOWUP SHEET READ THEIR DATES THE SAME WAY -- THROUGH THE REAL HANDLER.
+   =====================================================================================
+     "so fix date readings okay? i even seen the error on default lists at disb date columns" -- the owner
+
+   The Follow-up list shows Disb date and Last trans from followup_status. A CURRENT defaulters deck
+   refreshes that register, and so does the "Defaulters Followup" upload -- whose importer used to read
+   those columns with no order. This pins that the route reads each sheet's own order, stores what the
+   file means, says which way it read, and that a Followup file cannot undo a corrected register. */
+test('an Expected sheet written month-first is stored as the file means it, and the answer says so', async () => {
+  const header = ['REF#', 'FULLNAME', 'DISB DATE', 'DUE DATE', 'LAST TRANS DATE', 'ARREAS', 'TEAM'];
+  const rows = [header, ['2200000001', 'A MADE UP', '9/7/2026', '11/30/2026', '11/9/2026', 31001, 'TEAM1']];
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, { code: 'A', type: 'expected-today', meta: { date: '2026-11-16' }, rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.dateOrder, 'month/day, as the file itself showed');
+  const a = c.dump('repayment_snapshots').find(r => r.ref === '2200000001');
+  assert.equal(a.disb_date, '2026-09-07', 'the seventh of September, not the ninth of July');
+  assert.equal(a.last_trans_date, '2026-11-09');
+  assert.ok(!/DAY\/MONTH because nothing/.test(res.body.message || ''), 'a sheet that decided says nothing alarming');
+});
+
+test('an Expected sheet that gives no clue is read day-first as it always was, and the answer says that it guessed', async () => {
+  const header = ['REF#', 'FULLNAME', 'DISB DATE', 'LAST TRANS DATE', 'ARREAS', 'TEAM'];
+  const rows = [header, ['2200000001', 'A MADE UP', '9/7/2026', '11/9/2026', 5000, 'TEAM1']];
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, { code: 'A', type: 'expected-initial', meta: { date: '2026-11-16' }, rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.match(res.body.dateOrder, /^assumed day\/month/);
+  assert.match(res.body.message, /read as DAY\/MONTH because nothing in it said which way round/);
+  assert.equal(c.dump('repayment_snapshots')[0].disb_date, '2026-07-09', 'the old reading, unchanged where nothing says otherwise');
+});
+
+test('a Defaulters Followup file written month-first cannot put swapped dates back on the Follow-up list', async () => {
+  const header = ['REF#', 'TEAM', 'FULLNAME', 'DISB DATE', 'LAST TRANS', 'ARREAS', 'PROMISE DATE'];
+  const rows = [header, ['2200000001', 'TEAM1', 'A MADE UP', '9/7/2026', '11/9/2026', 31001, '11/30/2026']];
+  // The register holds what a corrected CURRENT deck wrote; the Followup file is uploaded after it.
+  const c = countingDb(baseTables({ followup_status: [{ ref: '2200000001', team: 'TEAM1', disb_date: '2026-09-07', last_trans: '2026-11-09' }] }));
+  const res = await callUpload(c.db, { code: 'A', type: 'followup', rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.equal(res.body.dateOrder, 'month/day, as the file itself showed');
+  const a = c.dump('followup_status').find(r => r.ref === '2200000001');
+  assert.equal(a.disb_date, '2026-09-07', 'still the seventh of September -- not the ninth of July');
+  assert.equal(a.last_trans, '2026-11-09', 'the ninth of November, not the eleventh of September');
+  assert.equal(a.promise_date, '2026-11-30');
+});
+
+/* Measured on this fixture (a 40-row file) both with and without the date order: 21 round trips for an
+   Expected deck and 8 for a Followup file, the same before the change and after it. */
+const EXPECTED_SHEET_TRIPS = 24, FOLLOWUP_SHEET_TRIPS = 10;
+test('reading the date order adds no trip to an Expected or a Followup upload', async () => {
+  const exp = { code: 'A', type: 'expected-today', meta: { date: '2026-11-16' },
+    rows: [['REF#', 'FULLNAME', 'DISB DATE', 'DUE DATE', 'ARREAS', 'TEAM'],
+      ...Array.from({ length: 40 }, (_, k) => ['22' + String(k).padStart(8, '0'), 'C' + k, '9/7/2026', '11/30/2026', 1000 + k, 'TEAM1'])] };
+  const fu = { code: 'A', type: 'followup',
+    rows: [['REF#', 'TEAM', 'FULLNAME', 'DISB DATE', 'LAST TRANS', 'ARREAS'],
+      ...Array.from({ length: 40 }, (_, k) => ['22' + String(k).padStart(8, '0'), 'TEAM1', 'C' + k, '9/7/2026', '11/30/2026', 1000 + k])] };
+  const ce = countingDb(baseTables());
+  const re = await callUpload(ce.db, exp);
+  assert.equal(re.body.ok, true, re.body.error);
+  const cf = countingDb(baseTables({ followup_status: [] }));
+  const rf = await callUpload(cf.db, fu);
+  assert.equal(rf.body.ok, true, rf.body.error);
+  /* Arithmetic over rows already in hand: no read and no write is added. Measured on this fixture and
+     bounded with headroom, so a read added to either sheet's path fails here with its own count. */
+  assert.ok(ce.stat().trips <= EXPECTED_SHEET_TRIPS, 'a 40-row Expected deck cost ' + ce.stat().trips + ' round trips (budget ' + EXPECTED_SHEET_TRIPS + ')');
+  assert.ok(cf.stat().trips <= FOLLOWUP_SHEET_TRIPS, 'a 40-row Followup file cost ' + cf.stat().trips + ' round trips (budget ' + FOLLOWUP_SHEET_TRIPS + ')');
+});
+
 test('sameAsToday runs on the LAST slice only, not on every slice of a big file', async () => {
   const tables = baseTables();
   for (let i = 0; i < 900; i++) {

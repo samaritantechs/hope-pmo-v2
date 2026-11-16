@@ -17,8 +17,8 @@ import { noteAnswersChanged } from './_lib/answer-cache.js';
 import { noteDeviceSettingsWritten } from './_lib/device-core.js';
 import { weekdayOfKey } from './_lib/time.js';
 import {
-  importDefaulters, defaultersDateOrder, importExpected, importExpectedSummary, importDefaulterSummary,
-  importFollowup, importComments, commentsDateOrder,
+  importDefaulters, defaultersDateOrder, importExpected, expectedDateOrder, importExpectedSummary, importDefaulterSummary,
+  importFollowup, followupDateOrder, importComments, commentsDateOrder,
   importLoans, loansDateOrder, importTeams, importReceivedPayments,
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices, importDeductions,
@@ -777,7 +777,7 @@ export default withApi(async (req, res) => {
   if (!(await can(user, 'upload'))) { const e = new Error('Upload permission is required for your access code.'); e.status = 403; throw e; }
   if (!Array.isArray(rows) || rows.length < 2) { const e = new Error('No data rows found in the file.'); e.status = 400; throw e; }
 
-  let table, records, commentsOrder = null, loansOrder, defaultersOrder = null, teamsDroppedCols = null;
+  let table, records, commentsOrder = null, loansOrder, defaultersOrder = null, sheetOrder = null, teamsDroppedCols = null;
   let loansRelinked = 0, loansMerged = 0, receivedAbnormal = 0, receivedStep = 0, noticePlace = null, noticeCleared = null, noticeClash = [];
   switch (type) {
     case 'defaulters-current':
@@ -797,7 +797,8 @@ export default withApi(async (req, res) => {
     case 'expected-initial':
       if (!meta.date) { const e = new Error('date is required for an Expected upload.'); e.status = 400; throw e; }
       table = 'repayment_snapshots';
-      records = importExpected(rows, { snapshotType: type.replace('expected-', ''), snapshotDate: meta.date });
+      sheetOrder = expectedDateOrder(rows);            // which way round the file writes its dates: read off the file (Part 85)
+      records = importExpected(rows, { snapshotType: type.replace('expected-', ''), snapshotDate: meta.date, dateOrder: sheetOrder });
       break;
     /* A DAY WITHOUT ITS CUSTOMERS. The company's own summary sheet -- money per team, no
        names -- for the mornings the full export was missed. It goes to its own table, shaped
@@ -820,7 +821,8 @@ export default withApi(async (req, res) => {
       break;
     case 'followup':
       table = 'followup_status';
-      records = importFollowup(rows);
+      sheetOrder = followupDateOrder(rows);            // the Follow-up list shows Disb date / Last trans from this table (Part 85)
+      records = importFollowup(rows, { dateOrder: sheetOrder });
       break;
     case 'comments':
       table = 'followup_comments';
@@ -1733,8 +1735,10 @@ export default withApi(async (req, res) => {
        rotation are read off these dates, so the answer says which way round they were read. */
     defaulterDateOrder: defaultersOrder ? (defaultersOrder.dayFirst === null ? 'assumed day/month (this part of the file had no date that can only be read one way round)'
       : defaultersOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
-    dateOrder: commentsOrder ? (commentsOrder.dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
-      : commentsOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
+    /* The comments log and, since Part 85, the Expected and Defaulters Followup sheets say which way
+       round they were read in the same words (a request carries only one of them). */
+    dateOrder: (commentsOrder || sheetOrder) ? ((commentsOrder || sheetOrder).dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
+      : (commentsOrder || sheetOrder).dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
     noticePlace: noticePlace ? { filed: noticePlace.filed, respelled: noticePlace.respelled, unknown: noticePlace.unknown,
       replaced: noticeCleared ? noticeCleared.removed : 0, appHeld: noticeCleared ? noticeCleared.appHeld : [], clashes: noticeClash } : undefined,
@@ -1752,6 +1756,7 @@ export default withApi(async (req, res) => {
          day-first as it always was, and the cycle days come from these dates. (Per slice, like the rest of
          this message: a big deck always decides, so this is the sentence of a tiny file or a tiny last slice.) */
       defaultersOrder && defaultersOrder.dayFirst === null ? `Dates in this part of the file were read as DAY/MONTH because nothing in it said which way round the file writes them. A customer's two cycle days come from DISB DATE: check a few against the loan system.` : '',
+      sheetOrder && sheetOrder.dayFirst === null ? `Dates in this part of the file were read as DAY/MONTH because nothing in it said which way round the file writes them. Check a few against the loan system.` : '',
       loansOrder !== undefined ? `Dates in this file were read as ${loansOrder === null ? 'DAY/MONTH (nothing in the file said which way round it writes them)' : loansOrder ? 'DAY/MONTH' : 'MONTH/DAY'}. Check one row against the report if a figure looks like it landed in the wrong month.` : '',
       /* The whole reason "appending didn't update": the same loan under a new identity. Both
          figures are worth a sentence -- an update that happened invisibly is indistinguishable

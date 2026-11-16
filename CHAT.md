@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 84**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 85**.
 
 ---
 
@@ -81,6 +81,30 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#712 — the Expected and Follow-up uploads read the file's own date order too (handbook Part
+  85).** "so fix date readings okay? i even seen the error on default lists at disb date
+  columns" — the owner, 16 Nov, the hour #711 was merged. **The page was not the fault:** a list's
+  Disb date column prints what is stored (`String(v).slice(0, 10)`), so the error on the lists was
+  the stored date that #711 stopped writing. Two lists show a Disb date: Expected Defaulters (from
+  the defaulters decks) and the **Follow-up list** (`followup_status`), which every **Current**
+  deck refreshes (`writeFollowupFromDeck`; an Initial file never touches it) **and** the
+  "Defaulters Followup" upload writes. That importer, like the Expected sheet's (`importExpected`,
+  into `repayment_snapshots`; no screen reads those columns yet), read its dates with no order
+  (found by sweeping every `dateOrNull(` that has no second argument). A Followup file uploaded
+  after a corrected Current deck would have put the swapped Disb date and Last trans back. Now each
+  sheet's own date columns are pooled and read by the same rule (`expectedDateOrder`,
+  `followupDateOrder`, `inferDayFirst`); the upload's answer says `dateOrder`, and a sentence only
+  when a sheet gave no clue. **#711's note "nothing reads what they store" was wrong for the
+  Follow-up list**; it is corrected in Part 84 and below. **Cost:** CPU only, no read or write
+  added: a 40-row Expected deck is 21 round trips and a Followup file 8, **the same on the code as
+  merged and on this change**; `/api/call` untouched; `BUILD` and `CALL_BUILD` unchanged.
+  **Checked:** seven importer tests and four through the real upload handler, four deliberate
+  breaks each caught; `npm test` 1,568 pass. **Not done, said plainly:** stored rows keep their
+  swapped dates (the Follow-up list is put right for a customer by the next Current deck they are
+  on, today's once it is uploaded again; past days by their own files); **an exact repair of the
+  stored rows exists in principle and is not built** (section 8); the complaints and restructures
+  sheets (the company's own forms, not the loan system's export) read their dates with no order
+  and nobody has reported them; `migrate/` reads month-first by construction and is not wrong.
 - **#711 — the defaulters upload read the loan system's month-first dates day-first (handbook
   Part 84).** "Was 2209966593 on initial file of today 16th nov 2026 & expected defaulters? is it
   still in the expected defaulter reports for the recovered amounts?" — the owner, 16 Nov, who
@@ -117,7 +141,8 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   was on an earlier current file, and not at all when it never was (the week keeps it on a
   separate board outside the totals): found while answering, a design change that moves the
   report's recovered totals and the phone's EXP.DEF %, so the owner's to say (section 8); (2)
-  `importExpected` and `importFollowup` read dates the old way (nothing reads what they store);
+  `importExpected` and `importFollowup` read dates the old way (fixed in #712; nothing read what the
+  Expected sheet stores, but the Follow-up list does show what the Followup sheet stores);
   (3) the order is read per request, so a last slice of a few loans may carry no evidence and
   reads day-first (and says so). **A reusable read-only probe is kept:**
   `db/TEMPLATE-where-is-this-customer-read-only.sql` (a loan number and a day: on which files,
@@ -1554,9 +1579,10 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner — first, after #711 deploys:** upload **today's Initial and Current defaulters files
-  again** (16 Nov; both, Current included, because a day's cycle days are read off the current
-  file's dates first). Rows already in the book keep their swapped dates; only the file knows
+- **The owner — first, after #711 and #712 deploy:** upload **today's Initial and Current defaulters
+  files again** (16 Nov; both, Current included, because a day's cycle days are read off the current
+  file's dates first, and because it is the Current file that refreshes the Follow-up list's Disb
+  date and Last trans, section 4, #712). Rows already in the book keep their swapped dates; only the file knows
   which. Tomorrow's files are read right by themselves. Earlier days of this week only if the
   week's Expected Defaulters figures must be exact. When today's files are re-read, about a third
   of the customers move to their real days (Monday's list grows from about 3,842 to 4,148 on
@@ -1678,7 +1704,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: a leader's own Exp.Def list reaching
+- **Offered, never asked for — do not start without a yes**: an exact repair of the stored swapped
+  dates (section 4, #712: for a loan on today's re-uploaded Current deck, copy its right dates
+  onto the same loan's older rows where the old value is exactly the day/month swap of the new
+  one; nothing guessed, but a bulk update of the hottest table, to be cut into small statements,
+  and it restates past days' Exp.Def figures); a leader's own Exp.Def list reaching
   every customer the rotation hands them, whatever teams their code holds (the cure for "the manager
   sees little" in one stroke, and against the standing rule that the code decides what is seen, so
   the owner's word first); the three recycling roles following the access codes the way recovery,

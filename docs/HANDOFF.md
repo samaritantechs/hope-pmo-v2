@@ -6946,11 +6946,85 @@ out. `npm test`: 1,557 pass.
   the morning's arrears, credited to the leader the rotation names, in the day view, the week
   view and the phone; it changes the report's recovered totals and the phone's EXP.DEF %, so it
   is the owner's to say.
-- `importExpected` and `importFollowup` read their dates the old way too. Nothing reads the
-  dates they store today (checked); not changed, not checked against a real file.
+- `importExpected` and `importFollowup` read their dates the old way too. **Corrected in Part 85:**
+  this bullet first said that nothing reads the dates they store. That was right for the Expected
+  sheet and wrong for the Defaulters Followup sheet, whose Disb date and Last trans the Follow-up
+  list shows. Both importers now read the file's own order (Part 85).
 - The date order is read per request, as the comment importer's is: a deck is sent in slices of
   up to 2,000 loans and each slice carries its own evidence, which a big slice always has. A
   last slice of a few loans may carry none and then reads day-first (and says so in its answer).
+
+## Part 85 — The same reading for the Expected and Follow-up sheets: no upload reads a loan-system date by guessing
+
+> "so fix date readings okay? i even seen the error on default lists at disb date columns" — the
+> owner, 16 Nov 2026, the hour Part 84 was merged
+
+**What the owner saw, and why.** A list's Disb date column prints what is stored: a `kind:'date'`
+column is `String(v).slice(0, 10)` in `app.html`, and the server sends the stored value
+untouched. So the error on the lists was the stored date, the one Part 84's importer swapped.
+Two lists show a Disb date: **Expected Defaulters** (from the defaulters decks) and the
+**Follow-up list** (from `followup_status`).
+
+**What Part 84 left open, found by sweeping every `dateOrNull(` in `importers.js` for a call
+with no order.** Two more uploads of the loan system's sheets read their dates the old way:
+
+- **Defaulters Followup** (`importFollowup`, into `followup_status`: Disb date, Last trans, the
+  promise and comment dates). That register is refreshed from every slice of a **Current**
+  defaulters deck (`writeFollowupFromDeck`, an upsert of the deck's columns; `defaulters-current`
+  only, an Initial file never touches it) **and** written by this upload. A Followup file
+  uploaded after a corrected Current deck would have put the swapped Disb date and Last trans
+  back on the list the Current deck had just corrected.
+- **Expected** (`importExpected`, into `repayment_snapshots`: Disb, Due, First and Last
+  schedule, Last trans). No select names those columns today (checked), so nothing shows it:
+  the same fault waiting for a screen to read it.
+
+**What changed.** The rule is still the one that existed (`inferDayFirst`: one unambiguous date
+in the sheet decides every date in it), applied to each sheet's own date columns pooled, as the
+defaulters deck's are: `expectedDateOrder` and `followupDateOrder`, with `defaultersDateOrder`
+on the same helper and unchanged in what it answers. A sheet that PROVES month-first is read
+month-first; one that proves day-first, or shows no clue, is read exactly as it always was. The
+upload route works the order out once, hands it to the importer, and answers `dateOrder`
+("month/day, as the file itself showed", the comments log's field) and, only when a part of the
+sheet gave no clue, the same sentence a defaulters deck gives: "Dates in this part of the file
+were read as DAY/MONTH because nothing in it said which way round the file writes them. Check a
+few against the loan system." Server only: `BUILD` and `CALL_BUILD` are unchanged.
+
+**What it cost.** CPU only: no read and no write added. A 40-row Expected deck is 21 round trips
+and a 40-row Followup file is 8, **measured on the code as merged (Part 84) and on this change,
+the same**; `test/upload-speed.test.mjs` holds them with headroom (24 and 10). `/api/call` is
+untouched.
+
+**Checked.** Seven importer tests (Expected and Followup: month-first read right, day-first and
+no-clue read as before, a handed-in order obeyed, and the three loan-system sheets agree on one
+loan's disbursement date) and four through the real upload handler (stored as the file means, the
+no-clue answer says it guessed, a Followup file cannot put the swapped dates back on a corrected
+register, no round trip added). Four deliberate breaks (each importer ignoring its order, the route
+not reporting it, the Followup order forgetting its promise-date evidence), each caught.
+
+**What this does NOT do.**
+
+- **Stored history is as it was stored.** Every sheet uploaded before Part 84 or this change carries
+  swapped dates wherever both numbers were twelve or under. The Follow-up list is put right for a
+  customer by the next **Current** deck they are on (today's, once it is uploaded again); a
+  customer who left the current file keeps the register row they had; past days' decks keep their
+  stored dates until their files are uploaded again.
+- **An exact repair of the stored rows exists in principle and is not built.** For a loan on
+  today's re-uploaded Current deck, copy its right dates onto the same loan's older rows where the
+  old value is exactly the day/month swap of the new one: nothing is guessed. It is a bulk update
+  of the hottest table (so it would be cut into small statements) and it restates past days'
+  Exp.Def figures, so it is the owner's to ask for (`CHAT.md` section 8).
+- **The company's own forms are not touched.** The complaints and restructures sheets
+  (`importComplaints`, `importRestructures`: RESOLVED AT, START DATE, APPROVED AT, TIMESTAMP) are
+  written by the company's forms, not the loan system's export, and read their dates with no
+  order. Nothing here says they are wrong; nobody has reported them.
+- **The older copy under `migrate/` does not have this fault**, so it is not changed: its date parser
+  reads `a/b/yyyy` as month first by construction (`migrate/lib/parse.js`), the loan system's order.
+- The order is read per request (a part of a big sheet carries its own evidence), as in Part 84.
+
+**What the owner has to do.** Part 84's list stands: upload today's Initial **and Current** files
+again. The Current file is the one that puts the Follow-up list's Disb date and Last trans right (it
+refreshes the register); both put Expected Defaulters right. A Followup or an Expected sheet needs
+uploading again only if somebody is reading what it stored.
 
 ---
 
