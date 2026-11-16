@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 87**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 88**.
 
 ---
 
@@ -60,6 +60,7 @@ Given since, and written nowhere else:
 | 14 Nov 2026 | "dont just bring things up and kill the whole system better pass through the old chat brother" · "before fixing anything becase all these have their rules there already" · "Please never fix my system by making up a new rule unless we building something new to it - everything that was there has taken days anmd nights man" | **A surprising result is read against the rule that already governs it before anything is called a gap.** Said when a chat treated a deliberately-scoped, three-times-reviewed design decision (Parts 69-71: the ghost rescue reaches only *today*, never a past day, on purpose) as a newly-found bug worth fixing. `docs/HANDOFF.md`'s own Parts are the record of that reasoning — read the Part behind a screen before proposing a change to it, and if the existing rule already explains what is being seen, say so and stop, rather than inventing a new one beside it. A new rule is for new ground, never a patch for old ground that already has one. |
 | 15 Nov 2026 | "i said i cant be re-asking or re-prompting what i already did - i dont expect these - {merge it bro} complete whatever asked not partials waiting another promts. man my head is done" | **A chat's own caution is not a reason to hold a green, tested change back.** Said after a chat opened #703 as a draft "for a second look" nobody asked for. The existing rule already covered this ("Merge now... I never said that rule," 11 Nov) — this restates it for a chat's own extra-care instinct, not only a time-of-day one: once `npm test` and CI both read clean, merge it the same session, the same as anything else. A real blocker (a merge conflict, a failing test, a question only the owner can answer) is still said once and acted on; "I'd like someone to look this over first" is not one of those and is never grounds to leave work half-delivered, waiting on a prompt that should not have to come. |
 | 16 Nov 2026 | "how comes tou said "should disappear." yet we are fighting allover to say cleared people shouldnt dissapear for verifications" · "we cant re-upload now - i hope the system autoupdates whats right brother" | **A customer on a day's initial file does not disappear from that day's lists, because they cleared or because the current file no longer names them.** Said after an answer used the words "should disappear" about such a customer; the owner had ordered the opposite on 13 Nov ("they should stay there as of recovery so as to know recovery amount from difference of initial to current per each day by team or staff") and 15 Nov ("i expect that customer in initial never to get lost even if cleared its amounts and statuses that change"), section 4, #693, #703, #709. A screen that drops such a customer, or lists them as recovered 0, is the gap to close, not a design to defend. **And the owner cannot always upload a file again:** when the fault is in what an upload stored, the cure is one that works on what is stored (RUN-ME-060, section 4, #713), never "upload it again". |
+| 16 Nov 2026 | "Should the report and the phone also leave out customers who fall into default after the morning file, so the dashboard card, the report and the phone all count the same people?" — "YES" | **A day's list is its initial deck's customers, on the dashboard card, the report and the phone alike.** A customer in default on a day's current file who was never on its initial file entered default after the morning: they are nobody's expected defaulter of that day and join the next day's list (section 4, #716). Only when the day's two files are a pair (the same date). **Not asked, so not changed:** the Expected Defaulters tab (the weekly-cycle book of every defaulter, not a day's list) and the all-time ghost (13 Nov, Part 71), which is the one thing the three still differ on (section 8). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -82,14 +83,39 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#716 — the report and the phone list the day's morning deck, as the dashboard card does (handbook
+  Part 88).** "Should the report and the phone also leave out customers who fall into default after
+  the morning file, so the dashboard card, the report and the phone all count the same people?" —
+  "YES" — the owner, 16 Nov, answering the question #715 left open. **Before:** on the card's own test
+  data the card read 3 customers / 180,000 owed / 90,000 recovered / 50.0%, and the report 4 /
+  279,999 / 90,000 / 32.1%. The one difference was a customer in default on the current file who was
+  never on the day's initial file: the card counts initial customers only (Part 74); the report and
+  the phone listed the evening's new defaulters with their current arrears as their "initial",
+  recovered 0. **Now** (`buildRows_`, only when the day's two decks are a pair, Part 87): that customer
+  is not a row of the day, on the report's day, a leader's card, the phone's list and strip, and every
+  filed day of the week; the same data reads 3 / 180,000 / 90,000 / 50.0 on both. `enteredAfter`
+  (`{customers, arrears}`) on the report's day view and in the phone's `diag` says how many were left
+  out (null with no pair); the page does not draw it. **Left alone on purpose:** the Expected
+  Defaulters tab (the weekly-cycle book of every defaulter, not a day's list) and the all-time ghost
+  (Part 71, ordered 13 Nov), which is still counted in the report's and the phone's figures and is not
+  on the card: **the only thing the three still differ on** (section 8). **The consequence to know:** a
+  team missing from a day's initial file while its current file carries it reads as "entered default
+  after the morning" and leaves a multi-team reader's day (the whole-book rule on the initial side,
+  RUN-ME-032); `enteredAfter` shows it, and a one-team reader is not touched. **Cost:** no read; fewer
+  rows. **Checked:** the existing tests that relied on the old rule rewritten (one of mine, from #714),
+  an evening-only customer added to the four-screens, unpaired, parity and phone tests, five deliberate
+  breaks each caught (the customer left on the day, nobody counted as left out, the ghost left out too,
+  left out with no pair, the week keeping later entrants); `npm test`: 1,581 pass. Server only: `BUILD`
+  and `CALL_BUILD` unchanged. **Not done, said plainly:** ghosts in the figures (section 8); the tab;
+  a note on the page; nothing run on the live book, no SQL.
 - **#715 — the dashboard card and the Exp.Def Report pinned to one reading; the cost measured; the one
   difference left, named (handbook Part 87 addendum).** After #714 merged, the report's day was laid
   beside the card's tile on the card's own test data: **recovered is the same to the shilling (90,000)**, and
   the percentage is not (50.0% on the card, 32.1% on the report) because one customer who entered default
   after the morning deck is on the current file and not on the day's initial file: the card does not count
   them (Part 74), the report and the phone list them with their current arrears as their initial. Not
-  changed: whether "the lists per day come from initial files" extends to the report and the phone is the
-  owner's to say (section 8). A new test (`test/portal.test.mjs`) pins the card and the report to the same
+  changed: whether "the lists per day come from initial files" extends to the report and the phone was the
+  owner's to say (section 8): **he said YES the same evening, #716**. A new test (`test/portal.test.mjs`) pins the card and the report to the same
   customers, arrears, recovery and percentage for a day and its week, in every state a customer can be in;
   three deliberate breaks of #714's rule each turn it red by itself. **Cost of #714, measured at the live
   book's size** (10,372 customers on the morning deck, 4,000 gone from the current one): about 15 ms of CPU
@@ -1720,7 +1746,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 - **The owner, once #714 has deployed:** open one day on the Exp.Def Report and its leaders'
   cards. The rows marked CLEARED whose recovered equals their initial are the customers the
   day's current file did not name (section 4, #714); the report's recovered totals and the phone's
-  EXP.DEF % are higher than yesterday's by exactly those. Nothing to run. And the owner's word on
+  EXP.DEF % are higher than yesterday's by exactly those, and after #716 higher still by the customers who
+  entered default after the morning file (`enteredAfter` in the report's answer counts them). Nothing to run. And the owner's word on
   the corner left open: a reader whose own teams are ALL missing from the day's current file gets
   nothing closed (a small team whose last defaulter paid); closing it uses the company's file date
   (no read) and is the whole-book trade applied to a one-team reader.
@@ -1758,12 +1785,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   filed day being asked of the reader's teams, **went with the board in #714**. **Not faults, by the whole-book rule:** the rows marked
   CLEARED for a team today's current file does not name, on the phone's list, the Exp.Def
   Report, the Expected Defaulters tab, team progress and the weekly report's Count 1-6.
-- **The owner, only if they want it changed**: the report and the phone still list a customer who
-  entered default after the morning deck (on the current file, never on the day's initial file) with their
-  current arrears as their "initial"; the dashboard card does not count them (Part 74). Recovered agrees
-  to the shilling, the Rec % does not (50.0 on the card against 32.1 on the report, on the card's own test
-  data). Making the report and the phone follow the card is one rule for both (the lists per day come from
-  the initial deck, a leader's list included) and is the owner's to say; nothing was changed (section 4, #715).
+- **The owner, only if they want it changed**: the all-time ghost (Part 71, ordered on 13 Nov:
+  "should reflect to alltime data past present and future") is still a row on the report and the phone,
+  CLEARED, with its last-known arrears, and **still counted in their figures** (customers, owed, Rec %);
+  the dashboard card does not carry it. After #716 it is the one thing the card, the report and the phone
+  still differ on. "Count the same people" and "should reflect to alltime data" pull two ways; keeping the
+  ghosts **listed but out of the figures** would reconcile them, and reverses a reviewed decision ("both
+  counted in the week grand total"), so it is the owner's to say. Nothing was changed (section 4, #716).
 - **The owner, only if they want it changed**: the whole-book trade itself. If a current file
   ever arrives without a team that still owes, every recovery figure reads that team as
   cleared (section 4, #707, with the measured size of it). Changing it is one rule for every

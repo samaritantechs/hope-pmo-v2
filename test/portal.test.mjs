@@ -441,6 +441,7 @@ function clearedStayTables_(currentDate = TODAY) {
     R('NOCUR1', 4000, 'initial', { days_elapsed: 3 }),                                       // never on any current file: MANAGER (three days in default)
     R('OFFCYC1', 900, 'initial', { disb_date: '2026-07-22' }),                               // a Wednesday customer: not Friday's to work
     R('CHR1', 6000, 'initial', { status: 'Chronic', days_elapsed: 40, chronic_date: '2026-07-01' }),   // chronic on the morning deck, on no current row: the CHRONIC rotation's GMO (week 4), where the active one would say BIKE
+    R('NEW1', 7000, 'current', { status: 'Chronic', days_elapsed: 40, chronic_date: '2026-07-01' }),   // on the EVENING deck only: entered default after the morning deck was filed (Part 88)
     old('OLD1', 15500),                                                                      // gone from every deck for ten days (Part 71): NOT on today's initial deck
   ];
   return t;
@@ -470,6 +471,15 @@ test('a customer the day\'s current deck no longer names stays on every list of 
   // CHR1 -- CHRONIC on the morning deck. The rotation reads the morning row's OWN status (chronic, week 4: the GMO's turn), never the CLEARED the list shows.
   assert.deepEqual([gmo.CHR1.status, gmo.CHR1.initial, gmo.CHR1.arrears, gmo.CHR1.recovered, gmo.CHR1.cycle], ['CLEARED', 6000, 0, 6000, 'C-W4']);
   assert.ok(!bike.CHR1 && !mgr.CHR1, 'the active rotation would have said BIKE: the morning row says it is chronic');
+  // NEW1 -- on the evening deck only: it entered default AFTER the morning deck was filed (handbook Part 88). "Should the report and the phone
+  // also leave out customers who fall into default after the morning file, so the dashboard card, the report and the phone all count the same
+  // people?" -- "YES", the owner, 16 Nov 2026. Nobody's expected defaulter of THIS day: the card never counted them (Part 74); they join tomorrow's list.
+  assert.ok(!bike.NEW1 && !mgr.NEW1 && !gmo.NEW1, 'not on any leader\'s card of the day');
+  assert.ok(!s.mineBoss.rows.some(r => r.ref === 'NEW1') && !s.mineBike.rows.some(r => r.ref === 'NEW1'), 'nor on the worklist');
+  assert.deepEqual(s.report.enteredAfter, { customers: 1, arrears: 7000 }, 'and the answers say how many were left out, so a shorter list is explained');
+  assert.deepEqual(s.mineBike.diag.enteredAfter, { customers: 1, arrears: 7000 });
+  assert.deepEqual([tab.NEW1.status, tab.NEW1.arrears, tab.NEW1.initial, tab.NEW1.recovered], ['CHRONIC', 7000, 7000, 0],
+    'the Expected Defaulters tab is the weekly-cycle book of every defaulter, not a day\'s list: they are on it, owing, as a defaulter is');
   // The controls: paid-and-on-the-file is as it was; a customer who is NOT on the day's initial deck is the all-time ghost of Part 71, untouched.
   assert.deepEqual([bike.PAID1.status, bike.PAID1.initial, bike.PAID1.recovered], ['CLEARED', 800, 800]);
   assert.deepEqual([bike.OWE1.status, bike.OWE1.arrears, bike.OWE1.recovered], ['DEFAULTER', 600, 400]);
@@ -519,6 +529,8 @@ test('a customer is not marked cleared on a current deck of another date: nobody
   const mgr = Object.fromEntries(s.mgr.map(r => [r.ref, r])), tab = Object.fromEntries(s.tab.map(r => [r.ref, r]));
   assert.equal(s.report.paired, false, 'and the answers say so: the day\'s current deck is another date\'s');
   assert.equal(s.mineBike.diag.paired, false);
+  assert.equal(s.report.enteredAfter, null, 'nobody is left out on a comparison that was never made');
+  assert.ok(s.gmo.some(r => r.ref === 'NEW1'), 'a defaulter of the older current deck stays on the list, as it always did (the chronic rotation: the GMO)');
   assert.ok(!s.mineBoss.rows.some(r => r.ref === 'NOCUR1') && !mgr.NOCUR1, 'a customer on no current deck is not invented as recovered on a deck of last week');
   assert.ok(!s.bike.some(r => r.ref === 'GONE1'), 'not credited to the morning row\'s leader either');
   // GONE1 stays what the all-time ghost made it (Part 71): its last-known row, chronic, MANAGER, last-known arrears, nothing recovered.
@@ -533,6 +545,8 @@ test('a customer who left the current deck is shown only to the teams that may s
   t.teams[1] = { ...t.teams[1], manager: 'MBA LEAD' };
   t.defaulter_snapshots.push(
     { ref: 'MB1', full_name: 'C MB1', contact: '0714000MB1', team: 'MBAGALA', arrears: 3000, status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 3,
+      disb_date: '2026-07-21', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'binitial' + TODAY, created_at: TODAY + 'T04:00:00Z' },
+    { ref: 'MB2', full_name: 'C MB2', contact: '0714000MB2', team: 'MBAGALA', arrears: 100, status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 3,
       disb_date: '2026-07-21', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'binitial' + TODAY, created_at: TODAY + 'T04:00:00Z' },
     { ref: 'MB2', full_name: 'C MB2', contact: '0714000MB2', team: 'MBAGALA', arrears: 100, status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 3,
       disb_date: '2026-07-21', snapshot_type: 'current', weekday: 'FRI', snapshot_date: TODAY, upload_batch: 'bcurrent' + TODAY, created_at: TODAY + 'T08:00:00Z' });
@@ -557,10 +571,11 @@ test('a customer who left the current deck is shown only to the teams that may s
    The population is the card's own: customers on the day's initial deck on their cycle day, in
    every state a customer can be in -- still owing, owing MORE (clamped to 0, never negative), paid
    and still on the file, gone from the current deck with an older row in history, never on a
-   current file -- and one who is on both decks but not Friday's (a Wednesday customer). What the
-   two are BUILT to differ on is left out on purpose and named in Part 87: a customer who enters
-   default after the morning deck (on the current deck, not the initial: the card does not count
-   them, Part 74; the report lists them) and the all-time ghost (Part 71, the report only). */
+   current file -- one who is on both decks but not Friday's (a Wednesday customer), and one who
+   entered default after the morning deck (on the current deck only: neither counts them, since the
+   owner's "YES" of 16 Nov, Part 88 -- it was the one difference the two were built to have). What
+   still differs, on purpose and named in Part 88, is the all-time ghost (Part 71, ordered on 13
+   Nov), which only the report and the phone carry and which this fixture does not draw. */
 test('the dashboard card and the Exp.Def Report agree on a day: the same customers, arrears, recovery and percentage -- for every state a customer can be in', async () => {
   const t = tables();
   const row = (ref, arrears, type, over = {}) => ({ ...D(ref, 'KONGOWE', arrears, type), ...over });
@@ -572,6 +587,7 @@ test('the dashboard card and the Exp.Def Report agree on a day: the same custome
     { ...row('P4', 21000, 'current', { status: 'Chronic' }), snapshot_date: '2026-07-14', weekday: 'TUE', upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' },   // ... with an older row in history
     row('P5', 10000, 'initial'),                                                                 // never on a current file
     row('P6', 200000, 'initial', { disb_date: '2026-07-22' }), row('P6', 130000, 'current', { disb_date: '2026-07-22' }),   // a Wednesday customer: not Friday's
+    row('P7', 99999, 'current', { status: 'Chronic' }),                                          // on the evening's deck only: entered default after the morning deck. Neither counts them (Part 88)
   ];
   const card = (await run('dashboardFull', {}, ADMIN, fakeDb(t, { rpc: { ...SNAPSHOT_TOTALS_RPC, ...UPLOAD_STATUS_RPC, ...EXPDF_RECOVERY_RPC } }))).edrTrend.find(x => x.date === TODAY);
   const rep = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expdfReport', {}, NOW);

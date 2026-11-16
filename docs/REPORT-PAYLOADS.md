@@ -237,7 +237,7 @@ demandNotices:      rows[{id, ref, team, full_name, notice_date, total_demand, i
 adjustments:        rows[…], totals{…}, net, ready, targets[], superseded, deckChecked
 perfHistory:        period, rows[…], count, available, note, periods[]
 recoveryByCredit:   week{…}, metrics[{weekday, date, creditUser, team, assigned, recovered}]
-expdfReport:        weekly, weekday, date, weekOf, dayName, hasBaseline, sections[{role, rows, totals, unassigned}], totals{…}
+expdfReport:        weekly, weekday, date, weekOf, dayName, hasBaseline, paired + enteredAfter{customers, arrears} (a day: the day's two decks were one date, and how many customers in default on the current deck the morning deck never named, left out of the day: Part 88; null with no pair), sections[{role, rows, totals, unassigned}], totals{…}, unassignedCleared (always null since Part 87)
 notifications:      items[{kind, id, ref, team, who, by, what, at, unseen}], unseen, seenAt
 ```
 </details>
