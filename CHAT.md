@@ -85,6 +85,25 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#721 — the live answers of 17 Nov, recorded (docs only; handbook Part 91, addendum): the Follow-up list is ALL RIGHT, and the
+  10 to 15 Nov repair is under way.** The owner ran `db/RUN-ME-062`: **"no Disb date is later than today and all 10,455 dates tested
+  fit their own DAYS ELAPSED -- the column is all right"**: 10,455 customers on the tab, all with a Disb date (2024-04-17 to 2026-11-09),
+  0 later than today, Last trans 0 of 10,401 later than today, 10,455 of 10,455 fit as stored, 0 swapped, 0 neither, 0 not tested, and
+  **every row stamped with the deck of 2026-11-17**: that day's Current deck was uploaded after #711 and #717 and rewrote the whole
+  list, so it healed by itself (the owner's "i hope the system autoupdates whats right"). **#720's prediction was wrong:** it said "NOT
+  all right" until the next Current upload; the upload had already happened, and a chat does not know which uploads the owner has done
+  since: it reads the stamps (`deck of ...` lines) before predicting. **64 rows the tab does not list** (no status, no arrears) carry a
+  Disb date later than today: customers who left the book and keep the date their last write held (the old importer's swap, written
+  before the fix); no list shows them, and a Current deck that names the customer again rewrites them. The same run of the owner's
+  also ran **`db/RUN-ME-060` for 10 to 15 Nov** (window `2026-11-10` to `2026-11-15`, `max_rows` 50,000): 110,328 not fitting, 110,328
+  with one fitting reading, **50,000 repaired, 60,328 still to do, 0 left alone** (section 8). **Found while checking who reads the
+  register's date, and not asked:** Parts 85 and 86 and #712 say no screen reads the Expected sheet's `repayment_snapshots` dates (Part 85 had looked
+  for a select that NAMES them; the reader uses `select('*')`); that is wrong, and both Parts are corrected in place: the customer page (`public/mkopo.html`, `api_customerLookup`) shows **Last payment** from the customer's newest Expected
+  row first and from the Follow-up row second, and returns the Disb date the page does not draw. Rows stored before 16 Nov carry the old
+  swap and nothing repairs them; not measured on the live book (section 8, offered). The other readers of the whole register row do
+  not reach a hidden row: the phone's two reads do not select the date and drop stubs; `/api/followup` (GET) has no caller in any page,
+  module or app source; the Promise to Pay tab returns the row but draws no Disb date. **Cost:** none: words only, `BUILD` and
+  `CALL_BUILD` unchanged. **Not done:** nothing measured on the live book beyond what the owner pasted.
 - **#720 — the Follow-up list's Disb dates: is any later than today, and does each fit its own DAYS ELAPSED? A read-only check
   (handbook Part 91, `db/RUN-ME-062-followup-list-dates-read-only.sql`, pasted in full in the chat).** "In the defaulter followup
   nav, try check if there exists any future date than today in the disb date column to confirm all dates are okay" — the owner,
@@ -110,7 +129,7 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   (8 tests, eleven breaks of it, each caught). `npm test`: 1,611 pass. **Not done, said plainly:** nothing run on the live book;
   **the register is not repaired:** the next Current upload rewrites every customer on it with dates read right (nothing to run), and
   a repair in place from the repaired deck rows was not built (the working day, the hottest table, hours of difference; the owner's to
-  ask for); Last trans cannot be repaired by a pattern; 10 to 15 Nov in the decks wait for RUN-ME-060 with its window changed (section 8).
+  ask for) **(Answered 17 Nov, #721: the list had already healed by itself.)**; Last trans cannot be repaired by a pattern; 10 to 15 Nov in the decks wait for RUN-ME-060 with its window changed (section 8).
 - **#719 — RUN-ME-061 failed on the live book: `upload_batch` is a uuid; the kept check now builds its table from the real
   schema's types (handbook Part 90, addendum).** The owner ran `db/RUN-ME-060` for 16 Nov that evening: **16,531 rows put right,
   0 still to do, 0 left alone** (the day's initial and current decks; 2209966593 now falls on Monday). Then `db/RUN-ME-061`
@@ -1847,14 +1866,17 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **`db/RUN-ME-060` was run for 16 Nov by the owner (the evening of 16 Nov): 16,531 rows put right, 0 still to do, 0 left
-  alone** (section 4, #713 and #719). **For the days before** (the Exp.Def Report of a past week, the dashboard card's arrows
-  against last week) the owner changes the first date (and, if they like, `max_rows` to 50,000) in the first lines of the file and
-  runs it again, **until `still_to_do_run_again` says 0**, away from an upload (an evening upload deletes the rows of the files it
-  replaces). LAST TRANS DATE is not repaired: the Current upload sets it right on the Follow-up list, and every file from now on is
-  right by itself. When a past day is put right about a third of its customers move to their real days and about 3,500 expired or
-  chronic customers move to their real recycling leader or week: the leaders' lists of that day change, and that is the
-  correction. If anything looks wrong, the undo is at the foot of the file.
+- **`db/RUN-ME-060`: 16 Nov done; 10 to 15 Nov UNDER WAY; 1 to 9 Nov not started.** 16 Nov (the evening of 16 Nov): 16,531 rows put
+  right, 0 still to do, 0 left alone (section 4, #713 and #719). **10 to 15 Nov, first run (17 Nov): 110,328 rows did not fit the
+  pattern, 110,328 had exactly one fitting reading, 50,000 repaired, `still_to_do_run_again` 60,328, 0 left alone.** The owner was told
+  to run **the same text again with no edit until `still_to_do_run_again` says 0** (two more runs: 50,000, then 10,328), away from an
+  upload (an evening upload deletes the rows of the files it replaces); **a chat that sees the owner's next answer reads that number
+  first.** Then **`from_day` 2026-11-01, `to_day` 2026-11-09**: 9 Nov is last week's Monday (the dashboard's week-over-week arrows and
+  the Exp.Def Report's last week) and the audit never looked before 10 Nov; a `not_fitting_in_these_days` of 0 means those days were
+  already right. How far back to repair beyond that is the owner's. LAST TRANS DATE is not repaired by it (no pattern): the Current
+  upload sets it right on the Follow-up list, and every file from now on is right by itself. When a past day is put right about a third
+  of its customers move to their real days and about 3,500 expired or chronic customers move to their real recycling leader or week:
+  the leaders' lists of that day change, and that is the correction. If anything looks wrong, the undo is at the foot of the file.
 - **The owner: 2209966593 should now fall on Monday and read CLEARED** (its 16 Nov rows were put right with the rest; Monday's
   current file is filed and does not name it). Run the same probe again (`db/TEMPLATE-where-is-this-customer-read-only.sql`, the
   loan and `2026-11-16` filled in): Q2 should read 2026-09-07 (Mon) with "YES, it is their day", Q4 state B. (The corrected
@@ -1862,9 +1884,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   and the initial decks of 11, 12 and 13 Nov still read about 80% fit only if swapped, with nothing in `neither` or `missing`: RUN-ME-060
   with its first date `2026-11-10` and last `2026-11-15`, `max_rows` 50,000, run until `still_to_do_run_again` says 0, puts them right.** It
   restates those days' Exp.Def figures and the dashboard's week-over-week arrows: that is the correction, and the owner's to run.)
-- **The owner: run `db/RUN-ME-062-followup-list-dates-read-only.sql` (pasted in full in the chat, 17 Nov) and say its ANSWER line.**
-  Not all right is expected until a Current deck is uploaded after the fix: tonight's upload rewrites the list (nothing to run); run
-  the file again after it and it should read "all right". If it says "all right" already, a Current deck was uploaded after #711.
+- **`db/RUN-ME-062` was run by the owner on 17 Nov and read ALL RIGHT** (section 4, #721): nothing to do on the Follow-up list.
+  The re-run after "tonight's upload" this bullet used to ask for is not needed.
 - **The owner: send ONE real file of each of these, so each is checked against a real file** (a few rows are enough; no
   need to hide anything, none of it is written down): Expected (today or initial), Defaulters Followup, Received payments,
   Comments, Complaints, Restructures, Demand notices, PMO deductions, Staff registry, Advance requests. The Defaulters (two)
@@ -1999,7 +2020,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: a leader's own Exp.Def list reaching
+- **Offered, never asked for — do not start without a yes**: the customer page's **Last payment** (`public/mkopo.html`, `api_customerLookup`) is taken from the customer's newest Expected row
+(`repayment_snapshots.last_trans_date`) first and from the Follow-up row second; Expected rows stored before 16 Nov carry the old importer's
+swap and nothing repairs them (no pattern to check a last-payment date against), so a customer whose newest Expected row is older than
+16 Nov can be shown a swapped date: not measured on the live book, and an active customer's newest row is today's (a read-only
+count of the newest row per loan by upload day would size it; handbook Part 91, addendum); a leader's own Exp.Def list reaching
   every customer the rotation hands them, whatever teams their code holds (the cure for "the manager
   sees little" in one stroke, and against the standing rule that the code decides what is seen, so
   the owner's word first); the three recycling roles following the access codes the way recovery,

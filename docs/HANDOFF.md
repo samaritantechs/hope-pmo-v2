@@ -6980,7 +6980,9 @@ with no order.** Two more uploads of the loan system's sheets read their dates t
   back on the list the Current deck had just corrected.
 - **Expected** (`importExpected`, into `repayment_snapshots`: Disb, Due, First and Last
   schedule, Last trans). No select names those columns today (checked), so nothing shows it:
-  the same fault waiting for a screen to read it.
+  the same fault waiting for a screen to read it. **(Corrected in Part 91: wrong. The check looked for
+  a select that NAMES the columns; `api_customerLookup` reads the row with `select('*')`, and the
+  customer page draws Last payment from it.)**
 
 **What changed.** The rule is still the one that existed (`inferDayFirst`: one unambiguous date
 in the sheet decides every date in it), applied to each sheet's own date columns pooled, as the
@@ -7101,7 +7103,7 @@ does not, it refuses to pass. `test/deck-date-repair.test.mjs` pins the safety l
   (tonight's Current upload and every file from now on carry it right, and refresh the Follow-up list).
 - Rows with a missing date or no DAYS ELAPSED, loans whose expiry was moved, and any row where no
   reading or two readings fit, stay as they are.
-- The Expected sheet's dates (`repayment_snapshots`, read by no screen) and the Follow-up register are
+- The Expected sheet's dates (`repayment_snapshots`, read by no screen **(corrected in Part 91: the customer page shows Last payment from it)**) and the Follow-up register are
   not touched here: the register is refreshed from every Current deck.
 - **Which days are repaired is the owner's:** today's run puts the morning's Initial deck right. To put
   the week before right (the Exp.Def Report of a past week, the dashboard card's arrows against last
@@ -7586,8 +7588,30 @@ column) each change the answer or make the file fail. 60,017 rows: 1.5 s; 60,000
 - Test 2 judges rows last written by a Current deck. A row the Followup sheet wrote last carries that sheet's DAYS ELAPSED against an older stamp and lands in "neither" (not
   in "swapped": the two readings differ by at least 27 days and the window is four wide).
 
-**What the owner has to do.** Run `db/RUN-ME-062` (pasted in the chat) and say the ANSWER line. If it says not all right, nothing to run: tonight's Current upload puts the list right;
-run it again after that upload and it should read "all right".
+**Run on the live book, 17 Nov (the owner's answers).** `db/RUN-ME-062`: **"no Disb date is later than today and all 10,455 dates tested fit their own DAYS ELAPSED -- the column is
+all right."** 10,455 customers on the tab, all with a Disb date (2024-04-17 to 2026-11-09); **0 later than today** (Last trans: 0 of 10,401); test 2: 10,455 tested, **10,455 fit as
+stored**, 0 swapped, 0 neither, 0 not tested; **every row is stamped with the deck of 2026-11-17**. That day's Current deck was uploaded after #711 and #717, and an upload writes every
+customer on it (an upsert of its Disb date, Last trans and DAYS ELAPSED): the list **healed by itself**, which is the owner's "i hope the system autoupdates whats right". **The
+prediction two sections up was wrong:** it said "not all right until the next Current upload" and the upload had already happened. A prediction about what the book holds is made from its
+stamps (the `deck of ...` lines), not from what a chat believes was uploaded.
+
+- **The 64 rows the tab does not list** (no status, no arrears) with a Disb date later than today are customers who left the book. They keep the date their last write carried (the old importer's
+  swap, for a write before the fix) until a Current deck names them again. **What can show such a row's date, read in the code:** the phone's two reads of the register select no date and drop
+  stubs (`call-core.js`); `GET /api/followup` returns every column but nothing in any page, module or app source calls it; the Promise to Pay tab returns the whole row and draws no Disb date;
+  the customer page (`public/mkopo.html`, `api_customerLookup`) takes the date from the customer's Expected row first and returns the register's only as the fallback, and draws Last payment, not
+  the Disb date. Nothing to do.
+- **A correction to Parts 85 and 86: the Expected sheet's `repayment_snapshots` dates are NOT "read by no screen"** (Part 85: "No select names those columns today (checked), so nothing shows it"; the
+  check looked for a select that names them, and the reader uses `select('*')`; both Parts are corrected in place). `api_customerLookup` shows **Last payment** (`last_trans_date`) from the
+  customer's newest Expected row (`today` or `initial`, whichever day it is from) first and from the register's `last_trans` second. Expected rows stored before 16 Nov carry the old importer's
+  swap, and **nothing repairs them** (RUN-ME-060 reads the defaulter decks only, and a last-payment date has no pattern to be checked against). The exposure is a customer whose newest Expected
+  row is older than 16 Nov (an active customer's is today's, uploaded after #712). **Not measured on the live book.** A read-only count of each loan's newest Expected row by the day of its upload
+  would size it; it is offered, not built (`CHAT.md` section 8).
+- **`db/RUN-ME-060` for 10 to 15 Nov, the same run of the owner's:** 110,328 rows did not fit the pattern, 110,328 had exactly one fitting reading, **50,000 repaired** (the first run, `max_rows`
+  50,000), **60,328 still to do**, 0 left alone: the same text is run again, unedited, until `still_to_do_run_again` says 0 (two more runs). Then `from_day` 2026-11-01, `to_day` 2026-11-09:
+  9 Nov is last week's Monday and the audit never looked before 10 Nov.
+
+**What the owner has to do.** Finish `db/RUN-ME-060` for 10 to 15 Nov (two more runs of the same text), then run it once for 2026-11-01 to 2026-11-09 and read `not_fitting_in_these_days`. Nothing
+to do on the Follow-up list.
 
 ---
 
