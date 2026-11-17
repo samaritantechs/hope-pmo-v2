@@ -1,5 +1,5 @@
 -- =====================================================================================
--- RUN-ME-071: THE SWAPPED DATES OF EACH CUSTOMER'S LAST-KNOWN DECK ROW, PUT RIGHT IN PLACE (no re-upload, no day-by-day repair)
+-- RUN-ME-071: THE SWAPPED DATES OF EACH CUSTOMER'S LAST-KNOWN DECK ROW, PUT RIGHT IN PLACE -- ONE DAY AT A TIME, WITH THE CLOCK ON
 --
 --   "Repair everything that's wrong brother I can't be perfect to detect every where dates are wrong ... When we finish disb dates ..." -- the owner, 17 Nov 2026
 --   "Don't clean owner role, recycling leader & cycle for 'cleared' customers at expected defaulters because the disb date still gives us where to place them
@@ -21,23 +21,37 @@
 -- It does not touch an INITIAL row, a row that is not its customer's newest, LAST TRANS DATE or anything else. A customer still on the latest deck has a newest row that
 -- was written right: nothing to do for them.
 --
--- THE DAYS. The first lines of the query name the days of the LAST-KNOWN rows to repair (the whole range since August, to begin with) and how many rows one run may change.
--- A run reads the current rows of those days (through the snapshot_date index) and asks of each whether a newer one of the same customer exists (through the (ref,
--- snapshot_date) index): on a test book of 2.4 million rows the whole range took 2 seconds. If a run is cut off ("canceling statement due to statement timeout") it has
--- changed NOTHING and a shorter window (a month) is the answer. RUN AGAIN UNTIL
--- "still_to_do_run_again" SAYS 0. SET max_rows TO 0 TO COUNT WITHOUT CHANGING ANYTHING. SAFE TO RUN AGAIN: a repaired row fits the pattern and is never touched twice.
+-- HOW IT RUNS. THE FIRST VERSION OF THIS FILE TIMED OUT ON THE LIVE BOOK ("upstream timeout", 17 Nov): it asked for the whole range in ONE statement, so the database had to
+-- look at every deck row since August at once; that took 4 seconds on a test copy held in memory and it ran past what the SQL editor waits for on the live book
+-- (docs/HANDOFF.md Part 106). THIS VERSION DOES ONE DAY AT A TIME, NEWEST DAY FIRST (the customers cleared lately are the ones the tab shows first), AND STOPS STARTING NEW
+-- DAYS ONCE lk_seconds (10) HAVE PASSED. A day is its own ~11,000 current rows, read from one place, and about 500 lookups in the loan-number index: the work of a run is
+-- the days it did, never the size of the book (a one-day run touches 3,000 to 6,000 pages of a 2.3-million-row book of 84,000 pages; the whole-range statement touched 172,000).
+-- EVERY DAY IT FINISHES IS WRITTEN DOWN (defaulter_last_known_repair_days): the next run carries on from there.
+--   >>> RUN THE SAME TEXT AGAIN, WITHOUT CHANGING ANYTHING, UNTIL THE ANSWER SAYS "FINISHED". <<<
+-- A run always finishes the day it is on, so one run is a few seconds past lk_seconds at most. If a run is cut off ("canceling statement due to statement timeout", or the
+-- editor gives up) it changed NOTHING of the day in hand and nothing after the last full run: run it again. If a run says it did many days and took only a few seconds, raise
+-- lk_seconds (20 is safe for most books); if the editor ever gives up on a run, lower it (3).
+--
+-- THE FIRST LINES. lk_from_day and lk_to_day name the days of the LAST-KNOWN rows to repair (the whole range since August, to begin with); lk_apply 'no' COUNTS without
+-- changing anything and without writing anything down (it looks at the same days each time: it is for seeing the first days, not the whole range).
 -- NEVER AT THE SAME MOMENT AS RUN-ME-060 OR RUN-ME-066, or while an upload is being written: they write the same table.
 --
 -- UNDO. Every row changed is written to defaulter_last_known_repair_log with its old and new dates (a log of its own: RUN-ME-066 reads RUN-ME-060's, and rows put right
 -- here are not days put right). The undo is at the bottom, commented out.
 --
--- COST. It reads the current rows of the days named and probes the index once for each row that does not fit; it writes only the rows it changes (a small part of
--- them: the customers who left). Nothing on uploads, nothing on HOPE Calls: no code reads the log, and no code waits for this script. The run is cut off after 50
--- seconds and rolls back whole if it is. (docs/HANDOFF.md Part 104.)
+-- COST. A day reads the current rows of that day, the keys of the next deck day (the customers who are on it are not the last-known row: no lookup for them), and, for the
+-- few hundred customers who are not, one look into the (loan number, day) index for each; it writes only the rows it changes. Nothing on uploads, nothing on HOPE Calls: no
+-- code reads the two small tables this file makes, and no code waits for it. The whole script is cut off after 30 seconds and rolls back whole if it is.
 -- =====================================================================================
 set local lock_timeout = '3s';
-set local statement_timeout = '50s';
+set local statement_timeout = '30s';
 set local jit = off;
+set local plan_cache_mode = 'force_custom_plan';        -- every day is planned for its own two dates
+set local enable_seqscan = off;                         -- a day is read through the day index, never by reading the whole table
+set local hope.lk_from_day = '2026-08-01';              -- CHANGE: the first day of the last-known rows to repair (the whole range since August, to begin with)
+set local hope.lk_to_day = '2026-11-15';                -- CHANGE: the last day (the uploads from 16 Nov were read right)
+set local hope.lk_seconds = '10';                       -- CHANGE: a run starts no new day after this many seconds
+set local hope.lk_apply = 'yes';                        -- CHANGE: 'no' counts only: nothing is changed and nothing is written down
 
 create table if not exists public.defaulter_last_known_repair_log (
   id uuid primary key,                       -- the deck row that was changed
@@ -47,20 +61,51 @@ create table if not exists public.defaulter_last_known_repair_log (
   disb_new date, expire_new date, chronic_new date
 );
 alter table public.defaulter_last_known_repair_log enable row level security;
+create table if not exists public.defaulter_last_known_repair_days (
+  day date primary key,                      -- a day whose last-known rows have been looked at (and put right where one reading fits)
+  done_at timestamptz not null default now(),
+  last_known integer not null, not_fitting integer not null, one_reading integer not null, repaired integer not null
+);
+alter table public.defaulter_last_known_repair_days enable row level security;
+create temp table lk_run (day date, last_known integer, not_fitting integer, one_reading integer, repaired integer) on commit drop;
 
-with win as (
-  select date '2026-08-01' as from_day,      -- CHANGE: the first day of the last-known rows to repair (the whole range since August, to begin with)
-         date '2026-11-15' as to_day,        -- CHANGE: the last day (the uploads from 16 Nov were read right)
-         50000 as max_rows                   -- one run changes at most this many rows (0: count, change nothing)
+do $lk$
+declare
+  v_from date := current_setting('hope.lk_from_day')::date;
+  v_to date := current_setting('hope.lk_to_day')::date;
+  v_secs numeric := current_setting('hope.lk_seconds')::numeric;
+  v_apply boolean := lower(btrim(current_setting('hope.lk_apply'))) in ('yes', 'on', 'true', '1');
+  v_start timestamptz := clock_timestamp();
+  v_day date;
+  v_next date;
+  v_lk bigint; v_cand bigint; v_one bigint; v_upd bigint;
+begin
+  for v_day in select g::date from generate_series(v_from::timestamp, v_to::timestamp, interval '1 day') g order by 1 desc loop
+    continue when exists (select 1 from public.defaulter_last_known_repair_days p where p.day = v_day);
+    -- the next day that has a current deck at all: a customer on it is not at the end of their run
+    select min(s.snapshot_date) into v_next from public.defaulter_snapshots s where s.snapshot_type = 'current' and s.snapshot_date > v_day;
+with nx as materialized (   -- who is on the next deck
+  select x.ref, x.team
+  from public.defaulter_snapshots x
+  where x.snapshot_type = 'current' and x.snapshot_date = v_next
 ),
-lk as (   -- the CURRENT rows of those days that are the last-known row of their customer: no newer current row of the same team and loan number
-  select s.id, s.ref, s.team, s.snapshot_date, s.snapshot_type, s.days_elapsed, s.disb_date, s.expire_date, s.chronic_date
+gone as materialized (   -- the day's current rows of customers who are NOT on the next deck: the only ones that can be the last
+  select s.id, s.ref, s.team, s.snapshot_date, s.snapshot_type, s.days_elapsed, s.disb_date, s.expire_date, s.chronic_date, s.created_at
   from public.defaulter_snapshots s
-  cross join win
-  where s.snapshot_type = 'current' and s.snapshot_date between win.from_day and win.to_day
-    and not exists (select 1 from public.defaulter_snapshots n
-                     where n.ref = s.ref and n.team is not distinct from s.team and n.snapshot_type = 'current'
-                       and (n.snapshot_date > s.snapshot_date or (n.snapshot_date = s.snapshot_date and n.created_at > s.created_at)))
+  where s.snapshot_type = 'current' and s.snapshot_date = v_day
+    and not exists (select 1 from nx where nx.ref = s.ref and nx.team is not distinct from s.team)
+),
+lk as (   -- the LAST-KNOWN rows: no newer current row of the same team and loan number, on a later day or the same day written later (one look into the (loan number, day) index for each row)
+  select g.id, g.ref, g.team, g.snapshot_date, g.snapshot_type, g.days_elapsed, g.disb_date, g.expire_date, g.chronic_date
+  from gone g
+  left join lateral (
+    select 1 as newer
+    from public.defaulter_snapshots n
+    where n.ref = g.ref and n.snapshot_date >= g.snapshot_date and n.snapshot_type = 'current' and n.team is not distinct from g.team
+      and (n.snapshot_date > g.snapshot_date or n.created_at > g.created_at)
+    limit 1
+  ) h on true
+  where h.newer is null
 ),
 cand as (   -- those whose three dates, as stored, do not fit the pattern; and each date with day and month exchanged
   select s.id, s.ref, s.team, s.snapshot_date, s.snapshot_type, s.days_elapsed as de, s.disb_date as d, s.expire_date as e, s.chronic_date as c, sw.d_s, sw.e_s, sw.c_s
@@ -91,11 +136,10 @@ one as (    -- the one reading that fits, for the rows where exactly one does
   group by c.id
   having count(*) = 1
 ),
-take as (   -- this run's rows
+take as (   -- this day's rows (none when only counting)
   select c.*, o.d2, o.e2, o.c2
   from cand c join one o on o.id = c.id
-  order by c.snapshot_date, c.id
-  limit (select max_rows from win)
+  where v_apply
 ),
 lg as (
   insert into public.defaulter_last_known_repair_log (id, snapshot_date, snapshot_type, ref, team, disb_old, expire_old, chronic_old, disb_new, expire_new, chronic_new)
@@ -110,14 +154,38 @@ upd as (
    where s.id = t.id and s.disb_date = t.d and s.expire_date = t.e and s.chronic_date = t.c
   returning s.id
 )
-select (select count(*) from lk)                                     as last_known_rows_in_these_days,
-       (select count(*) from cand)                                   as of_them_not_fitting,
-       (select count(*) from one)                                    as one_reading_fits,
-       (select count(*) from upd)                                    as repaired_now,
-       (select count(*) from one) - (select count(*) from upd)       as still_to_do_run_again,
-       (select count(*) from cand) - (select count(*) from one)      as left_alone_no_single_reading;
+select (select count(*) from lk), (select count(*) from cand), (select count(*) from one), (select count(*) from upd)
+  into v_lk, v_cand, v_one, v_upd;
+    insert into lk_run values (v_day, v_lk, v_cand, v_one, v_upd);
+    if v_apply then
+      insert into public.defaulter_last_known_repair_days (day, last_known, not_fitting, one_reading, repaired) values (v_day, v_lk, v_cand, v_one, v_upd);
+    end if;
+    -- the day in hand is finished; start another only while the clock is inside the run's time
+    exit when clock_timestamp() - v_start > make_interval(secs => v_secs);
+  end loop;
+end
+$lk$;
 
--- UNDO: take the two dashes off the three lines below, run them, and every row the log names goes back to the dates it was uploaded with.
+select (select count(*) from lk_run)                                                                              as days_done_in_this_run,
+       (select min(day) from lk_run)                                                                              as oldest_day_done,
+       (select coalesce(sum(last_known), 0) from lk_run)                                                          as last_known_rows,
+       (select coalesce(sum(not_fitting), 0) from lk_run)                                                         as of_them_not_fitting,
+       (select coalesce(sum(one_reading), 0) from lk_run)                                                         as one_reading_fits,
+       (select coalesce(sum(repaired), 0) from lk_run)                                                            as repaired_now,
+       (select coalesce(sum(not_fitting - one_reading), 0) from lk_run)                                           as left_alone_no_single_reading,
+       (current_setting('hope.lk_to_day')::date - current_setting('hope.lk_from_day')::date + 1)
+         - (select count(*) from public.defaulter_last_known_repair_days d
+             where d.day between current_setting('hope.lk_from_day')::date and current_setting('hope.lk_to_day')::date)  as days_still_to_do,
+       case when lower(btrim(current_setting('hope.lk_apply'))) not in ('yes', 'on', 'true', '1')
+              then 'COUNT ONLY: nothing was changed or written down'
+            when (current_setting('hope.lk_to_day')::date - current_setting('hope.lk_from_day')::date + 1)
+                 = (select count(*) from public.defaulter_last_known_repair_days d
+                     where d.day between current_setting('hope.lk_from_day')::date and current_setting('hope.lk_to_day')::date)
+              then 'FINISHED: every day of the window is done'
+            else 'RUN THE SAME TEXT AGAIN' end                                                                    as what_next;
+
+-- UNDO: take the two dashes off the lines below, run them, and every row the log names goes back to the dates it was uploaded with; the last line makes a later run look at every day again.
 -- update public.defaulter_snapshots s set disb_date = l.disb_old, expire_date = l.expire_old, chronic_date = l.chronic_old
 --   from public.defaulter_last_known_repair_log l
 --  where s.id = l.id and l.snapshot_date between date '2026-08-01' and date '2026-11-15';
+-- delete from public.defaulter_last_known_repair_days where day between date '2026-08-01' and date '2026-11-15';
