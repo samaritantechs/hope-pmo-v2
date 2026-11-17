@@ -792,7 +792,15 @@ export function noticeRowId(o, seq = 0) {
    bare date: the whole column was coming back null, and every notice with it. The clock is
    dropped BEFORE the date is read -- never converted through UTC, where 00:30 in the office
    is the evening before. */
-const dateCell_ = v => (v instanceof Date ? v : String(v == null ? '' : v).trim().split(/\s+/)[0]);
+/* A date written WITH SPACES ("9 July 2026", "Jul 9, 2026", "Thu, 09 Jul 2026") is read whole: cut at its first space it was "9", and
+   the new formats (parse.js, handbook Part 95) never reached the company's own sheets. Whatever else a cell holds is cut at its first
+   space exactly as before. Only WHETHER the cell reads is asked here, and the order of the file never changes that (it only decides which of
+   two dates), so the order handed in below is not a reading of anything. */
+const dateCell_ = v => {
+  if (v instanceof Date) return v;
+  const whole = String(v == null ? '' : v).trim();
+  return whole && dateOrNull(whole, true) !== null ? whole : whole.split(/\s+/)[0];
+};
 
 export function importDemandNotices(csvRows) {
   const objs = rowsToObjects(csvRows);

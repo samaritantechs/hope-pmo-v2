@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 94**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 95**.
 
 ---
 
@@ -86,6 +86,18 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#726 — dates, matter 4a: the formats a spreadsheet writes a date in (handbook Part 95, `api/_lib/parse.js`, 17 Nov).** The owner's order in section 2 ("... different excels might come with different fomarts am
+  not sure"). **What was wrong:** two forms were read (ISO, `a/b/yyyy`) and every other form came back as nothing, in silence: month names (`09-Jul-2026`, `9 July 2026`, `Jul 9, 2026`, English and Swahili), dotted
+  (`09.07.2026`), year first (`2026/07/09`), compact (`20260709`), Excel serial numbers (`46210`), a slash date with a clock. **Two hazards found beside them:** a date that does not exist was returned as one (`31/02/2026`
+  became the text `2026-02-31`, which the database refuses: the whole slice of an upload fails; and the stamp reader rolled it into **3 March**). **Now** `moreDateParts_` reads the new forms in ONE place, after the two old forms,
+  for the date reader and the stamp reader alike; `dayMonthOf_` is the one definition of which of a pair is the month (old forms and new); `validDate_` makes a date exist; dotted dates count as evidence of the file's order;
+  and the company sheets' `dateCell_` (which cut a cell at its first space) reads a date written with spaces whole. **Whatever the old readers read is read exactly as before** (the old code is kept in the test as a
+  yardstick, 60,000 generated strings compared; the only difference is a date that does not exist). **Choices written down:** an Excel serial is a date only from 2010 to 2040, and a fraction is a clock only with four digits
+  or more, so an amount in a misplaced column (`45000.00`) is never a date (`46210.5` is therefore not read). **Cost:** CPU only, +0.05 microseconds per date cell (a deck's 50,000 cells: about 2.5 ms); no read or write added;
+  `/api/call` untouched; no front-end file (`BUILD`, `CALL_BUILD` unchanged). **Checked:** `test/date-formats.test.mjs` (16 tests; 20,000 generated dates in every form round-trip; every serial of 2010 to 2040) and **20 of 20
+  deliberate breaks of `parse.js` caught**; `npm test`: 1,667 pass. **Not done, said plainly:** a date that still cannot be read is still stored empty without a word (**matter 4b, next**: the Upload screen says how many
+  and gives an example, a per-slice number the page adds up like `receivedAbnormal`); the company forms' day-first fallback on a small file with no evidence (**4c**: needs one real file of each, section 8); `July 2026`
+  with no day stays unreadable on purpose; nothing to run on the live book.
 - **#725 — dates, matter 3: the decks' Last trans dates (handbook Part 94, `db/RUN-ME-066-repair-swapped-last-trans-dates.sql`, pasted in full in the chat, 17 Nov).** The owner's order in section 2
   ("... we have last trans date column ..."). **What was wrong:** the old defaulters reader swapped LAST TRANS DATE like the other date columns, and `db/RUN-ME-060` never touched it (no pattern to check it
   against). **The repair is run AFTER RUN-ME-060, for the same days, and changes an upload only when the upload itself proves it TWICE:** (1) RUN-ME-060 put right at least three of its rows and they are at least half of
