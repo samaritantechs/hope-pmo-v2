@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 91**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 92**.
 
 ---
 
@@ -63,6 +63,7 @@ Given since, and written nowhere else:
 | 16 Nov 2026 | "Should the report and the phone also leave out customers who fall into default after the morning file, so the dashboard card, the report and the phone all count the same people?" — "YES" | **A day's list is its initial deck's customers, on the dashboard card, the report and the phone alike.** A customer in default on a day's current file who was never on its initial file entered default after the morning: they are nobody's expected defaulter of that day and join the next day's list (section 4, #716). Only when the day's two files are a pair (the same date). **Not asked, so not changed:** the Expected Defaulters tab (the weekly-cycle book of every defaulter, not a day's list) and the all-time ghost (13 Nov, Part 71), which is the one thing the three still differ on (section 8). |
 | 16 Nov 2026 | "just study the dates if the position of month starts then day or vice versa trim the same for the rest not to stay contradicted.. since that I think affects multiple lists in the system so pass through how you cumpute uploaded dates bro" | **One file, one date order: decided by what the file itself shows, applied to every date in it, by every upload; nothing between the file and the server may read a date by a rule of its own.** `inferDayFirst` is the one rule (a value with a part over twelve decides itself; the file's unambiguous values decide the rest; no evidence at all reads day-first, as it always did). A new importer reads its dates through it (`test/importers.test.mjs` fails on a date read with no order), and the Upload page passes a CSV on as the text it holds (handbook Part 89; section 4, #717). |
 | 16 Nov 2026 | "They might be in different orders per file so check starting with the defaulters one I sent" | **A file's order is read off that file, and a file the owner sends is checked before anything is said about it.** Never take one file's order for another's, and never say a file is day-first or month-first from memory: run `tools/file-date-audit.mjs` on it (the evidence per date column, and a witness that is not the order rule itself: the loan system's 91-and-14-days pattern for a deck, the file's own Filters window for an approved report). Checked that evening: the four files the owner had sent are all month-first (or real dates); what differed was the route the files took to the book (handbook Part 90; section 4, #718). |
+| 17 Nov 2026 | "Repair everything that's wrong brother I can't be perfect to detect every where dates are wrong. When we finish disb dates, we have transactions dates at received, we have last trans date column and other dates checkup and different excels might come with different fomarts am not sure. - repair one per time so that users see progress on the rised matters" | **Dates are repaired wherever they are wrong, without the owner having to find where, and ONE MATTER AT A TIME, each shipped and reported on its own so the users see progress:** (1) a read-only scan of every date column in the book (`db/RUN-ME-064`), (2) received payments' transaction dates, (3) Last trans dates, (4) every other date and the formats of different Excel files, (5) Disb dates finished (the RUN-ME-060 runs). A repair is exact (a witness that is not the order rule; nothing guessed), SQL is pasted at once, and each matter is merged when green before the next is started (handbook Part 92; section 4, #723). |
 
 An instruction the owner passes on from their own management is an order to carry out: answer
 what was asked, first and directly; say a risk once, briefly; then do it.
@@ -85,6 +86,22 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#723 — dates, everything that is wrong, one matter at a time: the order, and matter 1: every date in the book (handbook Part 92,
+  `db/RUN-ME-064-every-date-in-the-book-read-only.sql`, pasted in full in the chat, 17 Nov).** "Repair everything that's wrong brother I can't be
+  perfect to detect every where dates are wrong ..." (section 2, the owner's words in full). **The order:** (1) find where, anywhere (this change); (2) received
+  payments' transaction dates; (3) Last trans dates; (4) every other date and the formats of different Excel files; (5) Disb dates finished (the RUN-ME-060 runs).
+  **Found in the code while planning, not yet fixed (each is a matter above; Part 92):** `importReceivedPayments` reads the day/month order from that file's own
+  payment dates only, with none of the two fallbacks the approved-loans importer has (tightest span, nearest the upload day), so a payments file whose dates all have
+  both parts twelve or under (every file of a day from the 1st to the 12th) **reads day-first: 10 November stored as 11 October** (`paid_at` is a date; `created_at`,
+  the moment of the upload, is the witness); the company's own forms have the same last-resort day-first on a small file; and **`dateOrNull` reads ISO and `a/b/yyyy`
+  only: `09-Jul-2026`, `09.07.2026`, `2026/07/09`, `20260709` and an Excel serial number read as nothing, and the upload does not say so.** **Matter 1:** the scan finds every
+  date and timestamp column of every base table of the `public` schema from the catalogue (it names no table: a table made by a migration is in it), reads each table once, and prints per
+  column the rows, filled, earliest, latest, later than today (the East Africa date; a day ahead of now for a moment) and before 2020; `FUTURE?` where a later date is not normal,
+  `OLD?` for a date before 2020 outside a birth date, and no flag where a later date is normal (an expiry, a promise, a due date, a schedule, a start or end, tomorrow's sheet).
+  **Cost:** 5.4 s on a book of the live book's size, one process, a 45-second ceiling, nothing written; nothing on `/api/upload` or `/api/call`; no code that runs for a user changed.
+  **Checked:** `tools/db-checks/every-date-audit.mjs` runs the WHOLE of `db/schema.sql` (82 date columns) and compares every column's line with a direct query on that column, the
+  flags, the order, the ANSWER and the East Africa clock, with seventeen deliberate breaks; `test/every-date-audit.test.mjs` (6 tests, eleven breaks of the pins, each caught). `npm test`: 1,626 pass.
+  **Not done, said plainly:** nothing run on the live book; the matters after the first.
 - **#722 — where a Disb date later than today still lives: every table that holds one (handbook Part 91, second addendum,
   `db/RUN-ME-063-future-disb-dates-everywhere-read-only.sql`, pasted in full in the chat, 17 Nov).** "I mean there could be future dates e.g
   into December 2026 than today's 17th Nov 2026" — the owner, 17 Nov, after #721. **RUN-ME-062 had made exactly that test, on one table:**
@@ -1883,6 +1900,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner: run `db/RUN-ME-064-every-date-in-the-book-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`** (section 4,
+  #723). It lists every date column of every table; a flagged line is a place to look. The matters after it (payments, Last trans, other dates and formats) are built one at a time and
+  shipped as each is finished (handbook Part 92); a chat that sees the owner's paste reads which columns are flagged before it does anything else.
 - **`db/RUN-ME-060`: 16 Nov done; 10 to 15 Nov UNDER WAY; 1 to 9 Nov not started.** 16 Nov (the evening of 16 Nov): 16,531 rows put
   right, 0 still to do, 0 left alone (section 4, #713 and #719). **10 to 15 Nov, first run (17 Nov): 110,328 rows did not fit the
   pattern, 110,328 had exactly one fitting reading, 50,000 repaired, `still_to_do_run_again` 60,328, 0 left alone.** The owner was told
