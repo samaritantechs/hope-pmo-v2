@@ -85,6 +85,18 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#719 — RUN-ME-061 failed on the live book: `upload_batch` is a uuid; the kept check now builds its table from the real
+  schema's types (handbook Part 90, addendum).** The owner ran `db/RUN-ME-060` for 16 Nov that evening: **16,531 rows put right,
+  0 still to do, 0 left alone** (the day's initial and current decks; 2209966593 now falls on Monday). Then `db/RUN-ME-061`
+  stopped: `invalid input syntax for type uuid: "legacy"`. The query coalesced `upload_batch` with the text `'legacy'`, and on
+  the real table it is a uuid (`db/schema.sql`); `tools/db-checks/deck-upload-audit.mjs` had declared it `text`, so a check that
+  was run, timed and broken on purpose still passed on a table that is not the book's. **Fixed:** `coalesce(upload_batch::text,
+  'legacy')`; the check's table now carries the real types (a uuid for every upload and an upload with no batch at all, shown
+  as `legacy`), and the old query now fails on it with the owner's own words; `test/deck-upload-audit.test.mjs` compares the
+  fixture's type of every column the query reads with `db/schema.sql`; four deliberate breaks, each caught. The corrected query
+  was pasted in full to the owner at once. **Cost:** none: a read-only query, no code that runs for a user changed, no `BUILD`
+  bump, nothing on `/api/upload` or `/api/call`. `npm test`: 1,603 pass. **The lesson is in section 7.** Not done: nothing run on
+  the live book from here; the days before 16 Nov are still swapped until `db/RUN-ME-060` is run for them (section 8).
 - **#718 — the files are not in different orders; the routes they took are (handbook Part 90).** "They might be
   in different orders per file so check starting with the defaulters one I sent" — the owner, 16 Nov, with the
   probe for 2209966593 pasted under it: the loan's disbursement date is the swapped ninth of July on every current
@@ -1760,6 +1772,12 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   about a quarter of an hour); when it is not, say that it was not read.
 - **A zone has the name Teams & Staff files it under.** A GMO's word for a zone and the filed
   one can differ. Scripts and screens read the teams table; never type a zone from a message.
+- **A database check is built from the book's own column types, never from what the query needs.** `db/RUN-ME-061` was run
+  on a PostgreSQL, timed on 207,439 rows, compared line by line with a count made in JavaScript and broken on purpose, and still
+  stopped at the owner's keyboard on the first run: its test table declared `upload_batch` as text and the real column is a
+  uuid. Build a check's table from `db/schema.sql` (the columns, their types, their constraints), put in the awkward rows the
+  real book has (a row with no batch), and keep the fixture's types pinned to the schema by a test that `npm test` runs
+  (`test/deck-upload-audit.test.mjs`). A query the owner is about to paste into the SQL editor has run on the real types first.
 - **A file the owner sends is checked with `tools/file-date-audit.mjs` before anything is said about it** (handbook Part 90).
   Its date columns, its order and a witness that is not the order rule: the loan system's own pattern for a deck, the Filters
   window for an approved report. The route a file took (Excel text, a CSV, real dates) changes what is stored whatever the
@@ -1797,26 +1815,22 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner — first: run `db/RUN-ME-060-repair-swapped-deck-dates.sql`** (pasted in full in the
-  chat, 16 Nov; section 4, #713) as a new query in the SQL editor, away from an upload (an evening
-  upload deletes the rows of the files it replaces), and read its one row: `repaired_now`,
-  `still_to_do_run_again` (**run it again until that is 0**) and `left_alone_no_single_reading`.
-  It puts the stored swapped DISB, EXPIRE and CHRONIC dates of today's decks right in place, so
-  **today's files need not be uploaded again.** For the days before (the Exp.Def Report of a past
-  week, the dashboard card's arrows against last week), change the first date on its first lines
-  to the first day to put right and run it again. LAST TRANS DATE is not repaired: tonight's
-  Current upload sets it right on the Follow-up list, and every file from tomorrow is right by
-  itself. When the dates are put right about a third of the customers move to their real days
-  (Monday's list grows from about 3,842 to 4,148 on the 16 Nov file) and about 3,500 expired or
-  chronic customers move to their real recycling leader or week: the leaders' lists change, and
-  that is the correction. If anything looks wrong, the undo is at the foot of the file.
-- **The owner: 2209966593 is answered (the probe came back 16 Nov): its stored disbursement date on 16 Nov is still
-  the swapped ninth of July, so `db/RUN-ME-060` has not been run for that day.** Run it (first bullet; away from an
-  upload); the loan then falls on Monday and, absent from Monday's current file, shows CLEARED, recovered in full (the
-  day's current file is filed). Then run `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (pasted in full in the
-  chat, 16 Nov; it changes nothing) and say what it shows: for the 16 Nov initial upload it must read about 10,372 rows,
-  **2,076 fit as stored and 8,296 fit only if swapped**; an upload with every D.S date-like (`7/12/01`) was a CSV on the
-  old page (section 4, #718).
+- **`db/RUN-ME-060` was run for 16 Nov by the owner (the evening of 16 Nov): 16,531 rows put right, 0 still to do, 0 left
+  alone** (section 4, #713 and #719). **For the days before** (the Exp.Def Report of a past week, the dashboard card's arrows
+  against last week) the owner changes the first date (and, if they like, `max_rows` to 50,000) in the first lines of the file and
+  runs it again, **until `still_to_do_run_again` says 0**, away from an upload (an evening upload deletes the rows of the files it
+  replaces). LAST TRANS DATE is not repaired: the Current upload sets it right on the Follow-up list, and every file from now on is
+  right by itself. When a past day is put right about a third of its customers move to their real days and about 3,500 expired or
+  chronic customers move to their real recycling leader or week: the leaders' lists of that day change, and that is the
+  correction. If anything looks wrong, the undo is at the foot of the file.
+- **The owner: 2209966593 should now fall on Monday and read CLEARED** (its 16 Nov rows were put right with the rest; Monday's
+  current file is filed and does not name it). Run the same probe again (`db/TEMPLATE-where-is-this-customer-read-only.sql`, the
+  loan and `2026-11-16` filled in): Q2 should read 2026-09-07 (Mon) with "YES, it is their day", Q4 state B. Then run the
+  **corrected** `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (pasted in full in the chat, 16 Nov; the first copy failed on
+  a uuid, section 4, #719) and say what it shows: the 16 Nov uploads must now read all fit as stored; for an earlier day an
+  Excel upload read the old way reads **about 20% fit as stored and 80% fit only if swapped** (the 16 Nov initial upload was
+  2,076 and 8,296 of 10,372 before the repair); an upload with every D.S date-like (`7/12/01`) was a CSV on the old page
+  (section 4, #718).
 - **The owner: send ONE real file of each of these, so each is checked against a real file** (a few rows are enough; no
   need to hide anything, none of it is written down): Expected (today or initial), Defaulters Followup, Received payments,
   Comments, Complaints, Restructures, Demand notices, PMO deductions, Staff registry, Advance requests. The Defaulters (two)

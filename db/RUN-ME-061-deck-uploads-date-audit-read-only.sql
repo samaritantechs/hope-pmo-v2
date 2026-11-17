@@ -62,7 +62,7 @@ f as (      -- each row: does it fit the pattern as stored, or only with its dat
 select to_char(snapshot_date, 'YYYY-MM-DD Dy')                                                     as day,
        snapshot_type                                                                               as kind,
        to_char(min(created_at) at time zone 'Africa/Dar_es_Salaam', 'HH24:MI')                     as uploaded,
-       left(coalesce(upload_batch, 'legacy'), 8)                                                   as batch,
+       left(coalesce(upload_batch::text, 'legacy'), 8)                                             as batch,
        count(*)                                                                                    as rows,
        count(*) filter (where fits)                                                                as fit_as_stored,
        count(*) filter (where complete and not fits and fits_swapped)                              as fit_only_if_swapped,
