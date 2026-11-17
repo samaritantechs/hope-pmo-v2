@@ -85,6 +85,23 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#722 — where a Disb date later than today still lives: every table that holds one (handbook Part 91, second addendum,
+  `db/RUN-ME-063-future-disb-dates-everywhere-read-only.sql`, pasted in full in the chat, 17 Nov).** "I mean there could be future dates e.g
+  into December 2026 than today's 17th Nov 2026" — the owner, 17 Nov, after #721. **RUN-ME-062 had made exactly that test, on one table:**
+  the Defaulters Followup tab has none (its latest Disb date is 9 Nov). A Disb date is stored in FOUR tables (`followup_status`,
+  `defaulter_snapshots`, `repayment_snapshots`, `loans`: pinned by a test against `db/schema.sql`), and the old importer's swap went into every one
+  of them from early August to 16 Nov. The file counts the later-than-today dates in each, **week by week for the decks** (how far back RUN-ME-060
+  still has to reach), and **customers whose last-known deck row has a Disb date later than today and is older than the latest current deck**:
+  the December dates a CLEARED customer shows on Expected Defaulters (the newest current row of the customer, the rule of Part 71 and RUN-ME-055,
+  pinned), each also placed on the wrong cycle day and leader. **A clean answer is not proof** (a swap reaches the future only for the 12th of a month; the
+  pattern tests are RUN-ME-061 and RUN-ME-062). **Cost:** a read of the decks table end to end (2.3 million rows, 677 MB on the test machine:
+  1.4 s with 28,750 later-dated rows), one process, a 45-second ceiling, nothing written; nothing on `/api/upload` or `/api/call`; no code
+  that runs for a user changed (`BUILD`/`CALL_BUILD` unchanged). **Checked:** `tools/db-checks/future-disb-dates-audit.mjs` on a PostgreSQL with
+  the five tables, the enum and the indexes made from the REAL `db/schema.sql` blocks, a swapped book, a clean book and five clean books with one later
+  date in one table, every line equal to a count made in JavaScript, twenty-two deliberate breaks each changing the answer; `test/future-disb-dates-audit.test.mjs`
+  (9 tests, fourteen breaks of the pins, each caught). `npm test`: 1,620 pass. **Not done, said plainly:** nothing run on the live book; **no repair of the last-known rows
+  built** (the numbers decide its shape: RUN-ME-060's rule applied to each such customer's newest current row, a few tens of thousands of rows where whole
+  days are two million; section 8, offered).
 - **#721 — the live answers of 17 Nov, recorded (docs only; handbook Part 91, addendum): the Follow-up list is ALL RIGHT, and the
   10 to 15 Nov repair is under way.** The owner ran `db/RUN-ME-062`: **"no Disb date is later than today and all 10,455 dates tested
   fit their own DAYS ELAPSED -- the column is all right"**: 10,455 customers on the tab, all with a Disb date (2024-04-17 to 2026-11-09),
@@ -1877,6 +1894,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   upload sets it right on the Follow-up list, and every file from now on is right by itself. When a past day is put right about a third
   of its customers move to their real days and about 3,500 expired or chronic customers move to their real recycling leader or week:
   the leaders' lists of that day change, and that is the correction. If anything looks wrong, the undo is at the foot of the file.
+- **The owner: run `db/RUN-ME-063-future-disb-dates-everywhere-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the answer: the ANSWER line, line 7
+  (customers whose last-known deck row has a later Disb date) and the weekly lines.** Those numbers decide the next step (section 4, #722): if line 7 is not 0, the cure
+  is a repair of exactly those rows by RUN-ME-060's rule (offered below); the weekly lines say how far back the whole-day repair still has to reach. Not started without them.
 - **The owner: 2209966593 should now fall on Monday and read CLEARED** (its 16 Nov rows were put right with the rest; Monday's
   current file is filed and does not name it). Run the same probe again (`db/TEMPLATE-where-is-this-customer-read-only.sql`, the
   loan and `2026-11-16` filled in): Q2 should read 2026-09-07 (Mon) with "YES, it is their day", Q4 state B. (The corrected
@@ -2020,7 +2040,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   a zone beside a name comes from; it adds both and rewords either one a book holds in an
   earlier wording, so a book where it was run after #671 needs it run once more; the zone shows
   without them).
-- **Offered, never asked for — do not start without a yes**: the customer page's **Last payment** (`public/mkopo.html`, `api_customerLookup`) is taken from the customer's newest Expected row
+- **Offered, never asked for — do not start without a yes**: **a repair of each customer's LAST-KNOWN deck row** (the newest current row of every customer not on the latest current deck, by RUN-ME-060's two witnesses: exactly one reading
+fits, nothing guessed): the cure for the Disb dates the Expected Defaulters tab shows on CLEARED customers and for the cycle day and leader those dates give; a few tens of thousands of
+rows where RUN-ME-060 over every day since August would be two million (handbook Part 91, second addendum); the customer page's **Last payment** (`public/mkopo.html`, `api_customerLookup`) is taken from the customer's newest Expected row
 (`repayment_snapshots.last_trans_date`) first and from the Follow-up row second; Expected rows stored before 16 Nov carry the old importer's
 swap and nothing repairs them (no pattern to check a last-payment date against), so a customer whose newest Expected row is older than
 16 Nov can be shown a swapped date: not measured on the live book, and an active customer's newest row is today's (a read-only

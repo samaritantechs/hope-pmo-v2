@@ -7613,6 +7613,36 @@ stamps (the `deck of ...` lines), not from what a chat believes was uploaded.
 **What the owner has to do.** Finish `db/RUN-ME-060` for 10 to 15 Nov (two more runs of the same text), then run it once for 2026-11-01 to 2026-11-09 and read `not_fitting_in_these_days`. Nothing
 to do on the Follow-up list.
 
+**The owner's clarification, 17 Nov, and `db/RUN-ME-063`.** "I mean there could be future dates e.g into December 2026 than today's 17th Nov 2026" — the owner, after the answers above were recorded.
+That is the test Q1 of `db/RUN-ME-062` made (any Disb date later than today), on one table: **the Defaulters Followup tab has none (its latest Disb date is 9 Nov 2026)**, and the only dates of that
+kind in the register are the 64 rows the tab does not list. A Disb date is stored in **four** tables and the old importer's swap (12 Jan 2026 stored as 1 Dec 2026) went into every one of them from
+early August to 16 Nov: `followup_status` (the tab), `defaulter_snapshots` (the stored decks: Expected Defaulters, the Exp.Def Report, the phone, the dashboard card), `repayment_snapshots` (the Expected
+sheet: the customer page's Last payment) and `loans`. `test/future-disb-dates-audit.test.mjs` pins that these are the only four tables of `db/schema.sql` with a `disb_date` column.
+
+- **`db/RUN-ME-063-future-disb-dates-everywhere-read-only.sql`** (read-only; pasted in full in the chat). One table at a time: how many Disb dates are later than today (the East Africa date) and how many a
+  swap of day and month would put in the past; for the stored decks **week by week** (the Monday of the deck's week, initial and current, with Last trans beside it), which says how far back
+  `db/RUN-ME-060` still has to reach; the Expected sheet's last 28 days; the loans; the register including the rows the tab does not list.
+- **The line that matters for what the owner described:** *customers whose last-known deck row has a Disb date later than today and is older than the latest current deck.* The Expected Defaulters tab shows
+  a customer who dropped off the deck as CLEARED with the Disb date of their **newest current row** (Part 71, `db/RUN-ME-055`: the same rule, pinned by the test), placed on the cycle day and the
+  leader that date gives. Nobody has a newer row to put such a row right, and the days before 10 Nov were never repaired. These are the December 2026 dates that tab can show. A customer on the latest deck is
+  not counted: that deck is read right.
+- **What a clean answer does not prove.** A swapped 2026 date reaches the future only when its real day is the 12th (12 Jan to 12 Aug stored as 1 Dec to 8 Dec), and no 2024 or 2025 date ever does: the
+  dates that are wrong and still in the past are many times more numerous than the ones this file counts. The pattern tests that see them are `db/RUN-ME-061` (the decks) and `db/RUN-ME-062` (the tab). The
+  verdict line says so whenever it says "no Disb date later than today".
+- **Cost.** It reads the decks table once from end to end (about 2.3 million rows, 677 MB on the test machine: **1.4 s with 28,750 later-dated rows**, 0.95 s with none), the register, the Expected sheet's last 28
+  days and the loans. One process (`max_parallel_workers_per_gather = 0`), a 45-second ceiling, no lock beyond a read, nothing written; run when no upload is running. Nothing on `/api/upload` or `/api/call`.
+- **Checked.** `tools/db-checks/future-disb-dates-audit.mjs`, on a PostgreSQL, with the five tables, the `loan_stage` enum and the indexes the book has made from the **real** blocks of `db/schema.sql` (and
+  `idx_def_snap_team_ref` of RUN-ME-055): a swapped book (a ghost whose newest row is future-dated; a customer with a newer right row; a later upload of the same day that replaced a swapped one; a customer
+  with no team, with and without a newer row; a customer on the latest deck; an initial-only row; a row before the window and one on its first day; today and tomorrow; a tie on the date; the Expected sheet's
+  28-day edge; a loan disbursed today), a clean book, and five clean books with one later date in one table each: every printed line equals a count made in JavaScript, no name is printed, the tables are
+  byte-identical afterwards, the verdict reads right in each, and **twenty-two deliberate breaks** (a boundary moved at every place it is written, a filter or the window dropped, the ghost rule loosened, a null
+  team not a team, an initial row counted as last-known, weeks as months, the examples nearest-first, the swap not made, the verdict forgetting a table) each change the answer or make the file fail.
+  `test/future-disb-dates-audit.test.mjs` (9 tests; fourteen deliberate breaks of the pins, each caught).
+- **Not done, said plainly.** Nothing was run on the live book (a chat cannot). **No repair of the last-known rows was built**: the numbers decide its shape. The exact cure is `db/RUN-ME-060`'s rule
+  (two witnesses, exactly one fitting reading) applied to each such customer's newest current row instead of to whole days, which is a few tens of thousands of rows where whole days are two million; it would
+  also cover the swapped last-known rows that are still in the past (many more than the future ones). It is offered, not started (`CHAT.md` section 8). Last trans in the decks is not repaired by anything (no
+  pattern); the Current upload sets it right for every customer on it.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
