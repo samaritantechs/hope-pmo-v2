@@ -7652,7 +7652,7 @@ sheet: the customer page's Last payment) and `loans`. `test/future-disb-dates-au
 
 1. **Find where dates are wrong, anywhere** (this Part): one read-only scan of every date column of the book, so nobody has to know where to look. `db/RUN-ME-064`.
 2. **Received payments' transaction dates** (`received_payments.paid_at`): the reader and the stored rows (Part 93 when it ships).
-3. **Last trans dates**: the decks' `last_trans_date` (db/RUN-ME-060 repairs Disb, Expire and Chronic and never touched it), the Expected sheet's, the register's.
+3. **Last trans dates**: the decks' `last_trans_date` (db/RUN-ME-060 repairs Disb, Expire and Chronic and never touched it: `db/RUN-ME-066`, Part 94), the Expected sheet's, the register's.
 4. **Every other date, and "different excels might come with different formats":** which readers still fall back to day-first when a file gives them nothing to decide by, and which formats no reader understands.
 5. **Disb dates, finished:** the owner's runs of `db/RUN-ME-060` for 10 to 15 Nov and 1 to 9 Nov (Part 91), and the repair of each customer's last-known deck row, offered.
 
@@ -7734,6 +7734,70 @@ small file of early-in-the-month dates has no evidence and reads day-first) and 
 A payment uploaded a month late is the one coincidence above. The deck's `last_trans_date`, the Expected sheet's dates and every other table are the next matters.
 
 **What the owner has to do.** Run `db/RUN-ME-065` (pasted in the chat) when no upload is running and paste its answer: how many were put right, how many are still dated outside their upload's fortnight, and the example lines.
+
+## Part 94 — Dates, matter 3: the decks' Last trans dates (RUN-ME-066)
+
+> "... we have last trans date column ..." — the owner, 17 Nov 2026 (Part 92 has the whole order: "repair one per time so that users see progress on the rised matters").
+
+**What was wrong.** The old defaulters reader read every date of a deck day-first and the loan system writes them month-first (Part 84), so wherever both numbers of a date were twelve or under the day and the month were stored swapped.
+`db/RUN-ME-060` puts DISB DATE, EXPIRE DATE and CHRONIC DATE right because the loan system's own pattern checks them (91 days, 14 days, DAYS ELAPSED). **LAST TRANS DATE came in the same file by the same reader, swapped the same way, and has no
+pattern of its own**, so RUN-ME-060 never touched it (its header said so). It is the date behind the "Last payment" of a loan on the Follow-up list, and a swapped one often shows itself: a stored date later than the deck's own day, or before
+the loan was disbursed, is one the loan system never wrote.
+
+**How it is repaired: `db/RUN-ME-066-repair-swapped-last-trans-dates.sql` (pasted in full in the chat), run AFTER RUN-ME-060, for the same days.** A guess is not enough to rewrite a column with no pattern, so it changes an upload only when **the
+upload itself proves it was read the wrong way round, twice**, and a row only when the date it would become is a date that row could have. An upload is every row written under one upload number for one day and one kind of deck (the old reader decided
+for a whole file, so an upload is swapped all through or right all through):
+
+1. **RUN-ME-060 put right at least three of its rows, and they are at least half of the rows of the upload that fit the loan system's pattern.** Read from `defaulter_date_repair_log`, which is why 060 is run first. The half is not decoration: the reader
+   that has been live since 16 Nov decides per request (per slice of a file), so a small slice that gave it no clue could leave a few swapped rows inside an upload that was otherwise read right, and three of them must not make the whole upload a swapped one.
+   A real swapped file is about 80% (8,296 of 10,372 on the real 16 Nov deck).
+2. **At least three of its rows carry a LAST TRANS DATE that is impossible as stored and possible with day and month exchanged** (before the loan's disbursement or after the deck's own day; exchanged, between the two) on a loan whose dates fit the pattern.
+   RUN-ME-060 proves the date columns of the pattern were read day-first; this proves that the Last trans column was, which the first proof cannot: a file whose Last trans column arrived as real date cells while the others were text would pass the first proof and fail this one.
+
+**A row is changed only when** its upload has both proofs, its loan's three dates fit the pattern (so its Disb date is right), its LAST TRANS DATE has another reading (day twelve or under, and not equal to the month), that other reading lies between the
+Disb date and the deck's day, and it was not changed before. Left exactly as they are: a row with no Last trans date, a date with a day over twelve (it was read right), a day and month the same, a loan RUN-ME-060 could not put right (restructured, no DAYS ELAPSED,
+no chronic date), and every row of an upload with no upload number (the old rows from before batches cannot be told apart).
+
+**The proof is read from the date as it was uploaded** (`coalesce(log.last_trans_old, last_trans_date)`), because a run that stops at the row limit changes some of an upload's witnesses and a proof read from the current date would be gone on the next run
+and strand the rest of the upload: found while designing the "run again until 0" flow and pinned by a scenario (three rows changed two, then one) and by a deliberate break.
+
+**It says what it left alone.** The answer has nine lines (rows in the days, uploads found swapped / left alone, rows with another reading in swapped uploads, how many are safe, changed now, **still to do: run it again until 0**, left alone because the
+loan's dates do not fit (or RUN-ME-060 is not finished), left alone because the other reading is not possible, rows with another reading in uploads not found swapped) and then **one line per upload**: `2026-11-10 initial 3f2a9c1e: 10,372 rows; RUN-ME-060 put right
+8,296; 311 show the exchange: SWAPPED`, or why it was left alone (no upload number; RUN-ME-060 put right none of it, so it was read right or 060 has not been run for that day; too few of its rows; no Last trans date of it shows the exchange). No name and no
+loan number are printed.
+
+**It changes `last_trans_date` of the deck rows and nothing else.** Every row changed is in `defaulter_last_trans_repair_log` (the date as uploaded and the new one), a row in that log is never changed twice (a second run changes nothing; after the undo the rows stay in the log
+and are not changed again), the undo is at the foot, and the file has a 3-second lock and a 50-second statement limit and says in plain words, before it makes or changes anything, if RUN-ME-060 was never run ("Run db/RUN-ME-060 first...").
+
+**Cost, measured on a book of the live book's size.** `SCALE=1 node tools/db-checks/last-trans-repair.mjs`: **2,332,800 deck rows, about 855 MB with the live table's indexes** (the date, date-and-type, team-and-ref and the two trigram indexes besides the schema's three), the
+six days 10 to 15 Nov (**129,600 rows**, every one the old reader's, in 12 uploads): **RUN-ME-066 changed 50,000 rows in 4.2 to 4.6 s (two runs), the remaining 5,920 in 1.0 to 1.1 s, and a run with nothing left to do takes 0.7 s**, against the 50-second limit
+(RUN-ME-060 on the same book: 4.9 and 5.0 s, 4.4 and 4.6 s, and 0.1 and 0.2 s for its 101,430 rows). Afterwards **all 129,600 rows of the six days hold the real Last trans date, and the other 2,203,200 deck rows have the same checksum before and after**
+(the run fails if they do not). It reads the days named through the `snapshot_date` index and the two logs, and writes only what it changes. Nothing on `/api/upload` or `/api/call`; no code that runs for a user changed (`BUILD` and `CALL_BUILD` unchanged).
+
+**Checked.** `tools/db-checks/last-trans-repair.mjs` runs the WHOLE of `db/schema.sql` in a scratch database and **the real RUN-ME-060** first (it makes the log the proof is read from; the model of 060 is compared with its log and with the dates it leaves,
+row for row), then this file: 14,924 deck rows in 37 uploads, 25 of them swapped, 3,375 Last trans dates exchanged. The fixture knows the truth and has an upload made to stand on each line of the rule and fall just short of it: exactly three repaired rows, two (with
+the exchange shown on three), a swapped slice of five in an upload of thirty-five that was read right, an upload swapped but whose own dates show no exchange, swapped rows with **no upload number**, and an upload changed across several runs; a right upload on the SAME
+day and kind as a swapped one; restructured loans, loans with no DAYS ELAPSED and no chronic date, DAYS ELAPSED eleven days off in each direction on loans whose dates otherwise fit, a last transaction before the disbursement (165 rows) and one after the deck's day (123),
+rows with no last transaction, and dates whose day and month are the same. It passes only when: after every run (four runs of at most 1,500 rows) every row equals **a model of the rule written again in JavaScript**, and every row changed equals the real last transaction it
+was stored from; no row stored right and no other column was touched; the answer of every run and **the verdict of every upload** equal the model's; the run that hit the limit says how many remain and the last one says 0; a narrow window (10 to 12 Nov) changes only
+those days; small runs (a hundred rows, thirty-five of them) end where one big run ends; a window with no upload answers zero; a book where RUN-ME-060 never ran is told so; and **the file's own undo puts every row back, byte for byte**. **Twenty-eight deliberate breaks** (a proof moved
+or dropped, the half dropped or made a twentieth, the second proof's two halves dropped one at a time, rows with no upload number judged as one upload, the uploads told apart by day and kind, a bound dropped on either side, a row that does not fit changed, a date with no other
+reading made a candidate, a changed row changed again, the proof read from the current date, the exchange not made or not made on a twelfth, DAYS ELAPSED widened either way, every row counted as repaired, no row limit, the window ignored, the log empty or with the dates
+the wrong way round, the wrong column, the wrong still-to-do, the wrong verdict) each change the outcome: **28 of 28**. `test/last-trans-repair.test.mjs` (12 tests) pins the one column written, the limits, the log, the undo, the guard, both proofs and their numbers, the pattern and the exchange against RUN-ME-060's,
+the columns against `db/schema.sql`, no customer data, the answer's lines and the kept check.
+
+**Two mistakes of mine the check found, said plainly.** (1) The first fixture's "loans whose three dates can all be misread" **cannot exist**: the chronic date is 14 days after the expiry, so their days of the month differ by 14 and cannot all be twelve or under. Its special
+uploads were empty or tiny, and half its checks passed on nothing. The fixture now builds its special loans from the days that exist (and throws when it cannot), and **counts the kinds of row a break needs before any break is believed** (two breaks were "not caught" because the fixture lacked the row each needs: a last transaction before the disbursement, and DAYS ELAPSED off on loans whose
+dates otherwise fit; a broken file that fails to run is counted by the check as a failure of the check, not as a caught break). (2) The first rule proved an upload by three
+repaired rows alone; written down as a risk before it shipped, the share and the second proof were added.
+
+**Not done, said plainly.** Nothing was run on the live book (a chat cannot): the counts above are the test book's. **`due_date`** of the decks (the importer's fifth date column, `DUE DATE`) was swapped the same way and is NOT repaired here: the scan of RUN-ME-064 shows
+whether any row holds one, and the same two proofs would carry it once its bounds are known (matter 4). **The Expected sheet's `last_trans_date`** (`repayment_snapshots`: the customer page's "Last payment" reads it first, Part 91 addendum) has no witness of its own and no log
+of a repair to read; **the Follow-up list's** was rewritten whole by the 17 Nov Current deck (RUN-ME-062 found 0 of 10,401 later than today). An upload with too few rows to show the exchange (a deck of a few dozen loans) is left alone and listed, not guessed. **A date that is swapped
+and still inside the loan's days (both readings possible) is changed on the upload's proof alone**: that is the rule's whole premise, the all-or-nothing reading of the old importer, measured on the real file (Part 90: month-first in all four date columns, nothing day-first).
+
+**What the owner has to do.** After RUN-ME-060 for a window has said `still_to_do_run_again` 0, run RUN-ME-066 (pasted in the chat) with the **same two dates**, away from an upload (an evening upload deletes the rows of the files it replaces), **again until its "still to do" line says 0**,
+and paste the nine lines and the list of uploads. For 10 to 15 Nov it is about 130,000 rows: two or three runs.
 
 ---
 
