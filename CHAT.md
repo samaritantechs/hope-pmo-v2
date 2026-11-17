@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 90**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 91**.
 
 ---
 
@@ -85,6 +85,32 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#720 — the Follow-up list's Disb dates: is any later than today, and does each fit its own DAYS ELAPSED? A read-only check
+  (handbook Part 91, `db/RUN-ME-062-followup-list-dates-read-only.sql`, pasted in full in the chat).** "In the defaulter followup
+  nav, try check if there exists any future date than today in the disb date column to confirm all dates are okay" — the owner,
+  16 Nov, with the corrected RUN-ME-061 answer pasted above it. **What that answer showed:** the 16 Nov uploads all fit as stored
+  (RUN-ME-060 worked); the current decks of 10 to 15 Nov and the initial decks of 11, 12 and 13 Nov still read about 20% fit as
+  stored and 80% fit only if swapped (`neither` and `missing` 0, so RUN-ME-060 can put every row right); and **no upload has a
+  date-like D.S**, which corrects #718's guess: the five initial decks that read right were NOT CSVs chosen on the old page (their
+  D.S is intact): Part 90 and the entry below are corrected. **Why the list matters:** `followup_status` is a COPY, written by a
+  Current deck (and the Followup sheet) as the deck was read at upload; RUN-ME-060 repairs `defaulter_snapshots` and does not
+  name it, so until a Current deck is uploaded after the fix (#711, 16 Nov) it still holds what the old importer stored. **The
+  check:** test 1 (what was asked) counts Disb dates later than today (East Africa date) among the customers the tab lists, with
+  the earliest and latest, how many a swap of day and month explains, and eight examples (a loan number and a team, no name); the
+  same for Last trans; **test 2 is the one that confirms**, because a swapped 2026 date lands in the future only when its real day
+  is the 12th and no 2024 or 2025 date ever does: each row's Disb date, the day of the deck that wrote it (`deck_date`) and the
+  loan system's DAYS ELAPSED must agree (0 to 3, RUN-ME-060's window): fit as stored / only with day and month exchanged /
+  neither, and by the day of the deck. The answer line says "all right" only when test 1 is empty AND test 2 found no swapped
+  date. `deck_date` is read through `to_jsonb`, so the file runs with and without that optional migration. **Cost:** a read-only
+  statement, about two seconds for 60,000 rows, a 30-second ceiling; no code that runs for a user changed (`BUILD` and
+  `CALL_BUILD` unchanged); nothing on `/api/upload` or `/api/call`. **Checked:** `tools/db-checks/followup-dates-audit.mjs` on a
+  PostgreSQL, the table made from the REAL `create table` blocks of `db/schema.sql` and the real migration (section 7: a fixture
+  from the book's own types), four registers, every printed line equal to a count made in JavaScript, no name printed, the book
+  byte-identical afterwards, seventeen deliberate breaks of the file each changing the answer; `test/followup-dates-audit.test.mjs`
+  (8 tests, eleven breaks of it, each caught). `npm test`: 1,611 pass. **Not done, said plainly:** nothing run on the live book;
+  **the register is not repaired:** the next Current upload rewrites every customer on it with dates read right (nothing to run), and
+  a repair in place from the repaired deck rows was not built (the working day, the hottest table, hours of difference; the owner's to
+  ask for); Last trans cannot be repaired by a pattern; 10 to 15 Nov in the decks wait for RUN-ME-060 with its window changed (section 8).
 - **#719 — RUN-ME-061 failed on the live book: `upload_batch` is a uuid; the kept check now builds its table from the real
   schema's types (handbook Part 90, addendum).** The owner ran `db/RUN-ME-060` for 16 Nov that evening: **16,531 rows put right,
   0 still to do, 0 left alone** (the day's initial and current decks; 2209966593 now falls on Monday). Then `db/RUN-ME-061`
@@ -110,8 +136,9 @@ Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
   file:** an Excel file as the loan system wrote it, read by the importer of that day, stores 1,256 of 10,372 customers
   right (3,883 disbursement dates wrong); the same sheet saved as a CSV and chosen on the page as it was stores all
   10,372 right by luck (the page's reader read the text month-first) and **spoils D.S on all of them** (`7-12` became
-  `7/12/01`), so the five initial decks that read right were most likely CSV or saved copies. A model that fits, not
-  seen. **The loan's own answer:** its 16 Nov rows still say Thursday and Sunday, so `db/RUN-ME-060` has not been run
+  `7/12/01`). **Corrected in #720:** the five initial decks that read right were NOT CSVs: the owner's audit shows no upload with
+  a spoilt D.S, so their dates arrived right with D.S intact (real date cells, a copy saved from a spreadsheet program). A model
+  that fits, not seen. **The loan's own answer:** its 16 Nov rows still say Thursday and Sunday, so `db/RUN-ME-060` has not been run
   for 16 Nov; nothing else is wrong with it. **New:** `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (one line
   per upload of the last seven days: rows, fit as stored, fit only if swapped, neither, missing, and the shapes of D.S;
   the real file stored the old way must read 2,076 and 8,296; 207,439 rows in 0.43 s; `tools/db-checks/
@@ -1778,6 +1805,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   uuid. Build a check's table from `db/schema.sql` (the columns, their types, their constraints), put in the awkward rows the
   real book has (a row with no batch), and keep the fixture's types pinned to the schema by a test that `npm test` runs
   (`test/deck-upload-audit.test.mjs`). A query the owner is about to paste into the SQL editor has run on the real types first.
+- **A check whose clean answer would be read as "all okay" says, in the same breath, what a clean answer does not prove, and carries the
+  test that does.** "Is any Disb date later than today?" (Part 91) can only ever see the swapped dates whose real day is the 12th: a
+  zero would have read as "all the dates are right" while four fifths of them were not. The witness that sees the rest (the
+  deck's day, the Disb date and the loan system's DAYS ELAPSED must agree) goes in the same file, and the verdict line is written so that
+  it cannot say "all right" on the first test alone.
 - **A file the owner sends is checked with `tools/file-date-audit.mjs` before anything is said about it** (handbook Part 90).
   Its date columns, its order and a witness that is not the order rule: the loan system's own pattern for a deck, the Filters
   window for an approved report. The route a file took (Excel text, a CSV, real dates) changes what is stored whatever the
@@ -1825,12 +1857,14 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   correction. If anything looks wrong, the undo is at the foot of the file.
 - **The owner: 2209966593 should now fall on Monday and read CLEARED** (its 16 Nov rows were put right with the rest; Monday's
   current file is filed and does not name it). Run the same probe again (`db/TEMPLATE-where-is-this-customer-read-only.sql`, the
-  loan and `2026-11-16` filled in): Q2 should read 2026-09-07 (Mon) with "YES, it is their day", Q4 state B. Then run the
-  **corrected** `db/RUN-ME-061-deck-uploads-date-audit-read-only.sql` (pasted in full in the chat, 16 Nov; the first copy failed on
-  a uuid, section 4, #719) and say what it shows: the 16 Nov uploads must now read all fit as stored; for an earlier day an
-  Excel upload read the old way reads **about 20% fit as stored and 80% fit only if swapped** (the 16 Nov initial upload was
-  2,076 and 8,296 of 10,372 before the repair); an upload with every D.S date-like (`7/12/01`) was a CSV on the old page
-  (section 4, #718).
+  loan and `2026-11-16` filled in): Q2 should read 2026-09-07 (Mon) with "YES, it is their day", Q4 state B. (The corrected
+  `db/RUN-ME-061` was run on 16 Nov and its answer read in #720: the 16 Nov uploads fit as stored; **the current decks of 10 to 15 Nov
+  and the initial decks of 11, 12 and 13 Nov still read about 80% fit only if swapped, with nothing in `neither` or `missing`: RUN-ME-060
+  with its first date `2026-11-10` and last `2026-11-15`, `max_rows` 50,000, run until `still_to_do_run_again` says 0, puts them right.** It
+  restates those days' Exp.Def figures and the dashboard's week-over-week arrows: that is the correction, and the owner's to run.)
+- **The owner: run `db/RUN-ME-062-followup-list-dates-read-only.sql` (pasted in full in the chat, 17 Nov) and say its ANSWER line.**
+  Not all right is expected until a Current deck is uploaded after the fix: tonight's upload rewrites the list (nothing to run); run
+  the file again after it and it should read "all right". If it says "all right" already, a Current deck was uploaded after #711.
 - **The owner: send ONE real file of each of these, so each is checked against a real file** (a few rows are enough; no
   need to hide anything, none of it is written down): Expected (today or initial), Defaulters Followup, Received payments,
   Comments, Complaints, Restructures, Demand notices, PMO deductions, Staff registry, Advance requests. The Defaulters (two)
