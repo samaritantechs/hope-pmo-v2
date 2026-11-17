@@ -7843,6 +7843,40 @@ arrive as `yyyy-mm-dd`). (5) Nothing was run on the live book; nothing needs run
 
 **What the owner has to do.** Nothing. Files in those forms are read from the next upload on; files already uploaded keep what was stored (an empty date stays empty: upload the file again if it matters).
 
+## Part 96 — Dates, matter 4b: a date no reader could read is counted out loud (the Upload screen says how many, with examples)
+
+> "... different excels might come with different fomarts am not sure." — the owner, 17 Nov 2026 (Part 92 has the whole order; Part 95 is the formats).
+
+**What was wrong.** A cell that held something and did not read as a date came back as NULL: the row went in with an empty date (or, in the sheets that need one, with the moment of the upload), and **nothing on the screen said so**. Part 95 reads
+many more forms; a form nobody has seen, a typo (`9/31/2026`), a word in a date column (`sometime`), a shifted column, would still go in silently.
+
+**What changed.**
+
+- **`unreadableDatesOf(type, rows, { stage })` (`api/_lib/importers.js`)** counts, for an upload of that type, the cells of its date columns that hold something and do not read, and keeps up to three distinct examples (each cut at thirty characters).
+  It reads **the same column lists the importers read** (`DEFAULTER_DATE_COLUMNS`, `EXPECTED_DATE_COLUMNS`, `FOLLOWUP_DATE_COLUMNS`, `PAYMENT_DATE_COLUMNS`, the loans' `DISB DATE` and `APPROVED DATE`, and the company sheets' own lists: one definition of which columns are dates) and
+  **the same reader**, the company's sheets through `dateCell_` exactly as their importers do, so a cell is counted only when the importer really lost it. **Parity is tested against the importers themselves** (below).
+- **What is not counted:** an empty cell; the ways the loan system and the company's sheets say "no date" on purpose (a dash, `N/A`, `nil`, `none`, `null`, `TBD`, `hakuna`, a bare `0`, `No Due Date`); anything the reader reads. **Whether a cell reads never depends on the order of the file**
+  (with both parts twelve or under both readings are real dates, with one over twelve that part decides), so no order is asked: a first draft passed the order along, and the mutation run showed it changed nothing (an equivalent mutant), so it went.
+- **Which uploads:** the defaulters decks (current and initial), the four Expected sheets, the Defaulters Followup file, received payments, approved loans (**not** the application stages, which ignore the file's own date columns, so they lose nothing and say 0), complaints, restructures, call users,
+  call history and demand notices. **Not counted yet:** the comments log (it counts its own unreadable stamps, as before), the staff registry, the deductions and the advances (stamp-or-day cells), the two summaries.
+- **The server answers a plain number, not a sentence.** `/api/upload` returns `unreadableDates: { count, examples }` on every slice of those types (`{ count: 0, examples: [] }` when everything read, so the slices can be added up) and nothing on the others. There is no server sentence on purpose: `message` is per-slice text and
+  the page keeps only the last slice's (the abnormal-payments note in `upload.js` says why). **Automatic feeders read the field.**
+- **The page adds the slices up and says it once, in its two languages** (`public/upload.html`: `sendInSlices_` sums like `duplicates`; the Done message): "⚠ ANGALIA: tarehe 7 kwenye faili hii hazikusomeka (mfano: “sometime in July”, “soon”, “later”) ... hakuna tarehe iliyokisiwa" and "⚠ WARNING: 7 date(s) in this file could NOT be read (for example ...) They were
+  NOT stored as written (left empty, or the day of this upload where the sheet needs a date) and no date was guessed. Check the file's date columns." A file that read in full says nothing, and a type with no such field gains no stray zero. The page is its own no-cache page: `BUILD` and `CALL_BUILD` are unchanged.
+
+**Cost.** CPU only: one more pass over the date cells of each slice (a deck's 50,000 cells: a few milliseconds in all), no read and no write: **a defaulters upload costs the same round trips with and without unreadable dates** (a test counts them), `/api/call` untouched.
+
+**Checked.** `test/unreadable-dates.test.mjs` (11 tests): the five columns of a deck each count; the placeholders, the empty cells and every readable form do not; examples (three, distinct, cut); **PARITY: over 3,000 generated deck rows, and over Expected, Followup, payments and approved loans, the count equals the number of
+date cells the importer really turned into null** (non-empty, not a placeholder); the company sheets; a type with no dates answers nothing; a payments file with two spellings of the date column counts only the one the importer reads; pins that the counter reads the importers' own column lists and no database. `test/upload-speed.test.mjs` (4 more): the real handler counts and stores the cells empty with **no trip
+added**, answers 0 on a clean file and nothing on a type without dates; the page's real `sendInSlices_` (lifted out of `upload.html`, not a copy) adds three slices' counts (3 + 4 + 0 = 7) and keeps three distinct examples; the sentence is in the page. **Twenty-five deliberate breaks** (a placeholder or an empty cell counted, examples not distinct / not cut / five, the company sheets read without `dateCell_`, a payments alternative counted as its own
+column, a column dropped from each sheet, the application stages counted, a type without dates answering 0, the server not sending the field, the page taking the last slice's count, keeping five examples, not putting the total on the last answer, adding a zero to a type without the field, saying it for zero, losing the Swahili sentence) are each caught. **`tools/browser-checks/upload-unreadable-dates.mjs`** drives the real page in a real browser (12 points: three slices 3 + 4 + 0 say 7 once in each
+language with three distinct examples; a clean file says nothing; one request carries its own; no field adds nothing) and **fails 6 of the 12 on the page as it was before this change**. `npm test`: all of it passes.
+
+**Not done, said plainly.** (1) The sheets listed above as not counted. (2) **Over-counting:** a cell of a row the importer then drops (no reference) is still counted, and a cell the importer replaces with the moment of the upload is called "left empty, or the day of this upload": exact for the loan-system sheets, a little loose for the company's. (3) The examples are the cells' own text: if a file's columns are shifted a name or a number could
+be shown, on the screen of the person who uploaded that file. (4) **The company forms' day-first fallback on a small file with no evidence** (matter 4c) needs one real file of each. (5) Nothing was run on the live book; nothing needs running there: no SQL.
+
+**What the owner has to do.** Nothing. From the next upload on, a date the system cannot read is said on the Upload screen; if one ever shows, send the example and the file's date format.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

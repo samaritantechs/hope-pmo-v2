@@ -1453,6 +1453,16 @@ $('go').addEventListener('click', function(){
                 + ' payment(s) were already in the book (same transaction) and were NOT stored twice.'
                 + (res.body.inserted === 0 ? ' Nothing in this file was new.' : '')
               : '')
+          /* A DATE THE SYSTEM COULD NOT READ IS SAID, NOT DROPPED IN SILENCE. The cell was stored empty (or, where the sheet needs a
+             date, as the day of this upload); nothing is guessed. */
+          + (res.body.unreadableDates && res.body.unreadableDates.count
+              ? '\n\u26A0 ANGALIA: tarehe ' + res.body.unreadableDates.count.toLocaleString('en-US') + ' kwenye faili hii hazikusomeka'
+                + ' (mfano: ' + res.body.unreadableDates.examples.map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
+                + ' Hazikuhifadhiwa kama zilivyoandikwa (zimebaki tupu, au ni siku ya upload pale ripoti inapohitaji tarehe) \u2014 hakuna tarehe iliyokisiwa. Angalia safu za tarehe za faili.'
+                + '\n\u26A0 WARNING: ' + res.body.unreadableDates.count.toLocaleString('en-US') + ' date(s) in this file could NOT be read (for example '
+                + res.body.unreadableDates.examples.map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
+                + ' They were NOT stored as written (left empty, or the day of this upload where the sheet needs a date) and no date was guessed. Check the file\u2019s date columns.'
+              : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
               + ' customer(s) now visible in the app\u2019s Def / Exp / Chr tabs.' : '')
           /* THE DECK TOTALS, SAID EITHER WAY. A day whose totals were not added up is read
@@ -1629,6 +1639,10 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
   var receivedAbnormal = 0;
   // And the payments already in the book -- a number on every slice of a payments file.
   var duplicates = 0, sawDuplicates = false;
+  /* DATES NO READER COULD READ (handbook Part 96): a plain number on every slice of a file that has date columns, added up here like
+     `duplicates`, and the page (not the server) builds the sentence from the file's total -- a per-slice sentence would be the last slice's
+     alone. A few distinct examples are kept so the sentence can show what the cells said. */
+  var unreadableDates = 0, unreadableExamples = [], sawUnreadable = false;
   /* WHERE WE ARE, rather than which fixed slice we are on. `at` is the next unsent row and
      `size` can shrink between slices, so the plan is recomputed every time instead of being
      fixed up front -- `total` is only ever "this one plus however many are still to come at
@@ -1662,6 +1676,10 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
         // undefined at the end too rather than turning into a stray zero on a Done message.
         if (res.body.receivedAbnormal !== undefined) receivedAbnormal += (res.body.receivedAbnormal || 0);
         if (res.body.duplicates !== undefined) { sawDuplicates = true; duplicates += (res.body.duplicates || 0); }
+        if (res.body.unreadableDates) {
+          sawUnreadable = true; unreadableDates += (res.body.unreadableDates.count || 0);
+          (res.body.unreadableDates.examples || []).forEach(function(x){ if (unreadableExamples.length < 3 && unreadableExamples.indexOf(x) < 0) unreadableExamples.push(x); });
+        }
         at += take; idx += 1;
         if (at >= data.length) {
           // The last slice's answer is the file's answer -- it is the one that did the retiring
@@ -1670,6 +1688,7 @@ function sendInSlices_(apiBase, code, type, meta, rows, onProgress){
           if (synced) res.body.followupSynced = synced;
           if (res.body.receivedAbnormal !== undefined) res.body.receivedAbnormal = receivedAbnormal;
           if (sawDuplicates) res.body.duplicates = duplicates;
+          if (sawUnreadable) res.body.unreadableDates = { count: unreadableDates, examples: unreadableExamples };
           if (shrunk) res.body.sliceShrunk = { to: size, times: shrunk };
           if (onProgress) onProgress(idx, idx);
           return res;

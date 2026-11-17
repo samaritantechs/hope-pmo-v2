@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 95**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 96**.
 
 ---
 
@@ -86,6 +86,17 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#727 — dates, matter 4b: a date no reader could read is counted out loud (handbook Part 96, `api/_lib/importers.js`, `api/upload.js`, `public/upload.html`, 17 Nov).** The owner's order in section 2 ("... different excels might
+  come with different fomarts am not sure"). **What was wrong:** a cell that held something and did not read as a date was stored as an empty date (or the moment of the upload) and the screen said nothing. **Now**
+  `unreadableDatesOf(type, rows, { stage })` counts them per upload, with up to three distinct examples (cut at thirty characters), from **the same column lists and the same reader the importers use** (not counted: empty
+  cells and the deliberate "no date" words: a dash, N/A, nil, none, null, TBD, hakuna, 0, No Due Date; and whether a cell reads never depends on the file's order, so no order is asked). Covered: decks, the four Expected
+  sheets, Followup, payments, approved loans (not the application stages), complaints, restructures, call users, call history, demand notices. `/api/upload` answers `unreadableDates: { count, examples }` as a plain number on every slice (0 when all
+  read; nothing on other types) and **the page adds the slices up and says it once, in Swahili and English, from the file's total** ("N date(s) in this file could NOT be read (for example ...) ... no date was guessed"); a clean file says
+  nothing. **Cost:** CPU only, no read or write added (a test counts the trips: the same with and without unreadable dates); `/api/call` untouched; the page is its own no-cache page (`BUILD`, `CALL_BUILD` unchanged). **Checked:**
+  `test/unreadable-dates.test.mjs` (11 tests, including **parity with the importers over 3,000 generated deck rows** and over Expected, Followup, payments and loans), 4 more in `test/upload-speed.test.mjs` (the real handler and the page's
+  real `sendInSlices_`), **25 of 25 deliberate breaks caught**, and `tools/browser-checks/upload-unreadable-dates.mjs` in a real browser (12 points; **fails 6 on the page as it was**); `npm test`: 1,682 pass. **Not done, said plainly:**
+  comments' promise dates, the staff registry, deductions and advances are not counted; a cell of a row the importer drops is still counted; the examples are the cells' own text; the company forms' day-first fallback (**4c**) waits
+  for one real file of each (section 8); nothing to run on the live book.
 - **#726 — dates, matter 4a: the formats a spreadsheet writes a date in (handbook Part 95, `api/_lib/parse.js`, 17 Nov).** The owner's order in section 2 ("... different excels might come with different fomarts am
   not sure"). **What was wrong:** two forms were read (ISO, `a/b/yyyy`) and every other form came back as nothing, in silence: month names (`09-Jul-2026`, `9 July 2026`, `Jul 9, 2026`, English and Swahili), dotted
   (`09.07.2026`), year first (`2026/07/09`), compact (`20260709`), Excel serial numbers (`46210`), a slash date with a clock. **Two hazards found beside them:** a date that does not exist was returned as one (`31/02/2026`
@@ -1884,7 +1895,7 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   space, a line separator and a byte-order mark went into a script's pattern that way, invisible
   and waiting to be mangled by a paste. Write such a character with a doubled backslash, or build
   it in the script (`chr(92) + 'u00A0'`), and scan every file for characters outside plain text
-  before it is committed or handed over.
+  before it is committed or handed over. It happened again on 17 Nov (an ellipsis and a range of dashes written into `importers.js` by a python heredoc): the scan found it.
 - **Two copies that agree can both be wrong.** The portal's rule and the script's read a dash in
   the GMO cell as a GMO, alike, so the check that compares them passed. A review by readers who
   had not written the change found it. Have a change read before it is merged, findings put to

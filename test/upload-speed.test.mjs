@@ -669,3 +669,64 @@ test('the behaviour sentence says what a re-upload of THIS table does, from its 
   assert.equal(res.body.ok, true, res.body.error);
   assert.match(res.body.behaviour.text, /Added under 2026-09-01\. Uploading the same file twice would store it twice\./);
 });
+
+/* =====================================================================================
+   A DATE NO READER COULD READ IS COUNTED OUT LOUD -- THROUGH THE REAL HANDLER, AND THROUGH THE PAGE (handbook Part 96).
+   ===================================================================================== */
+const DECK_H2 = ['REF#', 'FULLNAME', 'DISB DATE', 'EXPIRE DATE', 'CHRONIC DATE', 'DUE DATE', 'LAST TRANS DATE', 'STATUS', 'ARREAS', 'TEAM'];
+const deckRow2 = (n, d, e, c, due, lt) => ['22' + String(n).padStart(8, '0'), 'C' + n, d, e, c, due, lt, 'Defaulter', 1000 + n, 'TEAM1'];
+
+test('a defaulters deck with dates no reader can read: the answer counts them with examples, the cells are stored empty, and no trip is added', async () => {
+  const clean = [DECK_H2, ...Array.from({ length: 40 }, (_, k) => deckRow2(k, '9/7/2026', '12/7/2026', '12/21/2026', 'No Due Date', '11/11/2026'))];
+  const dirty = clean.map((r, i) => (i === 3 ? deckRow2(i, 'sometime in July', '12/7/2026', '12/21/2026', '', '') : i === 9 ? deckRow2(i, '9/7/2026', 'soon', 'later', '', '') : r));
+  const a = countingDb(baseTables());
+  const ra = await callUpload(a.db, { code: 'A', type: 'defaulters-initial', meta: { date: '2026-11-16' }, rows: clean });
+  assert.equal(ra.body.ok, true, ra.body.error);
+  assert.deepEqual(ra.body.unreadableDates, { count: 0, examples: [] }, 'a file that read in full says 0, not nothing, so the page can add the slices up');
+  const b = countingDb(baseTables());
+  const rb = await callUpload(b.db, { code: 'A', type: 'defaulters-initial', meta: { date: '2026-11-16' }, rows: dirty });
+  assert.equal(rb.body.ok, true, rb.body.error);
+  assert.deepEqual(rb.body.unreadableDates, { count: 3, examples: ['sometime in July', 'soon', 'later'] });
+  const row = b.dump('defaulter_snapshots').find(r => r.ref === '2200000003');
+  assert.equal(row.disb_date, null, 'stored empty, not guessed');
+  assert.equal(b.stat().trips, a.stat().trips, 'counting adds no round trip: ' + b.stat().trips + ' against ' + a.stat().trips);
+});
+test('every other upload that carries date columns answers a count, and one that carries none does not', async () => {
+  const c1 = countingDb(baseTables());
+  const pay = await callUpload(c1.db, { code: 'A', type: 'received', meta: { uploadDate: '2026-11-16' }, rows: [['PAYMENT DATE', 'REF NO', 'AMOUNT', 'TRANSACTION ID'], ['11/10/2026', '2200000001', '1000', 'T1'], ['the other day', '2200000002', '1000', 'T2']] });
+  assert.equal(pay.body.ok, true, pay.body.error);
+  assert.deepEqual(pay.body.unreadableDates, { count: 1, examples: ['the other day'] });
+  const c2 = countingDb(baseTables());
+  const exp = await callUpload(c2.db, { code: 'A', type: 'expected-today', meta: { date: '2026-11-16' }, rows: [['REF#', 'FULLNAME', 'TEAM', 'DISB DATE'], ['R1', 'C1', 'TEAM1', '11/10/2026'], ['R2', 'C2', 'TEAM1', '??']] });
+  assert.equal(exp.body.ok, true, exp.body.error);
+  assert.equal(exp.body.unreadableDates.count, 1);
+  const c3 = countingDb(baseTables({ hints: [] }));
+  const hints = await callUpload(c3.db, { code: 'A', type: 'hints', meta: {}, rows: [['KEY', 'TEXT'], ['k1', 'a hint']] });
+  assert.equal(hints.body.unreadableDates, undefined, 'a type with no date column carries no field (the page must not gain a stray zero)');
+});
+
+test('the page adds the unreadable-date counts of every slice up, keeps three distinct examples, and leaves a type without them alone', async () => {
+  const body = await driveSlicer(5000, [
+    { unreadableDates: { count: 3, examples: ['sometime', 'soon'] } },
+    { unreadableDates: { count: 4, examples: ['soon', 'later', 'never', 'x'] } },
+    { unreadableDates: { count: 0, examples: [] } },
+  ]);
+  assert.deepEqual(body.unreadableDates, { count: 7, examples: ['sometime', 'soon', 'later'] }, '3 + 4 + 0 over three slices; the examples distinct and at most three');
+  const none = await driveSlicer(5000, [{}, {}, {}]);
+  assert.equal(none.unreadableDates, undefined, 'an upload type that never carries it must not gain one');
+  const one = await driveSlicer(500, [{ unreadableDates: { count: 2, examples: ['a', 'b'] } }]);
+  assert.deepEqual(one.unreadableDates, { count: 2, examples: ['a', 'b'] }, 'a file small enough for one request carries its own through');
+  const clean = await driveSlicer(5000, [{ unreadableDates: { count: 0, examples: [] } }]);
+  assert.equal(clean.unreadableDates.count, 0, 'a file that read in full says 0');
+});
+test('the Done message says it in both languages, from the file\'s total, only when something was lost', () => {
+  const src = readFileSync(PUBLIC + 'upload.html', 'utf8');
+  const i = src.indexOf('A DATE THE SYSTEM COULD NOT READ IS SAID');
+  assert.ok(i > 0, 'the page carries the sentence');
+  const block = src.slice(i, i + 1800);
+  assert.match(block, /res\.body\.unreadableDates && res\.body\.unreadableDates\.count/, 'only when a count is not zero');
+  assert.match(block, /ANGALIA: tarehe /);
+  assert.match(block, /WARNING: '? ?\+? ?res\.body\.unreadableDates\.count|WARNING: ' \+ res\.body\.unreadableDates\.count/);
+  assert.match(block, /no date was guessed/);
+  assert.match(block, /hakuna tarehe iliyokisiwa/);
+});
