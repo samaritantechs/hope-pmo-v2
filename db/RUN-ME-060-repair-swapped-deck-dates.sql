@@ -26,8 +26,10 @@
 -- already right were left alone. Tried on loans made to break the pattern: none was changed wrongly.
 --
 -- WHAT IT CANNOT DO. LAST TRANS DATE was swapped the same way and has no pattern to check it
--- against, so it is NOT repaired here. The Current file uploaded each evening, and every file from
--- now on, carries it right (and refreshes the Follow-up list).
+-- against, so it is NOT repaired here. db/RUN-ME-066 repairs it, in the uploads this file proves
+-- were read the wrong way round (run this first, then that, for the same days). The Current file
+-- uploaded each evening, and every file from now on, carries it right (and refreshes the
+-- Follow-up list).
 --
 -- THE DAYS. The first lines of the query name the days to repair (today, to begin with) and how many
 -- rows one run may change. To repair the week before, change the first date and run again. RUN AGAIN

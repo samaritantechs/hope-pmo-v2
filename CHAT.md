@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 93**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 94**.
 
 ---
 
@@ -86,6 +86,22 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#725 — dates, matter 3: the decks' Last trans dates (handbook Part 94, `db/RUN-ME-066-repair-swapped-last-trans-dates.sql`, pasted in full in the chat, 17 Nov).** The owner's order in section 2
+  ("... we have last trans date column ..."). **What was wrong:** the old defaulters reader swapped LAST TRANS DATE like the other date columns, and `db/RUN-ME-060` never touched it (no pattern to check it
+  against). **The repair is run AFTER RUN-ME-060, for the same days, and changes an upload only when the upload itself proves it TWICE:** (1) RUN-ME-060 put right at least three of its rows and they are at least half of
+  its rows that fit the pattern (read from `defaulter_date_repair_log`; the half keeps a small slice the new per-request reader could not decide from making a whole upload "swapped"); (2) at least three of its rows carry a
+  Last trans date that is impossible as stored (before the Disb date or after the deck's day) and possible with day and month exchanged (the column itself shows it). **A row** is changed only when its loan's dates fit the
+  pattern, its date has another reading, that reading lies between the Disb date and the deck's day, and it was not changed before; rows with no upload number are never changed. **The proof is read from the date as it was
+  uploaded**, so a run that stops at the row limit does not take the proof away from the rest of its upload. **It says what it left alone:** nine counting lines and one line per upload with its verdict. Log
+  `defaulter_last_trans_repair_log`, undo at the foot, 3 s lock / 50 s limit, and a plain "Run db/RUN-ME-060 first" when 060's log is missing. **Cost, measured on 2.33 million deck rows with the live table's indexes:** the
+  six days 10 to 15 Nov (129,600 rows) are done in two runs, 4.2 to 4.6 s for 50,000 rows and 1.0 s for the rest; every row of the six days ends with the real date and the other 2.2 million rows have the same checksum
+  before and after; nothing on `/api/upload` or `/api/call`; `BUILD` and `CALL_BUILD` unchanged. **Checked:** `tools/db-checks/last-trans-repair.mjs` on the whole real schema plus the real RUN-ME-060 (14,924 deck rows,
+  37 uploads, 25 swapped; uploads made to stand on each line of the rule: exactly three repaired rows, two, a swapped slice in a right upload, no exchange shown, no upload number, one changed across runs): every row equals a
+  model written again after every run, the verdict of every upload equals the model's, the undo is byte for byte, small runs end where one big run ends, a narrow window and a book without 060 behave, and **28 of 28
+  deliberate breaks change the outcome**; `test/last-trans-repair.test.mjs` (12 tests). `npm test`: 1,651 pass. **Two mistakes of mine, in Part 94:** the first fixture's "loans whose three dates can all be misread" cannot
+  exist (the chronic date is 14 days after the expiry), so half its checks passed on nothing (section 7); the first rule proved an upload by three repaired rows alone. **Not done, said plainly:** nothing run on the live book;
+  **`due_date` of the decks** (the importer's fifth date column) is swapped the same way and not repaired (RUN-ME-064 shows whether any row holds one; matter 4); **the Expected sheet's `last_trans_date`** (the customer page's
+  "Last payment" reads it first) has no witness and is not repaired; an upload too small to show the exchange is left alone and listed.
 - **#724 — dates, matter 2: received payments' transaction dates: the reader, and `db/RUN-ME-065` (handbook Part 93, pasted in full in the chat, 17 Nov).** The owner's order in section 2
   ("... we have transactions dates at received ..."). **What was wrong (in the code; the live book not seen):** `importReceivedPayments` decided day or month from the file's own payment dates
   only, so a payments file of one day from the 1st to the 12th of a month (every value `11/10/2026`) had no evidence and **read day-first: 10 November stored as 11 October; 12 November as 11
@@ -1875,6 +1891,11 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   zero would have read as "all the dates are right" while four fifths of them were not. The witness that sees the rest (the
   deck's day, the Disb date and the loan system's DAYS ELAPSED must agree) goes in the same file, and the verdict line is written so that
   it cannot say "all right" on the first test alone.
+- **A check's fixture is counted before its breaks are believed.** The first fixture of `db/RUN-ME-066` asked for "loans whose three dates can all be
+  misread": the chronic date is 14 days after the expiry, so there are none, and the special uploads built on them were empty or tiny while half the
+  checks passed on nothing; later, two deliberate breaks were "not caught" because the fixture had no row of the kind each one needs. Build special rows
+  from the days that exist and throw when there are none, count every kind of row a break needs and assert the count (`last-trans-repair.mjs` does), and
+  count a broken file that fails to run as a failure of the check, never as a caught break.
 - **A file the owner sends is checked with `tools/file-date-audit.mjs` before anything is said about it** (handbook Part 90).
   Its date columns, its order and a witness that is not the order rule: the loan system's own pattern for a deck, the Filters
   window for an approved report. The route a file took (Excel text, a CSV, real dates) changes what is stored whatever the
@@ -1912,6 +1933,9 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner: run `db/RUN-ME-066-repair-swapped-last-trans-dates.sql` (pasted in full in the chat, 17 Nov) AFTER `db/RUN-ME-060` has said `still_to_do_run_again` 0 for the same days, with the SAME two dates, away from an upload, and
+  AGAIN until its "still to do" line says 0; paste the nine lines and the list of uploads** (section 4, #725). It repairs LAST TRANS DATE of the decks in the uploads RUN-ME-060 proved were read day-first; for 10 to 15 Nov it is
+  about 130,000 rows, two or three runs. A chat that sees the answer reads the verdict of every upload before anything else: an upload "left alone" is the finding, not a failure. Its undo is at the foot.
 - **The owner: run `db/RUN-ME-065-repair-swapped-payment-dates.sql` (pasted in full in the chat, 17 Nov) when no upload is running, and paste its answer** (section 4, #724): the payments and ledger copies
   put right, the payments still dated outside their upload's fortnight, and the example lines. It repairs what the old payments reader stored for a file of the 1st to the 12th of a month; its undo is at the foot.
 - **The owner: run `db/RUN-ME-064-every-date-in-the-book-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`** (section 4,
@@ -1924,8 +1948,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
   upload (an evening upload deletes the rows of the files it replaces); **a chat that sees the owner's next answer reads that number
   first.** Then **`from_day` 2026-11-01, `to_day` 2026-11-09**: 9 Nov is last week's Monday (the dashboard's week-over-week arrows and
   the Exp.Def Report's last week) and the audit never looked before 10 Nov; a `not_fitting_in_these_days` of 0 means those days were
-  already right. How far back to repair beyond that is the owner's. LAST TRANS DATE is not repaired by it (no pattern): the Current
-  upload sets it right on the Follow-up list, and every file from now on is right by itself. When a past day is put right about a third
+  already right. How far back to repair beyond that is the owner's. LAST TRANS DATE is not repaired by it (no pattern): `db/RUN-ME-066`
+  repairs it afterwards, for the same days (section 4, #725), and every file from now on is right by itself. When a past day is put right about a third
   of its customers move to their real days and about 3,500 expired or chronic customers move to their real recycling leader or week:
   the leaders' lists of that day change, and that is the correction. If anything looks wrong, the undo is at the foot of the file.
 - **The owner: run `db/RUN-ME-063-future-disb-dates-everywhere-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the answer: the ANSWER line, line 7
