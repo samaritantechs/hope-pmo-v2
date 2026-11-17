@@ -7985,6 +7985,34 @@ The Expected sheet's dates (Part 97) and the decks' `due_date` are untouched.
 
 **What the owner has to do.** (1) **Run `RUN-ME-068`** (pasted in the chat; it makes three small log tables and changes only what is described above) and paste the WHOLE answer. (2) Optional, and it explains the extra day: in the register sheet, find any notice whose Kumb.Na. ends `/12/06/2026`, `/12/08/2026`, `/12/09/2026` or `/12/10/2026` and say what its NOTICE DATE and TIMESTAMP cells show. (3) For the five-row deduction case (as stored: received 5 Jun 2026, discovered 6 May 2026, submitted 6 Jul 2026), the real received and discovery dates from the register. The earlier asks stand (section 8 of `CHAT.md`): RUN-ME-060 for 10 to 15 Nov, then RUN-ME-066, and the `repayment_snapshots.snapshot_date` line of the 064 answer.
 
+## Part 99 — A list of the staff without a bank account number: zone, team, staff name (RUN-ME-069)
+
+> "I also need a list of all staff without bank account numbers / 3 columns - by zone (1st and primary), team, staff name / So that I send it and demand them in Whatsapp group / Include even those with no zone" — the owner, 17 Nov 2026
+
+**What it is.** A read-only list, `db/RUN-ME-069-staff-without-bank-account-read-only.sql` (pasted in full in the chat the moment it was checked), for the owner to run in the SQL editor and send. A chat cannot run SQL, so it cannot hand over the list itself, only the query.
+
+**Where the data is.** HR's registry, `staff_registry` (Part 49; `db/RUN-ME-044`): `name`, `role`, `zone`, `account`, `status`, all text. **The registry keeps no team column.** The team is what follows the role, `Field Officer - CHAMWINO`, which is how every staff script writes it (`role_word - team_text`,
+`db/TEMPLATE-staff-changes-from-gmo.sql`); a head-office staff (Part 53) has a department for a zone and no team.
+
+**The choices, said to the owner in the answer and written in the file's header:**
+- **No bank account number** = the ACCOUNTS cell is empty, blank, has **no digit** in it (`N/A`, `NONE`, `ON PROCESS`, `-`, `HAINA`: placeholders a sheet import stores as text, `accountCell`), or its digits are all zeros. **An account with digits counts as given, however short it looks** (a digit-count threshold would be a guess; a list of accounts that look too short is offered, not built). **Only the ACCOUNTS cell is read**: a number typed into the bank-name cell counts as missing.
+- **Active staff only.** A staff switched to Inactive has left; one word (`true` to `false`, on the line marked `CHANGE`) lists them too. The status is read as the portal reads it (capitals, blanks off).
+- **Zone first and primary**, then team, then name, **in an explicit order (`collate "C"`)**, so the list is the same whatever the database's default order: the live book's en_US order ignores spaces and punctuation (`LAKEVIEW` before `LAKE ZONE`), a C order does not.
+- **A staff with no zone is listed**, as `NO ZONE`, after the last zone (the registry's zone is a plain column: no join to the teams table, which would have dropped them). A staff with no team shows `-`. Zone, team and name are read as the registry writes them (runs of blanks as one, capitals): the same staff filed twice (two records) is listed twice, because a script never merges two staff records on a name alone.
+- **Three columns and nothing else:** no account, phone, NIDA, bank or ID is printed (a test pins that the file does not even read them).
+
+**Cost.** One pass over the registry (a few thousand rows at most): **0.75 s on a registry of 100,000 staff, a hundred times the live one**; a 30-second ceiling; nothing on `/api/upload` or `/api/call`; no code that runs for a user changed (`BUILD` and `CALL_BUILD` unchanged).
+
+**Checked, on a PostgreSQL made from the real schema.** `tools/db-checks/staff-without-account.mjs`: the whole of `db/schema.sql`; 703 staff with accounts of every kind (real digits with leading zeros, letters and digits, digits with spaces and dashes, a short one, empty, blank, `N/A`, `NONE`, `ON PROCESS`, a dash, `HAINA`, only zeros, only letters), zones (filed, lower case, runs of blanks, none, empty, blank, a department, two whose order depends on how a database sorts spaces),
+roles (with a team, with two dashes, with none, a dash and no team, lower case, extra blanks), statuses (Active, Inactive, inactive, with blanks), names (extra blanks, lower case, a tab), and a staff filed twice. **The list equals a model written again in JavaScript, row for row and in order, in two databases:** one that sorts like C and one whose default order ignores spaces and punctuation as the live book's does (this machine has no en_US; ICU's
+`en-u-ka-shifted` is the stand-in, and the check first proves the two databases really do sort that pair differently). The other switch (Inactive included) does the same; the registry is byte-identical afterwards; an empty registry and one where everybody has an account give no row and no error; **24 of 24 deliberate breaks of the file each change the list**.
+`test/staff-without-account.test.mjs` (9 tests; **22 of 22 deliberate breaks of the pins caught**, run against a baseline that passes) pins one table and no write, the three columns, the rule for an account, the switch and the status, the staff with no zone, the explicit order, how the zone, team and name are read, the columns against the schema, and the kept check.
+**Two mistakes of mine the check found, said plainly.** (1) The fixture's strides shared a factor with the lists they walked (a stride of 5 over twenty zones used four of them): no staff had no zone, so five breaks passed; made coprime, they are caught. (2) A mutation run of the pins was first read as "22 of 22 caught" while the baseline itself failed (an end-of-text pattern): every mutant "failed" because the file did; the script now refuses to run on a baseline that does not pass.
+
+**Not done, said plainly.** Nothing was run on the live book (a chat cannot), so the number of staff on the list is not known. Accounts that have digits but look too short or wrong are treated as given. A number typed into the bank-name cell is read as missing. The list is a snapshot: it says nothing of who answered the WhatsApp group; the owner runs it again.
+
+**What the owner has to do.** Run it (pasted in the chat) and send the three columns.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

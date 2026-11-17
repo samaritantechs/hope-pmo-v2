@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 17 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 98**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 99**.
 
 ---
 
@@ -86,6 +86,12 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#731 — a list of the staff without a bank account number: zone, team, staff name (`db/RUN-ME-069`, read-only, handbook Part 99, pasted in full in the chat, 17 Nov).** "I also need a list of all staff without bank account numbers / 3 columns - by zone (1st and primary), team, staff name / So that I send it and demand them in Whatsapp group /
+  Include even those with no zone" — the owner. **From `staff_registry`** (HR's registry: `name`, `role`, `zone`, `account`, `status`; **it has no team column: the team is what follows the role**, `Field Officer - CHAMWINO`, as every staff script writes it). **The choices the owner was told:** no account number = empty, blank, no digit in it (`N/A`, `NONE`, `ON PROCESS`, `-`, `HAINA`) or only zeros;
+  an account with digits counts as given however short (a list of accounts that look too short is **offered, not built**); only the ACCOUNTS cell is read; **Active staff only** (one word on the line marked `CHANGE` lists the Inactive too); sorted by zone, then team, then name, in an explicit `collate "C"` order (the live book's en_US order ignores spaces: the list is the same in both); **a staff with no zone is listed as `NO ZONE`, last**; no team shows `-`;
+  three columns, no account, phone or NIDA printed or even read. **Cost:** one pass over the registry, 0.75 s at 100,000 staff (a hundred times the live one); nothing on `/api/upload` or `/api/call`; no `BUILD` change. **Checked** on a PostgreSQL from the real schema: the list equals a model row for row and in order in two databases (one sorting like C, one ignoring spaces and punctuation like en_US);
+  **24 of 24 deliberate breaks change the list**; `test/staff-without-account.test.mjs` (9 tests, 22 of 22 breaks of the pins caught). **Two mistakes of mine the check found (Part 99):** a fixture whose strides shared a factor with its lists (no staff had no zone, so five breaks passed), and a mutation run read as "caught" over a baseline that was itself failing. **Not done, said plainly:** nothing run on the live book (the count is not known);
+  accounts that have digits but look wrong are treated as given; a number typed in the bank-name cell reads as missing; who has answered the WhatsApp group is not tracked: the owner runs it again.
 - **#730 — the owner's answer to RUN-ME-067 read (17 Nov), and `db/RUN-ME-068`, which repairs the notice and deduction dates that cannot be real (handbook Part 98, pasted in full in the chat).** **067's answer:** of 1,094 notices **0** carry their number's day exchanged and **280 imported ones match neither**; all **12** dated later than today are among them, and **every one of the twelve is the number's day with day and month exchanged AND a day early**
   (number 12 Oct → stored 9 Dec; 12 Jun → 5 Dec; ten of the twelve carry the same day in the stamp); all **248** made in the app agree with their number. **Seven** deductions are out of order (two cases): the two rows discovered after the submission have ONE reading that fits (12 Jun 2026); **the five rows discovered before the money was received do not**: exchanging the discovery, the received date or both puts them in order,
   so 067's "7 of 7 fixable" was true and not proof (said in Part 98; 067's header was incomplete). **Where the extra day comes from was looked for and NOT found:** the importer of 12 Oct is today's; the page of that day formats dates with the browser's local getters; replayed in a real Chromium set to `Africa/Dar_es_Salaam`, a day-first CSV gives an exact exchange and Excel date cells arrive exact: nothing runnable makes "exchanged and a day early"
