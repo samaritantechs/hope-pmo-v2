@@ -7687,6 +7687,54 @@ table's date columns in one pass) and prints, per column: rows, filled, earliest
 
 **What the owner has to do.** Run `db/RUN-ME-064` (pasted in the chat) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`.
 
+## Part 93 — Dates, matter 2: received payments' transaction dates (the reader, and RUN-ME-065)
+
+> "Repair everything that's wrong brother I can't be perfect to detect every where dates are wrong. When we finish disb dates, we have transactions dates at received ..." — the owner, 17 Nov 2026 (Part 92 has the whole order).
+
+**What was wrong (read in the code; nobody has sent a payments file, so it is what the code does, not what the live book holds, until `db/RUN-ME-065` is run and answers).** `importReceivedPayments` decided the
+day/month order from the file's own payment dates alone (`inferDayFirst`): one value with a part over twelve decides every value. **A payments file of one day from the 1st to the 12th of a month has no such value:
+every row is `11/10/2026`, both parts twelve or under, and it fell through to day-first. The loan system writes the month first, so the 10th of November was stored as the 11th of October** (every payment of the
+file, a month early, each a valid date and nothing looking wrong); a file of the 12th of November was stored as the 11th of December: in the future. The approved-loans importer had the two rules that decide such a
+file (`tightestSpanIsDayFirst`, `nearestToDayIsDayFirst`, Part 89's `loansDateOrder`); the payments importer never got them.
+
+**The reader (stops it at the source; `paymentsDateOrder`, `importers.js`).** Evidence first, exactly as before; where there is none, the tightest stretch of days (a report covers a short period: `11/9, 11/10, 11/11` is three
+days, not September, October and November); where that cannot tell either (one day, every value alike), the day the file is uploaded (`nearestToDayIsDayFirst`: the reading that puts the dates nearest it). The day is the one the
+page names (`meta.uploadDate`) or, without it, the server's clock in East Africa: one definition, `uploadDayKey_` in `upload.js`, used by the approved loans and the payments. With nothing to decide by it falls back to day-first, as it
+always did, and the answer says so. The upload's answer says which rule decided (`dateOrder`: "month/day, because that puts the file's dates nearest the day it was uploaded"). **Cost:** arithmetic over the rows in hand: no read and
+no write added (the trip budget of a small payments file is unchanged: 8 trips). Checked: three importer tests, one through the real upload handler (a day's file of `11/10/2026` sent on the 10th is the 10th; the same file sent
+on 12 October is the 11th of October; a file with its own evidence says so in the old words), eight deliberate breaks of the reader and its wiring (one a mutant that changes nothing: the span asked before the evidence, which can
+never differ because a span needs every value ambiguous).
+
+**The repair: `db/RUN-ME-065-repair-swapped-payment-dates.sql` (pasted in full in the chat).** The witness is the upload's own time (`created_at`, East Africa). A payment is uploaded the day it is made or within days, and received
+payments are pruned at two weeks; the two readings of an ambiguous date are at least 27 days apart, so at most one lies in the stretch. The rows written in the same minute are one upload, judged together because the old reader
+decided for a whole file:
+
+- a row is a candidate when its stored date is **not** in `[upload day - 14, upload day + 1]` and the other reading **is** in `[upload day - 7, upload day]`;
+- its upload is a **swapped upload** only when it has **no row with a day over twelve** (that is evidence: the file was read by its order, so it was read right), **no ambiguous row that fits as stored**, and at least one candidate;
+- only the candidates of a swapped upload change. A late payment in a file that was read right, a row no reading fits, a date whose day and month are the same: left alone.
+
+**The one case it cannot tell apart:** a payments file uploaded a month late whose dates read the other way round land on the upload day to the day: repaired as if swapped. It is written in the file.
+It also puts right the **copies in `notice_payment_ledger`** (a payment made after a notice, kept for good, with its date) of every payment repaired, by the payment's id and only where the copy still carries the old date; a book
+without that table (a migration run by hand) is repaired all the same; a copy whose payment was pruned before this run cannot be put right here. **Every row changed is in `payment_date_repair_log`** (old and new date, the upload's
+day), the undo is at the foot of the file, and a second run changes nothing. It changes `paid_at` and nothing else (a test pins that), prints no name (the first eight characters of an id, and dates), and has a 3-second lock and a
+50-second statement limit.
+
+**Checked.** `tools/db-checks/payment-date-repair.mjs`: the WHOLE of `db/schema.sql` on a PostgreSQL, 475 payments in 55 uploads (a day's file read day-first in two slices written in different minutes; a right file with the edges
+of the fortnight; a right file with a late payment and a row that would fit the other way, which carries evidence; a one-row swapped file stored in the future; a swapped file with three same-day-and-month rows; a file with rows that fit
+as stored and rows that fit only the other way, left alone; an upload written at 01:00 East Africa time, the day before in UTC; a stored day of exactly twelve; the edges of both windows; rows with no date; forty random uploads, right
+and swapped; a ledger with copies of repaired payments, one corrected by hand, one of a pruned payment, one of a right payment): every payment's date after the run equals a **model of the rule written again in JavaScript**, only
+`paid_at` changed, the ledger equals the model's, the answer's numbers equal the model's, a second run changes nothing, **the file's own undo puts every row back byte for byte**, a book without the ledger table is repaired all the same,
+and **eighteen deliberate breaks** (a window moved at each of its five edges, the evidence rule dropped, the ambiguous-fits rule dropped, two rows required, the uploads told apart by the day, the UTC day, a stored day of twelve left alone,
+the date not exchanged, same-day-and-month rows counted as ambiguous, the log not kept, the ledger not put right, the hand-corrected copy overwritten, the ledger step on a book without it, the answer counting the wrong source) each change the
+outcome or make the file fail. `test/payment-date-repair.test.mjs` (9 tests; seventeen deliberate breaks of the pins, each caught) pins the one column written, the limits, the log, the undo, the ledger guard, the witness and its windows, the
+columns against `db/schema.sql`, no customer data, the reader's wiring and the kept check.
+
+**Not done, said plainly.** Nothing was run on the live book (a chat cannot): the counts are the test book's. **The same last resort is still in the company's own forms** (complaints, restructures, advance requests, the call-app sheets: a
+small file of early-in-the-month dates has no evidence and reads day-first) and **`dateOrNull` still reads ISO and `a/b/yyyy` only** (matter 4). Payments uploaded and pruned before this run are gone: only what the book holds is put right.
+A payment uploaded a month late is the one coincidence above. The deck's `last_trans_date`, the Expected sheet's dates and every other table are the next matters.
+
+**What the owner has to do.** Run `db/RUN-ME-065` (pasted in the chat) when no upload is running and paste its answer: how many were put right, how many are still dated outside their upload's fortnight, and the example lines.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

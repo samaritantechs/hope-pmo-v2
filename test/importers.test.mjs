@@ -916,6 +916,47 @@ test('received payments: the day/month order is inferred, not assumed', () => {
   assert.equal(rows[1].paid_at, '2026-08-09', 'the 9th of August, not the 8th of September');
 });
 
+/* A PAYMENTS FILE OF ONE DAY, OR OF THE FIRST TWELVE DAYS OF A MONTH, HAS NO EVIDENCE OF ITS OWN (Part 93).
+     "Repair everything that's wrong brother ... we have transactions dates at received" -- the owner, 17 Nov 2026
+   `11/10/2026` is the tenth of November as the loan system writes it, and the eleventh of October read day-first:
+   every payment of the file stored a month early, each a perfectly valid date. The rules that decide a REPORT with no
+   evidence -- the tightest stretch of days, then the day it is uploaded -- decide it now, evidence first. */
+const { paymentsDateOrder: payOrder } = await import('../api/_lib/importers.js');
+const rcvRow_ = (d, i = 1) => ['A' + i, 'T' + i + d, 'R' + i, '100', 'RID' + i, d, 'processed', 'e', '2557000000' + i, 'TIGO', 'S', 'B', 'TEAM1', '070000000' + i];
+const rcvRows_ = (...ds) => [RCV_HEADER, ...ds.map((d, i) => rcvRow_(d, i + 1))];
+const paidOf_ = (rows, near) => importRcv(rows, { dateOrder: payOrder(rows, near) }).map(r => r.paid_at);
+
+test('received payments: a file of one day, every value the same, is read the way that puts it nearest the day it is uploaded', () => {
+  const day = rcvRows_('11/10/2026', '11/10/2026', '11/10/2026');
+  assert.deepEqual(paidOf_(day, '2026-11-10'), ['2026-11-10', '2026-11-10', '2026-11-10'], 'the tenth of November, uploaded on the tenth of November');
+  assert.deepEqual(payOrder(day, '2026-11-10'), { dayFirst: false, by: 'upload day' });
+  const dayFirstFile = rcvRows_('10/11/2026', '10/11/2026');                  // a file that writes the day first: the same rule reads it right
+  assert.deepEqual(paidOf_(dayFirstFile, '2026-11-10'), ['2026-11-10', '2026-11-10']);
+  assert.deepEqual(payOrder(dayFirstFile, '2026-11-10'), { dayFirst: true, by: 'upload day' });
+  // a file uploaded the next morning is still about the day before
+  assert.deepEqual(paidOf_(rcvRows_('11/9/2026'), '2026-11-10'), ['2026-11-09']);
+  // with nothing to say which day it is, the old reading stands, and the answer says it had to assume
+  assert.deepEqual(payOrder(day, null), { dayFirst: null, by: null });
+  assert.deepEqual(importRcv(day).map(r => r.paid_at), ['2026-10-11', '2026-10-11', '2026-10-11'], 'no upload day given: unchanged, as before');
+});
+
+test('received payments: a file of several days with no evidence is read the way that keeps it in the tightest stretch of days', () => {
+  const week = rcvRows_('11/9/2026', '11/10/2026', '11/11/2026');
+  assert.deepEqual(payOrder(week, null), { dayFirst: false, by: 'span' });
+  assert.deepEqual(importRcv(week).map(r => r.paid_at), ['2026-11-09', '2026-11-10', '2026-11-11'], 'three days, not the eleventh of September, October and November');
+  assert.deepEqual(payOrder(rcvRows_('9/11/2026', '10/11/2026', '11/11/2026'), null), { dayFirst: true, by: 'span' }, 'and the other way round');
+});
+
+test('received payments: the file\'s own evidence still decides first, over the span and the upload day', () => {
+  // the sixteenth can only be a day: month-first. A file uploaded on the twelfth of October would put 10/11 nearest that day day-first: the evidence wins.
+  const file = rcvRows_('11/16/2026', '11/10/2026');
+  assert.deepEqual(payOrder(file, '2026-10-12'), { dayFirst: false, by: 'evidence' });
+  assert.deepEqual(paidOf_(file, '2026-10-12'), ['2026-11-16', '2026-11-10']);
+  assert.deepEqual(payOrder(rcvRows_('16/11/2026', '10/11/2026'), '2026-11-17'), { dayFirst: true, by: 'evidence' });
+  // an exact tie of evidence gives up and lets the shape of the file decide
+  assert.equal(payOrder(rcvRows_('16/11/2026', '11/16/2026', '11/10/2026'), '2026-11-10').by === 'evidence', false);
+});
+
 test('received payments: the older header spellings still import', () => {
   // Files already uploaded under the old names must not stop working.
   const [x] = importRcv([['DATE', 'TEAM', 'CUSTOMER NO', 'REF NO', 'AMOUNT PAID', 'PAYMENT NO'],
