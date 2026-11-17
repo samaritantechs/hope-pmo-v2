@@ -7643,6 +7643,50 @@ sheet: the customer page's Last payment) and `loans`. `test/future-disb-dates-au
   also cover the swapped last-known rows that are still in the past (many more than the future ones). It is offered, not started (`CHAT.md` section 8). Last trans in the decks is not repaired by anything (no
   pattern); the Current upload sets it right for every customer on it.
 
+## Part 92 — Dates, everything that is wrong, one matter at a time: the order, and matter 1 (RUN-ME-064, every date in the book)
+
+> "Repair everything that's wrong brother I can't be perfect to detect every where dates are wrong. When we finish disb dates, we have transactions dates at received, we have last trans
+> date column and other dates checkup and different excels might come with different fomarts am not sure. - repair one per time so that users see progress on the rised matters" — the owner, 17 Nov 2026
+
+**The order the owner's words give, each matter its own change, merged when it is green and reported on its own:**
+
+1. **Find where dates are wrong, anywhere** (this Part): one read-only scan of every date column of the book, so nobody has to know where to look. `db/RUN-ME-064`.
+2. **Received payments' transaction dates** (`received_payments.paid_at`): the reader and the stored rows (Part 93 when it ships).
+3. **Last trans dates**: the decks' `last_trans_date` (db/RUN-ME-060 repairs Disb, Expire and Chronic and never touched it), the Expected sheet's, the register's.
+4. **Every other date, and "different excels might come with different formats":** which readers still fall back to day-first when a file gives them nothing to decide by, and which formats no reader understands.
+5. **Disb dates, finished:** the owner's runs of `db/RUN-ME-060` for 10 to 15 Nov and 1 to 9 Nov (Part 91), and the repair of each customer's last-known deck row, offered.
+
+**What was found in the code while planning (read, not yet run on the live book; each is a matter above).**
+
+- **`importReceivedPayments` decides day or month from that file's own payment dates alone** (`inferDayFirst`), with none of the two fallbacks the approved-loans importer has (`tightestSpanIsDayFirst`, `nearestToDayIsDayFirst`, `loansDateOrder`).
+  A payments file whose dates all have both parts twelve or under, which is every file of a day from the 1st to the 12th of a month, gives it no evidence, and it **reads day-first: `11/10/2026`
+  (10 November, as the loan system writes it) is stored as 11 October.** Not seen on the live book (nobody has sent a payments file, section 8 of `CHAT.md`); it is what the code does.
+  `paid_at` is a date and `created_at` is the moment of the upload: a payment is uploaded within days of being made, so the upload's own time is a witness that does not depend on the order rule.
+- **The company's own forms** (complaints, restructures, advance requests, call-app sheets) read their dates by the file's own evidence only (Part 89), and a small file of early-in-the-month dates has none:
+  the same fallback to day-first, on files a Google Form writes month-first (`6/22/2026 11:29`).
+- **`dateOrNull` understands ISO (`2026-07-09`) and `a/b/yyyy` or `a-b-yyyy` only.** A month written as a word (`09-Jul-2026`), a dotted date (`09.07.2026`), `2026/07/09`, `20260709` and an Excel serial number
+  (`46210`, a date cell that arrived as a number) read as **nothing**: the date is lost without a word. The upload does not say how many it could not read.
+
+**Matter 1: `db/RUN-ME-064-every-date-in-the-book-read-only.sql` (pasted in full in the chat).** It finds every column of date, timestamp or timestamp-without-zone type of every base table of the `public` schema from
+`information_schema` (so a table made by a migration is in it, and it names no table itself: a test fails if it does), reads each table **once** through one dynamically built query per table (`query_to_xml`, all of the
+table's date columns in one pass) and prints, per column: rows, filled, earliest, latest, **later than today** (the East Africa date; for a timestamp, a day ahead of now) and **before 2020**.
+
+- **A flag, not a proof.** `FUTURE?`: a later date in a column where that is not normal (a payment, a transaction, a disbursement, a comment, a creation time: the old importer's swap puts a date there, so do a typo and a wrong
+  year). `OLD?`: a date before 2020 in a column that is not a birth date. **Not flagged**, and the line says "a later date is normal in this column": an expiry, a chronic date, a due date, a promise, a schedule, a start or end,
+  a next, a deadline, a validity, a retirement, and `snapshot_date` (tomorrow's sheet). The words are in one place in the file and a test pins them.
+- **Cost.** One pass over each table: **5.4 s on a book of the live book's size** (2.3 million deck rows, 900,000 Expected rows, ten date columns between them), one process, a 45-second ceiling, nothing written, no lock beyond a
+  read. Nothing on `/api/upload` or `/api/call`; no code that runs for a user changed.
+- **Checked.** `tools/db-checks/every-date-audit.mjs` runs the **whole of `db/schema.sql`** (30 tables, **82** date and timestamp columns, the enum, the indexes) on an empty PostgreSQL inside one transaction, fills nine tables and a
+  view with every kind of value the file must tell apart (a date later than today and one on today, one before 2020 and one on 2020, a later expiry and promise and tomorrow's sheet, a birth date from 1975, a moment a minute ahead and
+  one two days ahead, rows of nothing), and compares **every one of the 82 lines with a direct query on its own column** (rows, filled, earliest, latest, later than today, before 2020), the flags with the rule written out again,
+  the order (flagged first), the ANSWER line, the East Africa clock, and that the tables are byte-identical afterwards; and **seventeen deliberate breaks** (a boundary moved, a threshold moved, an exemption dropped or widened, a view counted,
+  the earliest taken from the latest, the filled count taken from the row count, the columns numbered in no order, only some tables read, the flags in the wrong order, the ANSWER counting the wrong flag) each change the answer.
+  `test/every-date-audit.test.mjs` (6 tests; eleven deliberate breaks of the pins, each caught) pins read-only, one process, the ceiling, that no table is named, the catalogue, the clock, the words.
+- **Not done, said plainly.** Nothing was run on the live book (a chat cannot). A date can be wrong and still in the past, and later than today is only the visible tip: the pattern tests are `db/RUN-ME-061`, `062`, `063`; for a table
+  with no pattern the witness is the upload's own time (matter 2 for payments). What the scan finds is read by a chat and answered: the owner pastes the ANSWER line and the flagged lines.
+
+**What the owner has to do.** Run `db/RUN-ME-064` (pasted in the chat) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
