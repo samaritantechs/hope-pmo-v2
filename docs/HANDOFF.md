@@ -7508,8 +7508,19 @@ widened, the window test month-first only, an ISO date unread), each caught. No 
   file) is the only witness; nothing in the order rule can see it.
 - Nothing was run on the live book (a chat cannot).
 
-**What the owner has to do.** Run `db/RUN-ME-060` for 16 Nov (it is in the chat; away from an upload), then `db/RUN-ME-061` and say what it shows; and send
-one real file of each other upload kind to be checked.
+**Run on the live book, the same evening (the owner's answers).** `db/RUN-ME-060` for 16 Nov: **16,531 rows not fitting the pattern, 16,531 with exactly
+one fitting reading, 16,531 repaired, 0 still to do, 0 left alone**: the day's initial and current decks are right in place, and loan 2209966593 falls on
+Monday. Then `db/RUN-ME-061` **failed**: `invalid input syntax for type uuid: "legacy"`. `defaulter_snapshots.upload_batch` is a **uuid** (`db/schema.sql`) and the
+query coalesced it with the text `'legacy'`; the kept PostgreSQL check had been built with `upload_batch text`, so it passed on a table that is not the book's. Fixed
+(`coalesce(upload_batch::text, 'legacy')`), and the cause fixed with it: the check's table now takes the real column types (`upload_batch uuid`, a real uuid for
+every upload, and one upload with no batch at all, which the audit shows as `legacy`), the old query fails on it with the owner's own words, and
+`test/deck-upload-audit.test.mjs` compares the fixture's type of every column the query reads with `db/schema.sql`. Four deliberate breaks of that (the uuid
+coalesced with a text again, the fixture's `upload_batch` back to text, `days_elapsed` as a numeric, the row with no batch taken out), each caught. **A database
+check is built from the book's own column types, never from what the query happens to need.**
+
+**What the owner has to do.** Run the corrected `db/RUN-ME-061` (in the chat) and say what it shows; the 16 Nov uploads must now read all fit as stored. For the days
+before 16 Nov, change the first date (and, if they like, `max_rows` to 50,000) in `db/RUN-ME-060`'s first lines and run it again until `still_to_do_run_again` says 0.
+Send one real file of each other upload kind to be checked.
 
 ---
 

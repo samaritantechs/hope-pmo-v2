@@ -53,8 +53,11 @@ for (let i = 0; i < LOANS; i++) {
 const days = []; for (let k = 8; k <= 17; k++) days.push('2026-11-' + String(k).padStart(2, '0'));
 const ROUTE = { initial: ['X', 'C', 'X', 'R', 'C', 'X', 'C', 'X', 'R', 'X'], current: ['X', 'X', 'X', 'X', 'X', 'X', 'X', 'X', 'R', 'X'] };
 const uploads = [];
-days.forEach((day, di) => ['initial', 'current'].forEach(type => uploads.push({ day, type, route: ROUTE[type][di], batch: 'b' + String(uploads.length).padStart(7, '0') + 'x', at: type === 'initial' ? '04:30' : '22:40' })));
-uploads.push({ day: '2026-11-14', type: 'current', route: 'X', batch: 'bREPLACED1', at: '20:05' });          // an earlier upload of a day that a later one replaced: still in the book until swept
+const uuid = n => n.toString(16).padStart(8, '0') + '-0000-4000-8000-000000000000';           // upload_batch is a uuid on the real table (db/schema.sql): a text there failed on the live book
+const label = b => (b ? b.slice(0, 8) : 'legacy');                                                // the audit shows a batch as its first eight characters, and a row with none as "legacy"
+days.forEach((day, di) => ['initial', 'current'].forEach(type => uploads.push({ day, type, route: ROUTE[type][di], batch: uuid(uploads.length + 1), at: type === 'initial' ? '04:30' : '22:40' })));
+uploads.push({ day: '2026-11-14', type: 'current', route: 'X', batch: uuid(0xffff), at: '20:05' });          // an earlier upload of a day that a later one replaced: still in the book until swept
+uploads.push({ day: '2026-11-09', type: 'initial', route: 'X', batch: '', at: '04:00' });                  // rows with no batch at all (the book's oldest): shown as "legacy"
 const rows = []; const expect = new Map();
 const blank = () => ({ rows: 0, fit: 0, swapped: 0, neither: 0, missing: 0, pair: 0, datelike: 0, other: 0 });
 for (const u of uploads) {
@@ -76,15 +79,15 @@ for (const u of uploads) {
   }
 }
 const SETUP = `begin;
-create table public.defaulter_snapshots (id uuid primary key default gen_random_uuid(), ref text not null, snapshot_type text not null,
-  snapshot_date date not null, disb_date date, expire_date date, chronic_date date, days_elapsed integer, ds text, upload_batch text, created_at timestamptz);
+create table public.defaulter_snapshots (id uuid primary key default gen_random_uuid(), ref text not null, snapshot_type text not null check (snapshot_type in ('initial','current')),
+  snapshot_date date not null, disb_date date, expire_date date, chronic_date date, days_elapsed integer, ds text, upload_batch uuid, created_at timestamptz not null default now());
 create index on public.defaulter_snapshots (snapshot_date);
 copy public.defaulter_snapshots (ref, snapshot_type, snapshot_date, disb_date, expire_date, chronic_date, days_elapsed, ds, upload_batch, created_at) from stdin with (format csv, null '');
 ${rows.join('\n')}
 \\.
 analyze public.defaulter_snapshots;
 `;
-const SUM = `select md5(string_agg(id::text || coalesce(disb_date::text, '') || coalesce(expire_date::text, '') || coalesce(chronic_date::text, '') || coalesce(ds, '') || coalesce(upload_batch, ''), '|' order by id)), count(*) from public.defaulter_snapshots;`;
+const SUM = `select md5(string_agg(id::text || coalesce(disb_date::text, '') || coalesce(expire_date::text, '') || coalesce(chronic_date::text, '') || coalesce(ds, '') || coalesce(upload_batch::text, ''), '|' order by id)), count(*) from public.defaulter_snapshots;`;
 const run = (file, from, to) => {
   const f = file.replace(/date '2026-11-10' as from_day/, `date '${from}' as from_day`).replace(/date '2026-11-16' as to_day/, `date '${to}' as to_day`);
   if (f === file && (from !== '2026-11-10' || to !== '2026-11-16')) throw new Error('could not set the window in the file: its first lines changed');
@@ -109,14 +112,14 @@ const check = (name, ok, extra) => { if (!ok) fails.push(name + (extra ? ' -- ' 
   for (const t of table) {
     const [day, kind, , batch, n, fit, swapped, neither, missing, pair, datelike, other] = t, key = day.slice(0, 10) + '|' + kind + '|' + batch;
     // the batch is shown as its first eight characters
-    const full = [...expect.keys()].find(k => k.startsWith(key.slice(0, key.lastIndexOf('|') + 1)) && k.split('|')[2].slice(0, 8) === batch && !seen.has(k));
+    const full = [...expect.keys()].find(k => k.startsWith(key.slice(0, key.lastIndexOf('|') + 1)) && label(k.split('|')[2]) === batch && !seen.has(k));
     const ex = full && expect.get(full); if (full) seen.add(full);
     const got = [n, fit, swapped, neither, missing, pair, datelike, other].map(Number), exp = ex && [ex.rows, ex.fit, ex.swapped, ex.neither, ex.missing, ex.pair, ex.datelike, ex.other];
     if (!ex || got.join() !== exp.join()) { bad++; if (bad <= 3) console.log('   line ' + key + ' got ' + got.join(',') + ' want ' + (exp ? exp.join(',') : 'no such upload')); }
   }
   check('every upload line equals the count made in JavaScript from the same rows', bad === 0, bad + ' of ' + table.length + ' lines differ');
   // what the three kinds of upload must look like, said once in plain terms
-  const byRoute = r => table.filter(t => { const u = uploads.find(x => x.day === t[0].slice(0, 10) && x.type === t[1] && x.batch.slice(0, 8) === t[3]); return u && u.route === r; });
+  const byRoute = r => table.filter(t => { const u = uploads.find(x => x.day === t[0].slice(0, 10) && x.type === t[1] && label(x.batch) === t[3]); return u && u.route === r; });
   const frac = (t, i) => Number(t[i]) / Number(t[4]);
   check('an Excel file read day-first shows its customers as fit-only-if-swapped (the loans with a swappable date)', byRoute('X').every(t => frac(t, 6) > 0.45 && frac(t, 6) < 0.9 && Number(t[10]) === 0), byRoute('X').length + ' uploads');
   check('a CSV on the old page shows its dates fitting as stored and its D.S spoilt', byRoute('C').every(t => frac(t, 5) > 0.85 && frac(t, 10) > 0.99), byRoute('C').length + ' uploads');

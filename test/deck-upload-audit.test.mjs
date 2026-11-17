@@ -33,6 +33,28 @@ test('it judges by the same pattern and the same swap as the repair does: one de
   assert.match(code(REPAIR), /y\.e - x\.d = 91 and z\.c - y\.e = 14 and c\.snapshot_date - x\.d - c\.de between 0 and 3/, 'and the repair still says the same');
 });
 
+/* THE FIRST RUN ON THE LIVE BOOK FAILED: `invalid input syntax for type uuid: "legacy"`. The query coalesced upload_batch with the
+   text 'legacy', and on the real table upload_batch is a uuid (db/schema.sql); the kept check's fixture had declared it text, so the
+   check passed on a table that is not the book's. A fixture is built from the real schema's column types, and this is the guard
+   that keeps the two from parting company again: every column the audit reads has the type the schema gives it, in the fixture too. */
+test('the audit reads upload_batch as the uuid it is, and the kept check builds its table from the real schema\'s types', () => {
+  assert.match(CODE, /coalesce\(upload_batch::text, 'legacy'\)/, 'a uuid is turned to text before it meets a word');
+  assert.doesNotMatch(CODE, /coalesce\(upload_batch,/, 'never coalesce the uuid itself with a text');
+  const schema = readFileSync(new URL('../db/schema.sql', import.meta.url), 'utf8');
+  const real = schema.slice(schema.indexOf('create table if not exists defaulter_snapshots ('));
+  const realBlock = real.slice(0, real.indexOf('\n);'));
+  const chk = readFileSync(new URL('../tools/db-checks/deck-upload-audit.mjs', import.meta.url), 'utf8');
+  const fx = chk.slice(chk.indexOf('create table public.defaulter_snapshots ('));
+  const fixBlock = fx.slice(0, fx.indexOf(');') + 2);
+  const typeOf = (src, col) => (src.match(new RegExp('(?:^|[\\s,(])' + col + '\\s+([a-z]+)', 'm')) || [])[1];
+  for (const col of ['snapshot_type', 'snapshot_date', 'disb_date', 'expire_date', 'chronic_date', 'days_elapsed', 'ds', 'upload_batch', 'created_at']) {
+    assert.ok(typeOf(realBlock, col), 'db/schema.sql no longer declares ' + col + ' on defaulter_snapshots');
+    assert.equal(typeOf(fixBlock, col), typeOf(realBlock, col), col + ': the fixture\'s type is not the book\'s');
+  }
+  assert.equal(typeOf(realBlock, 'upload_batch'), 'uuid', 'the book\'s upload_batch is a uuid');
+  assert.match(chk, /route: 'X', batch: '', at:/, 'and the fixture has rows with no batch at all, which the audit shows as legacy');
+});
+
 test('it reads the days its first lines name, through the snapshot_date index, and says how a line is counted', () => {
   assert.match(AUDIT, /date '\d{4}-\d\d-\d\d' as from_day[^\n]*\n\s+date '\d{4}-\d\d-\d\d' as to_day/);
   assert.match(CODE, /s\.snapshot_date between win\.from_day and win\.to_day/);
