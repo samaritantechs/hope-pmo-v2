@@ -7463,11 +7463,14 @@ each stored something different:
 | **The same sheet saved as a CSV**, chosen on the page as it was before Part 89 | the page's own reader turned every text date into a real date, month first (JavaScript's rule): dates RIGHT, by luck | **10,372** | **spoilt on all 10,372** (`7-12` became `7/12/01`; a phone lost its leading zero) |
 | Either, after Parts 84 and 89 | dates read by the file's own order; a CSV goes as text | **10,372** | untouched |
 
-That is the mixture the probe found: **the current decks come as Excel files and read swapped on every day; the five initial decks
-that read right were most likely CSV (or saved copies); the nine that read swapped were Excel as the loan system wrote it.** The old
+That is the mixture the probe found: **the current decks come as Excel files and read swapped on every day; the nine initial decks
+that read swapped were Excel as the loan system wrote it.** The old
 importer, run on this very file, stores for 2209966593 exactly what the probe shows on 16 Nov (disbursed 9 July, expiring 12 July,
-chronic 21 December: two dates swapped and one, which could not be swapped, right, in one row). This model **fits; it was not seen**:
-what the book says about each upload is in db/RUN-ME-061 (below), and the D.S of a CSV upload is its signature. The call app already
+chronic 21 December: two dates swapped and one, which could not be swapped, right, in one row). **Corrected the same evening (Part 91):**
+this section first said the five initial decks that read right "were most likely CSV (or saved copies)". The owner's run of
+db/RUN-ME-061 shows the D.S of every upload intact (no upload with a date-like D.S, which is a CSV's signature), so none of the five was a
+CSV chosen on the old page; their dates arrived right and D.S untouched, as the file's own real date cells would (a copy saved from a
+spreadsheet program). Which of the two it was is not seen. What the book says about each upload is in db/RUN-ME-061 (below). The call app already
 shows a spoilt D.S as `7/12` (`dsFmt`), so the fault was known as a display problem, never as a sign of how a file arrived.
 
 **What it costs the owner's question.** Loan 2209966593 is a Monday customer whose 16 Nov rows (initial 04:51) still say Thursday
@@ -7521,6 +7524,70 @@ check is built from the book's own column types, never from what the query happe
 **What the owner has to do.** Run the corrected `db/RUN-ME-061` (in the chat) and say what it shows; the 16 Nov uploads must now read all fit as stored. For the days
 before 16 Nov, change the first date (and, if they like, `max_rows` to 50,000) in `db/RUN-ME-060`'s first lines and run it again until `still_to_do_run_again` says 0.
 Send one real file of each other upload kind to be checked.
+
+## Part 91 — The Follow-up list is a copy, and RUN-ME-060 does not reach it: is any Disb date later than today? (RUN-ME-062)
+
+> "In the defaulter followup nav, try check if there exists any future date than today in the disb date column to confirm all dates
+> are okay" — the owner, 16 Nov 2026, the evening they ran the corrected `db/RUN-ME-061`, with its answer pasted above the message.
+
+**What the owner's audit showed** (the corrected RUN-ME-061, twenty uploads of 10 to 16 Nov). The 16 Nov uploads read **all fit as stored**: `db/RUN-ME-060`
+put them right. The **current decks of 10 to 15 Nov and the initial decks of 11, 12 and 13 Nov still read about 20% fit as stored and about 80% fit only if
+swapped** (the 15 Nov current of 22:47 reads exactly 2,076 and 8,296, as the real 16 Nov file does when read the old way; the 12 Nov current of 23:18 is a
+partial of 3,171 rows); the initial decks of 10, 14 and 15 Nov came right; `neither` and `missing` are 0, so RUN-ME-060 can put every one of those rows right.
+And **no upload has a date-like D.S**, which corrects Part 90's guess about the five initial decks that read right (not CSVs: see there).
+
+**What the Follow-up list is.** `followup_status`, the register behind the Follow-up tab and the phone's Defaulters list. It is written by two routes only:
+a **Current** defaulters deck (`writeFollowupFromDeck`: one upsert of each customer's Disb date, Last trans, DAYS ELAPSED and status **as the deck was read at upload**,
+stamped `deck_date` with the deck's day; an Initial deck never touches it) and the "Defaulters Followup" sheet. **A copy, not a view of the deck rows.** RUN-ME-060
+repairs `defaulter_snapshots` and nothing else (the file does not name the register), so until a Current deck is uploaded after the fix the Follow-up list shows
+what the importer of the day stored. Parts 85 and 86 said "the register is refreshed from every Current deck": true, and it is the cure, not a repair already made.
+
+**The check: `db/RUN-ME-062-followup-list-dates-read-only.sql`.** Read-only, one table, one statement, about two seconds for 60,000 rows (a 30-second ceiling),
+nothing on `/api/upload` or `/api/call`. It prints no name and no number of a customer: a loan number and a team.
+
+- **Test 1, what was asked.** A loan is not disbursed tomorrow, so a Disb date later than today (the East Africa date) is wrong. It counts them, gives the earliest
+  and latest, says how many a swap of day and month would put in the past (the old importer's mark) and how many no swap explains (a day over 12, or day = month), and
+  lists up to eight, farthest first. It counts only what the tab lists (a customer with a status or arrears), and says how many hidden rows have one too. **Last trans
+  gets the same test** (not asked: the same mistake sits in that column and nothing repairs it by pattern).
+- **Why test 1 cannot confirm anything on its own.** A swapped date lands in the future only when the real date's day is the **12th** (12 Jan 2026 stored as 1 Dec
+  2026), and no 2024 or 2025 date ever does. The other swapped dates stay in the past and look fine. "None later than today" is therefore weak evidence; it is the
+  second test that confirms.
+- **Test 2, the witness.** A row carries three facts that must agree: the day of the deck that wrote it (`deck_date`), the Disb date, and the loan system's own
+  DAYS ELAPSED. `deck day - Disb date - DAYS ELAPSED` is 0 to 3 for a right date (RUN-ME-060's window, written once there and repeated here, pinned) and at least 27 days
+  off for a swapped one, so each row is sorted into **fit as stored**, **fit only with day and month exchanged** (a swapped date) or **neither** (a restructured loan, a row the
+  Followup sheet wrote last), by the day of the deck that wrote it. The answer line says "all right" only when nothing is later than today AND test 2 found no swapped date.
+- **`deck_date` came from an optional migration** (`db/migrations/2026-08-04-followup-deck-date.sql`) that nothing says was run. The file reads it through `to_jsonb(r) ->>
+  'deck_date'`, so it runs with the column and without it; without it test 2 says it could not be made, and the answer never says "all right" on test 1 alone.
+
+**What it will show, and the cure.** Unless a Current deck was uploaded after the fix (#711, 16 Nov), the list holds what the old importer stored: dates
+later than today for the loans whose real day was the 12th, and about four fifths of the dates of the others swapped. **The next Current upload rewrites every customer on
+it with dates read right** (nothing to run: the owner's "i hope the system autoupdates whats right"). Customers who left the book are retired by that upload (no status,
+no arrears: the tab does not list them). **No repair of the register was built:** it would restate the hottest table by hand, in the working day, for hours of difference.
+If somebody needs the list right before the upload, the exact repair exists in principle (copy the repaired deck row's Disb date onto the register row where the register's
+date is its swap and the row fits only so), and is the owner's to ask for.
+
+**Checked.** `tools/db-checks/followup-dates-audit.mjs`, on a PostgreSQL, with the table made from the **real** `create table` blocks of `db/schema.sql` and the real migration
+(Part 90's lesson: a fixture built from what the query needs, not the book's types, passed a query that failed on the owner's keyboard). Four registers (swapped with future
+dates; swapped with none; clean; without the `deck_date` column): every line the file prints equals a count made in JavaScript from the same rows, the examples in order, the
+deck days; no name is printed; the book is byte-identical afterwards; the verdict reads right in each; the file as pasted (its own East Africa expression) prints the East Africa
+date; and **seventeen deliberate breaks** (a date today counted as later, a placeholder counted as shown, the window widened or started at 1, a row fitting as stored counted as
+swapped, the test made without a stamp or on placeholders, Last trans today counted as later, the hidden rows counting the shown ones, the examples nearest-first, three deck days,
+the swap not made, a swap in the future "explaining" it, the verdict forgetting test 2, "all right" with no test made, a clean register called not all right, `deck_date` read as a
+column) each change the answer or make the file fail. 60,017 rows: 1.5 s; 60,000 rows of the table's real width: 1.8 to 1.9 s. `test/followup-dates-audit.test.mjs`
+(8 tests; eleven deliberate breaks of it, each caught) pins read-only, the ceiling, the East Africa clock, the optional column, no customer data, every column against
+`db/schema.sql`, the shared window, the verdict's order, and that the check builds its table from the real DDL.
+
+**Not done, said plainly.**
+
+- Nothing was run on the live book (a chat cannot). Every figure above is from a test register.
+- **The register is not repaired** (above). Last trans cannot be repaired by a pattern: the next Current upload sets it right.
+- The days 10 to 15 Nov are still swapped in the decks (the audit): `db/RUN-ME-060` with its first lines changed puts them right; it restates those days' Exp.Def figures and the
+  dashboard's week-over-week arrows, which is the correction. The owner's.
+- Test 2 judges rows last written by a Current deck. A row the Followup sheet wrote last carries that sheet's DAYS ELAPSED against an older stamp and lands in "neither" (not
+  in "swapped": the two readings differ by at least 27 days and the window is four wide).
+
+**What the owner has to do.** Run `db/RUN-ME-062` (pasted in the chat) and say the ANSWER line. If it says not all right, nothing to run: tonight's Current upload puts the list right;
+run it again after that upload and it should read "all right".
 
 ---
 
