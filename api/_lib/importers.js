@@ -802,6 +802,60 @@ const dateCell_ = v => {
   return whole && dateOrNull(whole, true) !== null ? whole : whole.split(/\s+/)[0];
 };
 
+/* DATES THE FILE CARRIED THAT NO READER COULD READ (handbook Part 96).
+
+     "... different excels might come with different fomarts am not sure." -- the owner, 17 Nov 2026
+
+   A cell that holds something and does not read as a date came back as NULL and the row went in with an empty date --
+   or, where the sheet needs one, with the moment of the upload -- and nothing on the screen said so. This counts them
+   per upload and keeps a few examples, from the SAME column lists the importers use (one definition of which columns
+   of a sheet are dates) and the SAME reader, so a cell is only counted when the importer really did lose it.
+   Arithmetic over cells already in hand: no read, no write.
+
+   NOT counted: an empty cell, and the ways the loan system and the company's sheets say "no date" on purpose
+   (a dash, N/A, nil, none, null, TBD, hakuna, a bare 0, "No Due Date"). */
+const NO_DATE_ = /^(?:[-\u2010-\u2015_.\u00B7]+|n\/?a|nil|none|null|tbd|hakuna|0+|no\s+due\s+date)$/i;
+function unreadableIn_(objs, columns, reader) {
+  let count = 0;
+  const examples = [];
+  for (const { raw: r, h } of objs) {
+    for (const c of columns) {
+      const v = col(r, h, ...[].concat(c));
+      const t = String(v == null ? '' : v).trim();
+      if (!t || NO_DATE_.test(t) || reader(v) !== null) continue;
+      count++;
+      const ex = t.length > 30 ? t.slice(0, 30) + '\u2026' : t;
+      if (examples.length < 3 && !examples.includes(ex)) examples.push(ex);
+    }
+  }
+  return { count, examples };
+}
+const NOTICE_DATE_COLUMNS = [['NOTICE DATE', 'NOTICEDATE'], 'TIMESTAMP'];
+/** {count, examples} for an upload of this type, or null for a type that carries no date column worth counting (the comments log counts
+    its own stamps, `commentsDateOrder`). WHETHER a cell reads never depends on the order of the file (the order only picks between two
+    dates that both exist: with both parts twelve or under both readings are real dates, and with one over twelve the part decides),
+    so no order is asked: the one handed to the reader below is not a reading of anything. The company's own sheets are read the way
+    their importers read them, a date written with spaces whole and anything else cut at its first space (`dateCell_`). */
+export function unreadableDatesOf(type, csvRows, { stage } = {}) {
+  const objs = rowsToObjects(csvRows);
+  const plain = columns => unreadableIn_(objs, columns, v => dateOrNull(v, true));
+  const own = columns => unreadableIn_(objs, columns, v => dateOrNull(dateCell_(v), true));
+  switch (type) {
+    case 'defaulters-current': case 'defaulters-initial': return plain(DEFAULTER_DATE_COLUMNS);
+    case 'expected-today': case 'expected-tomorrow': case 'expected-yesterday': case 'expected-initial': return plain(EXPECTED_DATE_COLUMNS);
+    case 'followup': return plain(FOLLOWUP_DATE_COLUMNS);
+    case 'received': return plain([PAYMENT_DATE_COLUMNS]);
+    // the application stages ignore the file's own date columns (PRE_APPROVAL_STAGES), so nothing there is lost
+    case 'loans': return PRE_APPROVAL_STAGES.has(String(stage)) ? { count: 0, examples: [] } : plain([LOAN_STAGE_COLUMNS.disb_date, LOAN_STAGE_COLUMNS.approved_date]);
+    case 'complaints': return own(COMPLAINT_DATE_COLUMNS);
+    case 'restructures': return own(RESTRUCTURE_DATE_COLUMNS);
+    case 'call-users': return own(CALL_USER_DATE_COLUMNS);
+    case 'call-logs': return own(CALL_LOG_DATE_COLUMNS);
+    case 'demand-notices': return own(NOTICE_DATE_COLUMNS);
+    default: return null;
+  }
+}
+
 export function importDemandNotices(csvRows) {
   const objs = rowsToObjects(csvRows);
   /* Which way round the sheet writes its slash dates, from EVERY dated column it has: the

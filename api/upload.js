@@ -23,7 +23,7 @@ import {
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices, importDeductions,
   importStaffRegistry, importAdvances,
-  importCallUsers, importCallLogs, importSettings, importHints,
+  importCallUsers, importCallLogs, importSettings, importHints, unreadableDatesOf,
   REF_HEADERS,
 } from './_lib/importers.js';
 
@@ -1049,6 +1049,13 @@ export default withApi(async (req, res) => {
 
   if (!records.length) return { inserted: 0, table, message: 'File parsed but no valid rows were found -- check the key column (REF#, FULLNAME, etc.) is present and populated.' };
 
+  /* A DATE THE FILE CARRIED AND NO READER COULD READ IS COUNTED OUT LOUD (importers.js, unreadableDatesOf; handbook Part 96).
+     It used to be stored as an empty date, or as the moment of the upload, with nothing on the screen to say so. Arithmetic over
+     the cells already in hand, from the same column lists and the same reader the importer used: no read, no write. The count
+     travels home as a plain NUMBER on every slice and the page adds the slices up and builds the sentence from the file's total
+     (a per-slice sentence in `message` would be the last slice's alone, as the abnormal-payments note above explains). */
+  const unreadableDates = unreadableDatesOf(type, rows, { stage: meta.stage });
+
   /* =====================================================================================
      A ROW THE FILE HAD AND THE SYSTEM DID NOT USE MUST BE COUNTED OUT LOUD.
 
@@ -1759,6 +1766,7 @@ export default withApi(async (req, res) => {
        round they were read in the same words (a request carries only one of them). */
     dateOrder: (commentsOrder || sheetOrder) ? dateOrderWords_(commentsOrder || sheetOrder) : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
+    unreadableDates: unreadableDates || undefined,       // { count, examples } of THIS slice, on every type that carries date columns (0 when all were read)
     noticePlace: noticePlace ? { filed: noticePlace.filed, respelled: noticePlace.respelled, unknown: noticePlace.unknown,
       replaced: noticeCleared ? noticeCleared.removed : 0, appHeld: noticeCleared ? noticeCleared.appHeld : [], clashes: noticeClash } : undefined,
     message: [
