@@ -9,7 +9,8 @@
      1. a file of three slices that lost 3, 4 and 0 dates: the Done message says 7, with three distinct examples, in Swahili and in English;
      2. a file that lost none: no sentence (and no stray zero);
      3. a file small enough for one request carries its own count through;
-     4. an upload type whose answer has no such field (the settings, the hints): nothing is added.
+     4. an upload type whose answer has no such field (the settings, the hints): nothing is added;
+     5. an answer with a count and no examples: the upload is still Done and the sentence is still said.
 
    The page loads the spreadsheet reader from cdnjs, which a cloud machine cannot reach, so this serves a local copy of the same version:
 
@@ -113,6 +114,12 @@ async function shown(rowCount, type, answers) {
 {
   const r = await shown(300, 'defaulters-current', [{}]);
   check('an answer with no unreadableDates field adds nothing', /^Done/.test(r.text) && !/tarehe \d|date\(s\) in this file/.test(r.text), r.text);
+}
+
+// 5. an answer with a count and no examples (another server, an older one): the upload is still Done, and the sentence is still said
+{
+  const r = await shown(300, 'defaulters-current', [{ unreadableDates: { count: 5 } }]);
+  check('a count with no examples does not turn a finished upload into an error', /^Done/.test(r.text) && /tarehe 5 kwenye faili/.test(r.text) && /5 date\(s\) in this file could NOT be read/.test(r.text), r.text);
 }
 
 await browser.close(); srv.close();
