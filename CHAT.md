@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 96**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 97**.
 
 ---
 
@@ -86,6 +86,14 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#729 — the owner's answers of 17 Nov read (RUN-ME-064, 065, 066), and `db/RUN-ME-067`, the notices' and deductions' dates asked of themselves (handbook Part 97, pasted in full in the chat).** **066 worked on the real book:** on 16 Nov it found ONE swapped
+  upload of three (the Initial deck: **8,296** rows put right by 060, the figure measured from the real file on 16 Nov, **1,636 Last trans dates impossible as stored**, 3,791 exchanged) and left alone the two Current uploads read right (**0 witnesses in 20,570 rows**, 7,325 ambiguous dates untouched);
+  the second run changed 0 and the witness count stayed 1,636 (the proof is read from the date as uploaded). **065:** the payments table is empty, nothing to repair. **064:** 136 date columns, 11 flagged, 0 old; read in Part 97: not faults (the 060 log's old values, `team_holders.to_date` = `9999-12-31`, the hidden Follow-up rows),
+  still the old reader's and waiting for the repairs (the decks' `disb_date` 21,756 and `last_trans_date` 41,176: the 060 log held 66,531 rows, so **two more runs for 10 to 15 Nov**), the Expected sheet's (23,909 / 28,166: only the customer page reads them; no repair), and **new: `demand_notices.notice_date` (12) and `created_at` (10), `pmo_deductions.discovery_date` (2)**.
+  **RUN-ME-067 (read-only):** a notice's number `HMCL/<initials>/<dd>/<mm>/<yyyy>` carries its own day (made by the app and by the sheet's script; TEXT, so the date bug never touched it); the probe counts, for the imported (846, uploaded 12 Oct after the fresh start) and the app-made (248) notices separately,
+  the notice dates that are the number's day, **the number's day with day and month exchanged**, or neither, the stamp against the number, and the deductions whose discovery date is out of order and **put in order by the exchange**; counts, dates and eight characters of an id only. **Cost:** 0.26 s for 5,000 notices (the live book has 1,094), 3.6 s at a hundred times the live size (a first form took 10 s per 5,000 notices:
+  inlined steps repeated the pattern match about fifty times a row; every step is now `MATERIALIZED`). **Checked:** `tools/db-checks/notice-dates-audit.mjs` (every printed line equals a model; byte-identical afterwards; **26 of 26 breaks**), `test/notice-dates-audit.test.mjs` (9 tests, 16 breaks of the pins caught); `npm test`: 1,692 pass; no code that runs for a user changed, no `BUILD` bump.
+  **Not done, said plainly:** no repair of notices or deductions (the answer decides); the Expected sheet and the decks' `due_date`; the 1 to 9 Nov window. **Two mistakes of mine in Part 97:** the check's must-fail breaks never ran, and three breaks were not breaks.
 - **#728 — hardening of #727, found by reading it as an upload would meet it (handbook Part 96).** (1) `unreadableDatesOf` ran in the upload request with nothing around it: a count is housekeeping, so it now sits in a `try` and can never fail the
   write that follows (CLAUDE.md section 1: nothing new in the upload request that is not the write). (2) The page's Done handler threw on an answer with a count and no examples, **turning a finished upload into "Failed: TypeError"**: the browser check's
   fifth case reproduces it on the page as merged and passes on the fix. Also pinned: thirteen hostile cells of 100,000 characters take about 15 ms through the three date readers (no backtracking). `npm test`: 1,683 pass; no SQL, no `BUILD` change.
@@ -1959,15 +1967,13 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
-- **The owner: run `db/RUN-ME-066-repair-swapped-last-trans-dates.sql` (pasted in full in the chat, 17 Nov) AFTER `db/RUN-ME-060` has said `still_to_do_run_again` 0 for the same days, with the SAME two dates, away from an upload, and
-  AGAIN until its "still to do" line says 0; paste the nine lines and the list of uploads** (section 4, #725). It repairs LAST TRANS DATE of the decks in the uploads RUN-ME-060 proved were read day-first; for 10 to 15 Nov it is
-  about 130,000 rows, two or three runs. A chat that sees the answer reads the verdict of every upload before anything else: an upload "left alone" is the finding, not a failure. Its undo is at the foot.
-- **The owner: run `db/RUN-ME-065-repair-swapped-payment-dates.sql` (pasted in full in the chat, 17 Nov) when no upload is running, and paste its answer** (section 4, #724): the payments and ledger copies
-  put right, the payments still dated outside their upload's fortnight, and the example lines. It repairs what the old payments reader stored for a file of the 1st to the 12th of a month; its undo is at the foot.
-- **The owner: run `db/RUN-ME-064-every-date-in-the-book-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`** (section 4,
-  #723). It lists every date column of every table; a flagged line is a place to look. The matters after it (payments, Last trans, other dates and formats) are built one at a time and
-  shipped as each is finished (handbook Part 92); a chat that sees the owner's paste reads which columns are flagged before it does anything else.
-- **`db/RUN-ME-060`: 16 Nov done; 10 to 15 Nov UNDER WAY; 1 to 9 Nov not started.** 16 Nov (the evening of 16 Nov): 16,531 rows put
+- **The owner: run `db/RUN-ME-067-notice-and-deduction-dates-read-only.sql` (pasted in full in the chat, 17 Nov; it changes nothing) and paste the WHOLE answer** (section 4, #729): the ANSWER line, the notice lines (imported / made in the app) and the example lines, the deduction lines. It says how many notice dates are
+  the number's day with day and month exchanged, and which deductions' discovery dates are out of order and fixed by the exchange. A chat that sees the answer builds the repair (notice_date, created_at and the ledger's `since` for the exchanged notices; the discovery date of the deductions it proves) from those lines and nothing else.
+- **The owner: `db/RUN-ME-066` is DONE for 16 Nov (3,791 rows; section 4, #729). For 10 to 15 Nov: AFTER RUN-ME-060 says `still_to_do_run_again` 0 for those days, run it with the SAME two dates** (`2026-11-10`, `2026-11-15`), away from an upload, again until "still to do" says 0 (about 40,000 rows: one or two runs), and paste the nine lines and the list of
+  uploads (an upload "left alone" is the finding, not a failure). Then 1 to 9 Nov, in the same order (060 first, then 066). The undo is at the foot of each file.
+- **The owner: paste the `repayment_snapshots.snapshot_date` line of the RUN-ME-064 answer** (the paste stopped at `loans.upload_date`; the 11 flagged lines were all there). `deck_totals_days` reaches 2025-08-01 and 2026-12-01 while the decks run 3 Aug to 17 Nov: the line says whether an Expected sheet was ever uploaded under a wrong date.
+- RUN-ME-064 and RUN-ME-065 are ANSWERED (17 Nov; Part 97): the scan's 11 flagged lines are read there; the payments table is empty (nothing to repair).
+- **`db/RUN-ME-060`: 16 Nov done; 10 to 15 Nov UNDER WAY (the log held 66,531 rows when the 064 scan ran: 16,531 + the first 50,000; two more runs are due: 50,000, then 10,328); 1 to 9 Nov not started.** 16 Nov (the evening of 16 Nov): 16,531 rows put
   right, 0 still to do, 0 left alone (section 4, #713 and #719). **10 to 15 Nov, first run (17 Nov): 110,328 rows did not fit the
   pattern, 110,328 had exactly one fitting reading, 50,000 repaired, `still_to_do_run_again` 60,328, 0 left alone.** The owner was told
   to run **the same text again with no edit until `still_to_do_run_again` says 0** (two more runs: 50,000, then 10,328), away from an
