@@ -88,6 +88,33 @@ export function defaultersDateOrder(csvRows) { return pooledDateOrder_(csvRows, 
 export function expectedDateOrder(csvRows) { return pooledDateOrder_(csvRows, EXPECTED_DATE_COLUMNS); }
 export function followupDateOrder(csvRows) { return pooledDateOrder_(csvRows, FOLLOWUP_DATE_COLUMNS); }
 
+/* RECEIVED PAYMENTS: A FILE OF ONE DAY, OR OF THE FIRST TWELVE DAYS OF A MONTH, HAS NO EVIDENCE.
+
+     "Repair everything that's wrong brother I can't be perfect to detect every where dates are wrong. When we
+      finish disb dates, we have transactions dates at received ..." -- the owner, 17 Nov 2026
+
+   `PAYMENT DATE` reads the file's own dates and nothing else: one value with a part over twelve decides every
+   value in it. A payments file of a day from the 1st to the 12th of a month has none: every value is the
+   same `11/10/2026`, both parts twelve or under, and that fell through to day-first -- the loan system
+   writes the month first, so the tenth of November was stored as the eleventh of October, for every payment
+   of the file, with nothing looking wrong (the stored date is a perfectly valid date, a month before the
+   upload). The approved-loans importer already has the two rules that decide such a file, and they are not
+   rules about the loan system, they are about a REPORT: it covers a short stretch of days (tightest span),
+   and a report is about the days near the day it is uploaded (nearest the upload day). Same order of
+   asking, same helpers, evidence first. `by` says which rule decided, for the upload's answer.
+   Handbook Part 93. */
+const PAYMENT_DATE_COLUMNS = ['PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE'];
+export function paymentsDateOrder(csvRows, nearDate) {
+  const vals = rowsToObjects(csvRows).map(({ raw: r, h }) => col(r, h, ...PAYMENT_DATE_COLUMNS));
+  const byEvidence = inferDayFirst(vals);
+  if (byEvidence !== null) return { dayFirst: byEvidence, by: 'evidence' };
+  const bySpan = tightestSpanIsDayFirst(vals);
+  if (bySpan !== null) return { dayFirst: bySpan, by: 'span' };
+  const near = nearDate ? nearestToDayIsDayFirst(vals, nearDate) : null;
+  if (near !== null) return { dayFirst: near, by: 'upload day' };
+  return { dayFirst: null, by: null };
+}
+
 export function importDefaulters(csvRows, { snapshotType, weekday, snapshotDate, dateOrder }) {
   const objs = rowsToObjects(csvRows);
   // The upload route asks once for its report and hands the answer in, so a deck is scanned once;
@@ -559,12 +586,11 @@ export function paymentId(o) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-export function importReceivedPayments(csvRows) {
+export function importReceivedPayments(csvRows, { dateOrder } = {}) {
   const objs = rowsToObjects(csvRows);
-  const dayFirst = inferDayFirst(objs.map(({ raw: r, h }) =>
-    col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE')));
+  const dayFirst = (dateOrder || paymentsDateOrder(csvRows)).dayFirst;
   return objs.map(({ raw: r, h }) => withPaymentId_({
-    paid_at: dateOrNull(col(r, h, 'PAYMENT DATE', 'PAID AT', 'DATE PAID', 'DATE', 'TRANSACTION DATE'), dayFirst),
+    paid_at: dateOrNull(col(r, h, ...PAYMENT_DATE_COLUMNS), dayFirst),
     team: normTeam(col(r, h, 'TEAM')),
     customer_name: textOrNull(col(r, h, 'CUSTOMER NAME')),
     customer_no: normPhone(col(r, h, 'CONTACT NO', 'CUSTOMER NO', 'CUSTOMER NUMBER', 'CONTACT NUMBER')),

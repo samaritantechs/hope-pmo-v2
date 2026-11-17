@@ -19,7 +19,7 @@ import { weekdayOfKey } from './_lib/time.js';
 import {
   importDefaulters, defaultersDateOrder, importExpected, expectedDateOrder, importExpectedSummary, importDefaulterSummary,
   importFollowup, followupDateOrder, importComments, commentsDateOrder,
-  importLoans, loansDateOrder, importTeams, importReceivedPayments,
+  importLoans, loansDateOrder, importTeams, importReceivedPayments, paymentsDateOrder,
   importAccessCodes, importUserRoles,
   importAbnormal, importComplaints, importRestructures, importDemandNotices, importDeductions,
   importStaffRegistry, importAdvances,
@@ -716,6 +716,25 @@ export function partPlan(part) {
   };
 }
 
+/* THE DAY THE FILE IS BEING UPLOADED, as a date key (East Africa). The upload page names it in meta.uploadDate;
+   without it the server's own clock is read in East Africa time. One definition, for the two reports whose dates are
+   about the days near it (the approved loans, the received payments): a file that gives the reader no evidence of
+   its own is read the way that puts its dates nearest this day. */
+function uploadDayKey_(meta) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String((meta && meta.uploadDate) || ''))
+    ? String(meta.uploadDate)
+    : new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10);
+}
+/* The answer's own words for which way round a sheet's dates were read, and WHICH RULE DECIDED when it was not
+   the file's own evidence (paymentsDateOrder's `by`). */
+function dateOrderWords_(o) {
+  if (o.dayFirst === null) return 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)';
+  const w = o.dayFirst ? 'day/month' : 'month/day';
+  if (o.by === 'span') return w + ', because that keeps the file\'s dates in the tightest stretch of days';
+  if (o.by === 'upload day') return w + ', because that puts the file\'s dates nearest the day it was uploaded';
+  return w + ', as the file itself showed';
+}
+
 export default withApi(async (req, res) => {
   if (req.method !== 'POST') { const e = new Error('Method not allowed'); e.status = 405; throw e; }
   /* The clock starts HERE, not after the write, because the platform's sixty seconds started
@@ -844,10 +863,7 @@ export default withApi(async (req, res) => {
          same "9/1/2026" -- the day it is being uploaded decides which way round it reads:
          a report uploaded on the second of September is about the first of September, not
          the ninth of January. See nearestToDayIsDayFirst. */
-      loansOrder = loansDateOrder(rows,
-        /^\d{4}-\d{2}-\d{2}$/.test(String(meta.uploadDate || ''))
-          ? String(meta.uploadDate)
-          : new Date(Date.now() + 3 * 3600 * 1000).toISOString().slice(0, 10));
+      loansOrder = loansDateOrder(rows, uploadDayKey_(meta));
       records = importLoans(rows, meta.stage, loansOrder);
       /* A loan whose paperwork grew a LOAN ID since its last upload must UPDATE its row, not
          sit beside it as a twin -- see reconcileLoanIds above. */
@@ -910,7 +926,11 @@ export default withApi(async (req, res) => {
       break;
     case 'received':
       table = 'received_payments';
-      records = importReceivedPayments(rows);
+      /* A payments file of one day, or of the first twelve days of a month, gives the reader nothing to
+         decide the day/month order by: the day it is uploaded does (importers.js, paymentsDateOrder;
+         handbook Part 93). Arithmetic over the rows in hand: no read, no write. */
+      sheetOrder = paymentsDateOrder(rows, uploadDayKey_(meta));
+      records = importReceivedPayments(rows, { dateOrder: sheetOrder });
       /* REF ID arrives with db/migrations/2026-08-10-received-ref-id.sql, and migrations here
          are run by hand. Sending a column the database has not got yet fails the WHOLE file,
          so the payments upload would break on an admin who had not pasted that SQL -- with an
@@ -1737,8 +1757,7 @@ export default withApi(async (req, res) => {
       : defaultersOrder.dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
     /* The comments log and, since Part 85, the Expected and Defaulters Followup sheets say which way
        round they were read in the same words (a request carries only one of them). */
-    dateOrder: (commentsOrder || sheetOrder) ? ((commentsOrder || sheetOrder).dayFirst === null ? 'assumed day/month (the file gave no clue either way -- if these are American dates, check a few)'
-      : (commentsOrder || sheetOrder).dayFirst ? 'day/month, as the file itself showed' : 'month/day, as the file itself showed') : undefined,
+    dateOrder: (commentsOrder || sheetOrder) ? dateOrderWords_(commentsOrder || sheetOrder) : undefined,
     unreadableStamps: commentsOrder && commentsOrder.unreadable ? commentsOrder.unreadable : undefined,
     noticePlace: noticePlace ? { filed: noticePlace.filed, respelled: noticePlace.respelled, unknown: noticePlace.unknown,
       replaced: noticeCleared ? noticeCleared.removed : 0, appHeld: noticeCleared ? noticeCleared.appHeld : [], clashes: noticeClash } : undefined,

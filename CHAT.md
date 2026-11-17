@@ -14,7 +14,7 @@ it falls behind the code.
 carry on. Do not ask the owner to repeat anything that is written here.**
 
 **As of 16 November 2026** — portal `BUILD 2026-11-16-c` · call app `CALL_BUILD 2026-11-16-a` ·
-Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 92**.
+Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 93**.
 
 ---
 
@@ -86,6 +86,18 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#724 — dates, matter 2: received payments' transaction dates: the reader, and `db/RUN-ME-065` (handbook Part 93, pasted in full in the chat, 17 Nov).** The owner's order in section 2
+  ("... we have transactions dates at received ..."). **What was wrong (in the code; the live book not seen):** `importReceivedPayments` decided day or month from the file's own payment dates
+  only, so a payments file of one day from the 1st to the 12th of a month (every value `11/10/2026`) had no evidence and **read day-first: 10 November stored as 11 October; 12 November as 11
+  December, in the future.** **The reader:** `paymentsDateOrder` asks the file's evidence, then the tightest stretch of days, then the day it is uploaded (the page's `meta.uploadDate`, else the
+  server's clock in East Africa: `uploadDayKey_`, one definition shared with the approved loans), and the upload's answer says which rule decided; arithmetic only, no read or write added.
+  **The repair:** the upload's own time is the witness: a row is repaired when its stored date is outside `[upload day - 14, upload day + 1]` and the other reading is inside `[upload day - 7, upload day]`,
+  and only in an upload (the rows of one minute) with no day over twelve in it, no ambiguous row that fits as stored, and at least one such row; the copies in `notice_payment_ledger` are put right by the
+  payment's id (skipped on a book without that table); every row is in `payment_date_repair_log`, the undo is at the foot, a second run changes nothing; **the one case it cannot tell apart is a file uploaded a
+  month late whose dates land on the upload day the other way round.** **Cost:** a few thousand rows (two weeks of payments), a 3 s lock and a 50 s statement limit; nothing on `/api/call`; on `/api/upload`
+  arithmetic only. **Checked:** `tools/db-checks/payment-date-repair.mjs` on the whole real schema, 475 payments in 55 uploads, row by row against a model of the rule, the undo byte for byte, a second run, a book
+  without the ledger, eighteen deliberate breaks; `test/payment-date-repair.test.mjs` (9 tests, seventeen breaks of the pins) and four tests of the reader. `npm test`: 1,639 pass. `BUILD` and `CALL_BUILD` unchanged.
+  **Not done:** nothing run on the live book; the company's forms' same last resort and `dateOrNull`'s formats (matter 4); the Last trans dates (matter 3).
 - **#723 — dates, everything that is wrong, one matter at a time: the order, and matter 1: every date in the book (handbook Part 92,
   `db/RUN-ME-064-every-date-in-the-book-read-only.sql`, pasted in full in the chat, 17 Nov).** "Repair everything that's wrong brother I can't be
   perfect to detect every where dates are wrong ..." (section 2, the owner's words in full). **The order:** (1) find where, anywhere (this change); (2) received
@@ -1900,6 +1912,8 @@ point), disables the old one, and tells the owner. Disable, never delete: the hi
 
 ## 8. Waiting on someone
 
+- **The owner: run `db/RUN-ME-065-repair-swapped-payment-dates.sql` (pasted in full in the chat, 17 Nov) when no upload is running, and paste its answer** (section 4, #724): the payments and ledger copies
+  put right, the payments still dated outside their upload's fortnight, and the example lines. It repairs what the old payments reader stored for a file of the 1st to the 12th of a month; its undo is at the foot.
 - **The owner: run `db/RUN-ME-064-every-date-in-the-book-read-only.sql` (pasted in full in the chat, 17 Nov) and paste the ANSWER line and every line marked `FUTURE?` or `OLD?`** (section 4,
   #723). It lists every date column of every table; a flagged line is a place to look. The matters after it (payments, Last trans, other dates and formats) are built one at a time and
   shipped as each is finished (handbook Part 92); a chat that sees the owner's paste reads which columns are flagged before it does anything else.

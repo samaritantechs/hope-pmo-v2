@@ -139,6 +139,34 @@ test('a small received-payments upload, sent whole, keeps a sane trip budget', a
   assert.ok(rowCount <= 300, `received-payments single request pulled ${rowCount} rows (budget 300)`);
 });
 
+/* A PAYMENTS FILE OF ONE DAY GIVES THE READER NOTHING TO DECIDE BY BUT THE DAY IT IS UPLOADED (handbook Part 93).
+     "Repair everything that's wrong brother ... we have transactions dates at received" -- the owner, 17 Nov 2026
+   Through the real handler: a day's file of `11/10/2026`, sent on the tenth of November, is the tenth of November -- not the
+   eleventh of October -- and the answer says how the order was decided. Cost: arithmetic over the rows in hand, the same trips. */
+test('a received-payments file of one day is stored on that day, and the answer says how the order was read', async () => {
+  const header = ['PAYMENT DATE', 'TEAM', 'CUSTOMER NAME', 'AMOUNT PAID', 'TRANSACTION ID'];
+  const rows = [header, ...Array.from({ length: 12 }, (_, i) => ['11/10/2026', 'TEAM1', 'C' + i, 500 + i, 'TX' + i])];
+  const c = countingDb(baseTables());
+  const res = await callUpload(c.db, { code: 'A', type: 'received', meta: { uploadDate: '2026-11-10' }, rows });
+  assert.equal(res.body.ok, true, res.body.error);
+  assert.deepEqual([...new Set(c.dump('received_payments').map(r => String(r.paid_at).slice(0, 10)))], ['2026-11-10']);
+  assert.match(String(res.body.dateOrder), /^month\/day, because that puts the file's dates nearest the day it was uploaded/);
+  // sent the next day it is the day before, as the file says; with no upload day named, the server's own clock (East Africa) is read
+  const later = countingDb(baseTables());
+  const r2 = await callUpload(later.db, { code: 'A', type: 'received', meta: { uploadDate: '2026-11-11' }, rows });
+  assert.deepEqual([...new Set(later.dump('received_payments').map(r => String(r.paid_at).slice(0, 10)))], ['2026-11-10']);
+  assert.equal(r2.body.ok, true);
+  // the day the PAGE names is the one that decides: the same file, uploaded on the twelfth of October, is the eleventh of October (day-first)
+  const oct = countingDb(baseTables());
+  await callUpload(oct.db, { code: 'A', type: 'received', meta: { uploadDate: '2026-10-12' }, rows });
+  assert.deepEqual([...new Set(oct.dump('received_payments').map(r => String(r.paid_at).slice(0, 10)))], ['2026-10-11']);
+  // a file that proves its own order says so in the old words
+  const proves = countingDb(baseTables());
+  const r3 = await callUpload(proves.db, { code: 'A', type: 'received', meta: { uploadDate: '2026-11-10' }, rows: [header, ['11/16/2026', 'TEAM1', 'C', 1, 'TXA'], ['11/10/2026', 'TEAM1', 'D', 1, 'TXB']] });
+  assert.equal(r3.body.dateOrder, 'month/day, as the file itself showed');
+  assert.deepEqual(proves.dump('received_payments').map(r => String(r.paid_at).slice(0, 10)).sort(), ['2026-11-10', '2026-11-16']);
+});
+
 test('a small Expected-Tomorrow upload, sent whole, keeps a sane trip budget', async () => {
   const tables = baseTables();
   for (let i = 0; i < 900; i++) {
