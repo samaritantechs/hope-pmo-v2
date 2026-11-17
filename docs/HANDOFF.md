@@ -7653,7 +7653,7 @@ sheet: the customer page's Last payment) and `loans`. `test/future-disb-dates-au
 1. **Find where dates are wrong, anywhere** (this Part): one read-only scan of every date column of the book, so nobody has to know where to look. `db/RUN-ME-064`.
 2. **Received payments' transaction dates** (`received_payments.paid_at`): the reader and the stored rows (Part 93 when it ships).
 3. **Last trans dates**: the decks' `last_trans_date` (db/RUN-ME-060 repairs Disb, Expire and Chronic and never touched it: `db/RUN-ME-066`, Part 94), the Expected sheet's, the register's.
-4. **Every other date, and "different excels might come with different formats":** which readers still fall back to day-first when a file gives them nothing to decide by, and which formats no reader understands.
+4. **Every other date, and "different excels might come with different formats":** which readers still fall back to day-first when a file gives them nothing to decide by, and which formats no reader understands (the formats: Part 95; saying when a date cannot be read, and the company forms' fallback, are the rest).
 5. **Disb dates, finished:** the owner's runs of `db/RUN-ME-060` for 10 to 15 Nov and 1 to 9 Nov (Part 91), and the repair of each customer's last-known deck row, offered.
 
 **What was found in the code while planning (read, not yet run on the live book; each is a matter above).**
@@ -7798,6 +7798,50 @@ and still inside the loan's days (both readings possible) is changed on the uplo
 
 **What the owner has to do.** After RUN-ME-060 for a window has said `still_to_do_run_again` 0, run RUN-ME-066 (pasted in the chat) with the **same two dates**, away from an upload (an evening upload deletes the rows of the files it replaces), **again until its "still to do" line says 0**,
 and paste the nine lines and the list of uploads. For 10 to 15 Nov it is about 130,000 rows: two or three runs.
+
+## Part 95 — Dates, matter 4a: the formats a spreadsheet writes a date in (one reader, `parse.js`)
+
+> "... different excels might come with different fomarts am not sure." — the owner, 17 Nov 2026 (Part 92 has the whole order).
+
+**What was wrong.** Two forms were read, ISO (`2026-07-09`) and `a/b/yyyy` (or `a-b-yyyy`), and **every other way a spreadsheet writes a date came back as nothing, in silence**, and the row went in with an empty date:
+`09-Jul-2026`, `9 July 2026`, `Jul 9, 2026`, `09.07.2026`, `2026/07/09`, `20260709`, an Excel serial number (`46210`: a date cell that arrived as a number), and a slash date with a clock (`7/9/2026 14:03`, which only the
+stamp reader knew). Two hazards beside them: **a date that does not exist was returned as one** (`dateOrNull('31/02/2026')` gave `2026-02-31`, which the database refuses, so the whole slice of the upload fails; and
+`stampOrNull('31/02/2026 10:00')` gave **3 March**: `new Date("2026-02-31T10:00:00+03:00")` rolls over instead of failing).
+
+**What changed (`api/_lib/parse.js`; no front-end file, so `BUILD` and `CALL_BUILD` are unchanged).**
+
+- **One place reads the new forms: `moreDateParts_`**, asked AFTER the two old forms by both readers (`dateOrNull` through `dateParts_`, `stampOrNull` directly). Month names (English and Swahili, whole words: `Sept`, `Septemba`, `Mei`, `Julai`;
+  never a guess at a prefix), with an optional weekday before (`Thu,`, `Alhamisi`) and ordinal (`9th`); year first with a slash or a dot; day.month.year with dots; compact `YYYYMMDD` (1900 to 2099); an Excel serial number; and an optional clock
+  after any of them (`14:03`, `2:03:11 PM`). A name decides the month, so these need no order; a dotted pair is ordered by **the same rule as a slash pair** (a part over twelve decides, then the file's order, then day-first): ONE function,
+  `dayMonthOf_`, now decides it for the old forms and the new alike (it replaced the copy written inline in each reader).
+- **A date has to exist** (`validDate_`): 31 February, 31 April, 29 February of a year with none, month 0, day 0 and year 0 are no date for either reader, whatever the form: the cell reads as unreadable instead of failing the slice or
+  becoming the next month.
+- **The file's own evidence reads dotted dates too** (`inferDayFirst`, `tightestSpanIsDayFirst`, `nearestToDayIsDayFirst`), so one file keeps one order.
+- **The company's own sheets** (complaints, restructures, notices, deductions, advances, staff, call users and call history) cut a cell at its first space before reading it (`dateCell_`, to drop a clock), which would have turned `9 July 2026` into
+  `9` and kept the new forms away from them. A cell that reads whole is now read whole; any other cell is cut at its first space exactly as before.
+- **The serial window and the fraction rule are choices, written down.** An Excel serial number is taken for a date only from 2010-01-01 to 2040-12-31 (40179 to 51501), and a fraction is a clock only when it has four digits or more (`46210.4375`):
+  a five-digit number in a date column is nearly always a date, but an amount in a misplaced column (`45000.00`, `45000.5`) must not become one. `46210.5` (exactly noon) is therefore NOT read; say so if a file ever shows one.
+  A phone, an account, a TIN, an amount with a comma, `12345`, `99999`, `30260709` and a word are not dates (tested).
+
+**What did NOT change.** **Whatever the old readers read is read exactly as before:** the old code is kept in `test/date-formats.test.mjs` as a yardstick and compared with the new over **60,000 generated strings** in the old forms (both orders, with
+and without a clock, with junk after): the same date, except where the old one returned a date that does not exist. The two old forms are tried first, untouched; a day over twelve still decides the order; two-digit years are read as before.
+
+**Cost.** CPU only, and almost none: 675,000 calls of `dateOrNull` took 170 ms before and 204 ms after (the common M/D/YYYY value is read by the same two regular expressions as before, then checked to exist); a deck's 50,000 date cells cost about
+2.5 ms more. No read and no write added; nothing on `/api/upload`'s round trips or on `/api/call`.
+
+**Checked.** `test/date-formats.test.mjs` (16 tests): fifty-two new forms each read as the date they are by both readers; the clock comes with the stamp; the order of a dotted date; the evidence; the old readers' own examples; the 60,000-string
+comparison; the dates that do not exist; the list of things that must not become dates; **20,000 generated dates written in every form read back as themselves** and every Excel serial of 2010 to 2040 read as the right day; the importers
+(a deck in month names, serial numbers and dotted dates in every one of its five date columns; payments; a complaint, a restructure and a notice with a date written with spaces; a cell the company importers cut at its first space is still cut there);
+and a pin that **one function reads the forms and both readers use it**. **Twenty deliberate breaks of `parse.js`** (each form dropped in turn, the Swahili names, a month taken by its first three letters, the compact form for any year, the serial window opened,
+an amount-like fraction taken for a clock, the fraction not a clock, 31 allowed in every month, every year a leap year, the stamp reader not checking, the stamp reader not reading the new forms, the order read the other way, dotted dates not evidence,
+the end anchor dropped, the clock tail taking anything, the weekday not read) are each caught. `npm test`: all of it passes.
+
+**Not done, said plainly.** (1) **A date that still cannot be read is still stored empty without a word**: telling the person on the Upload screen how many cells could not be read, and an example, is matter 4b (next: a per-slice number the page adds up, as
+`receivedAbnormal` is). (2) **The company's own forms still fall back to day-first when a small file gives no evidence** (matter 4c): changing it needs one real file of each, because a rule written without seeing the file is the guess this
+order is against (section 8 of `CHAT.md` asks for them). (3) A month with no day (`July 2026`) and a weekday alone stay unreadable on purpose: a day is never invented. (4) The Upload page's own spreadsheet reader is unchanged (real date cells already
+arrive as `yyyy-mm-dd`). (5) Nothing was run on the live book; nothing needs running there: no SQL.
+
+**What the owner has to do.** Nothing. Files in those forms are read from the next upload on; files already uploaded keep what was stored (an empty date stays empty: upload the file again if it matters).
 
 ---
 

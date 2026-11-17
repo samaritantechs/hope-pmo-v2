@@ -44,27 +44,91 @@ export function num(v) {
     (The browser path now sends yyyy-mm-dd, which is unambiguous and skips all of this.) */
 /** `dayFirst` is optional and comes from inferDayFirst over the whole column: it only decides
     the cases the value itself cannot, like 06/07/2026. Everything else is read from the value.
-    Omitted, this behaves exactly as it always has. */
+    Omitted, this behaves exactly as it always has.
+
+    THE FORMATS (handbook Part 95). Two forms were read until 17 Nov 2026 -- ISO, and a/b/yyyy -- and
+    every other way a spreadsheet writes a date came back as NOTHING, in silence: "09-Jul-2026",
+    "9 July 2026", "Jul 9, 2026", "09.07.2026", "2026/07/09", "20260709", an Excel serial number
+    ("46210": a date cell that arrived as a number), and a slash date with a clock ("7/9/2026 14:03").
+    "different excels might come with different formats" -- the owner, 17 Nov 2026. They are read now,
+    by `moreDateParts_`, AFTER the two old forms: whatever the old reader read is read exactly as before.
+    The one thing that changed for an old form is that a date which does not exist (31 February) is no
+    longer returned as a date: a database refuses it and the whole slice of the upload fails, where the
+    stamp reader rolled it into March without a word. */
 export function dateOrNull(v, dayFirst) {
   if (!v) return null;
   const s = String(v).trim();
   if (!s || /^no\s+due\s+date$/i.test(s)) return null;
+  const p = dateParts_(s, dayFirst);
+  return p ? isoOf_(p) : null;
+}
+
+/** The day and the month of a pair a/b, in the order the pair itself or the file shows. ONE definition of
+    "which of the two is the month", for slash, dash and dotted dates alike (the order rule above). */
+function dayMonthOf_(a, b, dayFirst) {
+  if (a > 12 && b <= 12) return { d: a, mo: b };                       // 23/7 -> only d/m is possible
+  if (b > 12 && a <= 12) return { d: b, mo: a };                       // 7/23 -> only m/d is possible
+  if (dayFirst === false) return { d: b, mo: a };                      // the file said month-first
+  return { d: a, mo: b };                                              // both <= 12 -> the sheets' own d/m
+}
+
+const isLeap_ = y => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+/** A date that EXISTS. The old check was "day 1 to 31", which let 31 February through as the text
+    "2026-02-31": a database refuses it (the whole slice of the upload fails), and the stamp reader
+    rolled it into the third of March with no word. */
+const DAYS_IN_MONTH_ = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+export function validDate_(y, mo, d) {
+  return Number.isInteger(y) && Number.isInteger(mo) && Number.isInteger(d) && y >= 1 && mo >= 1 && mo <= 12 && d >= 1
+    && d <= (mo === 2 && isLeap_(y) ? 29 : DAYS_IN_MONTH_[mo - 1]);
+}
+const isoOf_ = ({ y, mo, d }) => validDate_(y, mo, d) ? `${String(y).padStart(4, '0')}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}` : null;
+
+/** The year, month and day a text holds, or null: the two old forms first (exactly as they were read), then the new ones. */
+function dateParts_(s, dayFirst) {
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);                      // ISO first -- never ambiguous
-  if (m) {
-    const month = Number(m[2]), day = Number(m[3]);
-    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-    return `${m[1]}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-  }
+  if (m) return { y: Number(m[1]), mo: Number(m[2]), d: Number(m[3]) };
   m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (m) { const { d, mo } = dayMonthOf_(Number(m[1]), Number(m[2]), dayFirst); return { y: Number(yearOf(m[3])), mo, d }; }
+  return moreDateParts_(s, dayFirst);
+}
+
+/* MONTH NAMES, English and Swahili, whole words only ("sept" and "septemba", never a guess at a prefix). */
+const MONTH_NAMES_ = {
+  jan: 1, january: 1, januari: 1, feb: 2, february: 2, februari: 2, mar: 3, march: 3, machi: 3, apr: 4, april: 4, aprili: 4, may: 5, mei: 5,
+  jun: 6, june: 6, juni: 6, jul: 7, july: 7, julai: 7, aug: 8, august: 8, agosti: 8, sep: 9, sept: 9, september: 9, septemba: 9,
+  oct: 10, october: 10, oktoba: 10, nov: 11, november: 11, novemba: 11, dec: 12, december: 12, desemba: 12,
+};
+// An optional clock after the date ("14:03", "2:03:11 PM"), and an optional weekday before it ("Thu, ", "Alhamisi ").
+const CLOCK_TAIL_ = '(?:[\\sT,]+\\d{1,2}:\\d{2}(?::\\d{2}(?:\\.\\d+)?)?\\s*(?:[AaPp]\\.?[Mm]\\.?)?)?';
+const WEEKDAY_HEAD_ = '(?:(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*|jumatatu|jumanne|jumatano|alhamisi|ijumaa|jumamosi|jumapili)\\.?[,\\s]+';
+const DMY_ = new RegExp('^\\s*(?:' + WEEKDAY_HEAD_ + ')?(\\d{1,2})[\\/\\-.](\\d{1,2})[\\/\\-.](\\d{2,4})' + CLOCK_TAIL_ + '$', 'i');                              // 09.07.2026, 7/9/2026 14:03
+const YMD_ = new RegExp('^\\s*(\\d{4})[\\/.](\\d{1,2})[\\/.](\\d{1,2})' + CLOCK_TAIL_ + '$');                                                                              // 2026/07/09, 2026.07.09
+const D_MON_Y_ = new RegExp('^\\s*(?:' + WEEKDAY_HEAD_ + ')?(\\d{1,2})(?:st|nd|rd|th)?[\\s\\-\\/.,]+([A-Za-z]{3,9})\\.?[\\s\\-\\/.,]+(\\d{2,4})' + CLOCK_TAIL_ + '$', 'i');   // 09-Jul-2026, 9 July 2026
+const MON_D_Y_ = new RegExp('^\\s*(?:' + WEEKDAY_HEAD_ + ')?([A-Za-z]{3,9})\\.?[\\s\\-\\/.]+(\\d{1,2})(?:st|nd|rd|th)?[\\s\\-\\/.,]+(\\d{2,4})' + CLOCK_TAIL_ + '$', 'i');   // Jul 9, 2026
+const COMPACT_ = /^((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])$/;                                                                                                  // 20260709
+const SERIAL_ = /^(\d{5})(?:\.(\d{4,}))?$/;                                                                                                                                         // 46210, 46210.4375 (a fraction is a clock: four digits or more, so that an amount like 45000.00 is not one)
+// Excel's day numbers, counted from 1899-12-30 (the 1900 leap-year error only touches the first 60). Only 2010 to 2040 is taken for one: a five-digit
+// number in a date column is nearly always a date, but an amount in a misplaced column must not become a date of the year 2063.
+const SERIAL_FROM_ = 40179, SERIAL_TO_ = 51501;                                                                                                                              // 2010-01-01, 2040-12-31
+
+/** The forms nothing read before 17 Nov 2026, or null. `secs` is the clock of a serial number's fraction. */
+function moreDateParts_(s, dayFirst) {
+  let m = s.match(YMD_);
+  if (m) return { y: Number(m[1]), mo: Number(m[2]), d: Number(m[3]) };
+  m = s.match(DMY_);
+  if (m) { const { d, mo } = dayMonthOf_(Number(m[1]), Number(m[2]), dayFirst); return { y: Number(yearOf(m[3])), mo, d }; }
+  m = s.match(D_MON_Y_);
+  if (m && MONTH_NAMES_[m[2].toLowerCase()]) return { y: Number(yearOf(m[3])), mo: MONTH_NAMES_[m[2].toLowerCase()], d: Number(m[1]) };
+  m = s.match(MON_D_Y_);
+  if (m && MONTH_NAMES_[m[1].toLowerCase()]) return { y: Number(yearOf(m[3])), mo: MONTH_NAMES_[m[1].toLowerCase()], d: Number(m[2]) };
+  m = s.match(COMPACT_);
+  if (m) return { y: Number(m[1]), mo: Number(m[2]), d: Number(m[3]) };
+  m = s.match(SERIAL_);
   if (m) {
-    const a = Number(m[1]), b = Number(m[2]), year = yearOf(m[3]);
-    let day, month;
-    if (a > 12 && b <= 12) { day = a; month = b; }                      // 23/7 -> only d/m is possible
-    else if (b > 12 && a <= 12) { month = a; day = b; }                 // 7/23 -> only m/d is possible
-    else if (dayFirst === false) { month = a; day = b; }                 // the file said month-first
-    else { day = a; month = b; }                                        // both <= 12 -> the sheets' own d/m
-    if (day < 1 || day > 31 || month < 1 || month > 12) return null;
-    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const n = Number(m[1]);
+    if (n < SERIAL_FROM_ || n > SERIAL_TO_) return null;
+    const t = new Date(Date.UTC(1899, 11, 30) + n * 86400000);
+    return { y: t.getUTCFullYear(), mo: t.getUTCMonth() + 1, d: t.getUTCDate(), secs: m[2] ? Math.round(Number('0.' + m[2]) * 86400) : undefined };
   }
   return null;
 }
@@ -110,7 +174,7 @@ export function yearOf(raw) {
 export function inferDayFirst(values) {
   let dayFirst = 0, monthFirst = 0;
   for (const v of (values || [])) {
-    const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
     if (!m) continue;
     const a = Number(m[1]), b = Number(m[2]);
     if (a > 12 && b <= 12) dayFirst++;
@@ -150,7 +214,7 @@ export function tightestSpanIsDayFirst(values) {
   const span = first => {
     let lo = null, hi = null;
     for (const v of (values || [])) {
-      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
       if (!m) continue;
       const d = first ? Number(m[1]) : Number(m[2]);
       const mo = first ? Number(m[2]) : Number(m[1]);
@@ -187,7 +251,7 @@ export function nearestToDayIsDayFirst(values, nearKey) {
   const farthest = first => {
     let worst = null;
     for (const v of (values || [])) {
-      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+      const m = String(v == null ? '' : v).trim().match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})/);
       if (!m) continue;
       const d = first ? Number(m[1]) : Number(m[2]);
       const mo = first ? Number(m[2]) : Number(m[1]);
@@ -226,20 +290,21 @@ export function stampOrNull(v, dayFirst) {
   const s = String(v).trim();
   if (!s) return null;
 
-  let y, mo, d;
+  let y, mo, d, secs;
   let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);                  // ISO -- never ambiguous
   if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
   else {
     m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-    if (!m) return null;
-    const a = +m[1], b = +m[2];
-    y = +yearOf(m[3]);
-    if (a > 12 && b <= 12) { d = a; mo = b; }                        // only d/m is possible
-    else if (b > 12 && a <= 12) { mo = a; d = b; }                   // only m/d is possible
-    else if (dayFirst === false) { mo = a; d = b; }                  // the file said month-first
-    else { d = a; mo = b; }                                          // the sheets' own d/m
+    if (m) { y = +yearOf(m[3]); ({ d, mo } = dayMonthOf_(+m[1], +m[2], dayFirst)); }
+    else {
+      const p = moreDateParts_(s, dayFirst);                         // the forms nothing read before 17 Nov 2026: dateOrNull's list
+      if (!p) return null;
+      y = p.y; mo = p.mo; d = p.d; secs = p.secs;
+    }
   }
-  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  /* A date that EXISTS: `new Date("2026-02-31T10:00:00+03:00")` is the third of March, not an error, so the
+     check is made here, before the date is built. */
+  if (!validDate_(y, mo, d)) return null;
 
   // The clock, if there is one. 12-hour times carry am/pm; a bare 24-hour time does not.
   let hh = 0, mi = 0, ss = 0;
@@ -250,6 +315,9 @@ export function stampOrNull(v, dayFirst) {
     if (ap === 'PM' && hh < 12) hh += 12;
     if (ap === 'AM' && hh === 12) hh = 0;
     if (hh > 23 || mi > 59 || ss > 59) { hh = 0; mi = 0; ss = 0; }
+  } else if (secs !== undefined) {                                   // an Excel serial number's fraction of a day is the clock
+    const day = secs % 86400;
+    hh = Math.floor(day / 3600); mi = Math.floor((day % 3600) / 60); ss = day % 60;
   }
 
   /* Read as EAT (UTC+3) and stored as the UTC instant it was. The clock in a v1 export is the
