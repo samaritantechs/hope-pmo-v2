@@ -416,6 +416,11 @@ export function accountCell(v) {
   if (s === null) return null;
   return /^[\d.e+\-\s]+$/i.test(s) ? digitsCell(s) : s;
 }
+/** IS THIS CELL A BANK ACCOUNT NUMBER? One definition, the owner's (RUN-ME-069, docs/HANDOFF.md Part 99): no account number is a cell that is
+    empty, blank, has no digit in it ("N/A", "NONE", "ON PROCESS", "-", "HAINA") or whose digits are all zeros; a cell with a digit other than
+    zero in it counts as given, however short it looks. The SQL says the same in one line (the digits of the cell match '^0*$'): a test
+    compares the two. The advance report uses it to tell a request's own copy of an account from junk that was copied beside it. */
+export function hasAccount(v) { return /[1-9]/.test(String(v == null ? '' : v)); }
 /** A phone from the sheet's numeric cell: back to its digits, then the system's 9-digit rule. */
 export function phoneCell(v) { return normPhone(digitsCell(v)); }
 /** A NIDA number carries the birth date in its first eight digits (YYYYMMDD) -- "BIRTH DATE

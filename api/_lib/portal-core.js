@@ -2,7 +2,7 @@ import { fetchAll, runQuery , rpcAll } from './supabase.js';
 import { docketKeyOf } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
-import { nameOrNull, textOrNull, digitsCell, accountCell, phoneCell, nidaBirth, staffIdFor } from './parse.js';
+import { nameOrNull, textOrNull, digitsCell, accountCell, hasAccount, phoneCell, nidaBirth, staffIdFor } from './parse.js';
 import { ADV_APPROVALS } from './importers.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
@@ -2589,6 +2589,23 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
   if (refused && !(approved + disapproved) && updates.length === 1) throw refused;     // one request, not yours: the refusal itself
   return { updated: approved + disapproved, approved, disapproved, skipped };
 }
+/** THE REGISTRY BESIDE THE REPORT'S REQUESTS: the bank, the account and the phone of every staff the report names, read in chunks of 400 IDs
+    (an ID is in the address of the read, and 400 is what one address has always carried here). It used to read none at all once a report
+    named more than 400 different staff: the finance manager's report of a whole month is exactly that, and every bank, phone and
+    registry account on it came back empty without a word. Up to 400 staff it is the one read it always was. */
+const ADV_REG_CHUNK = 400;
+async function advRegistryOf_(db, ids) {
+  const parts = [];
+  for (let i = 0; i < ids.length; i += ADV_REG_CHUNK) parts.push(ids.slice(i, i + ADV_REG_CHUNK));
+  const got = await Promise.all(parts.map(p => advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', p))));
+  return got.flatMap(g => g || []);
+}
+/** THE ACCOUNT THE REPORT PRINTS. A request carries a copy of the staff's account as it was when they asked (advRequest), and that copy
+    comes first. But a copy that is not an account (empty, "N/A", "ON PROCESS", zeros: hasAccount in parse.js, the owner's own
+    definition of "no account number", RUN-ME-069) is not what payroll pays to, and it used to hide the registry's real number for ever:
+    the account is filled in the registry and the report went on printing "N/A". Now the request's own copy when it is an account, else the
+    registry's when that is one, else what was there (as before). A real copy is NEVER replaced by another number here. */
+const advAccountOf_ = (r, s) => (hasAccount(r.account) ? r.account : hasAccount(s.account) ? s.account : (r.account || s.account || null));
 /** The report the sheet exported: the requests of a window, Approved by default, by zone,
     with the bank and account beside each so payroll can be paid off the board.
     WHOSE REQUESTS -- "Roles with advance reports granted see all requests regardless not
@@ -2631,10 +2648,10 @@ async function advReport(db, user, { from, to, approval, zone } = {}, nowMs = Da
   let rows = view.rows.filter(r => sees(r) && (want === 'ALL' || K(r.approval) === K(want)))
     .sort((a, b) => String(b.submitted_at).localeCompare(String(a.submitted_at)));
   const ids = [...new Set(rows.map(r => r.staff_id).filter(Boolean))];
-  const reg = ids.length && ids.length <= 400 ? (await advRead_(() => db.from('staff_registry').select('id, bank, account, phone').in('id', ids))) || [] : [];
+  const reg = await advRegistryOf_(db, ids);
   const regBy = new Map(reg.map(r => [K(r.id), r]));
   const ms = advMonthState_(monthsRaw, monthNow, nowMs);
-  rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: r.account || s.account || null, phone: s.phone || null, finalState: advFinalState_(r, ms) }; });
+  rows = rows.map(r => { const s = regBy.get(K(r.staff_id)) || {}; return { ...r, bank: s.bank || null, account: advAccountOf_(r, s), phone: s.phone || null, finalState: advFinalState_(r, ms) }; });
   const byZone = new Map();
   for (const r of rows) {
     const z = K(r.zone) || '—';
