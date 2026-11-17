@@ -159,7 +159,7 @@ test('the counter reads the same column lists the importers read (one definition
     'COMPLAINT_DATE_COLUMNS', 'RESTRUCTURE_DATE_COLUMNS', 'CALL_USER_DATE_COLUMNS', 'CALL_LOG_DATE_COLUMNS', 'NOTICE_DATE_COLUMNS', 'PRE_APPROVAL_STAGES']) assert.ok(body.includes(c), 'the counter names ' + c);
   assert.doesNotMatch(body, /\bawait\b|supabase|\.from\(|fetch\(/, 'pure arithmetic over the rows in hand');
   const up = readFileSync(new URL('../api/upload.js', import.meta.url), 'utf8');
-  assert.match(up, /const unreadableDates = unreadableDatesOf\(type, rows, \{ stage: meta\.stage \}\);/);
+  assert.match(up, /let unreadableDates = null;\s+try \{ unreadableDates = unreadableDatesOf\(type, rows, \{ stage: meta\.stage \}\); \}\s+catch \(e\) \{ unreadableDates = null; \}/, 'a count is housekeeping: it can never fail the write');
   assert.match(up, /unreadableDates: unreadableDates \|\| undefined,/);
 });
 test('payments: when a file carries two of the spellings of the date column, the importer reads the first non-empty one, and so does the count', () => {

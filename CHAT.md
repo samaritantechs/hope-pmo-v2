@@ -86,6 +86,9 @@ what was asked, first and directly; say a risk once, briefly; then do it.
 
 Newest first. `#` numbers are pull requests on `samaritantechs/hope-pmo-v2`.
 
+- **#728 — hardening of #727, found by reading it as an upload would meet it (handbook Part 96).** (1) `unreadableDatesOf` ran in the upload request with nothing around it: a count is housekeeping, so it now sits in a `try` and can never fail the
+  write that follows (CLAUDE.md section 1: nothing new in the upload request that is not the write). (2) The page's Done handler threw on an answer with a count and no examples, **turning a finished upload into "Failed: TypeError"**: the browser check's
+  fifth case reproduces it on the page as merged and passes on the fix. Also pinned: thirteen hostile cells of 100,000 characters take about 15 ms through the three date readers (no backtracking). `npm test`: 1,683 pass; no SQL, no `BUILD` change.
 - **#727 — dates, matter 4b: a date no reader could read is counted out loud (handbook Part 96, `api/_lib/importers.js`, `api/upload.js`, `public/upload.html`, 17 Nov).** The owner's order in section 2 ("... different excels might
   come with different fomarts am not sure"). **What was wrong:** a cell that held something and did not read as a date was stored as an empty date (or the moment of the upload) and the screen said nothing. **Now**
   `unreadableDatesOf(type, rows, { stage })` counts them per upload, with up to three distinct examples (cut at thirty characters), from **the same column lists and the same reader the importers use** (not counted: empty

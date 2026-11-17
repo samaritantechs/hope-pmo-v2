@@ -296,3 +296,13 @@ test('a cell the old company importers cut at its first space is still cut there
   const out = IMP.importComplaints([H, row('24/09/2026 10:15:00', '25/09/2026 (Friday)'), row('2026-09-07T10:15:00', '2026-09-08 at noon')]);
   assert.deepEqual(out.map(r => [r.created_at, r.resolved_at]), [['2026-09-24', '2026-09-25'], ['2026-09-07', '2026-09-08']]);
 });
+
+test('no cell, however long or hostile, makes a date reader slow: 100,000-character cells of every shape the new forms are built from take milliseconds', () => {
+  const N = 100000;
+  const cells = [' '.repeat(N) + 'x', '9' + ' '.repeat(N) + 'x', '9 abc' + ' '.repeat(N) + 'x', '9' + '.'.repeat(N) + '9', '9/' + '/'.repeat(N), '9/9/2026' + ',T'.repeat(N / 2) + 'x',
+    '9/9/2026 ' + '1:11 '.repeat(N / 5), 'Jul' + ' '.repeat(N) + '9', 'Thu' + ',  '.repeat(N / 3) + 'x', '9'.repeat(N), '1-'.repeat(N / 2), ('9 Jul ' + '2026 ').repeat(N / 11), '9/9/2026 1:11 ' + 'a.m.'.repeat(N / 4)];
+  const t0 = Date.now();
+  for (const c of cells) { dateOrNull(c, true); stampOrNull(c, true); inferDayFirst([c]); }
+  const ms = Date.now() - t0;
+  assert.ok(ms < 1000, 'thirteen hostile cells of 100,000 characters took ' + ms + ' ms through three readers (measured at about 15)');
+});

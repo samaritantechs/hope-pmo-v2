@@ -1054,7 +1054,9 @@ export default withApi(async (req, res) => {
      the cells already in hand, from the same column lists and the same reader the importer used: no read, no write. The count
      travels home as a plain NUMBER on every slice and the page adds the slices up and builds the sentence from the file's total
      (a per-slice sentence in `message` would be the last slice's alone, as the abnormal-payments note above explains). */
-  const unreadableDates = unreadableDatesOf(type, rows, { stage: meta.stage });
+  let unreadableDates = null;
+  try { unreadableDates = unreadableDatesOf(type, rows, { stage: meta.stage }); }
+  catch (e) { unreadableDates = null; }     // a count is housekeeping: whatever it meets, it can never fail the write that follows
 
   /* =====================================================================================
      A ROW THE FILE HAD AND THE SYSTEM DID NOT USE MUST BE COUNTED OUT LOUD.

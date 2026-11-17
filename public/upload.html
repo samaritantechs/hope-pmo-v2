@@ -1457,10 +1457,10 @@ $('go').addEventListener('click', function(){
              date, as the day of this upload); nothing is guessed. */
           + (res.body.unreadableDates && res.body.unreadableDates.count
               ? '\n\u26A0 ANGALIA: tarehe ' + res.body.unreadableDates.count.toLocaleString('en-US') + ' kwenye faili hii hazikusomeka'
-                + ' (mfano: ' + res.body.unreadableDates.examples.map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
+                + ' (mfano: ' + (res.body.unreadableDates.examples || []).map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
                 + ' Hazikuhifadhiwa kama zilivyoandikwa (zimebaki tupu, au ni siku ya upload pale ripoti inapohitaji tarehe) \u2014 hakuna tarehe iliyokisiwa. Angalia safu za tarehe za faili.'
                 + '\n\u26A0 WARNING: ' + res.body.unreadableDates.count.toLocaleString('en-US') + ' date(s) in this file could NOT be read (for example '
-                + res.body.unreadableDates.examples.map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
+                + (res.body.unreadableDates.examples || []).map(function(x){ return '\u201C' + x + '\u201D'; }).join(', ') + ').'
                 + ' They were NOT stored as written (left empty, or the day of this upload where the sheet needs a date) and no date was guessed. Check the file\u2019s date columns.'
               : '')
           + (res.body.followupSynced ? '\nOfficers\u2019 working list rebuilt: ' + res.body.followupSynced
