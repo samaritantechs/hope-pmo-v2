@@ -8310,6 +8310,22 @@ roles (with a team, with two dashes, with none, a dash and no team, lower case, 
 
 **What the owner has to do.** Run ONE of A or B (the last line in the editor must read `END OF A` or `END OF B`; if it does not, nothing is run and the chat is told) and paste its answer; run `RUN-ME-072` and `RUN-ME-073` again and paste their answers; the other open items are in CHAT.md section 8.
 
+## Part 110, addendum 3 — the answers of RUN-ME-072 and RUN-ME-073 run again (17 Nov, evening)
+
+> The owner pasted, with no words, the answers of `RUN-ME-072` (November, Approved) and `RUN-ME-073` (the call-agents roster against the registry): steps 4 and 5 of the list of addendum 2. Nothing in this addendum names a person, a staff ID, an account or a team.
+
+**072: exactly the 13.** The answer lists 13 people, one request each, **TZS 1,950,000**: Mwanza 5, Mara 3, and Dar North, North, North Coast, South West and Western one each. They are staff for whom HR's registry holds no real account (`hasAccount`: a digit from 1 to 9), so the report prints none for them, and only they can give it. **No Customer Service name, no request with no staff ID and no staff ID that is in no registry record is left on it**: the link (C2), the roster (E) and the accounts (D) of addendum 1 did what they were built for, and the finance manager's column fills for those people with no step (Part 102). Before this run it was 14 people and TZS 2,150,000 (Part 110): one South West request of TZS 200,000 has an account since (that zone's count goes from 2 to 1 and nothing else moves). Two of the Mara officers show no team: the registry holds their role with nothing after the dash, so the message for the group asks them for the team as well.
+
+**073: 14 of 15, and one spelling.** The tab finds 14 of the 15 roster names, each with a real account in the registry, and **none has a request filed with no staff ID** (the column is 0 on every row). **Two of the 14 have no bank name**: the two staff D added with none (addendum 1): the staff say the bank and it is filled by staff ID; nothing is guessed from the number (Part 107). **One name still says NO**: the roster holds two names, the registry's record in the Customer Service department holds three and spells the surname one letter shorter, so the tab's exact test (trim and upper-case, the blanks inside kept) finds nobody, and a request she files is filed with no staff ID and no account; the Leave tab matches the roster the same way (Part 109). No request has been filed under her name yet. Which spelling is hers is the owner's and hers to say.
+
+**What was handed over in the chat** (not committed: it names people). The message for the WhatsApp group, in Swahili, listing the 13 by zone, team and name and asking each for the bank name, the account number and the name on the account (the two Mara officers also for their team); and the question of the spelling, with its two cures. **If the registry's spelling is hers:** in Settings, Call agents, the roster typed exactly as the registry has it (or the roster template, which replaces a roster name only when exactly one Active record carries the new name). **If another is:** one script renames the registry record by staff ID and the roster follows; **not built until she says**: three endings are possible (the surname with its last letter, with or without the middle name) and a guess would be a second spelling.
+
+**Cost.** None: words only; no code, no `BUILD` bump, nothing on `/api/upload` or `/api/call`.
+
+**Not done, said plainly.** Nothing was run from here. The 13 accounts, the two banks and the spelling are the staff's and the owner's to give. A or B (addendum 2) has no answer yet. When the group's replies come, the accounts script (D) is filled from them by exact name.
+
+**What the owner has to do.** Send the message to the group and paste the replies as they come; say the bank of the two; say which spelling is hers (or type the registry's in Settings, Call agents); run A or B and paste its answer.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
