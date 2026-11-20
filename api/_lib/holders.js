@@ -46,7 +46,12 @@ const K = s => String(s == null ? '' : s).trim().toUpperCase();
 /** Team keys across spellings: letters and digits only -- "TENGERU- USARIVER " is TENGERUUSARIVER. */
 export const teamKey = s => K(s).replace(/[^A-Z0-9]+/g, '');
 export const cleanName = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
-export const wordsOf = s => K(s).split(/[^A-Z0-9]+/).filter(Boolean);
+/** The words of a name, the way two spellings of ONE person agree: accents dropped (an E with an acute is
+    an E), an apostrophe dropped rather than split on (NG'SAMPLE is NGSAMPLE, not NG and SAMPLE -- the
+    spellings that carry one are exactly the names a form and a code write differently), then the letters
+    and digits of any alphabet. A name with no word at all (symbols only) has no words. */
+export const wordsOf = s => K(s).normalize('NFD').replace(/\p{M}+/gu, '')
+  .replace(/['`\p{Pi}\p{Pf}\p{Lm}\p{Sk}]+/gu, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 const day = d => String(d == null ? '' : d).slice(0, 10);
 
 /** The same person? Equal, or every word of the shorter name is in the longer. Two empty names

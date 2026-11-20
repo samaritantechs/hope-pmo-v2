@@ -12,6 +12,10 @@
    leader's name is drawn as TEXT (names are typed by people); that the two buttons are wired and send the
    right calls; and that a settled book shows no Undo.
 
+   WHAT THIS ONE CANNOT SAY (handbook Part 122): it answers from a stub that says "something differs" for ever, so it could not
+   see that the page's own look straight after an Undo wrote the same difference again. Undo, Sync now, a failing check and
+   the save and delete of a code are checked against the REAL server in portal-leaders-real.mjs.
+
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
        npm i --no-save playwright-core

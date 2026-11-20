@@ -59,7 +59,7 @@ import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostR
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
-import { planLeaderSync, groupPatches } from './leaders-sync.js';
+import { planLeaderSync, groupPatches, handsOverPatch, holdsOn } from './leaders-sync.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -7778,7 +7778,12 @@ function portfolioByTeam_(codeRows, roleMatches) {
   for (const c of codeRows) {
     if (!roleMatches(c.role)) continue;
     if (!c.teams || !c.teams.length) continue;
-    for (const t of upperTeams(c.teams)) if (!byTeam.has(t)) byTeam.set(t, { name: c.name || c.code, code: c.code });
+    /* A code with no NAME names nobody. It used to fall back to the code itself, which is a password: laid over
+       every team the code holds (the code now wins over what the row says), every viewer of the Teams tab,
+       a view-only supervisor included, would have read it in the Collection or Legal column (handbook Part 122). */
+    const name = String(c.name == null ? '' : c.name).trim();
+    if (!name) continue;
+    for (const t of upperTeams(c.teams)) if (!byTeam.has(t)) byTeam.set(t, { name, code: c.code });
   }
   return byTeam;
 }
@@ -8317,7 +8322,7 @@ async function saveAccessCode(db, user, p, nowMs = Date.now()) {
   let leaders = null;
   try {
     const r = await syncLeadersFromCodes_(db, user, nowMs);
-    leaders = { changed: r.changed, conflicts: r.conflicts.length };
+    leaders = { changed: r.changed, conflicts: r.conflicts.length, held: r.held.length };
   } catch (e) { leaders = { error: String((e && e.message) || e).slice(0, 160) }; }
 
   const notes = [];
@@ -8393,7 +8398,9 @@ async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
 
   const want = explicit ? new Set(upperTeams(teams)) : null;
   const teamRows = await readTeamsRaw(db);  // writers see the sheet as stored, not the code overlay
-  const writes = [];
+  // what the owner undid stays undone on THIS road too (plan rule 8): saving the same code again must not write it back
+  const holds = explicit ? (await readLeadersState_(db)).holds : [];
+  const writes = [];                        // { team, patch }
   let renamedOn = 0, added = 0, cleared = 0;
   for (const t of teamRows) {
     if (!teamAllowed(user, t.team)) continue;
@@ -8402,18 +8409,26 @@ async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
     // rename is trying to catch up with.
     const held = holder && (K(holder) === K(now) || (renamed && K(holder) === K(before)));
     const shouldHold = want ? want.has(K(t.team)) : held;
+    if (shouldHold && !held && holdsOn(holds, t.team, roleCol, now).length) continue;   // held: the owner undid exactly this claim
     if (shouldHold && (!held || holder !== now)) {
-      writes.push({ team: t.team, [roleCol]: now });
+      /* The same person under another spelling keeps their number; anybody ARRIVING on the team brings their own number
+         and ID or none, never the last leader's (plan rule 5, handbook Part 122: this road used to write the name alone and
+         leave the previous leader's number beside the new one, which the sync that follows could not see). */
+      writes.push({ team: t.team, patch: held ? { [roleCol]: now }
+        : handsOverPatch({ rows: teamRows, row: t, col: roleCol, name: now, phoneOf: TEAM_PHONE_OF, idOf: TEAM_ID_OF }) });
       if (held) renamedOn++; else added++;
     } else if (!shouldHold && held) {
-      writes.push({ team: t.team, [roleCol]: null });
+      writes.push({ team: t.team, patch: { [roleCol]: null } });
       cleared++;
     }
   }
-  for (const batch of chunk_(writes, 200)) {
-    const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
-    noteTeamsWritten(db);
-    if (error) throw new Error(error.message);
+  // rows that carry different keys go in different statements: a missing key is NULL on a conflict, which would blank the cell
+  for (const group of groupPatches(writes, null)) {
+    for (const batch of chunk_(group, 200)) {
+      const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+      noteTeamsWritten(db);
+      if (error) throw new Error(error.message);
+    }
   }
   return writes.length ? { role: roleCol, name: now, renamedOn, added, cleared } : null;
 }
@@ -8446,80 +8461,137 @@ function leaderColumnOf_(role) {
   return word === 'collection' ? null : word;
 }
 const LEADERS_SYNC_LOG_KEY = 'LEADERS_SYNC_LOG';
-async function syncLeadersFromCodes_(db, user, nowMs, { preview = false } = {}) {
-  const [teamRows, codeRows] = await Promise.all([
+const LEADERS_SYNC_HOLDS_KEY = 'LEADERS_SYNC_HOLDS';
+/** The log of the last sync and the holds an Undo leaves, read FRESH from the table -- never through the 20-second
+    settings memo: the screen checks again the moment after an Undo and must see the hold (handbook Part 122).
+    A read that fails throws: a check that could not see the holds must not go on to write what they forbid. */
+async function readLeadersState_(db) {
+  const { data, error } = await db.from('settings').select('key, value').in('key', [LEADERS_SYNC_LOG_KEY, LEADERS_SYNC_HOLDS_KEY]);
+  if (error) throw new Error(error.message);
+  const by = new Map((data || []).map(r => [r.key, r.value]));
+  const json = k => { try { const v = by.get(k); return v ? JSON.parse(v) : null; } catch (e) { return null; } };
+  const log = json(LEADERS_SYNC_LOG_KEY), holds = json(LEADERS_SYNC_HOLDS_KEY);
+  return {
+    log: log && Array.isArray(log.changes) && log.changes.length ? log : null,
+    holds: Array.isArray(holds) ? holds.filter(h => h && h.team && h.col && h.name) : [],
+  };
+}
+/** What the screen is told about the last sync that changed something: when, who, how many, and WHICH cells
+    (so what Undo would undo is on the screen, not only in the log). */
+function lastSyncOf_(log) {
+  return log && Array.isArray(log.changes) && log.changes.length
+    ? { at: log.at || null, by: log.by || '', n: log.changes.length,
+        changes: log.changes.map(c => ({ team: c.team, col: c.col, was: c.was, now: c.now, why: c.why })) }
+    : null;
+}
+/** A sync that was cut short (its log says done:false) keeps its first part undoable: the next sync's log is the
+    two put together, each cell keeping what it was BEFORE the first of them touched it. */
+function mergeLog_(previous, changes) {
+  const out = new Map();
+  for (const c of previous) out.set(c.team + '|' + c.col, { ...c });
+  for (const c of changes) {
+    const k = c.team + '|' + c.col, old = out.get(k);
+    out.set(k, old
+      ? { ...old, now: c.now, why: c.why, wrote: { ...(old.wrote || {}), ...c.patch }, undo: { ...c.undo, ...(old.undo || {}) } }
+      : { team: c.team, col: c.col, was: c.was, now: c.now, why: c.why, wrote: c.patch, undo: c.undo });
+  }
+  return [...out.values()];
+}
+async function putSettings_(db, rows) {
+  const { error } = await db.from('settings').upsert(rows, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  noteSettingsWritten(db);
+}
+async function syncLeadersFromCodes_(db, user, nowMs, { preview = false, releaseHolds = false } = {}) {
+  const [teamRows, codeRows, state] = await Promise.all([
     readTeamsRaw(db),                                       // writers see the sheet as stored, not the code overlay
     fetchAll(() => db.from('access_codes').select('name, role, teams')),    // the code itself is never read: it is a password
+    readLeadersState_(db),                                  // the last sync's log and the claims the owner undid: ONE read
   ]);
   const plan = planLeaderSync({ teams: teamRows, codes: codeRows, cols: TEAM_ROLE_COLS, colOf: leaderColumnOf_,
-    phoneOf: TEAM_PHONE_OF, idOf: TEAM_ID_OF, allowed: t => teamAllowed(user, t) });
+    phoneOf: TEAM_PHONE_OF, idOf: TEAM_ID_OF, allowed: t => teamAllowed(user, t), holds: releaseHolds ? [] : state.holds });
   const at = new Date(nowMs).toISOString();
-  if (plan.changes.length && !preview) {
-    /* THE WAY BACK IS WRITTEN BEFORE THE FIRST CELL IS. The log holds what every cell was and what it
-       becomes; undoing it puts back only a cell that still holds what this wrote, so a log for cells that
-       were never reached (a write that failed half way) undoes nothing it should not. If the log cannot be
-       written nothing is changed. */
-    const log = { at, by: String((user && user.name) || ''), changes: plan.changes.map(c =>
-      ({ team: c.team, col: c.col, was: c.was, now: c.now, why: c.why, undo: c.undo })) };
-    const { error: logErr } = await db.from('settings').upsert({ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }, { onConflict: 'key' });
-    if (logErr) throw new Error(logErr.message);
-    noteSettingsWritten(db);
-    for (const group of groupPatches(plan.changes, at)) {
-      for (const batch of chunk_(group, 200)) {
-        const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
-        noteTeamsWritten(db);
-        if (error) throw new Error(error.message);
+  const by = String((user && user.name) || '');
+  /* WHAT THE OWNER UNDID STAYS UNDONE (plan rule 8): the holds that still stand, or none when Sync now lets go of them.
+     Holds nobody's code claims any more are dropped by the write that sees it -- never by a read. */
+  const outOfScope = state.holds.filter(h => !teamAllowed(user, h.team));      // a hold on a team this caller may not change is not theirs to judge or to let go of
+  const holdsKept = (releaseHolds ? [] : plan.holdsInForce).concat(outOfScope);
+  const holdsRow = () => ({ key: LEADERS_SYNC_HOLDS_KEY, value: JSON.stringify(holdsKept) });
+  const holdsDiffer = JSON.stringify(holdsKept) !== JSON.stringify(state.holds);
+  let log = state.log;
+  if (!preview) {
+    if (plan.changes.length) {
+      /* THE WAY BACK IS WRITTEN BEFORE THE FIRST CELL IS. The log holds what every cell was and what it
+         becomes; undoing it puts back only a cell that still holds everything this wrote, so a log for cells that
+         were never reached (a write that failed half way) undoes nothing it should not. If the log cannot be
+         written nothing is changed. It says done:false until the last cell is written: a sync cut short is taken up by
+         the next one, which keeps the first part undoable. */
+      const carried = state.log && state.log.done === false ? state.log.changes : [];
+      log = { at, by, done: false, changes: mergeLog_(carried, plan.changes) };
+      await putSettings_(db, holdsDiffer ? [{ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }, holdsRow()]
+                                         : [{ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }]);
+      for (const group of groupPatches(plan.changes, at)) {
+        for (const batch of chunk_(group, 200)) {
+          const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+          noteTeamsWritten(db);
+          if (error) throw new Error(error.message);
+        }
       }
+      log = { ...log, done: true };
+      await putSettings_(db, [{ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }]);
+    } else {
+      const rows = [];
+      if (holdsDiffer) rows.push(holdsRow());
+      if (state.log && state.log.done === false) { log = { ...state.log, done: true }; rows.push({ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }); }
+      if (rows.length) await putSettings_(db, rows);
     }
   }
-  /* THE LAST SYNC THAT CHANGED SOMETHING, for the screen's Undo: just written, or read from the log (one row). */
-  let last = null;
-  if (plan.changes.length && !preview) last = { at, by: String((user && user.name) || ''), n: plan.changes.length };
-  else {
-    const { data: lg } = await db.from('settings').select('value').eq('key', LEADERS_SYNC_LOG_KEY).maybeSingle();
-    try {
-      const j = lg && lg.value ? JSON.parse(lg.value) : null;
-      if (j && Array.isArray(j.changes) && j.changes.length) last = { at: j.at || null, by: j.by || '', n: j.changes.length };
-    } catch (e) { last = null; }
-  }
   return {
-    ok: true, preview: !!preview, applied: !preview && plan.changes.length > 0, at, last,
+    ok: true, preview: !!preview, applied: !preview && plan.changes.length > 0, at,
+    last: lastSyncOf_(log),
     changed: plan.changes.length,
     changes: plan.changes.map(c => ({ team: c.team, col: c.col, was: c.was, now: c.now, why: c.why })),
+    held: plan.held, heldReleased: releaseHolds ? state.holds.length - outOfScope.length : 0,
     kept: plan.kept, conflicts: plan.conflicts, offCode: plan.offCode,
     unmapped: plan.unmapped, allTeamsCodes: plan.allTeamsCodes,
   };
 }
 async function leadersSync(db, user, p, nowMs) {
   requireAdmin(user);
-  return syncLeadersFromCodes_(db, user, nowMs, { preview: !!(p && p.preview) });
+  return syncLeadersFromCodes_(db, user, nowMs, { preview: !!(p && p.preview), releaseHolds: !!(p && p.releaseHolds) });
 }
 /** THE QUESTION BEFORE THE WRITE. The Teams & Staff screen asks this as it opens -- a READ, open to a
     view-only admin too, never audited and never recorded in the history of who held what -- and calls
-    leadersSync only when it says something differs. So an open of a book that agrees costs two small
+    leadersSync only when it says something differs. So an open of a book that agrees costs three small
     reads and leaves nothing in the audit log, instead of a "write" in it and six reads of the history
     on every open (handbook Part 121). */
 async function leadersCheck(db, user, p, nowMs) {
   requireAdmin(user);
   return syncLeadersFromCodes_(db, user, nowMs, { preview: true });
 }
-/** The way back: every cell the last sync changed that still holds what it wrote goes back to what it
-    held; a cell somebody has changed since is left as they changed it. */
+/** The way back: every cell the last sync changed that still holds EVERYTHING the sync wrote there (the name, and the number
+    and ID where it wrote those) goes back to what it held; a cell somebody has changed since -- the name or only the
+    number -- is left as they changed it. And each cell put back is HELD (plan rule 8): the next look must not write the
+    same thing again, or the Undo would undo nothing. The holds are written before the first cell is put back. */
 async function leadersSyncUndo(db, user, p, nowMs) {
   requireAdmin(user);
-  const { data: row } = await db.from('settings').select('value').eq('key', LEADERS_SYNC_LOG_KEY).maybeSingle();
-  let log = null;
-  try { log = row && row.value ? JSON.parse(row.value) : null; } catch (e) { log = null; }
-  if (!log || !Array.isArray(log.changes) || !log.changes.length) {
-    throw badRequest('Hakuna usasishaji wa kurudisha. / There is no sync to undo.');
-  }
-  const byTeam = new Map((await readTeamsRaw(db)).map(t => [K(t.team), t]));
-  const restore = [];
+  const [state, teamRows] = await Promise.all([readLeadersState_(db), readTeamsRaw(db)]);
+  const log = state.log;
+  if (!log) throw badRequest('Hakuna usasishaji wa kurudisha. / There is no sync to undo.');
+  const byTeam = new Map(teamRows.map(t => [t.team, t]));               // the spelling the log was written under: twin rows stay two
+  const restore = [], newHolds = [];
   let skipped = 0;
   for (const c of log.changes) {
-    const t = byTeam.get(K(c.team));
-    if (!t || !teamAllowed(user, t.team) || K(t[c.col]) !== K(c.now)) { skipped++; continue; }
+    const t = byTeam.get(c.team);
+    const wrote = c.wrote && typeof c.wrote === 'object' ? c.wrote : { [c.col]: c.now };      // a log from before Part 122 names the cell only
+    if (!t || !teamAllowed(user, t.team) || !Object.keys(wrote).every(k => K(t[k]) === K(wrote[k]))) { skipped++; continue; }
     restore.push({ team: t.team, patch: c.undo || {} });
+    newHolds.push({ team: t.team, col: c.col, name: c.now });
+  }
+  if (newHolds.length) {
+    const seen = new Set(state.holds.map(h => K(h.team) + '|' + h.col + '|' + K(h.name)));
+    const holds = state.holds.concat(newHolds.filter(h => !seen.has(K(h.team) + '|' + h.col + '|' + K(h.name))));
+    await putSettings_(db, [{ key: LEADERS_SYNC_HOLDS_KEY, value: JSON.stringify(holds) }]);
   }
   const at = new Date(nowMs).toISOString();
   for (const group of groupPatches(restore, at)) {
@@ -8532,10 +8604,10 @@ async function leadersSyncUndo(db, user, p, nowMs) {
   const { error: delErr } = await db.from('settings').delete().eq('key', LEADERS_SYNC_LOG_KEY);
   if (delErr) throw new Error(delErr.message);
   noteSettingsWritten(db);
-  return { ok: true, restored: restore.length, skipped, from: log.at || null };
+  return { ok: true, restored: restore.length, skipped, held: newHolds.length, from: log.at || null };
 }
 
-async function deleteAccessCode(db, user, p) {
+async function deleteAccessCode(db, user, p, nowMs = Date.now()) {
   requireAdmin(user);
   const code = String((p && p.code) || '').trim();
   if (!code) throw badRequest('code is required');
@@ -8544,7 +8616,15 @@ async function deleteAccessCode(db, user, p) {
   const { error } = await db.from('access_codes').delete().eq('code', code);
   if (error) throw new Error(error.message);
   noteCodesWritten(db);                       // the codes lay over the sheet: every board re-reads
-  return { code };
+  /* THE SHEET FOLLOWS A DELETION TOO, right away (handbook Part 122). Deleting a code is how a stale one is put right: two
+     codes naming two people on one team stop disputing it, and the one that is left now says who leads. It also lets go of
+     what an Undo was holding for a claim nobody makes any more. Quiet on failure: the code is gone either way. */
+  let leaders = null;
+  try {
+    const r = await syncLeadersFromCodes_(db, user, nowMs);
+    leaders = { changed: r.changed, conflicts: r.conflicts.length, held: r.held.length };
+  } catch (e) { leaders = { error: String((e && e.message) || e).slice(0, 160) }; }
+  return { code, leaders };
 }
 
 /** Phone (calls app) registrations. Test devices and mistyped names accumulate fast during a
