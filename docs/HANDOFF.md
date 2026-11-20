@@ -8862,6 +8862,39 @@ The settings read: `work_mem` 5 MB, `maintenance_work_mem` 128 MB, `temp_file_li
 
 **Not done, said plainly.** Nothing live seen beyond the seven minutes above; the statements cancelled at 8 seconds are still not named (the recorder will, after a working day); the 1,000-row cap of the ghost lookup, the region of the app against the database, the compute size and the two repair logs (66 MB) are the same open items as before (section 8 of CHAT.md).
 
+## Part 127, addendum — the owner's re-runs of the corrected `db/RUN-ME-079` and `db/RUN-ME-080`, 83 and 76 minutes after the first (20 Nov, 19:46 East Africa time)
+
+> "postgress war please; and that shouldnt distract efficiency of system operations" — the owner, 20 Nov 2026. They asked for the text of the two files ("(RUN-ME-080) & (RUN-ME-079) text?"), ran the corrected forms of Part 126 in new tabs at 19:46 and pasted both tables with no words. The first answers were 079 at 18:23 and 080 at about 18:30.
+
+**The two files work on the live book.** 079's table sizes now come from the catalogue's page counts, taken without a lock on any table, and agree with the first run (`defaulter_snapshots` 1,980 MB with 92.5% of its table pages served from memory; the two repair logs 45 and 19 MB, where the exact functions had said 46 and 20). 080's whitelist printed only PostgREST statements and the dashboard's own introspection query. "Counting since" reads `n/a`: the counters have never been reset, so every total is since the database began, not since the app moved.
+
+**A quiet evening, not a working day** (inference marked). In the 83 minutes since the first 079: rolled-back transactions 39,827 → 39,851 (+24; 0.147% of all, unchanged); temp files 143,120 → 143,363 (+243, about 3 a minute: the recorder's 22 files in 7 minutes at 18:00 is the same pace); temp bytes 1,640 → 1,642 GB (about +2 GB: each end is rounded to the GB, so 1 to 3); cache hit 99.76%, unchanged; 21 of 90 connections open and no statement running; no deadlock. So the 1,640 GB since the counters began came from working days, mostly the old week read. The limits: `anon` 3 s, `authenticated` 8 s, the `authenticator` (the API's own login) `statement_timeout=8s` and `lock_timeout=8s`, and **`pgrst.db_schemas = public, hopeloan`: the API exposes those two schemas only, so the recorder's `ops` tables cannot be reached through it**; `service_role` has no limit of its own and works under the authenticator's 8 s (every worst run in the table is 8 s or less).
+
+**080, 76 minutes after the first.** The statements are named by their arguments and columns; what is inferred is marked, because the statistics cut each text at 150 characters.
+
+| Statement | Runs now (before) | Average / worst | Temp | From disk |
+|---|---|---|---|---|
+| the old week read of `call_logs` (the boards' fall-back) | 122,556 (122,556) | 579 / 7,654 ms | 768 GB | 17 GB |
+| `recovery_standing` (`p_from, p_to, p_teams, p_lookback`; **inferred** from the four names) | 176,460 (176,243) | 231 / 7,662 ms | 88 GB | 97 GB |
+| `expected_phone_window` (`p_from`; the runs and seconds match the 13:58 paste's third heaviest) | 150,051 (149,469 at 13:58) | 339 / 5,538 ms | 0 | 17 GB |
+| `call_board_rollup` (`p_from, p_to, p_day, p_teams`) | 59 | 3,080 / 5,538 ms | 2,785 MB | 357 MB |
+| `fold_notice_payments` (`p_before`) | 15,824 | 246 / 5,262 ms | 2,437 MB | 520 MB |
+| the ghost lookup `defaulter_ghost_rows` (`p_teams, p_known_refs`) | 13,971 (12,793 at 13:58) | 226 / 800 ms | 0 | 41 GB |
+| two reads of `defaulter_snapshots` by `ref, full_name, contact` (**inferred**: the Legal tab's customer search) | 642 and 115 | 3,302 / 7,992 and 4,117 / 7,970 ms | 0 | 36 and 13 GB |
+| the upload's insert into `defaulter_snapshots` | 8,590 (8,590) | 445 / 5,279 ms | 0 | 32 GB |
+| the phones' insert into `call_logs` | 837,812 (836,870) | 16 / 1,761 ms | 0 | 15 GB |
+
+1. **The old week read did not run once in 76 minutes** (122,556 both times): the small answer of RUN-ME-078 is serving the boards. It is an evening, when few people open them, so this is the first sign and not yet the proof.
+2. **The ghost lookup is about 3.6 times cheaper on the live book.** From the 13:58 paste (12,793 runs, 3,075 s) to now (13,971 runs, 3,154 s): 1,178 runs and about 79 s, about 67 ms each where the average to 13:58 was 240 ms (two rounded figures: the 67 is good to a millisecond or so). Its worst run is still 800 ms, its own limit. RUN-ME-075 and RUN-ME-076 do what they were built for.
+3. **`call_board_rollup`'s first live cost:** 3.1 s a run (5.5 s at worst, against a limit of about 8 s) and 47 MB of temp each (2,785 MB over 59 runs): **the scratch book's 47 MB (point 3 of Part 127) held on the live book.** A function-level `work_mem` for that one function is still the candidate and still not built; it is measured on the scratch book before it is offered.
+4. **The two largest left by total time** are `expected_phone_window` (50,861 s) and `recovery_standing` (40,726 s), together 91,587 s, more than the old week read ever cost (70,973 s). `recovery_standing` is also the largest spiller left (88 GB of the 1,642) and the largest reader of the disk (97 GB). **They are the next matters.** Matters 3b and 3c already cut the rebuilds of the first; by how much is not known (+582 runs since 13:58, about 100 an hour, across the hours before and after they were deployed). `recovery_standing` ran 1,469 more times in the same hours, about 250 an hour; why it runs so often is not yet read in the code.
+5. **Two smaller, new to the list.** `fold_notice_payments` is called by `legalLedgerWeek_` (`fold = true`) whenever a Legal board reads the notice ledger, and by the Legal tab itself: the book is pruned to two weeks, so the payments are copied against their notices before they are read, a rule with a reason that is read in its Part before anything is changed; each run is small (154 KB of temp), 15,824 of them. The customer search of the Legal tab's New-notice drawer (`legalFind`: `ref`, `full_name` and, for seven digits or more, `contact`, each `ILIKE '%...%'`) shows as 757 runs at 3.3 and 4.1 s, 57 and 113 MB read from disk each, some reaching the 8-second limit; RUN-ME-054 indexed `ref` and `full_name` only, so a phone number cannot use an index. Few runs, so little load; whoever searches by phone waits 3 to 4 seconds. A trigram index on `contact` would cost the upload's write, as RUN-ME-054's two did: measured before it is offered.
+6. **The two things that never go down are as they were:** the upload's insert and the phones' insert, unchanged and untouched.
+
+**Cost, CLAUDE.md section 1.** Words only: nothing in the app changes, `/api/upload` and `/api/call` are untouched, no `BUILD` bump.
+
+**Not done, said plainly.** Nothing was changed because of this reading. One evening is not a working day: whether the spill has stopped, how many requests fail in working hours and which statements are cancelled at 8 seconds are read from the recorder tomorrow evening (`RUN-ME-082` and `RUN-ME-083`); the next matter is chosen from those. The names marked inferred are by argument names and columns, not by the whole statement text.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
