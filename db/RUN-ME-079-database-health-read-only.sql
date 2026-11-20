@@ -8,16 +8,21 @@
 -- so this is the failed-request count: compare two runs); the cache hit percent (well below 99 = the database is reading the disk because
 -- its memory is too small: the lever is then the compute size, the owner's decision, not a code change); temp files (statements that spilled
 -- to disk) and deadlocks; the limits each API role carries (the statement timeout that applies); and the eight biggest tables with how much
--- of each is served from memory. Only table names and counters: never a row of any table.
+-- of each is served from memory. Only table names and counters: never a row of any table. A table's size is the catalogue's own count of its pages
+-- (table, its TOAST and its indexes) as of the last vacuum or analyze: about, and taken WITHOUT a lock on any table, so this reading never waits behind a
+-- script that holds one (the size functions take a lock on every table they measure).
 -- HOW TO USE: run it now, and again in an hour or the next time you look. The difference between two runs is what happened in between.
 -- WHAT IT COSTS: it reads Postgres's own counters and the catalogue; it changes nothing and touches no table of the book.
 with d as (
 select * from pg_stat_database where datname = current_database()
 ), t as (
-select relname, pg_total_relation_size(relid) as bytes, heap_blks_read, heap_blks_hit, idx_blks_read, idx_blks_hit
-from pg_statio_user_tables
-where schemaname = 'public'
-order by pg_total_relation_size(relid) desc
+select s.relname, (greatest(c.relpages + coalesce(tt.relpages, 0) + coalesce((select sum(ci.relpages) from pg_index i join pg_class ci on ci.oid = i.indexrelid where i.indrelid = c.oid), 0), 0))::bigint * 8192 as bytes,
+s.heap_blks_read, s.heap_blks_hit, s.idx_blks_read, s.idx_blks_hit
+from pg_statio_user_tables s
+join pg_class c on c.oid = s.relid
+left join pg_class tt on tt.oid = c.reltoastrelid
+where s.schemaname = 'public'
+order by bytes desc
 limit 8
 )
 select what, value from (

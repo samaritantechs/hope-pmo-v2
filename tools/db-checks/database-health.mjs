@@ -15,7 +15,7 @@
    It makes, uses and drops its own scratch database, and the two roles only if they were not there. NEVER point it at the live book. Exit code 0 = the file did what it says. */
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const FILE = fs.readFileSync(ROOT + '/db/RUN-ME-079-database-health-read-only.sql', 'utf8');
@@ -38,7 +38,8 @@ alter role authenticator set statement_timeout = '8s';`, 'postgres');
 const book = `create table public.t_big as select g as id, md5(g::text) as v from generate_series(1, 60000) g;
 create index on public.t_big (v);
 create table public.t_mid as select g as id, md5(g::text) as v from generate_series(1, 20000) g;
-${Array.from({ length: 10 }, (_, i) => `create table public.t_small_${i} as select g as id from generate_series(1, ${100 + i}) g;`).join('\n')}`;
+${Array.from({ length: 10 }, (_, i) => `create table public.t_small_${i} as select g as id from generate_series(1, ${100 + i}) g;`).join('\n')}
+analyze;`;      // the sizes are the catalogue's page counts: they exist once the tables are analyzed, as on the live book
 try {
   sh(book, DB);
   const run = text => rows(sh(text, DB));
@@ -47,6 +48,19 @@ try {
   check(labels[0] === 'now' && labels[1] === 'counting since' && labels[2] === 'database size', 'it starts with now, counting since, database size');
   check(['shared_buffers (about a quarter of the compute RAM)', 'effective_cache_size', 'max_connections', 'connections open now', 'statements running now (not this one)',
     'transactions committed', 'transactions rolled back (failed requests, mostly)', 'rolled back, percent of all', 'deadlocks'].every(l => labels.includes(l)), 'the database, memory and counter lines are all there');
+  // 1b. NEVER WAITS BEHIND A LOCK on any table of the book. The size functions take a lock on every table they measure (and let it go inside the call, so
+  //     pg_locks shows nothing afterwards): behind a script that holds ACCESS EXCLUSIVE on one table the reading would hang. A second session holds exactly that.
+  const waitsBehindALock = async text => {
+    const holder = spawn('psql', ['-X', '-q', '-At', '-d', DB], { env, stdio: ['pipe', 'ignore', 'ignore'] });
+    holder.stdin.end("begin; lock table public.t_big in access exclusive mode; select pg_sleep(6); rollback;");
+    await sleep(1200);                                                           // the holder has its lock
+    let waited = false;
+    try { sh("set lock_timeout = '1500ms';\n" + text, DB); } catch (e) { waited = /lock timeout|canceling statement/i.test(String(e.stderr || e.message)); }
+    holder.kill('SIGKILL'); await sleep(300);
+    return waited;
+  };
+  check(!(await waitsBehindALock(FILE)), 'the reading does not wait behind a lock held on a table of the book');
+  check(await waitsBehindALock(FILE.replace('order by bytes desc', 'order by pg_total_relation_size(s.relid) desc')), 'the same probe sees a size function wait (the deliberate break)');
   const val = l => (a.find(r => r[0] === l) || [])[1];
   const hit = Number(val('cache hit percent, whole database (well below 99 = reading the disk)'));
   check(hit >= 0 && hit <= 100, 'the cache hit percent is a percentage: ' + hit);
@@ -75,23 +89,34 @@ try {
   try { sh('create extension if not exists pg_stat_statements', DB); sh('select pg_stat_statements_reset()', DB); } catch (e) { haveStatements = false; }
   if (!haveStatements) console.log('skip  RUN-ME-080: pg_stat_statements is not loaded on this server (shared_preload_libraries)');
   else {
-    sh("set work_mem = '64kB'; select count(*) from (select * from public.t_big order by id desc limit 50000) x; do $$ begin perform 'SECRET NAME TYPED IN A DO BLOCK'; end $$;", DB);
+    sh(`create or replace procedure public.p_spill(t text) language plpgsql as $$ begin perform count(*) from (select md5(g::text) from generate_series(1, 200000) g order by 1) x; end $$;`, DB);
+    sh(`set work_mem = '64kB';
+select count(*) from (select * from public.t_big order by id desc limit 50000) x;
+do $$ begin perform count(*) from (select md5(g::text) from generate_series(1, 200000) g order by 1) x; perform 'SECRET NAME TYPED IN A DO BLOCK'; end $$;
+call public.p_spill('SECRET CALL ARGUMENT');`, DB);
+    // the check is not vacuous: the DO block and the CALL DID spill, and Postgres DID keep their literal text (a statement that wrote nothing to temp is in neither ranking, whatever the filter says)
+    const kept = sh("select query || ' || ' || temp_blks_written from pg_stat_statements where query ~* '^\\s*(do|call)\\y' order by 1", DB);
+    check(/SECRET NAME TYPED IN A DO BLOCK[^|]*\|\| [1-9]/.test(kept) && /SECRET CALL ARGUMENT[^|]*\|\| [1-9]/.test(kept), 'the DO block and the CALL spilled to temp and pg_stat_statements kept their literal text, so the next checks mean something: ' + kept.replace(/\s+/g, ' ').slice(0, 200));
     const c = run(F80);
     const spill = c.find(r => r[0] === 'writes to disk most');
     check(!!spill && /order by id desc limit \$1/.test(spill[1]), 'RUN-ME-080 names the statement that spilled, with its values as $1');
     check(!!spill && /^\d+ (kB|MB|GB)$/.test(spill[1].split('|')[4]), 'and what it wrote to temp: not nothing');
-    check(!c.some(r => /SECRET NAME/.test(r[1])), 'a DO block (the owner\'s own script) is left out, whatever was typed in it');
+    check(!c.some(r => /SECRET (NAME|CALL)/.test(r[1])), 'a DO block and a CALL (the owner\'s own scripts) are left out, whatever was typed in them');
     check(c.filter(r => r[0] === 'writes to disk most').length <= 10 && c.filter(r => r[0] === 'reads the disk most').length <= 10, 'ten rows at most in each ranking');
-    check(JSON.stringify(run(FILE80_BREAK_(F80, "where temp_blks_written > 0 and query !~*", "where temp_blks_written > 0 and query ~*"))) !== JSON.stringify(c), 'a break that keeps ONLY the owner\'s scripts changes the answer');
+    const noFilter = FILE80_BREAK_(F80, "where temp_blks_written > 0 and query ~* '^\\s*(select|with|insert|update|delete|merge)\\y'", "where temp_blks_written > 0");
+    check(run(noFilter).some(r => /SECRET (NAME|CALL)/.test(r[1])), 'a break with no filter at all lists the literals: the check can see them');
+    const oldList = FILE80_BREAK_(F80, "temp_blks_written > 0 and query ~* '^\\s*(select|with|insert|update|delete|merge)\\y'", "temp_blks_written > 0 and query !~* '^\\s*(do|create|alter|drop|grant|revoke|copy|set|show|begin|commit|truncate|vacuum)\\y'");
+    check(run(oldList).some(r => /SECRET CALL ARGUMENT/.test(r[1])), 'the first form of the filter (a blacklist) leaked a CALL\'s argument: the check catches it');
+    check(JSON.stringify(run(FILE80_BREAK_(F80, "temp_blks_written > 0 and query ~*", "temp_blks_written > 0 and query !~*"))) !== JSON.stringify(c), 'a break that keeps ONLY the owner\'s scripts changes the answer');
   }
   // 4. breaks
   const BREAKS = [
     ['a view that does not exist', FILE.replace('pg_stat_database', 'pg_stat_databasee')],
     ['no limit on the tables', FILE.replace('limit 8', 'limit 80')],
     ['the statement itself counted as running', FILE.replace(" and pid <> pg_backend_pid()", '')],
-    ['no table of the book', FILE.replace("where schemaname = 'public'", "where schemaname = 'nope'")],
+    ['no table of the book', FILE.replace("where s.schemaname = 'public'", "where s.schemaname = 'nope'")],
     ['one role fewer', FILE.replace("'service_role', 'postgres'", "'service_role'")],
-    ['the smallest tables first', FILE.replace('order by pg_total_relation_size(relid) desc', 'order by pg_total_relation_size(relid) asc')],
+    ['the smallest tables first', FILE.replace('order by bytes desc', 'order by bytes asc')],
   ];
   const baseline = JSON.stringify(a.map(r => r[0]));
   for (const [name, text] of BREAKS) {
