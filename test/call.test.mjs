@@ -3603,3 +3603,63 @@ test('called today: a quiet day is an empty answer from the function, not a reas
   assert.ok(d.rows.length > 0 && d.rows.every(r => r.called === false));
   assert.ok(!seen.tables.includes('call_logs'));
 });
+
+/* THE PHONE INDEX READS SIX COLUMNS OF AN EXPECTED SHEET, not thirty (20 Nov 2026, the Postgres war).
+   Today's and tomorrow's sheets are read whole, all teams, for every index a server instance builds; the index adds a customer's
+   number and a guarantor's and nothing else of the row. The list is opt-in on latestSnapshot and this caller names it: a column
+   left out would give a customer no name or a guarantor no number in this index only, and the fake database honours the
+   projection, so each of the six is held here by a call that needs it. The window's own function is NOT installed in these
+   tests, so only the two sheet reads feed the index. */
+const SHEET_COLS_ = 'ref, full_name, contact, guarantor_name, guarantor_contact, team, upload_batch, created_at';
+async function sheetIndexDb_() {
+  const t = makeTables();
+  t.repayment_snapshots.push(
+    { ref: '445', full_name: 'KESHO GEE', contact: '0712000005', guarantor_name: 'G KESHO', guarantor_contact: '0713000009', team: 'KONGOWE', payment_expected: 650, arrears: 0, todays_status: '', due_summary: '', snapshot_type: 'tomorrow', snapshot_date: '2026-07-24', upload_batch: 'b2', created_at: '2026-07-24T04:00:00Z' });
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(t);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  return db;
+}
+test('phone index: the two expected sheets are read for six columns (and the two that decide which upload wins), never every column', async () => {
+  const db = await sheetIndexDb_();
+  const seen = [];
+  const from = db.from.bind(db);
+  db.from = name => {
+    const q = from(name);
+    if (name !== 'repayment_snapshots') return q;
+    const sel = q.select.bind(q);
+    q.select = cols => { seen.push(String(cols)); return sel(cols); };
+    return q;
+  };
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000001' }]], NOW);
+  const sheets = seen.filter(c => c !== 'snapshot_date');
+  assert.deepEqual(sheets, [SHEET_COLS_, SHEET_COLS_], 'today\'s sheet and tomorrow\'s, each with exactly those columns: ' + JSON.stringify(sheets));
+  assert.ok(!seen.includes('*'), 'no read of a sheet takes every column');
+});
+test('phone index: a customer AND a guarantor on today\'s or tomorrow\'s sheet are recognised, with their names, refs and the sheet\'s category', async () => {
+  const db = await sheetIndexDb_();
+  const r = await callApi(db, 'api_callSync', ['d1', [
+    { ts: T1, dur: 40, dir: 'out', num: '0712000001' },           // today's customer
+    { ts: T1 + 1000, dur: 40, dir: 'out', num: '0713000001' },    // today's customer's guarantor
+    { ts: T1 + 2000, dur: 40, dir: 'out', num: '0712000005' },    // tomorrow's customer
+    { ts: T1 + 3000, dur: 40, dir: 'out', num: '0713000009' },    // tomorrow's customer's guarantor
+    { ts: T1 + 4000, dur: 40, dir: 'out', num: '0799999999' },    // nobody
+  ]], NOW);
+  assert.equal(r.portfolio, 4);
+  assert.equal(r.nonPortfolio, 1);
+  const logs = db._dump('call_logs');
+  const by = n => logs.find(l => l.phone === pnorm(n));
+  assert.equal(by('0712000001').match_type, 'CUSTOMER');
+  assert.equal(by('0712000001').customer, 'AMINA H', 'the name comes with the number');
+  assert.equal(by('0712000001').ref, '111');
+  assert.equal(by('0713000001').match_type, 'GUARANTOR');
+  assert.equal(by('0713000001').customer, 'G ONE', 'a guarantor is found by their own number and named by their own name');
+  assert.equal(by('0713000001').ref, '111', 'and belongs to the customer\'s ref');
+  assert.equal(by('0712000005').match_type, 'CUSTOMER');
+  assert.equal(by('0712000005').customer, 'KESHO GEE');
+  assert.equal(by('0713000009').match_type, 'GUARANTOR');
+  assert.equal(by('0713000009').customer, 'G KESHO');
+  assert.equal(by('0713000009').ref, '445');
+  for (const n of ['0712000001', '0713000001', '0712000005', '0713000009']) assert.equal(by(n).category, 'EXPECTED', n + ' is on an expected sheet');
+});

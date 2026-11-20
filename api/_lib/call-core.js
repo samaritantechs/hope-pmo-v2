@@ -1569,12 +1569,30 @@ async function phoneIndex(db, nowMs, version) {
   return value;
 }
 
+/* THE SIX COLUMNS THE PHONE INDEX READS OFF AN EXPECTED SHEET -- 20 Nov 2026.
+
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   The index adds a customer's number and a guarantor's (add(r.contact, r.full_name, r.ref, r.team ...)
+   and add(r.guarantor_contact, r.guarantor_name, r.ref, r.team ...)), and nothing else of a sheet row.
+   The two reads of today's and tomorrow's sheet used to take every column of every row (about thirty,
+   all teams: the amounts, the dates, the branch, the zone), once for each index a warm server instance
+   builds, and the index is rebuilt on every instance's own clock and on every upload. Measured on a
+   scratch book laid out like the real table (10,000 rows a sheet, warm): 98 to 137 ms and 7.8 MB with
+   every column, 60 to 64 ms and 2.7 MB with these six. The list is opt-in on latestSnapshot, as the
+   note there says it has to be (a shared reader cannot carry one list for every screen): this caller
+   knows exactly what it reads, and snapshots.js adds the two columns that decide which upload wins
+   (upload_batch, created_at). A column left out here would give a customer no name or no number
+   in this index only, and the fake database in the tests honours the projection, so it shows as a
+   red test (test/call.test.mjs pins this list and breaks it on purpose). */
+const PHONE_INDEX_SHEET_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, team';
+
 async function phoneIndexCompute(db, nowMs, today) {
   const [fu, eT, eM, eWin, cm] = await Promise.all([
     // The phone index needs names and numbers, nothing else.
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
-    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today }),
-    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today }),
+    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, columns: PHONE_INDEX_SHEET_COLS }),
+    latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'tomorrow' }, { notAfter: today, columns: PHONE_INDEX_SHEET_COLS }),
     /* THE TWO-WEEK WINDOW, AS ONE DATABASE TRIP. "sometimes they call customers not in these
        batches like expected of two next days b/se they have their numbers and i have not yet
        uploaded but last week has that number so any customer number within these 2 weeks is
