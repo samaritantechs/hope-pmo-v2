@@ -8,6 +8,13 @@
 export let PAGE_CAP = 100000;
 export function setPageCap(n) { PAGE_CAP = n; }
 
+/* The call app's and the call boards' fall-backs say why a small database answer failed, on purpose, in the server's own log
+   (handbook Part 123: a line for each failure, never on a good answer). Every fake database here is a book where RUN-ME-077 and
+   RUN-ME-078 are not installed unless a test installs them, so every run of such a test would say it: the suite keeps its output quiet
+   for those two tags and nothing else. A test that looks at the line captures console.warn itself, which replaces this. */
+const realWarn_ = console.warn.bind(console);
+console.warn = (...a) => { if (!/^\[(call|boards)\] /.test(String(a[0]))) realWarn_(...a); };
+
 /** Postgres LIKE, properly: `%` is any run of characters, `_` is exactly one, and a backslash
     escapes either of them into its literal self. Regex metacharacters in the pattern are escaped
     so searching for "C++" or "(a)" matches those characters rather than blowing up.

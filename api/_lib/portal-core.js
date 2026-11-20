@@ -1,4 +1,4 @@
-import { fetchAll, runQuery , rpcAll } from './supabase.js';
+import { fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS, errWords } from './supabase.js';
 import { docketKeyOf } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
@@ -14513,20 +14513,49 @@ function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
    drops every row), so nothing is read for them. */
 const CALL_BOARD_FN = 'call_board_rollup';
 const CALL_BOARD_PAUSE_MS = 5 * 60 * 1000;
-const callBoardFailed = new WeakMap();           // db -> when the function last failed or was found missing
+const callBoardFailed = new WeakMap();           // db -> { at, soft }: when the function last failed or was found missing; soft = the database was briefly unreachable
+/* THE LAST GOOD ANSWER STANDS IN, FOR TEN MINUTES, WHEN THE DATABASE WAS ONLY BRIEFLY UNREACHABLE -- 20 Nov 2026, from the owner's
+   second pg_stat_statements paste (handbook Part 120 addendum, Part 123). The old week read ran 810 times in three and a half hours
+   (about 58 boards) beside 31 runs of this function: 917 s, 47% of the listed database time, with the called-today fall-back, made
+   exactly when the database was busy. A failure that isTransient (a timeout, a cancelled statement, a full connection pool, a
+   network error) does not make the last answer wrong, only older, so for STALE_OK_MS it is handed out again (marked `staleS`, its age
+   in seconds, which the answer carries as callsStaleS) and the old read is made only when this scope has no good answer, when the failure
+   is a fault (not installed, refused, a shape it does not make) or when the failure has lasted that long. One answer is kept for each
+   viewer's scope and day: the week, today and the teams, the same three things the function is asked. Memory: only what is younger
+   than STALE_OK_MS is kept. */
+const callBoardGood = new WeakMap();             // db -> Map(scope -> { at, data })
+const callBoardScope_ = (user, mon, sun, today) =>
+  [mon, sun, today, user.teams && user.teams.length ? teamMatchList(user.teams).slice().sort().join('\u0001') : '*'].join('|');
+function callBoardKeep_(db, scope, data) {
+  let m = callBoardGood.get(db);
+  if (!m) { m = new Map(); callBoardGood.set(db, m); }
+  const now = Date.now();
+  for (const [k, v] of m) if (now - v.at >= STALE_OK_MS) m.delete(k);
+  m.set(scope, { at: now, data });
+}
+function callBoardLast_(db, scope) {
+  const m = callBoardGood.get(db), v = m && m.get(scope);
+  const age = v ? Date.now() - v.at : -1;
+  return v && age >= 0 && age < STALE_OK_MS ? { w: v.data.w, t: v.data.t, staleS: Math.round(age / 1000) } : null;
+}
 // Every one of the eight figures a board draws must BE a number: Number(null) is 0, so a null or a string used to pass for one.
 const CALL_BOARD_FIGS_ = ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected', 'customers'];
 const callBoardRowOk_ = r => !!r && typeof r.name === 'string' && CALL_BOARD_FIGS_.every(k => Number.isFinite(r[k]));
 async function callBoardFromDb_(db, user, mon, sun, today) {
+  const scope = callBoardScope_(user, mon, sun, today);
   const failed = callBoardFailed.get(db);
-  if (failed && (Date.now() - failed) < CALL_BOARD_PAUSE_MS) return null;
+  if (failed && (Date.now() - failed.at) < CALL_BOARD_PAUSE_MS) return failed.soft ? callBoardLast_(db, scope) : null;
+  let soft = false, why = '';
   try {
     const { data, error } = await db.rpc(CALL_BOARD_FN, { p_from: mon, p_to: sun, p_day: today,
       p_teams: user.teams && user.teams.length ? teamMatchList(user.teams) : null });
-    if (!error && data && Array.isArray(data.w) && Array.isArray(data.t) && data.w.every(callBoardRowOk_) && data.t.every(callBoardRowOk_)) return data;
-  } catch (e) { /* a client that throws is a function that failed */ }
-  callBoardFailed.set(db, Date.now());
-  return null;
+    if (!error && data && Array.isArray(data.w) && Array.isArray(data.t) && data.w.every(callBoardRowOk_) && data.t.every(callBoardRowOk_)) { callBoardKeep_(db, scope, data); return data; }
+    soft = isTransient(error); why = errWords(error);
+  } catch (e) { soft = isTransient(e); why = errWords(e); /* a client that throws is a function that failed */ }
+  callBoardFailed.set(db, { at: Date.now(), soft });
+  // Said once for each failure (the five minutes of pause ask nothing, so say nothing), never on a good answer: the reason is in the server's own log.
+  console.warn('[boards] ' + CALL_BOARD_FN + ' did not answer: ' + why + (soft ? ' -- the database was busy or unreachable: the last good board for this scope stands in, else the week is read the old way' : ' -- a fault: the week is read the old way'));
+  return soft ? callBoardLast_(db, scope) : null;
 }
 async function callBoardSource_(db, user, mon, sun, today) {
   if (user.teams && !user.teams.length) return { w: [], t: [] };
@@ -15265,6 +15294,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const unassignedTeams = { early: noOne('expected'), col: loose.slice().sort(), rec: noOne('recovery') };
 
   return { weekday: wd, weekOf: mon, today, deckWarning, unassignedTeams,
+    ...(callSrc.staleS ? { callsStaleS: callSrc.staleS } : {}),     // the call boards are an older answer (seconds): the database was briefly unreachable (Part 123)
     initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
     /* WHICH TEAMS' SHEET ROWS CARRY NO N.C, per board -- so each slide can name the sheet to

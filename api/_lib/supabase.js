@@ -63,6 +63,30 @@ export function isTransient(err) {
   return TRANSIENT.test(m);
 }
 
+/* HOW OLD A LAST GOOD ANSWER MAY BE when a fresh one cannot be had because the database is briefly
+   unreachable (isTransient above) -- ten minutes, 20 Nov 2026 (the Postgres war, handbook Part 123).
+
+   Two small database answers (the call app's called-today numbers, the call boards' week) each
+   fall back to the heavy read they replaced when they fail, and the owner's pg_stat_statements
+   showed those fall-backs running about as often as the answers: 47% of the listed database time
+   in a window of three and a half hours, made exactly when the database was already struggling.
+   A failure that is the database being busy or unreachable does not make the last good answer
+   wrong, only older; so for up to this long it stands in, and the heavy read is made only when
+   there is no good answer at all, when the failure is not of that kind (a function that is not
+   installed, one that is refused, one that answers a shape it does not make: those are faults, and
+   are answered by the old read as they always were), or when the failure has lasted this long.
+   expdf.js's ghost lookup has done the same since #755, with no time limit. */
+export const STALE_OK_MS = 10 * 60 * 1000;
+
+/** A failure's own words for a log line: its code and its message on one line, cut at 160 characters. A fall-back that swallows
+    the reason leaves nobody able to say WHY a small answer failed (handbook Part 123): the pg_stat_statements table cannot,
+    because a cancelled statement is not in it. No customer data can be in it: these are the database's own words about a
+    function call whose arguments are dates, a number and a list of team names. */
+export function errWords(err) {
+  if (!err) return 'no error, but an answer of a shape the app does not take';
+  return ((err.code ? String(err.code) + ' ' : '') + String(err.message || err)).replace(/\s+/g, ' ').slice(0, 160);
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Runs a query, retrying only failures that look like the database being briefly unreachable.
