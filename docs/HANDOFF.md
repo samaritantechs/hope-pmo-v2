@@ -8346,6 +8346,26 @@ roles (with a team, with two dashes, with none, a dash and no team, lower case, 
 
 **What the owner has to do.** Run the script (the last line in the editor must read `END OF THE SCRIPT`; if it does not, nothing is run and the chat is told), paste its answer, and paste each further reply as it comes.
 
+## Part 111 — A demand notice's rule of 2 DC does not apply at D.S 11-12 (20 Nov)
+
+> "The rule of 2 installments shouldnt apply for DS 11-12 because there cant be two there" — the owner, 20 Nov 2026, in the same hour as a request for the SQL that deletes duplicate demand notices and a screenshot of the Postgres errors ("when you finish: postgress war please").
+
+**The rule that was there.** The Legal tab's New-notice drawer serves a customer only at 2 DC and above: the owner's own order ("a demand notice cant be generated for an expected/defaulter not from 2 DC and above ... we only apply these measures when a customer defaults 2 DC+ at demand creation", the comment of `LEGAL_MIN_DC` in `api/_lib/portal-core.js`). The deck's D.C (`missedDc_`, the count of installments the customer has defaulted on) decides, in three places that must never disagree: `legalPreview` (`eligible`, so the drawer withholds the button and says the DC), `legalFind` (the pick list marks the line red before a tap) and the guard at the top of `addDemandNotice` (refused anyway, so a stale screen cannot slip one through). Reprints of letters already served are not gated.
+
+**Why it needed a hole.** D.S is paid-of-target (the handbook's glossary: `11-12` is eleven paid of the twelve due; the loan system writes it with a dash or a slash) and a loan has twelve installments. At 11-12 only the last installment can be missing: D.C is at most 1 and can never reach 2. Held to the rule, such a customer could never be served, however long the finished loan stood unpaid. At 10-11 the same is not true (a twelfth installment can still fall due and make two), so the rule stands for them.
+
+**What changed.** One question, written once: `legalEligible_(d)` is `legalDcWaived_(d) || D.C >= LEGAL_MIN_DC`, and `legalDcWaived_` reads D.S with `dsParts` (`api/_lib/call-core.js`, the reader the phone reads D.S with: one or two digits, a dash or a slash, spaces aside) and is true exactly when paid is 11 and target is 12. The D.C is not asked when it is waived: the rule is not theirs, and a deck row with no D.C at all is served. The preview answers `eligible` and `dcWaived`; the pick list answers `eligible` on every line, and the Legal module (`public/mod/legal.js`) reads it (`var low = !r.eligible`) instead of comparing DC with the rule itself, which was a second copy of the rule in the browser; the drawer says, in Swahili and English, that the rule does not apply and why; the guard refuses with the same words as before.
+
+**What did not change.** (1) The rule for every other D.S, and for a row with no D.S. (2) **The fine's own rule.** `legalFine` gives no fine for a single missed payment on a loan that has not expired (`missed < 2 && !expired`, the handbook's Legal fines section): the same number two, a different rule, and the owner did not name it. At D.S 11-12 it means a notice served before the loan expires (91 days after disbursement) reads a fine of 0; after the expiry the fine runs as always. Whether the fine should start earlier for them is the owner's to say (CHAT.md section 8). (3) The restructuring offer, which reads the same D.C with its own minimum (`RESTRUCTURE_MIN_DC`, 4).
+
+**Cost.** None to the system: no read added anywhere, a regex on one string per customer; nothing on `/api/upload` or `/api/call` (`dsParts` is a named import in `portal-core.js`; `call-core.js` is not touched); `test/speed.test.mjs` unchanged. A front-end change: `BUILD 2026-11-20-a` (a page older than the server reloads itself past the cache).
+
+**Checked.** `test/portal.test.mjs`, one new test through the real dispatch: D.S 11-12 at DC 1 is served (`eligible`, `dcWaived`) and the letter is issued; the slash form, spaces around the dash and a row with no D.C likewise; 10-11, 9-10, 8-9, 11-11, 12-12, 1-12, 11-13, an empty D.S, `n/a` and no D.S at all are refused as before, with the old words; 9-12 at DC 3 and 10-12 at DC 2 as before; the pick list says `eligible` per line. `test/pages.test.mjs`: the drawer's pin (the list reads the server's answer and no longer compares DC itself; the drawer says why at D.S 11-12). **13 of 13 deliberate breaks of the code and of the drawer each turn a test red** (waived for nobody, waived at 10-11, the target not asked, the paid count not asked, the guard or the preview or the pick list asking the DC alone, the preview not saying why, a waived row that still needs a DC, the rule dropped for everybody, the drawer deciding the rule itself, the drawer not saying why). `npm test`: 1,777 pass.
+
+**Not done, said plainly.** Nothing was seen on the live screen. The fine at D.S 11-12 is as it was (above). A customer at 10-11 who the owner thinks should also be waived is the owner's to say: the rule is waived where it can never be met, not where it merely is not met yet.
+
+**What the owner has to do.** Nothing: the Legal tab picks the change up when the page reloads (the `BUILD` moved).
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

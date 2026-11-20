@@ -1912,7 +1912,10 @@ test('the New-notice drawer withholds Issue below the DC rule and says why', () 
   assert.ok(/if \(e\.eligible\) \$\('#lgGo'\)\.onclick/.test(fn), 'and its handler likewise');
   assert.ok(/e\.eligible \? '' : '<div class="note bad">/.test(fn) && /e\.minDc/.test(fn), 'the rule and the figure, said on the screen');
   assert.ok(/DC \(marejesho yaliyokosekana \/ missed\)/.test(fn), 'the DC as a fact row');
-  assert.ok(/r\.dc < f\.minDc/.test(fn), 'the pick list marks who is below it');
+  assert.ok(/var low = !r\.eligible;/.test(fn) && !/r\.dc < f\.minDc/.test(fn), 'the pick list marks who the SERVER says cannot be served (r.eligible), it does not decide the rule itself');
+  /* "The rule of 2 installments shouldnt apply for DS 11-12 because there cant be two there": the
+     server says so (dcWaived) and the drawer says why the button is there at DC 1. */
+  assert.ok(/e\.dcWaived \? '<div class="note">/.test(fn) && /DS 11-12/.test(fn) && /does not apply/.test(fn), 'the drawer says why the rule is not applied at D.S 11-12');
 });
 
 /* "Recovered since notice card, in demands - add % figure infront of amount in the same
