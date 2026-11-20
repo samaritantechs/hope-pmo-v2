@@ -243,6 +243,28 @@ function withinMs_(p, ms, fallback) {
   return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }), late]);
 }
 
+/* THE LAST GOOD ANSWER STANDS IN WHEN A FRESH ONE CANNOT BE HAD -- 20 Nov 2026, found reading how
+   this function is asked for while the Postgres logs showed statement timeouts about eight a
+   minute at midday. This used to do the opposite. A read that failed (a statement timeout is the
+   usual way) threw away what the last good read had found and answered nothing for the next five
+   minutes, so every customer who had left the book vanished from the Exp.Def lists and the
+   phone's list for five minutes at a time, for whoever that server instance and team set served:
+   the very thing the owner ordered against on 13, 15 and 16 Nov ("they should stay there", "i
+   expect that customer in initial never to get lost"). A read that was only LATE (the budget
+   ended before it did) did the same: the caller got nothing while the cache held the last good
+   list. Now the failure, the pause after it and the late read all hand out the last good list,
+   however old: it is never made up, only older, and ghostRowsFor_ still takes out every ref
+   today's own deck names. Where there has never been a good read (RUN-ME-055 not run, or the very
+   first read failing) the answer is nothing, as before. The pause itself is unchanged: a failed
+   read is not asked again for five minutes, which is what keeps a function that times out from
+   being run, and timing out, over and over. Nothing here reads anything from the database. */
+const ghostKey_ = teams => teams.slice().sort().join('\u0001');
+function lastGoodGhosts_(db, teams) {
+  const byKey = ghostCache.get(db);
+  const hit = byKey && byKey.get(ghostKey_(teams));
+  return (hit && hit.rows) || [];
+}
+
 /* ONE ROUND TRIP, HOWEVER MANY TEAMS -- caught by test/speed.test.mjs before this ever shipped:
    an earlier draft called db.rpc once PER TEAM (cached per team), which costs nothing extra
    for a single leader's own 1-2 teams but means an unrestricted admin -- every team in the
@@ -269,28 +291,34 @@ function withinMs_(p, ms, fallback) {
 async function readGhosts_(db, teams, knownRefs, atMs) {
   let byKey = ghostCache.get(db);
   if (!byKey) { byKey = new Map(); ghostCache.set(db, byKey); }
-  const key = teams.slice().sort().join('\u0001');
+  const key = ghostKey_(teams);
   const hit = byKey.get(key);
   if (hit) {
-    if (hit.missingAt && (atMs - hit.missingAt) < GHOST_MISSING_TTL_MS) return [];
+    // A read that failed lately is not asked again until its pause is over -- and the pause hands out the last good list, not nothing.
+    if (hit.missingAt && (atMs - hit.missingAt) < GHOST_MISSING_TTL_MS) return hit.rows || [];
     if (hit.pending) return hit.pending;
     if (hit.rows && (atMs - hit.at) < GHOST_TTL_MS) return hit.rows;
   }
-  const pending = (async () => {
+  // What the last good read found (nothing, the first time). The entry goes in BEFORE the read starts: a read that fails at
+  // once is then remembered, where written after it the entry would overwrite that memory and be asked for ever.
+  const last = { at: (hit && hit.at) || 0, rows: hit && hit.rows };
+  let settle;
+  const pending = new Promise(res => { settle = res; });
+  byKey.set(key, { ...last, pending });
+  (async () => {
     try {
       const { data, error } = await db.rpc('defaulter_ghost_rows', { p_teams: teams, p_known_refs: knownRefs });
       if (error) throw error;
       const rows = data || [];
       byKey.set(key, { at: Date.now(), rows });
-      return rows;
+      settle(rows);
     } catch (e) {
-      // db/RUN-ME-055 not run here. Remembered, so the next request does not ask again and get
-      // the same rejection logged against the database a second time (adjustments.js's own rule).
-      byKey.set(key, { at: atMs, missingAt: Date.now() });
-      return [];
+      // db/RUN-ME-055 not run here, or the database refused or timed out. Remembered, so the next request does not ask again and
+      // get the same rejection logged against the database a second time (adjustments.js's own rule) -- and the last good list stays.
+      byKey.set(key, { ...last, missingAt: Date.now() });
+      settle(last.rows || []);
     }
   })();
-  byKey.set(key, { at: (hit && hit.at) || 0, rows: hit && hit.rows, pending });
   return pending;
 }
 
@@ -318,7 +346,9 @@ export async function ghostRowsFor_(db, teams, knownRefs, budgetMs = 0) {
   const normalized = (knownRefs || []).map(K);
   const known = new Set(normalized);
   const atMs = Date.now();
-  const rows = budgetMs > 0 ? await withinMs_(readGhosts_(db, teams, normalized, atMs), budgetMs, [])
+  // A read still out when the budget ends does not leave the caller with nothing: the last good list stands in for it
+  // (lastGoodGhosts_), and the read goes on underneath and warms the cache for the next caller.
+  const rows = budgetMs > 0 ? await withinMs_(readGhosts_(db, teams, normalized, atMs), budgetMs, lastGoodGhosts_(db, teams))
                              : await readGhosts_(db, teams, normalized, atMs);
   return rows.filter(r => !known.has(K(r.ref))).map(r => ({ ...r, _ghost: true }));
 }
