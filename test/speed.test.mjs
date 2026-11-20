@@ -1162,7 +1162,7 @@ const WRITERS = new Set(['addComment', 'addComplaint', 'saveComplaint', 'resolve
   'systemOpenSet', 'saveAccessCode', 'deleteAccessCode', 'commissionSave', 'saveStaffTeams',
   'purgeSnapshots', 'cleanFollowup', 'removeCallUser', 'changeMyCode', 'fuStatusesSave',
   'stampWeek', 'teamsImport', 'purgeSuperseded', 'retireUploads', 'saveHint', 'deleteHint',
-  'rotateAccessCode', 'saveSettings', 'announcementSave', 'demandMessage']);
+  'rotateAccessCode', 'saveSettings', 'announcementSave', 'demandMessage', 'leadersSync', 'leadersSyncUndo']);
 
 test('speed: NO screen lets one officer read the whole company book', async () => {
   const { PORTAL_FUNCTIONS } = await import('../api/_lib/portal-core.js');

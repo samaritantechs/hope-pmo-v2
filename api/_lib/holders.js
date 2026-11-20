@@ -40,7 +40,7 @@ import { todayKey, addDaysKey } from './time.js';
 export const OPEN = '9999-12-31';
 export const HOLDER_ROLES = ['gmo', 'manager', 'opm', 'collection', 'credit', 'expected', 'recovery', 'bike', 'legal'];
 /** The portal functions after which who-holds-what may have changed. */
-export const HOLDER_FNS = new Set(['saveTeam', 'deleteTeam', 'saveStaffTeams', 'saveAccessCode', 'deleteAccessCode']);
+export const HOLDER_FNS = new Set(['saveTeam', 'deleteTeam', 'saveStaffTeams', 'saveAccessCode', 'deleteAccessCode', 'leadersSync', 'leadersSyncUndo']);
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 /** Team keys across spellings: letters and digits only -- "TENGERU- USARIVER " is TENGERUUSARIVER. */

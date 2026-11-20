@@ -37,6 +37,8 @@ export default withApi(async (req, res) => {
     role: user.role,
     teams: user.teams,                       // null = every team
     teamCount: user.teams ? user.teams.length : null,
+    // A view-only code: the page does not offer, and does not quietly ask for, anything that writes (the Teams & Staff screen's leaders sync).
+    readOnly: !!user.readOnly,
     ...(zoneAsked ? await zoneAsked : {}),   // zone: 'LAKE ZONE' or '', zones: [...] -- only when asked
     tabs,
     /* The version of public/app.html this deployment is serving. The page compares it against

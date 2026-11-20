@@ -2399,8 +2399,8 @@ test('the upload page defers its spreadsheet library and waits for it; the brand
   assert.ok(/if \(window\.HOPE_NO_BRAND_FETCH\) return;/.test(brand), 'the call app still opts out entirely');
   const core = appCore();
   assert.ok(/wireStampWeek\(\);\s*\/\/ the Weekly report's own button: core/.test(core), 'the Weekly report\'s stamp button is wired from the core');
-  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); wireApprovalsReset_\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module');
-  for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireStaffExcel(']) {
+  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); wireApprovalsReset_\(\); if \(window\.wireLeadersSync_\) wireLeadersSync_\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module (the leaders card\'s two buttons too)');
+  for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireStaffExcel(', 'function wireLeadersSync_(']) {
     assert.ok(!core.includes(n), n + ' is still in the core');
     assert.ok(page('admin').includes(n), n + ' is not in the admin module');
   }

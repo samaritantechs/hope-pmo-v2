@@ -12112,6 +12112,8 @@ test('every write is refused at the one door, loudly', async () => {
     ['leaveSetAnnualDays', { days: 30 }],  // resolveTabs gives this code 'settings' too; the fn's own isAdminUser check does not catch it
     ['stampWeek', {}],                    // a maintenance write, deliberately unaudited
     ['rebuildFollowup', {}],
+    ['leadersSync', {}],                  // writes the leaders of every team from the access codes
+    ['leadersSyncUndo', {}],
   ]) {
     await assert.rejects(() => portalApi(fakeDb(tables()), AUDITOR, fn, args, NOW),
       e => e.status === 403 && /view-only/.test(e.message), fn + ' was not refused');
@@ -12252,13 +12254,18 @@ test('the teams table names the Collection and Legal officer from their access-c
   assert.ok(!mbagala.legal);
 });
 
-test('a name already typed on the row wins over the portfolio', async () => {
+test('the access code\'s portfolio officer wins over a name typed on the row; a team no code names keeps its row', async () => {
+  /* "The access codes hold the latest staff / leader per team, so unless not there, will be set at teams and staff" -- the
+     owner, 20 Nov 2026. This used to be the other way round (a typed name won, the portfolio only filled a blank): handbook Part 121. */
   const book = tables();
   book.teams.find(x => x.team === 'KONGOWE').collection = 'TYPED IN BY HAND';
+  book.teams.find(x => x.team === 'MBAGALA').collection = 'NO CODE NAMES THIS TEAM';
   book.access_codes.push({ code: 'P', name: 'CATHERINE', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
   const d = await portalApi(fakeDb(book), ADMIN, 'teams', {}, NOW);
-  assert.equal(d.rows.find(r => r.team === 'KONGOWE').collection, 'TYPED IN BY HAND',
-    'the row already had an answer -- the portfolio only fills what is blank');
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').collection, 'CATHERINE',
+    'the code names the team, and the code holds the latest');
+  assert.equal(d.rows.find(r => r.team === 'MBAGALA').collection, 'NO CODE NAMES THIS TEAM',
+    'unless not there: a team no code names keeps what Teams & Staff says');
 });
 
 test('a portfolio code with no teams names nobody, same as staffRoster', async () => {
