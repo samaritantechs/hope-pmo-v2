@@ -76,7 +76,7 @@ VIEWS.teams = function(){
     ? srv('leadersCheck').then(function(c){
         if (!(c && c.changed && !S.me.readOnly)) return c;
         return srv('leadersSync').then(function(r){ S.teamsCache = null; return r; });
-      }).catch(function(){ return null; })
+      }).catch(function(e){ return { error: String((e && e.message) || e || 'error') }; })   // said on the card: a failure never stops the list, and is never silent
     : Promise.resolve(null);
   return sync.then(function(sr){ S.leadersSync = sr; return teamsView_(); });
 };
@@ -178,7 +178,14 @@ var LEADER_ROLE_LABEL_ = { opm: 'OPM', recovery: 'Recovery', gmo: 'GMO', manager
 function leadersCard_(sr){
   if (!sr || !S.me.can.admin) return '';
   var role = function(c){ return LEADER_ROLE_LABEL_[c] || c; };
-  var ch = sr.changes || [], kp = sr.kept || [], cf = sr.conflicts || [], off = sr.offCode || [], un = sr.unmapped || [];
+  if (sr.error) {
+    // The check or the sync failed: say so (a screen that says nothing reads as "all agrees") and let the list open as it is.
+    return '<div class="card" id="leadersCard"><div class="card-h">Viongozi kutoka kwenye misimbo / Leaders from the access codes'
+      + '<span class="sub">' + (S.me.readOnly ? '' : '<button class="btn sm ghost" id="leadersNow">Jaribu tena / Try again</button>') + '</span></div>'
+      + '<div class="note bad" style="margin:10px 14px"><b>Viongozi hawakuweza kulinganishwa na misimbo ya kuingia. / The leaders could not be checked against the access codes.</b> '
+      + esc(sr.error) + ' — orodha iliyo hapa chini ni data kama ilivyo. / the list below is the data as it is.</div></div>';
+  }
+  var ch = sr.changes || [], kp = sr.kept || [], cf = sr.conflicts || [], off = sr.offCode || [], un = sr.unmapped || [], hd = sr.held || [];
   var head = ch.length
     ? (sr.preview   // a view-only code is shown what differs and changes nothing
         ? '<b>' + money(ch.length) + '</b> viongozi hawalingani na misimbo ya kuingia — msimbo unaoweza kubadilisha utawasasisha. / <b>' + money(ch.length)
@@ -186,6 +193,7 @@ function leadersCard_(sr){
         : '<b>' + money(ch.length) + '</b> viongozi wamesasishwa kutoka kwenye misimbo ya kuingia. / <b>' + money(ch.length)
           + '</b> leaders were brought into line with the access codes.')
     : 'Viongozi wote wanalingana na misimbo ya kuingia. / Every leader agrees with the access codes.';
+  if (hd.length) head += ' <b>' + money(hd.length) + '</b> zimeshikwa kwa sababu ulizirudisha. / held back because you undid them.';
   var rows = ch.map(function(c){
     return '<tr><td>' + esc(c.team) + '</td><td>' + esc(role(c.col)) + '</td><td>' + esc(c.was || '—') + '</td><td><b>' + esc(c.now) + '</b></td></tr>';
   }).join('');
@@ -193,6 +201,9 @@ function leadersCard_(sr){
   var details = '';
   if (ch.length) details += '<div class="note" style="margin:6px 0 2px">Zilibadilika / Changed</div>'
     + table('<th>Timu / Team</th><th>Wadhifa / Role</th><th>Awali / Was</th><th>Sasa / Now</th>', rows);
+  if (hd.length) details += '<div class="note" style="margin:10px 0 2px"><b>' + money(hd.length) + '</b> seli zimeshikwa: ulizirudisha, na msimbo bado unataja mtu yule yule. Zitabadilika msimbo ukibadilika au ukibonyeza "Sasisha sasa". '
+    + '/ cells held back: you undid them and the code still names the same person there. They change when the code does, or when you press Sync now.</div>'
+    + '<ul class="plain">' + hd.map(function(c){ return '<li>' + esc(c.team) + ' · ' + esc(role(c.col)) + ': ' + esc(c.was || '—') + ' (' + esc(c.now) + ')</li>'; }).join('') + '</ul>';
   if (cf.length) details += '<div class="note bad" style="margin:10px 0 2px"><b>' + money(cf.length) + '</b> seli zina misimbo miwili inayotaja watu tofauti — hakuna kilichobadilishwa; msimbo mmoja ufutwe au ubadilishwe. '
     + '/ cells where two access codes name different people — nothing was changed; one of the codes has to go or change.</div>'
     + '<ul class="plain">' + cf.map(function(c){ return '<li>' + esc(c.team) + ' · ' + esc(role(c.col)) + ': ' + esc((c.names || []).join(' / ')) + '</li>'; }).join('') + '</ul>';
@@ -207,6 +218,9 @@ function leadersCard_(sr){
     + (sr.allTeamsCodes ? ' · timu zote / all-teams: ' + money(sr.allTeamsCodes) : '')
     + ' / Codes that name no team leader (their role is not a leader column, or they hold every team).</div>';
   var last = sr.last;
+  if (last && last.changes && last.changes.length && !sr.applied) details += '<div class="note" style="margin:10px 0 2px">Usasishaji wa mwisho (Rudisha huirudisha) / The last sync (what Undo puts back)</div>'
+    + table('<th>Timu / Team</th><th>Wadhifa / Role</th><th>Awali / Was</th><th>Sasa / Now</th>', last.changes.map(function(c){
+        return '<tr><td>' + esc(c.team) + '</td><td>' + esc(role(c.col)) + '</td><td>' + esc(c.was || '—') + '</td><td><b>' + esc(c.now) + '</b></td></tr>'; }).join(''));
   return '<div class="card" id="leadersCard"><div class="card-h">Viongozi kutoka kwenye misimbo / Leaders from the access codes'
     + '<span class="sub">' + (S.me.readOnly ? '' : '<button class="btn sm ghost" id="leadersNow">Sasisha sasa / Sync now</button>')
     + (!S.me.readOnly && last && last.n ? ' <button class="btn sm ghost" id="leadersUndo" style="color:var(--bad);border-color:var(--badline)">Rudisha / Undo the last sync (' + money(last.n) + ')</button>' : '')
@@ -222,8 +236,10 @@ function leadersCard_(sr){
 function wireLeadersSync_(){
   var now = document.getElementById('leadersNow'), undo = document.getElementById('leadersUndo');
   if (now) now.onclick = function(){
+    var holdN = S.leadersSync && S.leadersSync.held ? S.leadersSync.held.length : 0;
+    if (holdN && !confirm(holdN + ' seli ulizirudisha zitaandikwa tena kutoka kwenye misimbo. Endelea?\n\n' + holdN + ' cells you undid will be written again from the access codes. Continue?')) return;
     now.disabled = true;
-    srv('leadersSync').then(function(r){
+    srv('leadersSync', { releaseHolds: true }).then(function(r){
       S.teamsCache = null;
       toast(r && r.changed ? (money(r.changed) + ' viongozi wamesasishwa. / ' + r.changed + ' leaders brought into line.')
                            : 'Hakuna kilichobadilika. / Nothing needed changing.');
@@ -236,10 +252,22 @@ function wireLeadersSync_(){
     undo.disabled = true;
     srv('leadersSyncUndo').then(function(r){
       S.teamsCache = null;
-      toast(money(r.restored) + ' zimerudishwa / restored' + (r.skipped ? ', ' + r.skipped + ' zimeachwa / left' : ''));
+      toast(money(r.restored) + ' zimerudishwa / restored' + (r.skipped ? ', ' + r.skipped + ' zimeachwa / left (changed since)' : '')
+        + (r.held ? ' — zinashikwa hadi msimbo ubadilike au ubonyeze Sasisha sasa / held until the code changes or you press Sync now' : ''));
       render();
     }).catch(function(e){ undo.disabled = false; toast(String(e.message || e), true); });
   };
+}
+
+/* The sheet's half of a save or a delete of an access code, said in words: it is a change to a screen the admin is not looking at. */
+function leadersTold_(L){
+  if (!L) return { text: '', warn: false };
+  if (L.error) return { text: ' ⚠️ Viongozi wa timu zingine hawakusasishwa / The other leaders were not brought into line: ' + L.error, warn: true };
+  var t = '';
+  if (L.changed) t += ' Viongozi ' + L.changed + ' kwenye Timu na Wafanyakazi wamesasishwa kutoka kwenye misimbo. / ' + L.changed + ' leaders on Teams & Staff brought into line with the codes.';
+  if (L.conflicts) t += ' ⚠️ Seli ' + L.conflicts + ' zina misimbo miwili inayotaja watu tofauti. / ' + L.conflicts + ' cells have two codes naming different people.';
+  if (L.held) t += ' ' + L.held + ' zimeshikwa (ulizirudisha). / ' + L.held + ' held back (you undid them).';
+  return { text: t, warn: !!L.conflicts };
 }
 
 function agentForm(x){
@@ -1181,7 +1209,9 @@ function codeForm(x){
         if (r && r.roleSupervisor && r.roleSupervisor.saved) msg += ' Msimamizi wa wadhifa wote wa ' + r.roleSupervisor.role + ' ameandikwa. / Written as the supervisor of every ' + r.roleSupervisor.role + ' code.';
         // The code saves on any database; the supervisors only with RUN-ME-045/046, and the answer says.
         if (r && r.note) msg += ' ⚠️ Msimamizi hajahifadhiwa / the supervisor was not saved: ' + r.note;
-        toast(msg, !!(r && r.note)); closeDrawer(); render();
+        var told = leadersTold_(r && r.leaders);          // and what the save did to every other team's leader (handbook Part 122)
+        msg += told.text;
+        toast(msg, !!(r && r.note) || told.warn); closeDrawer(); render();
       })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
@@ -1189,7 +1219,7 @@ function codeForm(x){
   if (del) del.onclick = function(){
     if (!confirm('Futa msimbo wa '+(x.name)+'? Hataweza kuingia tena.\n\nDelete this code? They will no longer be able to sign in.')) return;
     srv('deleteAccessCode', { code:x.code })
-      .then(function(){ toast('Imefutwa.'); closeDrawer(); render(); })
+      .then(function(r){ var told = leadersTold_(r && r.leaders); toast('Imefutwa.' + told.text, told.warn); closeDrawer(); render(); })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
 }

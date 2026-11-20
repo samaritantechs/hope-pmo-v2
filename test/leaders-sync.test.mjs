@@ -198,6 +198,128 @@ test('the writes are grouped by the keys they carry: PostgREST turns a missing k
   assert.ok(groups.length >= 2, 'rows with different keys are in different statements');
 });
 
+
+/* ============ HANDBOOK PART 122: what the second reader of #764 found, each pinned ============ */
+
+const AC = String.fromCharCode(0xC9), AI = String.fromCharCode(0xCD), CURLY = String.fromCharCode(0x2019);   // E acute, I acute, a curly apostrophe
+
+test('a number is handed over only to the SAME words: a bare JOHN is not JOHN BETA, and two numbers for one person are not picked between', () => {
+  // JOHN (with a number and ID) leads T1, whose code says JOHN ALPHA; JOHN BETA's code takes over T2: he must not get ALPHA's number
+  const rows = [team('T1', { gmo: 'JOHN', gmo_no: '0711111111', gmo_id: 'ID-ALPHA' }), team('T2', { gmo: 'OLD' })];
+  const p = plan(rows, [code('JOHN ALPHA', 'GMO', ['T1']), code('JOHN BETA', 'GMO', ['T2'])]);
+  const t2 = p.changes.find(c => c.team === 'T2');
+  assert.equal(t2.patch.gmo_no, null, 'a short form on another team could be anybody');
+  assert.equal(t2.patch.gmo_id, null);
+  // the same words elsewhere: the number is handed over
+  const same = plan([team('T1', { gmo: 'JOHN BETA', gmo_no: '0722222222', gmo_id: 'ID-BETA' }), team('T2', { gmo: 'OLD' })], [code('JOHN BETA', 'GMO', ['T1', 'T2'])]);
+  assert.equal(same.changes[0].patch.gmo_no, '0722222222');
+  assert.equal(same.changes[0].patch.gmo_id, 'ID-BETA');
+  // two different numbers for one person: not a thing to pick between; the ID they agree on is still handed over
+  const two = plan([team('T1', { gmo: 'ASHA JUMA', gmo_no: '0711', gmo_id: 'ID-A' }), team('T3', { gmo: 'ASHA JUMA', gmo_no: '0722', gmo_id: 'ID-A' }), team('T2', { gmo: 'OLD' })],
+    [code('ASHA JUMA', 'GMO', ['T1', 'T2', 'T3'])]);
+  assert.equal(two.changes[0].team, 'T2');
+  assert.equal(two.changes[0].patch.gmo_no, null, 'two numbers disagree');
+  assert.equal(two.changes[0].patch.gmo_id, 'ID-A', 'the ID they agree on');
+  const ids = plan([team('T1', { gmo: 'ASHA JUMA', gmo_no: '0711', gmo_id: 'ID-A' }), team('T3', { gmo: 'ASHA JUMA', gmo_no: '0711', gmo_id: 'ID-B' }), team('T2', { gmo: 'OLD' })],
+    [code('ASHA JUMA', 'GMO', ['T1', 'T2', 'T3'])]);
+  assert.equal(ids.changes[0].patch.gmo_no, '0711', 'the number they agree on');
+  assert.equal(ids.changes[0].patch.gmo_id, null, 'two staff IDs for one person are not picked between either');
+});
+
+test('the same words with an apostrophe, an accent, a hyphen or another order are the same person: the sheet follows the code\'s spelling and the number stays', () => {
+  const pairs = [["NG'SAMPLE ALPHA", 'NGSAMPLE ALPHA'], ['ASHA NG' + CURLY + 'SAMPLE', 'ASHA NGSAMPLE'], ['JOSE SAMPLE', 'JOS' + AC + ' SAMPL' + AC],
+    ['SAMPLE-ONE ALI', 'SAMPLE ONE ALI'], ['JUMA ASHA', 'ASHA JUMA'], ["BA'SAMPLE SAID", 'BASAMPLE SAID'], ['ALPHA M' + AI + 'NOR', 'ALPHA MINOR']];
+  for (const [sheet, codeName] of pairs) {
+    const p = plan([team('T1', { gmo: sheet, gmo_no: '0700000001', gmo_id: 'ID-1' })], [code(codeName, 'GMO', ['T1'])]);
+    assert.equal(p.changes.length, 1, sheet + ' / ' + codeName);
+    assert.equal(p.changes[0].why, 'respelt');
+    assert.deepEqual(p.changes[0].patch, { gmo: codeName }, 'the name only: it is the same person, so their number and ID stand');
+    assert.equal(p.kept.length, 0);
+    assert.equal(p.conflicts.length, 0);
+  }
+  // and a code that spells the person SHORTER is still never allowed to shorten the sheet
+  const shorter = plan([team('T1', { gmo: "NG'SAMPLE ALPHA SAID" })], [code('NGSAMPLE ALPHA', 'GMO', ['T1'])]);
+  assert.equal(shorter.changes.length, 0);
+  assert.equal(shorter.kept.length, 1);
+});
+
+test('two codes naming one person with punctuation apart are ONE claimant; a name with no letters at all, or two different non-Latin names, are nobody\'s "same person"', () => {
+  const one = plan([team('T1')], [code("NG'SAMPLE ALPHA", 'GMO', ['T1']), code('NGSAMPLE ALPHA', 'GMO', ['T1'])]);
+  assert.equal(one.conflicts.length, 0);
+  assert.equal(one.changes.length, 1);
+  const symbols = plan([team('T1', { gmo: '???' })], [code('---', 'GMO', ['T1'])]);
+  assert.equal(symbols.changes.length, 1, 'two different symbol-only names are not the same person');
+  assert.equal(symbols.changes[0].why, 'replaced');
+  const cyr = (...c) => String.fromCharCode(...c);
+  const hasan = cyr(0x425, 0x410, 0x421, 0x410, 0x41D), ali = cyr(0x410, 0x41B, 0x418);
+  const cy = plan([team('T1', { gmo: hasan })], [code(ali, 'GMO', ['T1'])]);
+  assert.equal(cy.changes.length, 1, 'two different names in another alphabet are two people');
+  assert.equal(cy.changes[0].why, 'replaced');
+  const juma = cyr(0x416, 0x423, 0x41C, 0x410);
+  const same = plan([team('T1', { gmo: hasan + ' ' + juma, gmo_no: '0700000001' })], [code(juma + ' ' + hasan, 'GMO', ['T1'])]);
+  assert.equal(same.changes[0].why, 'respelt', 'the same words in another alphabet are the same person: letters are letters in any alphabet');
+  assert.deepEqual(same.changes[0].patch, { gmo: juma + ' ' + hasan });
+});
+
+test('one person with two codes of one role is one row of "off their code": their codes\' teams are pooled', () => {
+  const rows = [team('A', { manager: 'MARY SAMPLE' }), team('B', { manager: 'MARY SAMPLE' })];
+  assert.deepEqual(plan(rows, [code('MARY SAMPLE', 'MANAGER', ['A']), code('MARY SAMPLE', 'MANAGER', ['B'])]).offCode, []);
+  assert.deepEqual(plan(rows, [code('MARY', 'MANAGER', ['A']), code('MARY SAMPLE', 'MANAGER', ['B'])]).offCode, [], 'under two spellings too');
+  assert.equal(plan(rows, [code('MARY SAMPLE', 'MANAGER', ['A'])]).offCode.length, 1, 'and still told when no code of theirs holds B');
+});
+
+test('two codes that differ only in capitals write the same spelling whatever order they come in', () => {
+  const a = plan([team('T1')], [code('mary sample', 'MANAGER', ['T1']), code('MARY SAMPLE', 'MANAGER', ['T1'])]);
+  const b = plan([team('T1')], [code('MARY SAMPLE', 'MANAGER', ['T1']), code('mary sample', 'MANAGER', ['T1'])]);
+  assert.equal(a.changes[0].now, b.changes[0].now);
+  assert.equal(JSON.stringify(a), JSON.stringify(b));
+});
+
+test('what the owner undid stays undone while a code still names that person there (plan rule 8): held, reported, and the hold lets go when the code stops saying it', () => {
+  const rows = [team('KONGOWE', { gmo: 'OLD GMO' }), team('MBAGALA', { gmo: 'ALSO OLD' })];
+  const codes = [code('NEW GMO', 'GMO', ['KONGOWE', 'MBAGALA'])];
+  const holds = [{ team: 'KONGOWE', col: 'gmo', name: 'NEW GMO' }];
+  const p = plan(rows, codes, { holds });
+  assert.deepEqual(p.changes.map(c => c.team), ['MBAGALA'], 'only the cell that was not undone');
+  assert.deepEqual(p.held, [{ team: 'KONGOWE', col: 'gmo', was: 'OLD GMO', now: 'NEW GMO' }]);
+  assert.deepEqual(p.holdsInForce, holds);
+  // the code now names somebody else there: the claim is a new one, applied; the hold is no longer needed
+  const other = plan(rows, [code('ANOTHER GMO', 'GMO', ['KONGOWE'])], { holds });
+  assert.equal(other.changes.length, 1);
+  assert.equal(other.changes[0].now, 'ANOTHER GMO');
+  assert.deepEqual(other.holdsInForce, []);
+  // no code names the team any more: nothing is held, nothing is written
+  const none = plan(rows, [code('SOMEBODY', 'GMO', ['MBAGALA'])], { holds });
+  assert.deepEqual(none.holdsInForce, []);
+  assert.equal(none.held.length, 0);
+  // the same person under a longer spelling on the code is still the person that was undone
+  const longer = plan(rows, [code('NEW GMO JUNIOR', 'GMO', ['KONGOWE'])], { holds });
+  assert.equal(longer.held.length, 1);
+  // a hold is not an order to keep a cell the sheet already agrees on: it is let go
+  const agrees = plan([team('KONGOWE', { gmo: 'NEW GMO' })], codes, { holds });
+  assert.deepEqual(agrees.holdsInForce, []);
+  // a hold is on ONE role of ONE team: the same person as the team's manager is a different claim
+  const two = plan([team('KONGOWE', { gmo: 'OLD GMO', manager: 'OLD MGR' })], [code('NEW GMO', 'GMO', ['KONGOWE']), code('NEW GMO', 'MANAGER', ['KONGOWE'])], { holds });
+  assert.deepEqual(two.changes.map(c => c.col), ['manager'], 'only the role that was undone is held');
+  assert.deepEqual(two.held.map(h => h.col), ['gmo']);
+});
+
+test('handsOverPatch is the ONE rule for a cell that changes hands: the plan and the save of one code use it', async () => {
+  const fs = await import('node:fs');
+  const read = f => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+  const { handsOverPatch } = await import('../api/_lib/leaders-sync.js');
+  const rows = [team('A', { gmo: 'NEW GMO', gmo_no: '0711999888', gmo_id: 'ID-NEW' })];
+  assert.deepEqual(handsOverPatch({ rows, row: team('B', { gmo: 'OLD', gmo_no: '0700000001' }), col: 'gmo', name: 'NEW GMO', phoneOf: PHONE, idOf: ID }),
+    { gmo: 'NEW GMO', gmo_no: '0711999888', gmo_id: 'ID-NEW' });
+  assert.deepEqual(handsOverPatch({ rows, row: { team: 'B', gmo: 'OLD' }, col: 'gmo', name: 'NEW GMO', phoneOf: PHONE, idOf: ID }),
+    { gmo: 'NEW GMO' }, 'a book without the phone and ID columns is sent the name alone');
+  const core = read('api/_lib/portal-core.js');
+  const staff = core.slice(core.indexOf('async function syncStaffFromCode('), core.indexOf('function leaderColumnOf_'));
+  assert.ok(/handsOverPatch\(/.test(staff), 'the save of one code hands a cell over by the same rule');
+  assert.ok(/groupPatches\(writes/.test(staff), 'and sends rows that carry different keys in different statements');
+  assert.ok(/handsOverPatch\(/.test(read('api/_lib/leaders-sync.js').slice(read('api/_lib/leaders-sync.js').indexOf('export function planLeaderSync'))), 'as does the plan');
+});
+
 /* ================================== THE DOOR ================================== */
 
 const ADMIN = { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['teams', 'settings', 'upload'] };
@@ -405,6 +527,319 @@ test('the answer carries the last sync that changed something, so the screen can
   assert.equal(seen.last, null, 'nothing to undo any more');
 });
 
+
+/* ============ HANDBOOK PART 122, THE DOOR: Undo that sticks, one rule on both roads, failures said ============ */
+
+const holdsOf = db => { const r = db._dump('settings').find(x => x.key === 'LEADERS_SYNC_HOLDS'); return r ? JSON.parse(r.value) : []; };
+const logOf = db => { const r = db._dump('settings').find(x => x.key === 'LEADERS_SYNC_LOG'); return r ? JSON.parse(r.value) : null; };
+
+test('Undo STAYS undone: the look the screen takes straight afterwards finds nothing to change, and a save of the same code does not write it back', async () => {
+  const db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  const u = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  assert.ok(u.restored >= 3);
+  assert.equal(u.held, u.restored, 'every cell put back is held');
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO');
+  const c = await portalApi(db, ADMIN, 'leadersCheck', {}, NOW + 2000);
+  assert.equal(c.changed, 0, 'the same difference is not found again, or the Undo would undo nothing');
+  assert.equal(c.held.length, u.held, 'and the screen is told what it is holding back');
+  assert.equal(c.last, null, 'nothing is left to undo');
+  const s2 = await portalApi(db, ADMIN, 'leadersSync', {}, NOW + 3000);
+  assert.equal(s2.changed, 0);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO');
+  assert.equal(cell(db, 'KONGOWE', 'gmo_no'), '0700000001', 'the number came back with the name and stays');
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ALSO OLD');
+  assert.equal(cell(db, 'TEMEKE', 'recovery'), null);
+  // the other road: saving the SAME access code again (a tab ticked, nothing about its leader changed) is not an order to apply it
+  const r = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G1', oldCode: 'G1', name: 'NEW GMO', role: 'GMO', teams: 'KONGOWE;MBAGALA', tabs: 'teams' }, NOW + 4000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO', 'the save road holds what the owner undid too');
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ALSO OLD');
+  assert.ok(r.leaders.held >= 2, JSON.stringify(r.leaders));
+});
+
+test('a hold ends when the code stops saying it: another person on the team is applied, a deleted code lets go, and Sync now writes what was undone', async () => {
+  // (1) the code now names somebody else
+  let db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  assert.ok(holdsOf(db).length >= 2);
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G1', oldCode: 'G1', name: 'ANOTHER GMO', role: 'GMO', teams: 'KONGOWE;MBAGALA' }, NOW + 2000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'ANOTHER GMO');
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ANOTHER GMO');
+  assert.deepEqual(holdsOf(db).filter(h => h.col === 'gmo'), [], 'the claim is a new one, so the hold on the old one is gone');
+  // (2) the code is deleted: the hold goes with it, and a new code for the same person is a fresh claim
+  db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  const d = await portalApi(db, ADMIN, 'deleteAccessCode', { code: 'G1' }, NOW + 2000);
+  assert.ok(d.leaders && !d.leaders.error, 'the sheet follows a deletion too, and says so: ' + JSON.stringify(d.leaders));
+  assert.deepEqual(holdsOf(db).filter(h => h.col === 'gmo'), []);
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G2', name: 'NEW GMO', role: 'GMO', teams: 'KONGOWE' }, NOW + 3000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO', 'the same person again, on a code made after the delete, is applied');
+  // (3) Sync now lets go of every hold and writes what was undone
+  db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  const n = await portalApi(db, ADMIN, 'leadersSync', { releaseHolds: true }, NOW + 2000);
+  assert.ok(n.changed >= 3 && n.heldReleased >= 3, JSON.stringify([n.changed, n.heldReleased]));
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO');
+  assert.deepEqual(holdsOf(db), []);
+  assert.ok(n.last && n.last.n >= 3, 'and it is a sync like any other: there is something to undo again');
+});
+
+test('Undo puts a cell back only if EVERYTHING the sync wrote there is still there: a number typed since leaves the whole cell as it is, and twin rows are two cells', async () => {
+  let db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  await portalApi(db, ADMIN, 'saveTeam', { team: 'KONGOWE', gmo_no: '0788888888' }, NOW + 1000);          // somebody types the new GMO's real number
+  const u = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 2000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO', 'the name is not put back beside a number somebody typed for the new one');
+  assert.ok(/788888888/.test(String(cell(db, 'KONGOWE', 'gmo_no'))), 'and what they typed is not lost');
+  assert.ok(u.skipped >= 1);
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ALSO OLD', 'the cells nobody touched are put back');
+  assert.equal(holdsOf(db).some(h => h.team === 'KONGOWE' && h.col === 'gmo'), false, 'a cell that was not put back is not held either');
+  // twin rows: the registry can hold KONGOWE and "KONGOWE " as two rows; each is its own cell for the way back
+  const b = book();
+  b.teams = [team('KONGOWE', { gmo: 'OLD ONE' }), team('KONGOWE ', { gmo: 'OLD TWO' })];
+  b.access_codes = [b.access_codes[0], { code: 'G1', name: 'NEW GMO', role: 'GMO', teams: ['KONGOWE'], tabs: [] }];
+  db = fakeDb(b);
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  assert.deepEqual(db._dump('teams').map(t => t.gmo), ['NEW GMO', 'NEW GMO']);
+  const t = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  assert.deepEqual(db._dump('teams').map(x => x.gmo), ['OLD ONE', 'OLD TWO'], 'both put back, not one twice');
+  assert.equal(t.restored, 2);
+  assert.equal(t.skipped, 0);
+});
+
+test('a sync cut short is taken up by the next one: the first part stays undoable, and the log says when it is complete', async () => {
+  const db = fakeDb(book());
+  const realFrom = db.from.bind(db);
+  let up = 0, failing = true;
+  db.from = name => {
+    const q = realFrom(name);
+    if (name !== 'teams' || typeof q.upsert !== 'function') return q;
+    const u = q.upsert.bind(q);
+    q.upsert = (rows, opts) => { up++; return failing && up === 2 ? Promise.resolve({ data: null, error: { message: 'canceling statement due to statement timeout' } }) : u(rows, opts); };
+    return q;
+  };
+  await assert.rejects(() => portalApi(db, ADMIN, 'leadersSync', {}, NOW), /statement timeout/);
+  assert.equal(logOf(db).done, false, 'written before the first cell, and not finished');
+  assert.equal(logOf(db).changes.length, 3, 'every planned cell, so nothing that was written is out of it');
+  failing = false;
+  const again = await portalApi(db, ADMIN, 'leadersSync', {}, NOW + 1000);
+  assert.ok(again.changed >= 1 && again.changed < 3, 'the cells the first run reached are done: ' + again.changed);
+  assert.equal(logOf(db).done, true);
+  assert.equal(logOf(db).changes.length, 3, 'the log now holds the first part too, each cell as it was BEFORE the first run');
+  const u = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 2000);
+  assert.equal(u.restored, 3);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO');
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ALSO OLD');
+  assert.equal(cell(db, 'TEMEKE', 'recovery'), null);
+});
+
+test('a cell the cut-short sync wrote and the next sync writes AGAIN (the code changed in between) goes back to what it was BEFORE the first of them', async () => {
+  const db = fakeDb(book());
+  const realFrom = db.from.bind(db);
+  let up = 0, failing = true;
+  db.from = name => {
+    const q = realFrom(name);
+    if (name !== 'teams' || typeof q.upsert !== 'function') return q;
+    const u = q.upsert.bind(q);
+    q.upsert = (rows, opts) => { up++; return failing && up === 2 ? Promise.resolve({ data: null, error: { message: 'canceling statement due to statement timeout' } }) : u(rows, opts); };
+    return q;
+  };
+  await assert.rejects(() => portalApi(db, ADMIN, 'leadersSync', {}, NOW), /statement timeout/);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO', 'the first group was written');
+  failing = false;
+  await db.from('access_codes').update({ name: 'THIRD GMO' }).eq('code', 'G1');          // the code changes before the next look
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW + 1000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'THIRD GMO');
+  const u = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 2000);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO', 'not NEW GMO, the half-way state: what it was before the first sync touched it');
+  assert.equal(cell(db, 'KONGOWE', 'gmo_no'), '0700000001');
+  assert.ok(u.restored >= 3);
+});
+
+test('a log written before this change (no "wrote", no "done") can still be undone, by the name cell', async () => {
+  const db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  const log = logOf(db);
+  for (const c of log.changes) delete c.wrote;
+  delete log.done;
+  db._dump('settings').find(x => x.key === 'LEADERS_SYNC_LOG').value = JSON.stringify(log);
+  const u = await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  assert.ok(u.restored >= 3);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO');
+});
+
+test('a look that could not read what the owner undid must not go on to write it: the check and the sync fail, and the sheet is not touched', async () => {
+  const db = fakeDb(book());
+  const before = JSON.stringify(db._dump('teams'));
+  const realFrom = db.from.bind(db);
+  db.from = name => {
+    const q = realFrom(name);
+    if (name === 'settings' && typeof q.select === 'function') {
+      const sel = q.select.bind(q);
+      q.select = (...a) => { const r = sel(...a); return typeof r.in === 'function' ? { ...r, in: () => Promise.resolve({ data: null, error: { message: 'connection reset' } }) } : r; };
+    }
+    return q;
+  };
+  await assert.rejects(() => portalApi(db, ADMIN, 'leadersCheck', {}, NOW), /connection reset/);
+  await assert.rejects(() => portalApi(db, ADMIN, 'leadersSync', {}, NOW), /connection reset/);
+  assert.equal(JSON.stringify(db._dump('teams')), before);
+});
+
+test('a NEW person saved onto a team does not inherit the last leader\'s number or ID, on this road either; a rename keeps the number; an arrival brings the number they already have', async () => {
+  const b = book();
+  b.access_codes = b.access_codes.filter(c => c.code !== 'G1');
+  b.teams[2].gmo = 'NEW GMO'; b.teams[2].gmo_no = '0711999888'; b.teams[2].gmo_id = 'ID-NEW';           // TEMEKE: the person already has a number here
+  const db = fakeDb(b);
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G9', name: 'BRAND NEW', role: 'GMO', teams: 'KONGOWE' }, NOW);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'BRAND NEW');
+  assert.equal(cell(db, 'KONGOWE', 'gmo_no'), null, 'OLD GMO\'s number is not left beside BRAND NEW');
+  assert.equal(cell(db, 'KONGOWE', 'gmo_id'), null);
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G8', name: 'NEW GMO', role: 'GMO', teams: 'MBAGALA;TEMEKE' }, NOW + 1000);
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'NEW GMO');
+  assert.equal(cell(db, 'MBAGALA', 'gmo_no'), '0711999888', 'the number the same person already has beside that role on another team');
+  assert.equal(cell(db, 'MBAGALA', 'gmo_id'), 'ID-NEW');
+  assert.equal(cell(db, 'TEMEKE', 'gmo_no'), '0711999888', 'and the team they already lead is untouched');
+  // a rename of the same person keeps what is beside them
+  const c = book();
+  c.teams[0].manager = 'MARY'; c.teams[0].manager_no = '0722000111';
+  c.access_codes = c.access_codes.map(x => x.code === 'M1' ? { ...x, name: 'MARY' } : x);
+  const db2 = fakeDb(c);
+  await portalApi(db2, ADMIN, 'saveAccessCode', { code: 'M1', oldCode: 'M1', name: 'MARY SAMPLE', role: 'MANAGER', teams: 'KONGOWE' }, NOW);
+  assert.equal(cell(db2, 'KONGOWE', 'manager'), 'MARY SAMPLE');
+  assert.equal(cell(db2, 'KONGOWE', 'manager_no'), '0722000111');
+});
+
+test('an access code with no name names nobody: it is never shown as the Collection or Legal officer (a code is a password)', async () => {
+  const b = book();
+  b.access_codes.push({ code: 'SECRET-PW-123', name: '', role: 'PMO COLLECTION', teams: ['KONGOWE', 'MBAGALA'], tabs: [] });
+  b.access_codes.push({ code: 'SECRET-PW-456', name: '  ', role: 'LEGAL', teams: ['KONGOWE'], tabs: [] });
+  b.teams[0].collection = 'TYPED BY HAND';
+  const d = await portalApi(fakeDb(b), ADMIN, 'teams', {}, NOW);
+  assert.ok(!JSON.stringify(d).includes('SECRET-PW'), 'no access code reaches the Teams list');
+  assert.equal(d.rows.find(r => r.team === 'KONGOWE').collection, 'TYPED BY HAND', 'the row keeps what it says');
+});
+
+test('deleting an access code brings the sheet into line right away and says what it did: with one of two disputing codes gone, the other one leads', async () => {
+  const b = book();
+  b.access_codes.push({ code: 'G2', name: 'SECOND GMO', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  const db = fakeDb(b);
+  const c = await portalApi(db, ADMIN, 'leadersCheck', {}, NOW);
+  assert.ok(c.conflicts.some(x => x.team === 'KONGOWE' && x.col === 'gmo'), 'two codes dispute KONGOWE');
+  const d = await portalApi(db, ADMIN, 'deleteAccessCode', { code: 'G2' }, NOW + 1000);
+  assert.ok(d.leaders.changed >= 1, JSON.stringify(d.leaders));
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO');
+});
+
+test('the answer of a look carries WHICH cells the last sync changed, so a later open shows what Undo would put back; a sync that a code save ran is not forgotten', async () => {
+  const b = book();
+  b.access_codes = b.access_codes.filter(c => c.code !== 'G1');
+  const db = fakeDb(b);
+  const saved = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G9', name: 'BRAND NEW', role: 'GMO', teams: 'MBAGALA' }, NOW);
+  assert.ok(saved.leaders.changed >= 1);
+  const open = await portalApi(db, ADMIN, 'leadersCheck', {}, NOW + 1000);
+  assert.equal(open.changed, 0, 'the book agrees');
+  assert.ok(open.last && open.last.n >= 1);
+  assert.ok(Array.isArray(open.last.changes) && open.last.changes.some(x => x.team === 'TEMEKE' && x.col === 'recovery' && x.now === 'RAPHAEL R'), JSON.stringify(open.last));
+  assert.ok(!/ADMIN1|G9|R1/.test(JSON.stringify(open.last)), 'and no access code');
+});
+
+
+test('the save of one code sends rows that carry different keys in different statements: an arrival and a removal in one save blank nothing', async () => {
+  const b = book();
+  b.teams = [team('KONGOWE', { manager: 'MARY SAMPLE', manager_no: '0722000111', manager_id: 'ID-M' }),
+    team('TEMEKE', { manager: 'SOMEBODY ELSE', manager_no: '0700000009' }),
+    team('BIKO', { manager: 'MARY SAMPLE', manager_no: '0722000111', manager_id: 'ID-M' })].map(t => ({ ...t, team_code: null, zone: null }));
+  b.access_codes = [b.access_codes[0], { code: 'M1', name: 'MARY SAMPLE', role: 'MANAGER', teams: ['KONGOWE', 'BIKO'], tabs: [] }];
+  const db = fakeDb(b);
+  const sent = [];
+  const realFrom = db.from.bind(db);
+  db.from = name => {
+    const q = realFrom(name);
+    if (name !== 'teams' || typeof q.upsert !== 'function') return q;
+    const up = q.upsert.bind(q);
+    q.upsert = (rows, opts) => { sent.push(Array.isArray(rows) ? rows : [rows]); return up(rows, opts); };
+    return q;
+  };
+  // the code now holds KONGOWE and TEMEKE and no longer BIKO: TEMEKE is an arrival (name, number, ID), BIKO a removal (the name alone)
+  await portalApi(db, ADMIN, 'saveAccessCode', { code: 'M1', oldCode: 'M1', name: 'MARY SAMPLE', role: 'MANAGER', teams: 'KONGOWE;TEMEKE' }, NOW);
+  const own = sent.filter(batch => batch.some(r => r.team === 'TEMEKE' || r.team === 'BIKO'));
+  assert.ok(own.length >= 2, 'the two kinds of write are two statements: ' + own.length);
+  for (const batch of sent) assert.equal(new Set(batch.map(r => Object.keys(r).sort().join(','))).size, 1, 'one batch, one key set');
+  assert.equal(cell(db, 'TEMEKE', 'manager'), 'MARY SAMPLE');
+  assert.equal(cell(db, 'TEMEKE', 'manager_no'), '0722000111', 'the arrival brings the number the same person already has beside that role on another team, not the last leader\'s');
+  assert.equal(cell(db, 'TEMEKE', 'manager_id'), 'ID-M');
+  assert.equal(cell(db, 'BIKO', 'manager'), null, 'and the team dropped from the code is cleared');
+  assert.equal(cell(db, 'KONGOWE', 'manager_no'), '0722000111', 'the team she keeps is untouched: nothing was blanked on the way');
+});
+
+test('a sync that fails after a save does not fail the save, and the answer says so', async () => {
+  const b = book();
+  b.access_codes = b.access_codes.filter(c => c.code !== 'G1');
+  const db = fakeDb(b);
+  const realFrom = db.from.bind(db);
+  db.from = name => {
+    const q = realFrom(name);
+    if (name === 'access_codes' && typeof q.select === 'function') {
+      const sel = q.select.bind(q);
+      q.select = cols => {
+        const b = sel(cols);
+        if (cols !== 'name, role, teams') return b;                       // only the sync's own read of the codes fails
+        b.order = () => b;
+        b.range = () => Promise.resolve({ data: null, error: { message: 'canceling statement due to statement timeout' } });
+        return b;
+      };
+    }
+    return q;
+  };
+  const r = await portalApi(db, ADMIN, 'saveAccessCode', { code: 'G9', name: 'BRAND NEW', role: 'GMO', teams: 'MBAGALA' }, NOW);
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'BRAND NEW', 'the saved code still reached its own teams');
+  assert.match(r.leaders.error, /statement timeout/, JSON.stringify(r.leaders));
+  assert.ok(db._dump('access_codes').some(c => c.code === 'G9'), 'and the code is saved');
+});
+
+
+test('a sync whose cells were all written but whose log was never closed is closed by the next look', async () => {
+  const db = fakeDb(book());
+  const realFrom = db.from.bind(db);
+  let puts = 0, failing = true;
+  db.from = name => {
+    const q = realFrom(name);
+    if (name !== 'settings' || typeof q.upsert !== 'function') return q;
+    const up = q.upsert.bind(q);
+    q.upsert = (rows, opts) => { puts++; return failing && puts === 2 ? Promise.resolve({ data: null, error: { message: 'connection reset' } }) : up(rows, opts); };
+    return q;
+  };
+  await assert.rejects(() => portalApi(db, ADMIN, 'leadersSync', {}, NOW), /connection reset/);      // the second settings write is the one that closes the log
+  assert.equal(logOf(db).done, false);
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'NEW GMO', 'every cell was written');
+  failing = false;
+  const again = await portalApi(db, ADMIN, 'leadersSync', {}, NOW + 1000);
+  assert.equal(again.changed, 0);
+  assert.equal(logOf(db).done, true, 'so a later, unrelated sync does not take it up as a cut-short one');
+});
+
+
+test('an admin scoped to some teams neither judges nor lets go of the holds on the teams they cannot change', async () => {
+  const db = fakeDb(book());
+  await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
+  await portalApi(db, ADMIN, 'leadersSyncUndo', {}, NOW + 1000);
+  const before = holdsOf(db);
+  assert.ok(before.some(h => h.team === 'MBAGALA') && before.some(h => h.team === 'KONGOWE'));
+  const SCOPED = { ...ADMIN, code: 'ADMIN2', teams: ['TEMEKE'] };                         // may change TEMEKE only
+  const plain = await portalApi(db, SCOPED, 'leadersSync', {}, NOW + 2000);
+  assert.equal(plain.changed, 0, 'TEMEKE\'s own cell is held too (it was undone with the rest)');
+  assert.deepEqual(holdsOf(db).map(h => h.team + '|' + h.col).sort(), before.map(h => h.team + '|' + h.col).sort(), 'a sync that changed nothing leaves every hold as it was');
+  const rel = await portalApi(db, SCOPED, 'leadersSync', { releaseHolds: true }, NOW + 3000);
+  assert.equal(rel.heldReleased, 1, 'Sync now lets go of the one hold on a team they may change: TEMEKE');
+  assert.equal(cell(db, 'TEMEKE', 'recovery'), 'RAPHAEL R', 'and writes only that');
+  assert.equal(cell(db, 'KONGOWE', 'gmo'), 'OLD GMO', 'what they cannot change is not written');
+  assert.equal(cell(db, 'MBAGALA', 'gmo'), 'ALSO OLD');
+  assert.deepEqual(holdsOf(db).map(h => h.team).sort(), before.filter(h => h.team !== 'TEMEKE').map(h => h.team).sort(), 'and the holds on KONGOWE and MBAGALA, which they cannot judge, are still there');
+});
+
 /* ================================== THE SCREEN ================================== */
 
 test('the Teams & Staff screen asks for the sync BEFORE it reads the list, only for a code that may change things, and draws every name as text', async () => {
@@ -426,4 +861,25 @@ test('the Teams & Staff screen asks for the sync BEFORE it reads the list, only 
   assert.ok(!/\+ c\.(now|was|team|sheet|code) \+/.test(card.replace(/esc\(c\.[a-z]+\)/g, '')), 'no leader\'s name is put into the page raw');
   assert.ok(/wireLeadersSync_/.test(read('public/app.html')), 'the core wires the two buttons');
   assert.ok(/readOnly: !!user\.readOnly/.test(read('api/me.js')), 'and /api/me tells the page when the code is view-only');
+});
+
+test('the screen says what happened (Part 122): a failed check or sync is a card and never silence, the save and the delete of a code say what the sheet did, Sync now lets go of what was undone, and leadersCheck is a read the page may remember', async () => {
+  const fs = await import('node:fs');
+  const read = f => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+  const admin = read('public/mod/admin.js'), app = read('public/app.html');
+  const view = admin.slice(admin.indexOf('VIEWS.teams = function()'), admin.indexOf('function teamsView_()'));
+  assert.ok(/\.catch\(function\(e\)\{ return \{ error: /.test(view), 'a failure becomes an answer the card can say, not null');
+  assert.ok(!/\.catch\(function\(\)\{ return null; \}\)/.test(view), 'and is no longer swallowed');
+  const card = admin.slice(admin.indexOf('function leadersCard_('), admin.indexOf('function wireLeadersSync_('));
+  assert.ok(/if \(sr\.error\)/.test(card) && card.includes('esc(sr.error)'), 'the failure is drawn, as text');
+  assert.ok(card.includes('sr.held') && card.includes("esc(c.was || ") && card.includes('esc(c.now)'), 'what is held back is listed');
+  assert.ok(card.includes('last.changes') && card.includes('!sr.applied'), 'the last sync\'s own cells are listed when this open did not write them');
+  const wire = admin.slice(admin.indexOf('function wireLeadersSync_('), admin.indexOf('function leadersTold_('));
+  assert.ok(wire.includes("srv('leadersSync', { releaseHolds: true })"), 'Sync now is the explicit "write it all again"');
+  assert.ok(/holdN && !confirm\(/.test(wire), 'and says so first when it would write cells the owner undid');
+  const told = admin.slice(admin.indexOf('function leadersTold_('), admin.indexOf('function agentForm('));
+  assert.ok(told.includes('L.error') && told.includes('L.changed') && told.includes('L.conflicts') && told.includes('L.held'));
+  assert.equal((admin.match(/leadersTold_\(r && r\.leaders\)/g) || []).length, 2, 'the save and the delete of an access code both say what the sheet did');
+  assert.ok(/var READ_FNS = \{[^}]*\bleadersCheck:1/.test(app), 'leadersCheck is a read: opening Teams & Staff on a book that agrees must not wipe what the page remembers');
+  assert.ok(!/var READ_FNS = \{[^}]*\bleadersSync:1/.test(app) && !/var READ_FNS = \{[^}]*\bleadersSyncUndo:1/.test(app), 'the two writes are not');
 });
