@@ -409,6 +409,157 @@ test('a change to the register that moved NO stamp is seen at the lists\' own fi
   assert.ok(fresh[pnorm('0711000099')], 'after them it is read again');
 });
 
+/* ---------- a longer life once an upload has settled (matter 3c, handbook Part 120) ---------- */
+
+const MIN = 60000;
+/* Counts one kind of build: the register is read once for each build of the lists, and never otherwise. */
+const listsBuilt = c => c.n.followup_status;
+
+test('a build made ten minutes after its upload\'s stamp is SETTLED: the lists are kept thirty minutes, the comments still five', async () => {
+  const stamp = String(NOW - 11 * MIN);                                   // an upload eleven minutes ago, on the upload's own clock
+  const db = newDb(makeBook(21)); const c = counted(db);
+  await phoneIndex(c.db, NOW, stamp, 'n1');
+  assert.equal(c.n.total, 7);
+  c.reset();
+  await phoneIndex(c.db, NOW + 5 * MIN, stamp, 'n1');
+  assert.equal(c.n.total, 1, 'five minutes on: only the numbered comments (' + JSON.stringify(c.n) + ')');
+  assert.equal(c.n.followup_comments, 1);
+  c.reset();
+  await phoneIndex(c.db, NOW + 29 * MIN, stamp, 'n1');
+  assert.equal(listsBuilt(c), 0, 'twenty-nine minutes on: the lists are still the same build');
+  c.reset();
+  await phoneIndex(c.db, NOW + 30 * MIN, stamp, 'n1');
+  assert.equal(listsBuilt(c), 1, 'thirty minutes on: the lists are read again');
+  assert.equal(c.n.repayment_snapshots, 4);
+  assert.equal(c.n.rpc, 1);
+});
+
+test('a build made sooner is UNSETTLED and lives five minutes, as it always did; the first build after the settle point is the settled one', async () => {
+  const stamp = String(NOW - 1 * MIN);                                    // an upload a minute ago
+  const db = newDb(makeBook(22)); const c = counted(db);
+  await phoneIndex(c.db, NOW, stamp, 'n1');                                // built 1 minute after the stamp: unsettled
+  assert.equal(listsBuilt(c), 1);
+  c.reset();
+  await phoneIndex(c.db, NOW + 5 * MIN - 1, stamp, 'n1');
+  assert.equal(listsBuilt(c), 0, 'inside the five minutes');
+  await phoneIndex(c.db, NOW + 5 * MIN, stamp, 'n1');                      // 6 minutes after the stamp: still unsettled
+  assert.equal(listsBuilt(c), 1, 'after five minutes the lists are read again');
+  c.reset();
+  await phoneIndex(c.db, NOW + 10 * MIN - 1, stamp, 'n1');
+  assert.equal(listsBuilt(c), 0);
+  await phoneIndex(c.db, NOW + 10 * MIN, stamp, 'n1');                     // 11 minutes after the stamp: this build is settled
+  assert.equal(listsBuilt(c), 1, 'and again after five more, because the build of the sixth minute was unsettled');
+  c.reset();
+  await phoneIndex(c.db, NOW + 39 * MIN, stamp, 'n1');
+  assert.equal(listsBuilt(c), 0, 'the settled build is kept for thirty minutes from when it was made');
+  await phoneIndex(c.db, NOW + 40 * MIN, stamp, 'n1');
+  assert.equal(listsBuilt(c), 1);
+});
+
+test('the settle point is exactly ten minutes after the stamp', async () => {
+  for (const [offset, settled] of [[10 * MIN - 1, false], [10 * MIN, true]]) {
+    const stamp = String(NOW - offset);
+    const db = newDb(makeBook(23)); const c = counted(db);
+    await phoneIndex(c.db, NOW, stamp, 'n1');
+    c.reset();
+    await phoneIndex(c.db, NOW + 6 * MIN, stamp, 'n1');
+    assert.equal(listsBuilt(c), settled ? 0 : 1, (settled ? 'at' : 'one millisecond before') + ' the settle point the build is ' + (settled ? 'settled' : 'unsettled'));
+  }
+});
+
+test('a stamp that is not a millisecond clock never settles: nothing uploaded yet, a label, a tiny number, a stamp from the future', async () => {
+  for (const stamp of ['', 'v1', 'upload-7', '12345', '999999999999', String(NOW + 60 * MIN)]) {
+    const db = newDb(makeBook(24)); const c = counted(db);
+    await phoneIndex(c.db, NOW, stamp, 'n1');
+    c.reset();
+    await phoneIndex(c.db, NOW + 5 * MIN, stamp, 'n1');
+    assert.equal(listsBuilt(c), 1, 'stamp ' + JSON.stringify(stamp) + ': five minutes, as before');
+  }
+});
+
+test('an upload moves the stamp and the lists are read at once, however settled the last build was; and the new build is unsettled', async () => {
+  const old = String(NOW - 2 * 3600000);
+  const db = newDb(makeBook(25)); const c = counted(db);
+  await phoneIndex(c.db, NOW, old, 'n1');
+  c.reset();
+  await phoneIndex(c.db, NOW + 20 * MIN, old, 'n1');
+  assert.equal(listsBuilt(c), 0, 'settled: kept');
+  c.reset();
+  const fresh = String(NOW + 21 * MIN);                                    // an upload a moment ago
+  await phoneIndex(c.db, NOW + 21 * MIN + 5000, fresh, 'n1');
+  assert.equal(listsBuilt(c), 1, 'the stamp moved: read again on the very next sync');
+  c.reset();
+  await phoneIndex(c.db, NOW + 26 * MIN + 5000, fresh, 'n1');
+  assert.equal(listsBuilt(c), 1, 'and, being built five seconds after the stamp, it is unsettled: five minutes');
+});
+
+test('a recorded number on a SETTLED index is still one small read, and the lists stay', async () => {
+  const stamp = String(NOW - 3600000);
+  const db = newDb(makeBook(26)); const c = counted(db);
+  await phoneIndex(c.db, NOW, stamp, 'n1');
+  await db.from('followup_comments').insert({ ref: 'R101', new_number: '0765000111', full_name: 'REC', team: 'KONGOWE', comment: 'namba mpya', created_at: new Date(NOW).toISOString() });
+  c.reset();
+  const idx = await phoneIndex(c.db, NOW + 12 * MIN, stamp, 'n2');
+  assert.equal(c.n.total, 1, JSON.stringify(c.n));
+  assert.ok(idx[pnorm('0765000111')], 'the number is in the index');
+});
+
+test('a change that moved NO stamp is seen at the thirty-minute mark on a settled index: the price of the longer life, written down', async () => {
+  const stamp = String(NOW - 3600000);
+  const db = newDb(makeBook(27)); const c = counted(db);
+  await phoneIndex(c.db, NOW, stamp, 'n1');
+  db._dump('followup_status')[0].contact = '0711000077';
+  const stale = await phoneIndex(c.db, NOW + 29 * MIN, stamp, 'n1');
+  assert.equal(stale[pnorm('0711000077')], undefined, 'not seen inside thirty minutes');
+  const fresh = await phoneIndex(c.db, NOW + 30 * MIN, stamp, 'n1');
+  assert.ok(fresh[pnorm('0711000077')], 'seen at thirty');
+});
+
+test('the settled index is still the old code\'s index: 30 random books built twenty minutes after their upload and served twenty minutes later', async () => {
+  for (let seed = 300; seed < 330; seed++) {
+    const tables = makeBook(seed);
+    const db = newDb(tables);
+    const stamp = String(NOW - 40 * MIN);
+    await phoneIndex(db, NOW, stamp, 'n1');
+    const served = await phoneIndex(db, NOW + 25 * MIN, stamp, 'n1');
+    assert.equal(shape(served), shape(await oldIndex(newDb(tables), todayKey(NOW + 25 * MIN))), 'seed ' + seed);
+  }
+});
+
+/* ---------- what the longer life rests on: every writer of what the lists hold moves a stamp ---------- */
+
+test('every writer of a replacement number outside the importers moves NEW_NUMBER_VERSION; every writer of the register outside an upload moves DATA_VERSION', async () => {
+  const fs = await import('node:fs');
+  const read = f => fs.readFileSync(new URL('../' + f, import.meta.url), 'utf8');
+  const code = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const writers = ['api/followup.js', 'api/_lib/call-core.js', 'api/_lib/portal-core.js'];
+  for (const f of writers) {
+    const src = code(read(f));
+    assert.ok(/new_number\s*:/.test(src), f + ' is a writer of new_number (the list is current)');
+    assert.ok(/NEW_NUMBER_VERSION/.test(src), f + ' moves NEW_NUMBER_VERSION');
+  }
+  // no other server file writes new_number outside the importers
+  for (const f of fs.readdirSync(new URL('../api/_lib/', import.meta.url)).map(x => 'api/_lib/' + x).concat(['api/upload.js', 'api/comments.js', 'api/expected.js'])) {
+    if (!f.endsWith('.js') || writers.includes(f) || /importers\.js$/.test(f)) continue;
+    assert.ok(!/new_number\s*:/.test(code(read(f))), f + ' writes new_number and is not on the list of writers that move the stamp');
+  }
+  // the admin restore of the register
+  const portal = code(read('api/_lib/portal-core.js'));
+  const fn = portal.slice(portal.indexOf('async function rebuildFollowup'), portal.indexOf('async function findCustomer'));
+  assert.ok(/key: 'DATA_VERSION'/.test(fn) && fn.indexOf("key: 'DATA_VERSION'") > fn.indexOf('const restored = await write('), 'rebuildFollowup moves DATA_VERSION after it has written');
+  // an upload moves it on the last slice
+  const up = code(read('api/upload.js'));
+  assert.ok(/if \(isLastPart\) \{\s*try \{\s*await supabase\.from\('settings'\)\s*\.upsert\(\{ key: 'DATA_VERSION'/.test(up), 'api/upload.js moves DATA_VERSION on the last slice');
+});
+
+test('the settled life is two named numbers the index reads, ten minutes to settle and thirty to keep', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync(new URL('../api/_lib/call-core.js', import.meta.url), 'utf8');
+  assert.ok(/const PHONE_INDEX_SETTLE_MS = 600000;/.test(src));
+  assert.ok(/const PHONE_INDEX_SETTLED_TTL_MS = 1800000;/.test(src));
+  assert.ok(/const PHONE_INDEX_TTL_MS = 300000;/.test(src), 'and the five minutes stand');
+});
+
 /* ---------- the callers ---------- */
 
 test('both callers pass the two stamps apart (no joined string), and the module exports phoneIndex for this file', async () => {

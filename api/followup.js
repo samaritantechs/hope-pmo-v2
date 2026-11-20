@@ -58,5 +58,11 @@ async function handlePost(req) {
   }).eq('ref', ref);
   if (uErr) throw new Error(uErr.message);
 
+  // A recorded replacement number moves the call app's phone index, as the app's own comment and the
+  // portal's do (NEW_NUMBER_VERSION; handbook Part 120). Quiet on failure: the comment is saved.
+  if (newNumber) {
+    try { await supabase.from('settings').upsert({ key: 'NEW_NUMBER_VERSION', value: String(Date.now()) }, { onConflict: 'key' }); } catch (e) { /* the comment is in */ }
+  }
+
   return { ref, savedAt: now };
 }

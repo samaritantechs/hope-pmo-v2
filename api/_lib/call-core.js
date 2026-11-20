@@ -1551,6 +1551,9 @@ async function summaryCompute(db, user, nowMs) {
    its answer to the next test. In production that is one long-lived client per warm lambda,
    which is where the sharing happens. */
 const PHONE_INDEX_TTL_MS = 300000;
+/* THE LISTS' LONGER LIFE -- see "A LONGER LIFE ONCE AN UPLOAD HAS SETTLED" below. */
+const PHONE_INDEX_SETTLE_MS = 600000;           // ten minutes after DATA_VERSION moved, an upload's own writes are long over
+const PHONE_INDEX_SETTLED_TTL_MS = 1800000;     // and the lists they made are then kept thirty minutes, not five
 const phoneIndexCache = new WeakMap();          // db -> { lists, nums, built }
 
 /* THE INDEX IS READ IN TWO PARTS, AND ONE BUILD IS SHARED -- 20 Nov 2026.
@@ -1591,6 +1594,29 @@ const phoneIndexCache = new WeakMap();          // db -> { lists, nums, built }
    only one the code has) is seen at the lists' own five-minute mark, as it always could be, and no
    longer also at the next recorded number.
 
+   A LONGER LIFE ONCE AN UPLOAD HAS SETTLED -- 20 Nov 2026, matter 3c.
+
+   The five minutes were a backstop and are still, for the first ten minutes after an upload. The
+   key already says everything an upload does to the lists: DATA_VERSION is stamped by api/upload.js
+   with the upload's own clock (`String(Date.now())`, on the LAST slice, after the sheets are written),
+   and sync reads it on every request. What the stamp does not say is that the register is written
+   just AFTER it (writeFollowupFromDeck, in the same request, a few seconds), which is why a rebuild
+   at the stamp can hold a register that is not finished and the five minutes mattered. So the stamp
+   is read as a clock as well: a build made at least ten minutes after the stamp (PHONE_INDEX_SETTLE_MS:
+   the host stops an upload at sixty seconds) is SETTLED, holds everything that upload wrote, and is
+   kept for thirty minutes (PHONE_INDEX_SETTLED_TTL_MS) instead of five. A build made sooner is
+   unsettled and lives five minutes exactly as before, so the first build after the first five
+   minutes past the settle point is the settled one. A stamp that is not a millisecond clock (empty
+   on a book that was never uploaded to, a test's label, a number from the future) never settles:
+   it degrades to five minutes, which is what the backstop was for.
+
+   What this rests on, and the tests hold it (test/phone-index.test.mjs reads the sources): every
+   writer of what the lists hold moves a stamp. An upload moves DATA_VERSION; the admin button that
+   restores the register from the deck (rebuildFollowup) now does too; a recorded number moves
+   NEW_NUMBER_VERSION (call app, portal and the old /api/followup endpoint) and re-reads only the
+   comments. What it costs: a change made by hand in the database that moves no stamp is seen after
+   thirty minutes where it was seen after five.
+
    Held against the DATABASE CLIENT, as above: a test's fake cannot hand its answer to the next
    test, and in production that is one long-lived client per warm instance. */
 
@@ -1602,8 +1628,12 @@ export async function phoneIndex(db, nowMs, dataVersion, numberVersion) {
   const today = todayKey(nowMs);
   let c = phoneIndexCache.get(db);
   if (!c) { c = { lists: null, nums: null, built: null }; phoneIndexCache.set(db, c); }
+  // The stamp as a clock: a build made PHONE_INDEX_SETTLE_MS after it holds everything its upload wrote. Anything that is
+  // not a millisecond clock (nothing uploaded yet, a label, a number too small to be one) never settles.
+  const stamp = Number(dataVersion);
+  const settledAfter = Number.isFinite(stamp) && stamp > 1e12 ? stamp + PHONE_INDEX_SETTLE_MS : NaN;
   const [lists, nums] = await Promise.all([
-    phonePart_(c, 'lists', today + '|' + String(dataVersion == null ? '' : dataVersion), nowMs, () => phoneIndexLists(db, today)),
+    phonePart_(c, 'lists', today + '|' + String(dataVersion == null ? '' : dataVersion), nowMs, () => phoneIndexLists(db, today), settledAfter),
     phonePart_(c, 'nums', String(numberVersion == null ? '' : numberVersion), nowMs, () => phoneNumberRows(db)),
   ]);
   // The same two parts as the index already held: the same index, no arithmetic. Building is
@@ -1614,16 +1644,17 @@ export async function phoneIndex(db, nowMs, dataVersion, numberVersion) {
   return value;
 }
 
-/** One part of the index: what `load` read, for one key, for five minutes -- or the read already
-    in flight for that key. A read that fails is not kept. */
-function phonePart_(c, slot, key, nowMs, load) {
+/** One part of the index: what `load` read, for one key, for five minutes -- or, when it was read after
+    `settledAfter` (the upload's own writes are over), for thirty -- or the read already in flight for that
+    key. A read that fails is not kept. */
+function phonePart_(c, slot, key, nowMs, load, settledAfter) {
   const hit = c[slot];
   if (hit && hit.key === key) {
     if (hit.pending) return hit.pending;
     // hit.at <= nowMs guards a clock that jumps backwards (the same guard the whole index had).
-    if (hit.at <= nowMs && (nowMs - hit.at) < PHONE_INDEX_TTL_MS) return Promise.resolve(hit.value);
+    if (hit.at <= nowMs && (nowMs - hit.at) < (hit.settled ? PHONE_INDEX_SETTLED_TTL_MS : PHONE_INDEX_TTL_MS)) return Promise.resolve(hit.value);
   }
-  const e = { key, at: nowMs, value: undefined, pending: null };
+  const e = { key, at: nowMs, settled: nowMs >= settledAfter, value: undefined, pending: null };
   e.pending = load().then(value => { e.value = value; e.pending = null; return value; },
     err => { if (c[slot] === e) c[slot] = null; throw err; });
   c[slot] = e;
