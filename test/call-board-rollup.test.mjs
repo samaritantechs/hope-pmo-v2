@@ -237,6 +237,25 @@ test('every way the database can be briefly unreachable stands in for the boards
   }
 });
 
+test('a failed board function says why in the server\'s own log, once for each failure, never on a good answer, and says whether the last board stands in', async () => {
+  const c = clock_(), lines = [], real = console.warn;
+  console.warn = (...a) => lines.push(a.join(' '));
+  try {
+    const { db, state } = flakyBoards_();
+    await run(db, ADMIN, c.at(0));
+    assert.deepEqual(lines, [], 'a good answer says nothing');
+    state.fail = TIMEOUT_;
+    await run(db, ADMIN, c.at(61000));                                            // asked, fails: says why
+    await run(db, ADMIN, c.at(125000));                                           // inside the pause: asks nothing, says nothing
+    assert.equal(lines.length, 1, lines.join(' | '));
+    assert.equal(lines[0], '[boards] call_board_rollup did not answer: 57014 canceling statement due to statement timeout -- the database was busy or unreachable: the last good board for this scope stands in, else the week is read the old way');
+    state.fail = { data: null, error: { code: '42501', message: 'permission denied for function call_board_rollup' } };
+    await run(db, ADMIN, c.at(400000));                                           // the pause is over: asked, refused
+    assert.equal(lines.length, 2);
+    assert.equal(lines[1], '[boards] call_board_rollup did not answer: 42501 permission denied for function call_board_rollup -- a fault: the week is read the old way');
+  } finally { console.warn = real; c.restore(); }
+});
+
 test('a function that is not installed, refused, or that answers a shape it does not make is a fault: the old read answers, never the last board', async () => {
   const faults = {
     'not installed (what PostgREST says)': { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.call_board_rollup(p_day, p_from, p_teams, p_to) in the schema cache' } },
@@ -563,7 +582,7 @@ test('the SQL, the app and the stand-in use the same function name and the same 
   assert.equal((APP.match(/db\.rpc\(CALL_BOARD_FN/g) || []).length, 1, 'the function is asked for in exactly one place');
   assert.match(APP, /const CALL_BOARD_PAUSE_MS = 5 \* 60 \* 1000;/);
   assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\.at\) < CALL_BOARD_PAUSE_MS\) return failed\.soft \? callBoardLast_\(db, scope\) : null;/);
-  assert.match(APP, /callBoardFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}return soft \? callBoardLast_\(db, scope\) : null;/, 'every failure path is remembered, with whether the database was briefly unreachable, and falls back');
+  assert.match(APP, /callBoardFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}console\.warn\(.*\);\n {2}return soft \? callBoardLast_\(db, scope\) : null;/, 'every failure path is remembered, with whether the database was briefly unreachable, says why in the server\'s own log, and falls back');
   assert.match(APP, /\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)\n {4}\.gte\('call_date', mon\)\.lte\('call_date', sun\), user\.teams\)\);/, 'the old read, unchanged: the same eight columns, and no category');
   assert.equal((APP.match(/\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)/g) || []).length, 1, 'the week\'s calls are read in exactly one place');
   assert.match(APP, /boardRowsFromLogs\(mine, mon, sun\), t: boardRowsFromLogs\(mine, today, today\)/, 'the fall-back adds the rows up with the one definition');
@@ -575,9 +594,9 @@ test('the SQL, the app and the stand-in use the same function name and the same 
 
 /* THE LAST GOOD BOARD STANDS IN (20 Nov 2026, handbook Part 123): the rule's source, held here; its behaviour is above. */
 test('the last good board stands in only for a failure that is the database being briefly unreachable, for ten minutes, for the same scope and day, and the old read stays for every other failure', () => {
-  assert.match(APP, /^import \{ fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the reader\'s own, and the ten minutes are defined once');
+  assert.match(APP, /^import \{ fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS, errWords \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the reader\'s own, and the ten minutes are defined once');
   assert.match(APP, /soft = isTransient\(error\);/);
-  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\);\s*\}/);
+  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\); why = errWords\(e\);\s*\}/);
   assert.match(APP, /\{ callBoardKeep_\(db, scope, data\); return data; \}/, 'only an answer that passed the shape check is kept');
   assert.match(APP, /\[mon, sun, today, user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\)\.slice\(\)\.sort\(\)\.join\('\\u0001'\) : '\*'\]\.join\('\|'\)/,
     'the scope is the three things the function is asked: the week, today and the teams (an admin is its own scope)');

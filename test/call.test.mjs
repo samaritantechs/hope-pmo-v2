@@ -3707,6 +3707,45 @@ test('called today: every way the database can be briefly unreachable stands in:
   }
 });
 
+/* A FAILED SMALL ANSWER SAYS WHY, IN THE SERVER'S OWN LOG (handbook Part 123): one line for each failure, never on a good answer, nothing
+   from the five minutes of pause (the function is not asked then). The words are the database's own: pg_stat_statements cannot say them,
+   because a cancelled statement is not in it. */
+test('called today: a failed function says why in the server\'s own log, once for each failure, never on a good answer, and says whether a held set stands in', async () => {
+  const c = clock_(), lines = [], real = console.warn;
+  console.warn = (...a) => lines.push(a.join(' '));
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    assert.deepEqual(lines, [], 'a good answer says nothing');
+    state.fail = TIMEOUT_;
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));              // asked, fails: says why
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(90000));              // inside the pause: asks nothing, says nothing
+    assert.equal(lines.length, 1, lines.join(' | '));
+    assert.equal(lines[0], '[call] called_phones_today did not answer: 57014 canceling statement due to statement timeout -- the database was busy or unreachable: a set held for today stands in, else the day is read the old way');
+    state.fail = { data: null, error: { code: '42501', message: 'permission denied for function called_phones_today' } };
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(400000));             // the pause is over: asked, refused
+    assert.equal(lines.length, 2);
+    assert.equal(lines[1], '[call] called_phones_today did not answer: 42501 permission denied for function called_phones_today -- a fault: the day is read the old way');
+    state.fail = { data: { phones: 'oops' }, error: null };
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(800000));             // a shape it does not make
+    assert.equal(lines.length, 3);
+    assert.equal(lines[2], '[call] called_phones_today did not answer: no error, but an answer of a shape the app does not take -- a fault: the day is read the old way');
+  } finally { console.warn = real; c.restore(); }
+});
+
+test('errWords: a failure\'s own words on one line, with its code, cut at 160 characters, and a reason when there is no error at all', async () => {
+  const { errWords } = await import('../api/_lib/supabase.js');
+  assert.equal(errWords(null), 'no error, but an answer of a shape the app does not take');
+  assert.equal(errWords({ code: '57014', message: 'canceling\n  statement   due to statement timeout' }), '57014 canceling statement due to statement timeout');
+  assert.equal(errWords(new TypeError('fetch failed')), 'fetch failed');
+  assert.equal(errWords('plain text'), 'plain text');
+  const long = errWords({ code: 'PGRST003', message: '<!DOCTYPE html>' + 'x'.repeat(500) });
+  assert.equal(long.length, 160, 'cut at 160');
+  assert.ok(long.startsWith('PGRST003 <!DOCTYPE html>x'));
+  assert.ok(!/\n/.test(errWords({ message: 'a\r\nb\nc' })), 'one line');
+});
+
 test('called today: an instance with no set yet reads the day once when the database is busy, and that set then stands in', async () => {
   const c = clock_();
   try {
@@ -3750,32 +3789,30 @@ test('called today: a clock that went backwards never makes a held set younger t
   } finally { c.restore(); }
 });
 
-test('called today: yesterday\'s set and a set built at another threshold never stand in', async () => {
-  // Yesterday's: a set built at 23:55 EAT is seven minutes old at 00:02 and still never serves the new day.
-  {
-    const c = clock_(), late = Date.parse('2026-07-24T20:55:00Z');
-    try {
-      const { db, state } = await flakyCalled_();
-      await callApi(db, 'api_callList', ['d1', 'today'], late);
-      state.fail = TIMEOUT_;
-      const seen = watch_(db);
-      await callApi(db, 'api_callList', ['d1', 'today'], late + 7 * 60 * 1000);
-      assert.ok(readsOf_(seen) >= 1, 'another day: the table is read');
-    } finally { c.restore(); }
-  }
-  // The threshold: the owner raised it to 20 s while the set was held at 5 s.
-  {
-    const c = clock_();
-    try {
-      const { db, state } = await flakyCalled_();
-      await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
-      db._dump('settings').push({ key: 'CALL_MIN_SECS', value: '20' });
-      state.fail = TIMEOUT_;
-      const seen = watch_(db);
-      await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
-      assert.ok(readsOf_(seen) >= 1, 'another threshold: the table is read');
-    } finally { c.restore(); }
-  }
+test('called today: yesterday\'s set never stands in', async () => {
+  // A set built at 23:55 EAT is seven minutes old at 00:02 and still never serves the new day.
+  const c = clock_(), late = Date.parse('2026-07-24T20:55:00Z');
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callList', ['d1', 'today'], late);
+    state.fail = TIMEOUT_;
+    const seen = watch_(db);
+    await callApi(db, 'api_callList', ['d1', 'today'], late + 7 * 60 * 1000);
+    assert.ok(readsOf_(seen) >= 1, 'another day: the table is read');
+  } finally { c.restore(); }
+});
+
+test('called today: a set built at another threshold still stands in: the threshold is read from the same busy database, and comparing it would send the heavy read', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    db._dump('settings').push({ key: 'CALL_MIN_SECS', value: '20' });            // the owner raised it while the set was held at 5 s
+    state.fail = TIMEOUT_;
+    const seen = watch_(db);
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+    assert.equal(readsOf_(seen), 0, 'for the ten minutes it is the set it was: the day is not read');
+  } finally { c.restore(); }
 });
 
 test('called today: a quiet day is an empty answer from the function, not a reason to read the table', async () => {

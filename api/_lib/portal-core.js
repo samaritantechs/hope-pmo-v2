@@ -1,4 +1,4 @@
-import { fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS } from './supabase.js';
+import { fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS, errWords } from './supabase.js';
 import { docketKeyOf } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
@@ -14545,14 +14545,16 @@ async function callBoardFromDb_(db, user, mon, sun, today) {
   const scope = callBoardScope_(user, mon, sun, today);
   const failed = callBoardFailed.get(db);
   if (failed && (Date.now() - failed.at) < CALL_BOARD_PAUSE_MS) return failed.soft ? callBoardLast_(db, scope) : null;
-  let soft = false;
+  let soft = false, why = '';
   try {
     const { data, error } = await db.rpc(CALL_BOARD_FN, { p_from: mon, p_to: sun, p_day: today,
       p_teams: user.teams && user.teams.length ? teamMatchList(user.teams) : null });
     if (!error && data && Array.isArray(data.w) && Array.isArray(data.t) && data.w.every(callBoardRowOk_) && data.t.every(callBoardRowOk_)) { callBoardKeep_(db, scope, data); return data; }
-    soft = isTransient(error);
-  } catch (e) { soft = isTransient(e); /* a client that throws is a function that failed */ }
+    soft = isTransient(error); why = errWords(error);
+  } catch (e) { soft = isTransient(e); why = errWords(e); /* a client that throws is a function that failed */ }
   callBoardFailed.set(db, { at: Date.now(), soft });
+  // Said once for each failure (the five minutes of pause ask nothing, so say nothing), never on a good answer: the reason is in the server's own log.
+  console.warn('[boards] ' + CALL_BOARD_FN + ' did not answer: ' + why + (soft ? ' -- the database was busy or unreachable: the last good board for this scope stands in, else the week is read the old way' : ' -- a fault: the week is read the old way'));
   return soft ? callBoardLast_(db, scope) : null;
 }
 async function callBoardSource_(db, user, mon, sun, today) {

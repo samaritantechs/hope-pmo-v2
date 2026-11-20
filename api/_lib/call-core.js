@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { fetchAll, runQuery, rpcAll, isTransient, STALE_OK_MS } from './supabase.js';
+import { fetchAll, runQuery, rpcAll, isTransient, STALE_OK_MS, errWords } from './supabase.js';
 import { teamAllowed } from './auth.js';
 import { TZ_OFFSET_MS, todayKey, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
 import { latestSnapshot, snapshotsInRange, resolveLatestPerKey, upperTeams, teamMatchList, registrySpellings } from './snapshots.js';
@@ -583,13 +583,15 @@ const calledFnFailed = new WeakMap();           // db -> { at, soft }: when the 
 async function calledPhonesFromDb_(db, day, min) {
   const failed = calledFnFailed.get(db);
   if (failed && (Date.now() - failed.at) < CALLED_FN_PAUSE_MS) return null;
-  let soft = false;
+  let soft = false, why = '';
   try {
     const { data, error } = await db.rpc(CALLED_FN, { p_day: day, p_min: min });
     if (!error && data && Array.isArray(data.phones)) return data.phones;
-    soft = isTransient(error);
-  } catch (e) { soft = isTransient(e); /* a client that throws is a function that failed */ }
+    soft = isTransient(error); why = errWords(error);
+  } catch (e) { soft = isTransient(e); why = errWords(e); /* a client that throws is a function that failed */ }
   calledFnFailed.set(db, { at: Date.now(), soft });
+  // Said once for each failure (the five minutes of pause ask nothing, so say nothing), never on a good answer: the reason is in the server's own log.
+  console.warn('[call] ' + CALLED_FN + ' did not answer: ' + why + (soft ? ' -- the database was busy or unreachable: a set held for today stands in, else the day is read the old way' : ' -- a fault: the day is read the old way'));
   return null;
 }
 async function calledTodaySet(db, nowMs) {
@@ -603,12 +605,14 @@ async function calledTodaySet(db, nowMs) {
   if (phones) {
     for (const p of phones) { const d = pnorm(p); if (d) set[d] = 1; }
   } else {
-    /* The function did not answer. If the database was only briefly unreachable, the set this instance holds for today (the same
-       threshold, not older than STALE_OK_MS) stands in and the table is not read; its age is left as it is, so the ten minutes are
-       counted from when it was really built. Read again here, not taken from above: another list may have replaced it while this
-       one waited. */
+    /* The function did not answer. If the database was only briefly unreachable, the set this instance holds for today (not older
+       than STALE_OK_MS) stands in and the table is not read; its age is left as it is, so the ten minutes are counted from when it
+       was really built. Read again here, not taken from above: another list may have replaced it while this one waited. The
+       threshold is NOT compared: it was read above from the very database that is struggling (a failed read answers the default), so
+       comparing it would send the heavy read exactly when the stand-in is wanted; if the owner changed it meanwhile, for the ten
+       minutes the set is the one it was. */
     const f = calledFnFailed.get(db), last = calledCache.get(db);
-    if (f && f.soft && last && last.day === day && last.min === min && last.at <= nowMs && (nowMs - last.at) < STALE_OK_MS) return last.value;
+    if (f && f.soft && last && last.day === day && last.at <= nowMs && (nowMs - last.at) < STALE_OK_MS) return last.value;
     // Filtered here rather than in the query: durations are numbers, and PostgREST-style range
     // filters on this path compare as text, where '60' sorts below '6'.
     const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', day));

@@ -78,6 +78,15 @@ export function isTransient(err) {
    expdf.js's ghost lookup has done the same since #755, with no time limit. */
 export const STALE_OK_MS = 10 * 60 * 1000;
 
+/** A failure's own words for a log line: its code and its message on one line, cut at 160 characters. A fall-back that swallows
+    the reason leaves nobody able to say WHY a small answer failed (handbook Part 123): the pg_stat_statements table cannot,
+    because a cancelled statement is not in it. No customer data can be in it: these are the database's own words about a
+    function call whose arguments are dates, a number and a list of team names. */
+export function errWords(err) {
+  if (!err) return 'no error, but an answer of a shape the app does not take';
+  return ((err.code ? String(err.code) + ' ' : '') + String(err.message || err)).replace(/\s+/g, ' ').slice(0, 160);
+}
+
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Runs a query, retrying only failures that look like the database being briefly unreachable.
