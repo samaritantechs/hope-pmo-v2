@@ -1,0 +1,63 @@
+-- =====================================================================================
+-- RUN-ME-076 -- AN INDEX THAT HOLDS A CUSTOMER'S NEWEST CURRENT ROW IN ONE PLACE   (20 Nov 2026)
+--
+--   "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner.
+--
+-- WHAT IT IS. One index on defaulter_snapshots, on the current rows only:
+--     (team, ref, snapshot_date desc, created_at desc)  where snapshot_type = 'current'
+-- DB ONLY: no code changes with it, nothing to deploy, and nothing is ever lost or altered by it
+-- (an index holds copies of keys; it changes no row).
+--
+-- WHY. Every Exp.Def list, the phone's Exp.Def list and Expected Defaulters ask db.rpc('defaulter_ghost_rows')
+-- (RUN-ME-055, made cheaper in CPU by RUN-ME-075) for the customers who left the book, and for each such customer
+-- the function needs the NEWEST CURRENT ROW. Without this index the planner reads ALL of the customer's rows (the
+-- (team, ref) index has no row type and no date in order, so every initial row and every day it was ever on a deck
+-- is fetched, then the newest is kept): the cost of one lookup grows with how long the customer stood on the decks,
+-- up to 110 days of rows. RUN-ME-075 did not change that: counted in PAGES the first text and the cheaper one read
+-- the same pages (handbook Part 114). With this index the newest current row of a (team, ref) is one index descent
+-- and one row, however long the history.
+--
+-- MEASURED, in buffers touched (hits and reads together), on a test book laid out the worst way (848,000 deck rows,
+-- every row in a random place, 20 teams, 110 days of history for each customer, about 200 departed customers a
+-- team asked for), the same call (RUN-ME-075's function), with the index against without it:
+--     1 team    16,027 ->  2,681   (21.9 ms -> 6.7 ms warm)
+--     5 teams   72,891 -> 11,832   (82.6 ms -> 24.7 ms)
+--    20 teams  297,972 -> 46,712   (306 ms -> 118 ms)
+-- 6 to 6.4 times fewer pages (on the kept check's own book of 60 teams, ten times and more). The same answers: the kept
+-- check compares the rows with and without the index. NOTE: the index helps RUN-ME-075's function (a lookup for each
+-- customer) and hardly helps the first text of the function (RUN-ME-055: 31,959 pages to 27,603 for four teams): it is the
+-- pair, RUN-ME-075 with this index, that reads about ten times fewer pages than either text alone.
+--
+-- WHAT IT COSTS, said plainly, because /api/upload writes this table (CLAUDE.md section 1): every CURRENT row an upload
+-- inserts now also writes one entry here (initial rows do not: the index is partial). Inserting a deck day of 20,000
+-- rows, 10,000 of them current, took 595 ms without it and 714 ms with it (median of ten interleaved runs on a test table
+-- with five other indexes): about 12 microseconds for each current row, +119 ms for a whole day's deck, +20% on that
+-- insert statement in the test (six runs of the kept check, on a smaller book, gave +0% to +21%: it is noisy; the order of
+-- ten percent); the live table has more indexes (two trigram ones among them), so the share is smaller and the absolute cost
+-- about the same. It is spread over the upload's slices (a 2,000-row slice: about 24 ms more).
+-- The index itself is about 20 MB per 850,000 rows (roughly 55 MB on the live table).
+--
+-- HOW TO RUN. Select ONLY the statement under "SECTION 1" and press Run: CREATE INDEX CONCURRENTLY is refused inside a
+-- transaction block, and the SQL editor sends everything selected as one. CONCURRENTLY does not block /api/upload's
+-- writes while it builds (RUN-ME-054 and RUN-ME-055 were built the same way). A btree on the current half of the table
+-- builds in seconds to a few minutes; if the tab still says "Running..." after ten minutes, look from a SECOND tab at
+-- pg_stat_progress_create_index (zero rows = nothing is building) and at SECTION 2 (an INVALID index left behind is
+-- dropped with SECTION 4 and the statement is run again). Safe to run again: IF NOT EXISTS.
+--
+-- UNDO. SECTION 4, alone, the same way. Dropping it puts the lookup back to reading every row of a customer and changes
+-- nothing else.
+-- =====================================================================================
+
+-- SECTION 1 -- RUN ALONE.
+create index concurrently if not exists idx_def_snap_current_last on defaulter_snapshots (team, ref, snapshot_date desc, created_at desc) where snapshot_type = 'current';
+
+-- SECTION 2 -- read-only. Must say valid = true. (false: dropped with SECTION 4, then SECTION 1 again.)
+select indexrelid::regclass::text as index_name, indisvalid as valid, pg_size_pretty(pg_relation_size(indexrelid)) as size from pg_index where indexrelid::regclass::text = 'idx_def_snap_current_last';
+
+-- SECTION 3 -- read-only. Proof the planner takes it: the lookup of one customer's newest current row. Put a real
+-- ref and team of the book in the two places; the plan must name idx_def_snap_current_last, with no Sort node.
+-- explain select d.ref, d.snapshot_date from defaulter_snapshots d where d.team = 'TEAM' and d.ref = 'REF' and d.snapshot_type = 'current' order by d.snapshot_date desc, d.created_at desc limit 1;
+
+-- SECTION 4 -- UNDO, RUN ALONE.
+-- drop index concurrently if exists idx_def_snap_current_last;
+-- END OF THE FILE: if the editor shows this line, the whole text arrived.
