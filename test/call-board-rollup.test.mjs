@@ -353,7 +353,7 @@ test('the kept check holds the file to the production definition and breaks it o
   assert.match(CHECK, /const \{ boardRowsFromLogs \} = await import\('\.\.\/\.\.\/api\/_lib\/call-core\.js'\);/, 'the yardstick is the production function, imported, never written again');
   assert.match(CHECK, /const \{ teamMatchList \} = await import\('\.\.\/\.\.\/api\/_lib\/snapshots\.js'\);/, 'and the team list is the production one');
   assert.match(CHECK, /order by id\) t;/, 'the reference rows are read in id order, the order the board always read them in');
-  assert.match(CHECK, /select officer, team, duration, portfolio, ref, phone, outcome, call_date from call_logs/, 'the eight columns the board selects, and no category');
+  assert.match(CHECK, /select officer, team, duration, portfolio, ref, phone, outcome, call_date from call_logs\$\{teams \?/, 'the reference rows are the eight columns the board selects, and no category');
   assert.match(CHECK, /order by id asc limit 10000 offset/, 'the old read is measured in the shape the app sent it');
   assert.match(CHECK, /Buffers: shared/, 'the pages are counted, not only the milliseconds');
   assert.match(CHECK, /'random'/, 'in the worst layout a table can have, as well as the one calls really have');
@@ -361,7 +361,7 @@ test('the kept check holds the file to the production definition and breaks it o
   assert.match(CHECK, /has_function_privilege/);
   const m = CHECK.match(/const BREAKS = \[([\s\S]*?)\n\];/);
   assert.ok(m, 'the list of deliberate breaks is found');
-  assert.ok((m[1].match(/^  \[/gm) || []).length >= 20, 'deliberate breaks of the file: ' + (m[1].match(/^  \[/gm) || []).length);
+  assert.ok((m[1].match(/^  \[/gm) || []).length >= 28, 'deliberate breaks of the file: ' + (m[1].match(/^  \[/gm) || []).length);
 });
 
 test('the handbook and CHAT.md record RUN-ME-078 with its numbers and what is not claimed', () => {
