@@ -170,6 +170,182 @@ test('a function that failed is not asked again for five minutes, and is asked a
   } finally { Date.now = realNow; }
 });
 
+/* THE LAST GOOD BOARD STANDS IN WHEN THE DATABASE IS ONLY BRIEFLY UNREACHABLE -- 20 Nov 2026 (handbook Part 123).
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   The owner's second pg_stat_statements paste: the old week read ran 810 times (about 58 boards) beside 31 runs of the function:
+   when the function failed once, every board of the next five minutes was fifteen statements, made when the database was
+   already busy. A failure that is the database being busy or unreachable (isTransient) leaves the last answer only older, so for ten
+   minutes it stands in, and says how old it is (callsStaleS). Every other failure is a fault, answered by the old read as before. */
+function flakyBoards_() {
+  const db = fakeDb(tables(), { rpc: CALL_BOARD_RPC }), real = db.rpc.bind(db), state = { fail: null, asked: 0 };
+  db.rpc = (name, args) => {
+    if (name !== 'call_board_rollup') return real(name, args);
+    state.asked++;
+    if (!state.fail) return real(name, args);
+    const f = state.fail;
+    return typeof f === 'function' ? f() : Promise.resolve(f);                  // an error PostgREST RETURNS, or one the client THROWS
+  };
+  return { db, state };
+}
+const TIMEOUT_ = { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } };
+function clock_() {
+  const real = Date.now, t0 = real.call(Date);
+  return { at: (ms, base = NOW) => { Date.now = () => t0 + ms; return base + ms; }, restore: () => { Date.now = real; } };
+}
+
+test('when the database is only briefly unreachable the last good boards stand in for ten minutes, say how old they are, and the week is not read', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = flakyBoards_(), log = watch(db);
+    const good = await run(db, ADMIN, c.at(0));
+    assert.equal(good.callsStaleS, undefined, 'a board from the function carries no age');
+    state.fail = TIMEOUT_;
+    for (const s of [61, 125, 200, 400, 560]) {                                  // every one is past the one-minute answer
+      const got = await run(db, ADMIN, c.at(s * 1000));
+      assert.deepEqual(boards(got), boards(good), s + ' s: the same boards');
+      assert.equal(got.callsStaleS, s, s + ' s: and the answer says how old they are');
+    }
+    assert.equal(log.reads.length, 0, 'the week of calls was not read');
+    assert.equal(state.asked, 3, 'the function: at 0 s, at 61 s (it fails: five minutes of pause), at 400 s (it fails again)');
+    const old = await run(db, ADMIN, c.at(625 * 1000));                           // ten minutes old (and past the one-minute answer of the last): it no longer stands in
+    assert.deepEqual(boards(old), boards(good), 'the boards are the boards the rows give');
+    assert.equal(old.callsStaleS, undefined, 'and they are not marked old');
+    assert.ok(log.reads.length >= 1, 'read the old way');
+  } finally { c.restore(); }
+});
+
+test('every way the database can be briefly unreachable stands in for the boards: a returned error, a thrown one, a full pool, the network', async () => {
+  const moments = {
+    'a statement timeout, returned': TIMEOUT_,
+    'a full connection pool, returned': { data: null, error: { code: 'PGRST003', message: 'Timed out acquiring connection from connection pool.' } },
+    'a gateway page, returned': { data: null, error: { message: '<!DOCTYPE html><html><title>522: Connection timed out</title>' } },
+    'the network, thrown': () => { throw new TypeError('fetch failed'); },
+    'a timeout, thrown': () => { throw new Error('canceling statement due to statement timeout'); },
+  };
+  for (const [name, fail] of Object.entries(moments)) {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      const good = await run(db, ADMIN, c.at(0));
+      state.fail = fail;
+      const got = await run(db, ADMIN, c.at(61000));
+      assert.deepEqual(boards(got), boards(good), name);
+      assert.equal(got.callsStaleS, 61, name + ': marked old');
+      assert.equal(log.reads.length, 0, name + ': the week was not read');
+    } finally { c.restore(); }
+  }
+});
+
+test('a function that is not installed, refused, or that answers a shape it does not make is a fault: the old read answers, never the last board', async () => {
+  const faults = {
+    'not installed (what PostgREST says)': { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.call_board_rollup(p_day, p_from, p_teams, p_to) in the schema cache' } },
+    'refused': { data: null, error: { code: '42501', message: 'permission denied for function call_board_rollup' } },
+    'a shape it does not make': { data: { w: 'x', t: [] }, error: null },
+    'a row with no figures': { data: { w: [{ name: 'X' }], t: [] }, error: null },
+    'nothing at all': { data: null, error: null },
+    'a call that throws something that is not a bad moment': () => { throw new Error('boom'); },
+  };
+  for (const [name, answer] of Object.entries(faults)) {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      const good = await run(db, ADMIN, c.at(0));
+      state.fail = answer;
+      const got = await run(db, ADMIN, c.at(61000));
+      assert.deepEqual(boards(got), boards(good), name + ': the boards are the boards the rows give');
+      assert.equal(got.callsStaleS, undefined, name + ': and not marked old');
+      assert.ok(log.reads.length >= 1, name + ': the week was read the old way');
+      const reads = log.reads.length;
+      const paused = await run(db, ADMIN, c.at(125000));                          // inside the five minutes the fault began: a fault is not a bad moment then either
+      assert.equal(paused.callsStaleS, undefined, name + ': not handed out in the pause');
+      assert.ok(log.reads.length > reads, name + ': the week was read again the old way');
+    } finally { c.restore(); }
+  }
+});
+
+test('a board that failed the shape check is never kept as the last good one', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = flakyBoards_(), log = watch(db);
+    const good = await run(db, ADMIN, c.at(0));
+    state.fail = { data: { w: 'x', t: [] }, error: null };                       // a fault: answered by the rows
+    await run(db, ADMIN, c.at(61000));
+    state.fail = TIMEOUT_;                                                       // and, once the five minutes of pause are over, a bad moment
+    log.reads.length = 0;
+    const got = await run(db, ADMIN, c.at(400000));
+    assert.deepEqual(boards(got), boards(good), 'what stands in is the board the function made at 0 s, not the answer that was refused');
+    assert.equal(got.callsStaleS, 400);
+    assert.equal(log.reads.length, 0);
+  } finally { c.restore(); }
+});
+
+test('ten minutes exactly is no longer a board that stands in, and a clock that went backwards never makes one younger', async () => {
+  {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      await run(db, ADMIN, c.at(0));
+      state.fail = TIMEOUT_;
+      const got = await run(db, ADMIN, c.at(600 * 1000));
+      assert.equal(got.callsStaleS, undefined);
+      assert.ok(log.reads.length >= 1, 'read the old way');
+    } finally { c.restore(); }
+  }
+  {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      await run(db, ADMIN, c.at(300000));
+      state.fail = TIMEOUT_;
+      const got = await run(db, ADMIN, c.at(100000));                            // the process clock is EARLIER than the board's own
+      assert.equal(got.callsStaleS, undefined, 'a board from the future is not trusted');
+      assert.ok(log.reads.length >= 1);
+    } finally { c.restore(); }
+  }
+});
+
+test('the last good board is kept for each viewer\'s scope and day: another scope, another day and another week are never handed this one\'s', async () => {
+  // Another scope: the admin has a good board; a viewer with teams has none, so a failing database reads the rows for the viewer.
+  {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      await run(db, ADMIN, c.at(0));
+      state.fail = TIMEOUT_;
+      const want = boards(await run(fakeDb(tables()), viewer(['KONGOWE']), c.at(61000)));
+      log.reads.length = 0;
+      const got = await run(db, viewer(['KONGOWE']), c.at(61000));
+      assert.deepEqual(boards(got), want, 'the viewer\'s own board, from the rows');
+      assert.equal(got.callsStaleS, undefined);
+      assert.ok(log.reads.length >= 1, 'read the old way for the scope that has no board of its own');
+      // and once that scope has one (the five minutes of pause the failure above began are over), its own stands in
+      const mine = viewer(['KONGOWE', 'MBAGALA']);
+      state.fail = null;
+      const good = await run(db, mine, c.at(400000));
+      state.fail = TIMEOUT_;
+      log.reads.length = 0;
+      const again = await run(db, mine, c.at(470000));
+      assert.deepEqual(boards(again), boards(good));
+      assert.equal(again.callsStaleS, 70);
+      assert.equal(log.reads.length, 0);
+    } finally { c.restore(); }
+  }
+  // Another day (the same week): the key carries today. A board made at 23:55 EAT on Friday is seven minutes old at 00:02 on Saturday:
+  // young enough to stand in by its age, and it still never serves the new day.
+  {
+    const c = clock_(), late = Date.parse('2026-07-24T20:55:00Z');
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      await run(db, ADMIN, c.at(0, late));
+      state.fail = TIMEOUT_;
+      const got = await run(db, ADMIN, c.at(7 * 60 * 1000, late));
+      assert.equal(got.callsStaleS, undefined, 'yesterday\'s board is not today\'s');
+      assert.ok(log.reads.length >= 1);
+    } finally { c.restore(); }
+  }
+});
+
 test('the function is not capped at a thousand rows: 1,200 officers are 1,200 lines, from either source', async () => {
   const t = tables(); t.call_logs = [];
   for (let i = 0; i < 1200; i++) t.call_logs.push(L('z' + String(i).padStart(5, '0'), 'OFFICER ' + i, 'T' + (i % 7), '07' + String(10000000 + i), TODAY, { duration: 6 + (i % 5), portfolio: i % 2 === 0, ref: 'R' + (i % 50) }));
@@ -386,8 +562,8 @@ test('the SQL, the app and the stand-in use the same function name and the same 
   assert.match(APP, /db\.rpc\(CALL_BOARD_FN, \{ p_from: mon, p_to: sun, p_day: today,\n {6}p_teams: user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\) : null \}\)/, 'the same list onTeams sends, or none');
   assert.equal((APP.match(/db\.rpc\(CALL_BOARD_FN/g) || []).length, 1, 'the function is asked for in exactly one place');
   assert.match(APP, /const CALL_BOARD_PAUSE_MS = 5 \* 60 \* 1000;/);
-  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\) < CALL_BOARD_PAUSE_MS\) return null;/);
-  assert.match(APP, /callBoardFailed\.set\(db, Date\.now\(\)\);\n {2}return null;/, 'every failure path is remembered and falls back');
+  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\.at\) < CALL_BOARD_PAUSE_MS\) return failed\.soft \? callBoardLast_\(db, scope\) : null;/);
+  assert.match(APP, /callBoardFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}return soft \? callBoardLast_\(db, scope\) : null;/, 'every failure path is remembered, with whether the database was briefly unreachable, and falls back');
   assert.match(APP, /\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)\n {4}\.gte\('call_date', mon\)\.lte\('call_date', sun\), user\.teams\)\);/, 'the old read, unchanged: the same eight columns, and no category');
   assert.equal((APP.match(/\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)/g) || []).length, 1, 'the week\'s calls are read in exactly one place');
   assert.match(APP, /boardRowsFromLogs\(mine, mon, sun\), t: boardRowsFromLogs\(mine, today, today\)/, 'the fall-back adds the rows up with the one definition');
@@ -395,6 +571,20 @@ test('the SQL, the app and the stand-in use the same function name and the same 
   const mock = read('test/snapshot-totals-rpc.mjs');
   assert.match(mock, /call_board_rollup: async \(store, a = \{\}\) =>/);
   for (const k of ['p_teams', 'p_from', 'p_to', 'p_day']) { assert.match(mock, new RegExp('a\\.' + k + '\\b')); assert.ok(F078.includes(k + ' '), 'the SQL names ' + k); }
+});
+
+/* THE LAST GOOD BOARD STANDS IN (20 Nov 2026, handbook Part 123): the rule's source, held here; its behaviour is above. */
+test('the last good board stands in only for a failure that is the database being briefly unreachable, for ten minutes, for the same scope and day, and the old read stays for every other failure', () => {
+  assert.match(APP, /^import \{ fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the reader\'s own, and the ten minutes are defined once');
+  assert.match(APP, /soft = isTransient\(error\);/);
+  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\);\s*\}/);
+  assert.match(APP, /\{ callBoardKeep_\(db, scope, data\); return data; \}/, 'only an answer that passed the shape check is kept');
+  assert.match(APP, /\[mon, sun, today, user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\)\.slice\(\)\.sort\(\)\.join\('\\u0001'\) : '\*'\]\.join\('\|'\)/,
+    'the scope is the three things the function is asked: the week, today and the teams (an admin is its own scope)');
+  assert.match(APP, /return v && age >= 0 && age < STALE_OK_MS \? \{ w: v\.data\.w, t: v\.data\.t, staleS: Math\.round\(age \/ 1000\) \} : null;/, 'younger than ten minutes, never from the future, and it says how old it is');
+  assert.match(APP, /if \(now - v\.at >= STALE_OK_MS\) m\.delete\(k\);/, 'nothing older than it may be used is kept');
+  assert.match(APP, /\.\.\.\(callSrc\.staleS \? \{ callsStaleS: callSrc\.staleS \} : \{\}\),/, 'the answer says when the boards are an older answer, and carries nothing when they are not');
+  assert.equal((APP.match(/\? callBoardLast_\(db, scope\)/g) || []).length, 2, 'handed out in the pause and after a failure, nowhere else');
 });
 
 test('the kept check holds the file to the production definition and breaks it on purpose', () => {

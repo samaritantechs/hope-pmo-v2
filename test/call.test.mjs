@@ -3596,6 +3596,188 @@ test('called today: a function that failed is not asked again for five minutes, 
   } finally { Date.now = realNow; }
 });
 
+/* THE LAST GOOD SET STANDS IN WHEN THE DATABASE IS ONLY BRIEFLY UNREACHABLE -- 20 Nov 2026 (handbook Part 123).
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   Three and a half hours after the function landed, the owner's second pg_stat_statements paste showed the OLD read still running as
+   often as the function (389 runs beside 386): when the function failed once, every refresh of the next five minutes was the
+   heavy read, made when the database was already busy. A failure that is the database being busy or unreachable (isTransient: a
+   timeout, a cancelled statement, a full pool, the network) leaves the last good set only OLDER, so for ten minutes it stands in and
+   the day's calls are not read. Every other failure is a fault and is answered by the old read, as it always was. */
+async function flakyCalled_() {
+  const db = await calledDb_(CALLED_PHONES_RPC);
+  const real = db.rpc.bind(db), state = { fail: null, asked: 0 };
+  db.rpc = (name, args) => {
+    if (name !== 'called_phones_today') return real(name, args);
+    state.asked++;
+    if (!state.fail) return real(name, args);
+    const f = state.fail;
+    return typeof f === 'function' ? f() : Promise.resolve(f);                  // an error PostgREST RETURNS, or one the client THROWS
+  };
+  return { db, state };
+}
+const TIMEOUT_ = { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } };
+/* One clock for both things that keep time: the request's own (what the set's age is counted in) and Date.now (the five-minute pause). */
+function clock_() {
+  const real = Date.now, t0 = real.call(Date);
+  return { at: ms => { Date.now = () => t0 + ms; return NOW + ms; }, restore: () => { Date.now = real; } };
+}
+const readsOf_ = seen => seen.tables.filter(t => t === 'call_logs').length;
+
+test('called today: when the database is only briefly unreachable the set the instance holds stands in for ten minutes, and the day\'s calls are not read', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+    const first = await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));               // the function answers: the set is built
+    assert.equal(first.rows.find(r => r.ref === '222').called, true);
+    const seen = watch_(db);
+    state.fail = TIMEOUT_;
+    for (const s of [40, 90, 200, 340, 400, 500]) {                                          // every one is past the half-minute: each used to be the whole day, read page by page
+      const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(s * 1000));
+      assert.equal(d.rows.find(r => r.ref === '222').called, true, s + ' s: still ticked');
+    }
+    assert.equal(readsOf_(seen), 0, 'the day was not read: ' + seen.tables.join(','));
+    assert.equal(state.asked, 3, 'the function is asked at 0 s, then at 40 s (it fails: five minutes of pause), then at 340 s (it fails again)');
+    const old = await callApi(db, 'api_callList', ['d1', 'today'], c.at(600 * 1000));       // the set is ten minutes old: it no longer stands in
+    assert.equal(old.rows.find(r => r.ref === '222').called, true);
+    assert.ok(readsOf_(seen) >= 1, 'ten minutes old, the day is read the old way');
+    const reads = readsOf_(seen);
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(700 * 1000));
+    assert.equal(readsOf_(seen), reads, 'and the set built then stands in again, its ten minutes counted from its own age');
+  } finally { c.restore(); }
+});
+
+test('called today: twelve minutes of a database that keeps failing cost one read of the day, where each refresh used to cost one', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    state.fail = TIMEOUT_;
+    const seen = watch_(db);
+    for (let s = 40; s <= 720; s += 40) await callApi(db, 'api_callList', ['d1', 'today'], c.at(s * 1000));   // 17 requests, each past the half-minute
+    const pages = readsOf_(seen);
+    assert.ok(pages >= 1 && pages <= 3, 'one read of the day (a page or two), at the one moment the set was ten minutes old: ' + pages);
+  } finally { c.restore(); }
+});
+
+test('called today: a function that is not installed, refused, or that answers a shape it does not make is a fault, not a bad moment: the old read answers, as it always did', async () => {
+  const faults = {
+    'not installed (what PostgREST says)': { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.called_phones_today(p_day, p_min) in the schema cache' } },
+    'refused': { data: null, error: { code: '42501', message: 'permission denied for function called_phones_today' } },
+    'a shape it does not make': { data: { phones: 'oops' }, error: null },
+    'nothing at all': { data: null, error: null },
+    'a call that throws something that is not a bad moment': () => { throw new Error('boom'); },
+  };
+  for (const [name, answer] of Object.entries(faults)) {
+    const c = clock_();
+    try {
+      const { db, state } = await flakyCalled_();
+      await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+      await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+      state.fail = answer;
+      const seen = watch_(db);
+      const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+      assert.equal(d.rows.find(r => r.ref === '222').called, true, name + ': ticked all the same');
+      assert.ok(readsOf_(seen) >= 1, name + ': the day was read the old way, not served from the set held');
+    } finally { c.restore(); }
+  }
+});
+
+test('called today: every way the database can be briefly unreachable stands in: a returned error, a thrown one, a full pool, the network', async () => {
+  const moments = {
+    'a statement timeout, returned': TIMEOUT_,
+    'a full connection pool, returned': { data: null, error: { code: 'PGRST003', message: 'Timed out acquiring connection from connection pool.' } },
+    'a gateway page, returned': { data: null, error: { message: '<!DOCTYPE html><html><title>522: Connection timed out</title>' } },
+    'the network, thrown': () => { throw new TypeError('fetch failed'); },
+    'a timeout, thrown': () => { throw new Error('canceling statement due to statement timeout'); },
+  };
+  for (const [name, fail] of Object.entries(moments)) {
+    const c = clock_();
+    try {
+      const { db, state } = await flakyCalled_();
+      await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+      await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+      state.fail = fail;
+      const seen = watch_(db);
+      const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+      assert.equal(d.rows.find(r => r.ref === '222').called, true, name);
+      assert.equal(readsOf_(seen), 0, name + ': the day was not read');
+    } finally { c.restore(); }
+  }
+});
+
+test('called today: an instance with no set yet reads the day once when the database is busy, and that set then stands in', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    state.fail = TIMEOUT_;
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+    const seen = watch_(db);
+    const a = await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    assert.equal(a.rows.find(r => r.ref === '222').called, true);
+    const reads = readsOf_(seen);
+    assert.ok(reads >= 1, 'no set at all: the day is read, as before');
+    for (const s of [40, 200, 400, 500]) await callApi(db, 'api_callList', ['d1', 'today'], c.at(s * 1000));
+    assert.equal(readsOf_(seen), reads, 'and then not again for ten minutes');
+  } finally { c.restore(); }
+});
+
+test('called today: an officer\'s own new call still ticks while the held set stands in', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    state.fail = TIMEOUT_;
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 40, dir: 'out', num: '0712000001' }]], c.at(60000));
+    const seen = watch_(db);
+    const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(70000));
+    assert.equal(d.rows.find(r => r.ref === '111').called, true, 'merged into the held set by the sync');
+    assert.equal(readsOf_(seen), 0);
+  } finally { c.restore(); }
+});
+
+test('called today: a clock that went backwards never makes a held set younger than it is', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(300000));            // built five minutes "in"
+    state.fail = TIMEOUT_;
+    const seen = watch_(db);
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(100000));            // the request's clock is EARLIER than the set's own
+    assert.ok(readsOf_(seen) >= 1, 'a set from the future is not trusted: the day is read');
+  } finally { c.restore(); }
+});
+
+test('called today: yesterday\'s set and a set built at another threshold never stand in', async () => {
+  // Yesterday's: a set built at 23:55 EAT is seven minutes old at 00:02 and still never serves the new day.
+  {
+    const c = clock_(), late = Date.parse('2026-07-24T20:55:00Z');
+    try {
+      const { db, state } = await flakyCalled_();
+      await callApi(db, 'api_callList', ['d1', 'today'], late);
+      state.fail = TIMEOUT_;
+      const seen = watch_(db);
+      await callApi(db, 'api_callList', ['d1', 'today'], late + 7 * 60 * 1000);
+      assert.ok(readsOf_(seen) >= 1, 'another day: the table is read');
+    } finally { c.restore(); }
+  }
+  // The threshold: the owner raised it to 20 s while the set was held at 5 s.
+  {
+    const c = clock_();
+    try {
+      const { db, state } = await flakyCalled_();
+      await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+      db._dump('settings').push({ key: 'CALL_MIN_SECS', value: '20' });
+      state.fail = TIMEOUT_;
+      const seen = watch_(db);
+      await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+      assert.ok(readsOf_(seen) >= 1, 'another threshold: the table is read');
+    } finally { c.restore(); }
+  }
+});
+
 test('called today: a quiet day is an empty answer from the function, not a reason to read the table', async () => {
   const db = await calledDb_(CALLED_PHONES_RPC);
   const seen = watch_(db);

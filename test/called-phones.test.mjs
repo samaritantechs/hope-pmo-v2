@@ -67,10 +67,24 @@ test('the SQL, the app and the test mock use the same function name and the same
   assert.match(MOCK, /CALLED_PHONES_RPC/);
 });
 
+/* THE LAST GOOD SET STANDS IN (20 Nov 2026, handbook Part 123): the rule's source, held here; its behaviour is in test/call.test.mjs. */
+test('the last good set stands in only for a failure that is the database being briefly unreachable, for ten minutes, from the set\'s own age, and the old read stays for every other failure', () => {
+  assert.match(read('api/_lib/supabase.js'), /^export const STALE_OK_MS = 10 \* 60 \* 1000;$/m, 'ten minutes, defined once, beside isTransient');
+  assert.match(CORE, /^import \{ fetchAll, runQuery, rpcAll, isTransient, STALE_OK_MS \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the one the reader already retries on');
+  assert.match(APP, /soft = isTransient\(error\);/, 'an error the function returned is judged by isTransient, never by a list of this file\'s own');
+  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\);\s*\}/, 'and so is a call that threw');
+  assert.match(APP, /const f = calledFnFailed\.get\(db\), last = calledCache\.get\(db\);\n {4}if \(f && f\.soft && last && last\.day === day && last\.min === min && last\.at <= nowMs && \(nowMs - last\.at\) < STALE_OK_MS\) return last\.value;/,
+    'the set stands in only after a soft failure, for today, at the same threshold, from its own age, and the table is not read');
+  assert.equal((APP.match(/return last\.value;/g) || []).length, 1, 'in exactly one place');
+  const stale = APP.indexOf('return last.value;'), old = APP.indexOf("db.from('call_logs').select('phone, duration')");
+  assert.ok(stale > 0 && old > stale, 'and it is decided BEFORE the table is read');
+  assert.ok(!/calledCache\.set\(db, \{ at: nowMs[^)]*\}\);[\s\S]{0,40}return last/.test(APP), 'a stale answer never renews the set\'s age: the ten minutes are counted from when it was built');
+});
+
 test('the app keeps the old read as the fall-back, remembers a failure for five minutes, and asks the database for the answer in one place', () => {
   assert.match(APP, /const CALLED_FN_PAUSE_MS = 5 \* 60 \* 1000;/);
-  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\) < CALLED_FN_PAUSE_MS\) return null;/, 'a function that failed (or is not installed) is not asked again for five minutes');
-  assert.match(APP, /calledFnFailed\.set\(db, Date\.now\(\)\);\n {2}return null;/, 'every failure path (an error, a thrown call, an answer that is not {phones: [...]}) is remembered and falls back');
+  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\.at\) < CALLED_FN_PAUSE_MS\) return null;/, 'a function that failed (or is not installed) is not asked again for five minutes');
+  assert.match(APP, /calledFnFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}return null;/, 'every failure path (an error, a thrown call, an answer that is not {phones: [...]}) is remembered, with whether the database was briefly unreachable, and falls back');
   assert.match(APP, /if \(!error && data && Array\.isArray\(data\.phones\)\) return data\.phones;/, 'an answer is trusted only when it is the shape the function makes');
   assert.match(APP, /const rows = await fetchAll\(\(\) => db\.from\('call_logs'\)\.select\('phone, duration'\)\.eq\('call_date', day\)\);/, 'the old read, unchanged');
   assert.match(APP, /if \(num\(r\.duration\) <= min\) continue;/, 'and its threshold, unchanged: not "at least"');
