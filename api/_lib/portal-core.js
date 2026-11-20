@@ -13,7 +13,7 @@ import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
   recoveryByTeam, expdfRecoveryTotals, EXPDF_RECOVERY_FILE } from './snapshot-totals.js';
 import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
-import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote } from './snapshot-totals.js';
+import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote, defaulterDeckDays } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord, pmoBand,
   PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf,
@@ -3568,6 +3568,72 @@ const legalDcMsg_ = dc => `Notisi hutolewa kwa mdaiwa wa DC ${LEGAL_MIN_DC} na z
 const legalDcWaived_ = d => { const p = dsParts(dsOf(d)); return !!p && p.paid === 11 && p.target === 12; };
 const legalEligible_ = d => legalDcWaived_(d) || missedDc_(d) >= LEGAL_MIN_DC;
 
+/* NO SECOND NOTICE WHILE THE LAST ONE IS NOT CLEARED -- "Avoid duplicate demand notices - one cant
+   create a second when the last one is not yet cleared" (the owner, 20 Nov 2026), and, asked what
+   is allowed: "one can create demand for the same ref no if the existing is cleared and the new
+   one is 2dc+ or ds 11/12". The register had already shown what a second letter does: one
+   customer served six times on one day (the officer pressing Issue again each time the print did
+   not appear), 60 customers with a same-day repeat and 48 served on several days (db/RUN-ME-074
+   removed the repeats of one day).
+
+   TWO QUESTIONS, ASKED SEPARATELY AND BOTH MUST PASS. (1) Is the new letter allowed at all: the
+   customer is at 2 DC and above, or at D.S 11-12 (legalEligible_, unchanged). (2) Does an earlier
+   notice stand in the way: the customer's LAST notice (any date, any source: the app's or the
+   register's upload) is not cleared.
+
+   "CLEARED" IS THE REGISTER'S OWN WORD AND ITS OWN TEST (noticeCleared_: the customer is off the
+   deck, or owes nothing -- the State column's "Amemaliza / Cleared"), applied to the TIME SINCE
+   THE NOTICE and not only to today: a notice is cleared if the customer owes nothing today, or if
+   on any day a defaulters deck was uploaded after it (the calendar the dashboard already reads,
+   defaulterDeckDays) the customer was off that day's current deck or owed nothing on it. So a
+   customer served in September, who cleared in October and is in default again now, may be served
+   again; a customer who has stood on every deck since the notice may not. The preview names the
+   notice that stands in the way (openNotice), the drawer withholds the button and offers that
+   notice's reprint, and addDemandNotice refuses anyway, so a stale screen cannot slip one
+   through. Reprints are never gated: those letters were issued.
+
+   COST: nothing for a customer with no notice (the usual case: no read is added). For one who has
+   one, a single read of that customer's own deck rows since the notice (the (ref, day) index) and
+   the calendar, which is cached. Neither is on /api/upload or /api/call.
+
+   WHAT THIS CANNOT KNOW, said once: a day whose deck was uploaded but never built into the
+   calendar is not a day the customer could have cleared on (a missed record reads as "did not
+   clear", the safe side); a team missing from one day's file reads as cleared that day, as it
+   does everywhere else (the whole-book rule); with no calendar at all (RUN-ME-022 not run) the
+   register's reading of today stands. */
+const noticeCleared_ = current => current != null && current <= 0;
+/* WHAT THE REGISTER ALREADY HOLDS FOR THIS CUSTOMER -- one small read, by reference, newest first.
+   The preview shows it and the guard at creation asks it, so the two cannot read a customer's
+   notices two ways. */
+async function legalServed_(db, d) {
+  return (await fetchAll(() => db.from('demand_notices').select('id, notice_id, notice_date, issued_by')
+    .eq('ref', String(d.ref).trim()).order('notice_date', { ascending: false }).limit(10)))
+    .map(n => ({ id: n.id, noticeId: n.notice_id || '', date: String(n.notice_date || '').slice(0, 10), by: n.issued_by || '' }))
+    .sort((x, y) => y.date.localeCompare(x.date) || String(y.noticeId).localeCompare(String(x.noticeId)));
+}
+/* DID THIS CUSTOMER CLEAR AFTER THAT NOTICE? Up to the deck the customer is being read from
+   (d.snapshot_date: with today's current file not yet in, that is yesterday's). */
+async function legalClearedSince_(db, d, noticeDate) {
+  const upTo = String(d.snapshot_date || '').slice(0, 10);
+  if (!upTo || upTo <= noticeDate) return false;                // no deck since the notice: nothing could have cleared
+  const days = await defaulterDeckDays(db);
+  if (!days) return false;                                      // no calendar: the reading of today stands
+  const after = [...days].filter(x => x > noticeDate && x <= upTo);
+  if (!after.length) return false;
+  const rows = await fetchAll(() => db.from('defaulter_snapshots').select('snapshot_date, arrears')
+    .eq('ref', String(d.ref).trim()).eq('snapshot_type', 'current').gt('snapshot_date', noticeDate).lte('snapshot_date', upTo));
+  const owing = new Set((rows || []).filter(r => !noticeCleared_(num(r.arrears))).map(r => String(r.snapshot_date).slice(0, 10)));
+  return after.some(x => !owing.has(x));
+}
+/** The notice that stands in the way of a new one, or null: the customer's last notice, unless they
+    owe nothing today or have cleared since it. */
+async function legalOpenNotice_(db, served, d) {
+  if (!served.length) return null;
+  if (noticeCleared_(num(d.arrears))) return null;
+  return (await legalClearedSince_(db, d, served[0].date)) ? null : served[0];
+}
+const legalOpenMsg_ = n => `Mdaiwa huyu ana notisi ${n.noticeId} (${n.date}) ambayo bado haijamalizika; huwezi kutoa nyingine. Pakua ile. / This customer's last notice, ${n.noticeId} (${n.date}), is not cleared yet, so a second cannot be issued. Download that one.`;
+
 async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
   if (!ref) throw badRequest('A customer REF# is required.');
   const d = await findDefaulter(db, user, ref, nowMs);
@@ -3581,12 +3647,10 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
   const noticeKey = new Date(noticeMs).toISOString().slice(0, 10);
   /* ALREADY SERVED? The register showed one customer served six times on one day -- the
      officer pressed Issue again each time the print did not appear. What is already there is
-     said here, so the drawer can offer the reprint FIRST and a second letter is a decision,
-     not an accident. One small read, by reference. */
-  const served = (await fetchAll(() => db.from('demand_notices').select('id, notice_id, notice_date, issued_by')
-    .eq('ref', String(d.ref).trim()).order('notice_date', { ascending: false }).limit(10)))
-    .map(n => ({ id: n.id, noticeId: n.notice_id || '', date: String(n.notice_date || '').slice(0, 10), by: n.issued_by || '' }))
-    .sort((x, y) => y.date.localeCompare(x.date) || String(y.noticeId).localeCompare(String(x.noticeId)));
+     said here, so the drawer can offer the reprint FIRST; and while that notice is not cleared
+     a second letter is not possible at all (openNotice, legalOpenNotice_). One small read, by
+     reference (legalServed_, the guard's own). */
+  const served = await legalServed_(db, d);
   return { found: true, ref: d.ref, full_name: d.full_name, team: d.team, contact: d.contact,
     guarantor: d.guarantor_name, guarantor_contact: d.guarantor_contact,
     arrears: num(d.arrears), paidCount: f.paidCount, ds: dsOf(d), weeks: f.weeks, rate: f.rate,
@@ -3594,7 +3658,7 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
     disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
     ...a, noticeDate: noticeKey,
     dc, minDc: LEGAL_MIN_DC, eligible: legalEligible_(d), dcWaived: legalDcWaived_(d),
-    served, servedToday: served.filter(s => s.date === noticeKey) };
+    served, servedToday: served.filter(s => s.date === noticeKey), openNotice: await legalOpenNotice_(db, served, d) };
 }
 
 /* "search by ref, phone no and names etc" -- the New-notice drawer finds the customer on the
@@ -3664,9 +3728,17 @@ async function addDemandNotice(db, user, p, nowMs) {
   const fine = roundUp500(f.fine);
   const a = legalAmounts(d, fine);
   const ratePct = Math.round(f.rate * 1000) / 10;
-  const [noticeId, teamRows, brand, staff] = await Promise.all([
+  /* The customer's own notices ride in the SAME round of reads as the number, the teams, the
+     brand and the officer's phone: the guard below costs one more small read by reference and no
+     more waiting (creation is an officer's act, a few a day; the phone and the upload never
+     come here). */
+  const [noticeId, teamRows, brand, staff, served] = await Promise.all([
     nextNoticeId(db, d.full_name, noticeKey), readTeamsAll(db, nowMs), legalBrand_(db), staffPhone_(db, user, p.device),
+    legalServed_(db, d),
   ]);
+  // No second notice while the last one is not cleared (see noticeCleared_): refused here as well as withheld on the screen.
+  const open = await legalOpenNotice_(db, served, d);
+  if (open) throw badRequest(legalOpenMsg_(open));
   const teamRow = teamRows.find(t => K(t.team) === K(d.team)) || null;
   const letter = demandLetter_(d, user, p, noticeId, noticeKey, days,
     { fine, ratePct, paidCount: f.paidCount, ...a }, teamRow, legalContact_(user, teamRow, brand.phone, staff.phone));
@@ -4175,7 +4247,7 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
       // Rec % per row: the arrears drop over what the letter demanded against.
       rec_pct: down == null ? null : pctOf(down, at),
       // What a person working the notice needs to see at a glance.
-      notice_state: (current != null && current <= 0) ? 'Amemaliza / Cleared'
+      notice_state: noticeCleared_(current) ? 'Amemaliza / Cleared'
         : paidSince > 0 ? 'Analipa / Paying'
         : (current != null && current < at) ? 'Amepunguza / Reducing'
         : current == null ? 'Hakuna deki / No deck'

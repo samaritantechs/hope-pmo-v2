@@ -1907,9 +1907,17 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
    says the customer is at the rule; the pick list carries the DC on every line. */
 test('the New-notice drawer withholds Issue below the DC rule and says why', () => {
   const app = appSrc();
-  const fn = app.slice(app.indexOf('function lgIssue()'), app.indexOf('function lgPrint('));
-  assert.ok(/e\.eligible \? '<button class="btn w" id="lgGo">/.test(fn), 'the button only when eligible');
-  assert.ok(/if \(e\.eligible\) \$\('#lgGo'\)\.onclick/.test(fn), 'and its handler likewise');
+  // The Legal module's own drawer: the slice used to run from lgIssue to the end of EVERY module (lgPrint no longer exists), so another module's text could satisfy a pin.
+  const lgSrc = page('legal'); const fn = lgSrc.slice(lgSrc.indexOf('function lgIssue()'));
+  assert.ok(lgSrc.indexOf('function lgIssue()') > 0 && !fn.includes('function devices'), 'the slice is the Legal module and only it');
+  assert.ok(/can \? '<button class="btn w" id="lgGo">/.test(fn) && /var can = e\.eligible && !openN;/.test(fn), 'the button only when eligible AND nothing stands in the way');
+  assert.ok(/if \(can\) \$\('#lgGo'\)\.onclick/.test(fn), 'and its handler likewise');
+  /* "Avoid duplicate demand notices - one cant create a second when the last one is not yet cleared": the
+     server says which notice stands in the way (openNotice); the drawer names it, withholds the button and
+     offers that notice's reprint; and one press is one request. */
+  assert.ok(/var openN = e\.openNotice \|\| null/.test(fn) && /openN \? '<div class="note bad">⛔/.test(fn) && /is not cleared yet — a second cannot be issued/.test(fn), 'the notice that stands in the way is named, on the screen');
+  assert.ok(/id="lgReprint">Pakua ile \/ Download that one/.test(fn) && /lgDownload\(\(openN \|\| dup\[0\]\)\.id\)/.test(fn), 'and its reprint is offered instead of a second letter');
+  assert.ok(/var go = \$\('#lgGo'\); if \(go\.disabled\) return; go\.disabled = true;/.test(fn) && /go\.disabled = false; toast\(/.test(fn), 'one press is one request: the button is off until the server has answered, and back on after a refusal');
   assert.ok(/e\.eligible \? '' : '<div class="note bad">/.test(fn) && /e\.minDc/.test(fn), 'the rule and the figure, said on the screen');
   assert.ok(/DC \(marejesho yaliyokosekana \/ missed\)/.test(fn), 'the DC as a fact row');
   assert.ok(/var low = !r\.eligible;/.test(fn) && !/r\.dc < f\.minDc/.test(fn), 'the pick list marks who the SERVER says cannot be served (r.eligible), it does not decide the rule itself');

@@ -142,10 +142,21 @@ function lgIssue(){
       if (!e.found){ toast('Hakuna mdaiwa mwenye REF# hiyo. / No defaulter with that REF#.', true); return; }
       /* ALREADY SERVED TODAY. The register showed one customer served six times on one day:
          the officer pressed Issue again each time the print did not appear. The reprint is
-         offered first; a second letter is still possible, but it is now a decision. */
-      var dup = e.servedToday || [], old = (e.served || []).filter(function(s){ return dup.indexOf(s) < 0; });
+         offered first. (A customer who owes still cannot be served again: see below. Served
+         today and cleared the same day is the one case left where a second letter is possible,
+         and there it is a decision.) */
+      /* NO SECOND NOTICE WHILE THE LAST ONE IS NOT CLEARED -- "Avoid duplicate demand notices - one
+         cant create a second when the last one is not yet cleared". The server decides (openNotice:
+         the notice that stands in the way; null when the customer has none or has cleared); the
+         screen says which, withholds the button and offers that notice's reprint instead. */
+      var openN = e.openNotice || null, dup = openN ? [] : (e.servedToday || []);
+      var old = (e.served || []).filter(function(s){ return !openN || s.id !== openN.id; }).filter(function(s){ return dup.indexOf(s) < 0; });
+      var can = e.eligible && !openN;
       $('#lgPrev').innerHTML =
-        (dup.length ? '<div class="note">⚠ Ameshapewa notisi leo: <b>'+esc(dup.map(function(s){ return s.noticeId; }).join(', '))+'</b>.'
+        (openN ? '<div class="note bad">⛔ Mdaiwa huyu ana notisi <b>'+esc(openN.noticeId)+'</b> ('+esc(openN.date)+') ambayo bado haijamalizika — huwezi kutoa nyingine.'
+            + ' / This customer\'s last notice <b>'+esc(openN.noticeId)+'</b> ('+esc(openN.date)+') is not cleared yet — a second cannot be issued.'
+            + ' <a href="#" id="lgReprint">Pakua ile / Download that one</a></div>' : '')
+        + (dup.length ? '<div class="note">⚠ Ameshapewa notisi leo: <b>'+esc(dup.map(function(s){ return s.noticeId; }).join(', '))+'</b>.'
             + ' Pakua ile ile badala ya kutoa nyingine. / Already served today — download that one rather than issue another.'
             + ' <a href="#" id="lgReprint">Pakua tena / Download again</a></div>' : '')
         + (old.length ? '<div class="sub">Notisi za awali / Earlier notices: '+esc(old.map(function(s){ return s.noticeId+' ('+s.date+')'; }).join(', '))+'</div>' : '')
@@ -179,10 +190,15 @@ function lgIssue(){
         /* "Button on demands notices must be download not print": the letter is made into a PDF
            file on this device (noticePdf_) and saved -- in the app to Downloads, in a browser as
            a download -- named after the customer. No print dialog anywhere. */
-        + (e.eligible ? '<button class="btn w" id="lgGo">Toa notisi &amp; pakua PDF / Issue &amp; download PDF</button>'
+        + (can ? '<button class="btn w" id="lgGo">Toa notisi &amp; pakua PDF / Issue &amp; download PDF</button>'
         + '<div class="sub">Faili huitwa jina la mteja na kuhifadhiwa Downloads. / The file is named after the customer and saved to Downloads.</div>' : '');
-      if (dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgDownload(dup[0].id); };
-      if (e.eligible) $('#lgGo').onclick = function(){
+      if (openN || dup.length) $('#lgReprint').onclick = function(ev){ ev.preventDefault(); lgDownload((openN || dup[0]).id); };
+      if (can) $('#lgGo').onclick = function(){
+        /* One press is one request: the register showed one customer served six times on one day,
+           the officer pressing Issue again each time the print did not appear. The button is off
+           from the press until the server has answered (it stays off for a notice that was
+           issued; a refusal or a failed call turns it on again). */
+        var go = $('#lgGo'); if (go.disabled) return; go.disabled = true;
         srv('addDemandNotice', { ref:e.ref, noticeDate:$('#lgDate').value, noticeDays:$('#lgDays').value,
           guarantorName:$('#lgG').value.trim(), guarantorContact:$('#lgGC').value.trim(), device: hcDevice_() })
           .then(function(r){
@@ -190,7 +206,7 @@ function lgIssue(){
             noticePdf_(r.html);
             closeDrawer(); render();
           })
-          .catch(function(err){ toast(String(err.message||err), true); });
+          .catch(function(err){ go.disabled = false; toast(String(err.message||err), true); });
       };
     }).catch(function(err){ toast(String(err.message||err), true); });
   };

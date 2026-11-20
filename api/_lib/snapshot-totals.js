@@ -312,6 +312,16 @@ function builtDays(db, nowMs = Date.now()) {
     believing something it has just changed. */
 export function noteDeckTotalsChanged(db) { builtDaysCache.delete(db); }
 
+/** THE DAYS A DEFAULTERS DECK HAS BEEN UPLOADED AND BUILT FOR -- the system's own calendar of
+    uploaded days (deck_totals_days), the very read the dashboard already makes, kept a minute per
+    process. A Set of 'YYYY-MM-DD', or null when the table is not there (RUN-ME-022 not run). The
+    Legal tab asks it to tell a customer who has CLEARED since their last notice from one who has
+    stood on every deck since: a day with no deck is not a day they could have cleared on. */
+export async function defaulterDeckDays(db, nowMs = Date.now()) {
+  const b = await builtDays(db, nowMs);
+  return b ? b.defaulter : null;
+}
+
 /** Which kind of totals a snapshot table's uploads feed, or null for a table that feeds none. */
 export function deckKindOfTable(table) {
   if (table === 'repayment_snapshots') return 'expected';
