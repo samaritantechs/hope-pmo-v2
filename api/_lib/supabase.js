@@ -59,8 +59,41 @@ const TRANSIENT = /timeout|timed out|canceling statement|fetch failed|network|EC
 
 export function isTransient(err) {
   if (!err) return false;
-  const m = String(err.message || err);
-  return TRANSIENT.test(m);
+  try { return TRANSIENT.test(String(err.message || err)); }
+  catch (_) { return false; }          // a throwable that cannot even be turned into words (a null-prototype object, a toString that throws) is not "briefly unreachable"; it must not turn a retry loop into a second error
+}
+
+/* IS THIS FAILURE THE DATABASE BEING BRIEFLY BUSY OR UNREACHABLE -- AND NOTHING ELSE? -- the stand-ins' test, 20 Nov 2026 (handbook Part 126).
+
+   isTransient above answers "is a retry worth making?" and is deliberately loose: it matches words anywhere in a message, so
+   `invalid input syntax for type integer: "15022"` (it contains 502), `column "network_id" does not exist` and `permission denied for
+   schema "timeouts"` all pass for transient, and a retry costs nothing when it is wrong. The stand-ins of the call app and the call
+   boards ask a different question: "may a list that is up to ten minutes old be handed out INSTEAD of reading the table?" Answered
+   yes for a fault, it hides the fault for ten minutes under a log line that says the database was busy; the second reader of #767 found
+   five such messages that passed, and two real ones (PGRST002, a refused connection) that did not.
+
+   So when the database named the failure (a SQLSTATE or a PostgREST code) the NAME decides: busy are a cancelled statement or a lock
+   timeout (57014, 55P03), a deadlock or a serialization failure (40P01, 40001), a server going away or starting (57P01, 57P02, 57P03),
+   too few resources such as no connection left (class 53), a connection that failed (08000, 08001, 08003, 08004, 08006, 08007) and
+   PostgREST's own "cannot reach the database / the schema cache / the pool" (PGRST000 to PGRST003); every other code is the database
+   naming a fault (a bad value 22xxx, a broken constraint 23xxx, a missing column or table or no right 42xxx, a missing function
+   PGRST202 ...). Only when there is no such code (the network, a gateway page, a thrown error) are the words read, and then only the
+   network and gateway ones, never in a message that is a JavaScript fault of our own ("Cannot read properties of undefined (reading
+   'timeout')" is a bug, not a bad moment). Never throws. */
+const BUSY_SQLSTATE = /^(57014|57P0[123]|55P03|40001|40P01|53[0-9A-Z]{3}|08(000|001|003|004|006|007))$/;
+const BUSY_POSTGREST = /^PGRST00[0-3]$/;
+const NAMED_BY_DB = /^([0-9A-Z]{5}|PGRST\d+)$/;
+const BUSY_WORDS = /fetch failed|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|network (error|request failed)|time(d)?[ -]?out|canceling statement|^\s*<!DOCTYPE|\b(502|503|504|522)\b/i;
+const JS_FAULT = /^(Cannot (read|set|convert|destructure)\b|.{0,80} is not (a function|defined|iterable|a constructor)|Unexpected (token|end|identifier)|Invalid or unexpected token|Maximum call stack)/i;
+export function isBusyFailure(err) {
+  try {
+    if (!err) return false;
+    const code = typeof err === 'object' && typeof err.code === 'string' ? err.code.trim() : '';
+    if (NAMED_BY_DB.test(code)) return BUSY_SQLSTATE.test(code) || BUSY_POSTGREST.test(code);
+    const message = typeof err === 'string' ? err : (typeof err === 'object' && typeof err.message === 'string' ? err.message : '');
+    if (!message && !code) return false;
+    return !JS_FAULT.test(message) && BUSY_WORDS.test(code + ' ' + message);
+  } catch (_) { return false; }
 }
 
 /* HOW OLD A LAST GOOD ANSWER MAY BE when a fresh one cannot be had because the database is briefly
@@ -84,7 +117,8 @@ export const STALE_OK_MS = 10 * 60 * 1000;
     function call whose arguments are dates, a number and a list of team names. */
 export function errWords(err) {
   if (!err) return 'no error, but an answer of a shape the app does not take';
-  return ((err.code ? String(err.code) + ' ' : '') + String(err.message || err)).replace(/\s+/g, ' ').slice(0, 160);
+  try { return ((err.code ? String(err.code) + ' ' : '') + String(err.message || err)).replace(/\s+/g, ' ').slice(0, 160); }
+  catch (_) { return 'an error that cannot be read as words'; }          // a log line must never be what fails a list
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));

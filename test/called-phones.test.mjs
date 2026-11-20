@@ -70,27 +70,33 @@ test('the SQL, the app and the test mock use the same function name and the same
 /* THE LAST GOOD SET STANDS IN (20 Nov 2026, handbook Part 123): the rule's source, held here; its behaviour is in test/call.test.mjs. */
 test('the last good set stands in only for a failure that is the database being briefly unreachable, for ten minutes, from the set\'s own age, and the old read stays for every other failure', () => {
   assert.match(read('api/_lib/supabase.js'), /^export const STALE_OK_MS = 10 \* 60 \* 1000;$/m, 'ten minutes, defined once, beside isTransient');
-  assert.match(CORE, /^import \{ fetchAll, runQuery, rpcAll, isTransient, STALE_OK_MS, errWords \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the one the reader already retries on');
-  assert.match(APP, /soft = isTransient\(error\);/, 'an error the function returned is judged by isTransient, never by a list of this file\'s own');
-  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\); why = errWords\(e\);\s*\}/, 'and so is a call that threw');
-  assert.match(APP, /const f = calledFnFailed\.get\(db\), last = calledCache\.get\(db\);\n {4}if \(f && f\.soft && last && last\.day === day && last\.at <= nowMs && \(nowMs - last\.at\) < STALE_OK_MS\) return last\.value;/,
-    'the set stands in only after a soft failure, for today, from its own age, and the table is not read (the threshold is not compared: it is read from the database that is struggling)');
-  assert.equal((APP.match(/return last\.value;/g) || []).length, 1, 'in exactly one place');
-  const stale = APP.indexOf('return last.value;'), old = APP.indexOf("db.from('call_logs').select('phone, duration')");
-  assert.ok(stale > 0 && old > stale, 'and it is decided BEFORE the table is read');
-  assert.ok(!/calledCache\.set\(db, \{ at: nowMs[^)]*\}\);[\s\S]{0,40}return last/.test(APP), 'a stale answer never renews the set\'s age: the ten minutes are counted from when it was built');
+  assert.match(CORE, /^import \{ fetchAll, runQuery, rpcAll, isBusyFailure, STALE_OK_MS, errWords \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly busy or unreachable" is supabase.js\'s isBusyFailure (not the loose retry test)');
+  assert.ok(!/isTransient/.test(CORE), 'and nothing here judges a failure by the loose test any more');
+  assert.match(APP, /soft = isBusyFailure\(error\);/, 'an error the function returned is judged by isBusyFailure, never by a list of this file\'s own');
+  assert.match(APP, /catch \(e\) \{ soft = isBusyFailure\(e\); why = errWords\(e\);\s*\}/, 'and so is a call that threw');
+  assert.equal((APP.match(/const heldSet = \(\) => \{ const last = calledCache\.get\(db\); return last && last\.day === day && last\.at <= nowMs && \(nowMs - last\.at\) < STALE_OK_MS \? last\.value : null; \};/g) || []).length, 1,
+    'the held set is for today, from its own age, never from the future, read when it is wanted: defined once');
+  assert.equal((APP.match(/if \(paused && paused\.soft && \(Date\.now\(\) - paused\.at\) < CALLED_FN_PAUSE_MS\) \{ const s = heldSet\(\); if \(s\) return s; \}/g) || []).length, 1,
+    'while the pause that follows a busy failure runs, the held set stands in before ANYTHING is read');
+  assert.equal((APP.match(/if \(got\.soft\) \{ const s = heldSet\(\); if \(s\) return s; \}/g) || []).length, 1,
+    'and after a busy failure just seen, by the kind that failure handed back (the threshold is not compared: it is read from the database that is struggling)');
+  assert.equal((APP.match(/return s;/g) || []).length, 2, 'the held set is handed out in exactly those two places');
+  const early = APP.indexOf('const s = heldSet(); if (s) return s; }'), setting = APP.indexOf("settingGet(db, 'CALL_MIN_SECS')"), late = APP.lastIndexOf('const s = heldSet(); if (s) return s; }'), old = APP.indexOf("db.from('call_logs').select('phone, duration')"), built = APP.indexOf('calledCache.set(db, { at: nowMs, day, min, value: set });');
+  assert.ok(early > 0 && early < setting, 'the first is decided BEFORE the threshold is read: nothing is read while the held set stands in');
+  assert.ok(late > setting && late < old, 'the second is decided BEFORE the table is read');
+  assert.ok(built > old && APP.split('calledCache.set(db,').length === 2, 'the cache is written once, after a set was BUILT: a held set never renews its own age, so the ten minutes are counted from when it was built');
 });
 
 test('the app keeps the old read as the fall-back, remembers a failure for five minutes, and asks the database for the answer in one place', () => {
   assert.match(APP, /const CALLED_FN_PAUSE_MS = 5 \* 60 \* 1000;/);
-  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\.at\) < CALLED_FN_PAUSE_MS\) return null;/, 'a function that failed (or is not installed) is not asked again for five minutes');
-  assert.match(APP, /calledFnFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}console\.warn\(.*\);\n {2}return null;/, 'every failure path (an error, a thrown call, an answer that is not {phones: [...]}) is remembered, with whether the database was briefly unreachable, says why in the server\'s own log, and falls back');
-  assert.match(APP, /if \(!error && data && Array\.isArray\(data\.phones\)\) return data\.phones;/, 'an answer is trusted only when it is the shape the function makes');
+  assert.match(APP, /if \(failed && \(Date\.now\(\) - failed\.at\) < CALLED_FN_PAUSE_MS\) return \{ phones: null, soft: failed\.soft \};/, 'a function that failed (or is not installed) is not asked again for five minutes, and the pause hands back the kind of the failure that began it');
+  assert.match(APP, /calledFnFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}console\.warn\(.*\);\n {2}return \{ phones: null, soft \};/, 'every failure path (an error, a thrown call, an answer that is not {phones: [...]}) is remembered, with whether the database was briefly unreachable, says why in the server\'s own log, and falls back, handing its OWN kind back to its caller (never read from memory afterwards: another list may have overwritten it)');
+  assert.match(APP, /if \(!error && data && Array\.isArray\(data\.phones\)\) return \{ phones: data\.phones \};/, 'an answer is trusted only when it is the shape the function makes');
   assert.match(APP, /const rows = await fetchAll\(\(\) => db\.from\('call_logs'\)\.select\('phone, duration'\)\.eq\('call_date', day\)\);/, 'the old read, unchanged');
   assert.match(APP, /if \(num\(r\.duration\) <= min\) continue;/, 'and its threshold, unchanged: not "at least"');
   assert.equal((APP.match(/db\.rpc\(CALLED_FN/g) || []).length, 1, 'the function is asked for in exactly one place');
   assert.equal((APP.match(/from\('call_logs'\)\.select\('phone, duration'\)/g) || []).length, 1, 'and the day\'s rows are read in exactly one place (one definition of "called today")');
-  assert.match(APP, /for \(const p of phones\) \{ const d = pnorm\(p\); if \(d\) set\[d\] = 1; \}/, 'the numbers come back as stored and pnorm, here, is what decides what a number is (the SQL never normalises)');
+  assert.match(APP, /for \(const p of got\.phones\) \{ const d = pnorm\(p\); if \(d\) set\[d\] = 1; \}/, 'the numbers come back as stored and pnorm, here, is what decides what a number is (the SQL never normalises)');
 });
 
 test('the kept check holds the file to what it says and breaks it on purpose', () => {

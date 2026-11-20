@@ -299,6 +299,86 @@ test('a board that failed the shape check is never kept as the last good one', a
   } finally { c.restore(); }
 });
 
+/* WHAT THE SECOND READER OF #767 FOUND (handbook Part 126), on the boards' side. */
+test('a board with a row that lacks its figures is a wrong shape: never kept, and never what stands in later', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = flakyBoards_(), log = watch(db);
+    const good = await run(db, ADMIN, c.at(0));
+    state.fail = { data: { w: [{ name: 'X' }], t: [] }, error: null };              // rows with no figures at all: refused, answered by the rows
+    const refused = await run(db, ADMIN, c.at(61000));
+    assert.deepEqual(boards(refused), boards(good), 'the rows give the board the function gave');
+    assert.ok(!JSON.stringify(boards(refused)).includes('"X"'), 'and nobody called X is on it');
+    state.fail = TIMEOUT_;                                                          // and, once the five minutes of pause are over, a bad moment
+    log.reads.length = 0;
+    const later = await run(db, ADMIN, c.at(400000));
+    assert.deepEqual(boards(later), boards(good), 'what stands in is the board that passed the check');
+    assert.equal(later.callsStaleS, 400);
+    assert.equal(log.reads.length, 0);
+  } finally { c.restore(); }
+});
+
+test('two different team lists never share a kept board, even when a team NAME holds the character the key was once joined with', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = flakyBoards_(), log = watch(db);
+    await run(db, viewer(['KONGOWE', 'MBAGALA']), c.at(0));                         // a good board for two teams
+    state.fail = TIMEOUT_;
+    log.reads.length = 0;
+    const other = await run(db, viewer(['KONGOWE\u0001MBAGALA']), c.at(61000));     // ONE team whose name holds U+0001: another scope altogether
+    assert.equal(other.callsStaleS, undefined, 'it is not handed the two-team viewer\'s board');
+    assert.ok(log.reads.length >= 1, 'it is read the old way, for its own scope');
+  } finally { c.restore(); }
+});
+
+test('a failure that cannot even be turned into words never fails the boards: it is a fault, and the week is read the old way', async () => {
+  const unreadable = {
+    'a null-prototype object, thrown': () => { throw Object.create(null); },
+    'an object whose toString throws, thrown': () => { throw { toString() { throw new Error('x'); } }; },
+    'a null-prototype object, returned as the error': { data: null, error: Object.create(null) },
+  };
+  for (const [name, fail] of Object.entries(unreadable)) {
+    const c = clock_();
+    try {
+      const { db, state } = flakyBoards_(), log = watch(db);
+      const good = await run(db, ADMIN, c.at(0));
+      state.fail = fail;
+      log.reads.length = 0;
+      const got = await run(db, ADMIN, c.at(61000));
+      assert.deepEqual(boards(got), boards(good), name + ': the boards answered');
+      assert.equal(got.callsStaleS, undefined, name + ': nobody can say it was a bad moment: no older board is handed out');
+      assert.ok(log.reads.length >= 1, name + ': the week was read the old way');
+    } finally { c.restore(); }
+  }
+});
+
+test('the boards judge a failure by the stand-in\'s own test: a fault whose message holds 502, network or timeout is read the old way; the schema-cache code and a refused connection stand in', async () => {
+  const faults = {
+    'a bad value whose text holds 502': { data: null, error: { code: '22P02', message: 'invalid input syntax for type integer: "15022"' } },
+    'a missing column called network_id': { data: null, error: { code: '42703', message: 'column "network_id" does not exist' } },
+    'a bug of ours that mentions a timeout': () => { throw new TypeError("Cannot read properties of undefined (reading 'timeout')"); },
+  };
+  const moments = {
+    'the schema cache is being rebuilt': { data: null, error: { code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.' } },
+    'a refused connection': () => { throw new Error('connect ECONNREFUSED 10.0.0.1:443'); },
+  };
+  for (const [kind, table, stands] of [['fault', faults, false], ['bad moment', moments, true]]) {
+    for (const [name, fail] of Object.entries(table)) {
+      const c = clock_();
+      try {
+        const { db, state } = flakyBoards_(), log = watch(db);
+        const good = await run(db, ADMIN, c.at(0));
+        state.fail = fail;
+        log.reads.length = 0;
+        const got = await run(db, ADMIN, c.at(61000));
+        assert.deepEqual(boards(got), boards(good), kind + ' ' + name);
+        if (stands) { assert.equal(got.callsStaleS, 61, kind + ' ' + name + ': the last good board stands in'); assert.equal(log.reads.length, 0, kind + ' ' + name + ': the week is not read'); }
+        else { assert.equal(got.callsStaleS, undefined, kind + ' ' + name + ': no older board is handed out'); assert.ok(log.reads.length >= 1, kind + ' ' + name + ': the week is read the old way'); }
+      } finally { c.restore(); }
+    }
+  }
+});
+
 test('ten minutes exactly is no longer a board that stands in, and a clock that went backwards never makes one younger', async () => {
   {
     const c = clock_();
@@ -594,12 +674,13 @@ test('the SQL, the app and the stand-in use the same function name and the same 
 
 /* THE LAST GOOD BOARD STANDS IN (20 Nov 2026, handbook Part 123): the rule's source, held here; its behaviour is above. */
 test('the last good board stands in only for a failure that is the database being briefly unreachable, for ten minutes, for the same scope and day, and the old read stays for every other failure', () => {
-  assert.match(APP, /^import \{ fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS, errWords \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly unreachable" is the reader\'s own, and the ten minutes are defined once');
-  assert.match(APP, /soft = isTransient\(error\);/);
-  assert.match(APP, /catch \(e\) \{ soft = isTransient\(e\); why = errWords\(e\);\s*\}/);
+  assert.match(APP, /^import \{ fetchAll, runQuery , rpcAll, isBusyFailure, STALE_OK_MS, errWords \} from '\.\/supabase\.js';$/m, 'the one definition of "briefly busy or unreachable" is supabase.js\'s isBusyFailure, and the ten minutes are defined once');
+  assert.match(APP, /soft = isBusyFailure\(error\);/);
+  assert.match(APP, /catch \(e\) \{ soft = isBusyFailure\(e\); why = errWords\(e\);\s*\}/);
+  assert.ok(!/isTransient/.test(APP), 'the loose retry test is not the stand-in\'s test');
   assert.match(APP, /\{ callBoardKeep_\(db, scope, data\); return data; \}/, 'only an answer that passed the shape check is kept');
-  assert.match(APP, /\[mon, sun, today, user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\)\.slice\(\)\.sort\(\)\.join\('\\u0001'\) : '\*'\]\.join\('\|'\)/,
-    'the scope is the three things the function is asked: the week, today and the teams (an admin is its own scope)');
+  assert.match(APP, /JSON\.stringify\(\[mon, sun, today, user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\)\.slice\(\)\.sort\(\) : null\]\)/,
+    'the scope is the three things the function is asked: the week, today and the teams (an admin is its own scope), written so that no team NAME can make two lists one key');
   assert.match(APP, /return v && age >= 0 && age < STALE_OK_MS \? \{ w: v\.data\.w, t: v\.data\.t, staleS: Math\.round\(age \/ 1000\) \} : null;/, 'younger than ten minutes, never from the future, and it says how old it is');
   assert.match(APP, /if \(now - v\.at >= STALE_OK_MS\) m\.delete\(k\);/, 'nothing older than it may be used is kept');
   assert.match(APP, /\.\.\.\(callSrc\.staleS \? \{ callsStaleS: callSrc\.staleS \} : \{\}\),/, 'the answer says when the boards are an older answer, and carries nothing when they are not');

@@ -1,4 +1,4 @@
-import { fetchAll, runQuery , rpcAll, isTransient, STALE_OK_MS, errWords } from './supabase.js';
+import { fetchAll, runQuery , rpcAll, isBusyFailure, STALE_OK_MS, errWords } from './supabase.js';
 import { docketKeyOf } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
 import { teamAllowed, ADMIN_TABS, ALL_TABS, FIELD_OFFICER_ROLE } from './auth.js';
@@ -14517,15 +14517,16 @@ const callBoardFailed = new WeakMap();           // db -> { at, soft }: when the
 /* THE LAST GOOD ANSWER STANDS IN, FOR TEN MINUTES, WHEN THE DATABASE WAS ONLY BRIEFLY UNREACHABLE -- 20 Nov 2026, from the owner's
    second pg_stat_statements paste (handbook Part 120 addendum, Part 123). The old week read ran 810 times in three and a half hours
    (about 58 boards) beside 31 runs of this function: 917 s, 47% of the listed database time, with the called-today fall-back, made
-   exactly when the database was busy. A failure that isTransient (a timeout, a cancelled statement, a full connection pool, a
+   exactly when the database was busy. A failure that isBusyFailure (a timeout, a cancelled statement, a full connection pool, a
    network error) does not make the last answer wrong, only older, so for STALE_OK_MS it is handed out again (marked `staleS`, its age
    in seconds, which the answer carries as callsStaleS) and the old read is made only when this scope has no good answer, when the failure
    is a fault (not installed, refused, a shape it does not make) or when the failure has lasted that long. One answer is kept for each
    viewer's scope and day: the week, today and the teams, the same three things the function is asked. Memory: only what is younger
    than STALE_OK_MS is kept. */
 const callBoardGood = new WeakMap();             // db -> Map(scope -> { at, data })
+// JSON, not a joined string: a team NAME holding the joining character made two different lists one key (the second reader of #767, handbook Part 126).
 const callBoardScope_ = (user, mon, sun, today) =>
-  [mon, sun, today, user.teams && user.teams.length ? teamMatchList(user.teams).slice().sort().join('\u0001') : '*'].join('|');
+  JSON.stringify([mon, sun, today, user.teams && user.teams.length ? teamMatchList(user.teams).slice().sort() : null]);
 function callBoardKeep_(db, scope, data) {
   let m = callBoardGood.get(db);
   if (!m) { m = new Map(); callBoardGood.set(db, m); }
@@ -14550,8 +14551,8 @@ async function callBoardFromDb_(db, user, mon, sun, today) {
     const { data, error } = await db.rpc(CALL_BOARD_FN, { p_from: mon, p_to: sun, p_day: today,
       p_teams: user.teams && user.teams.length ? teamMatchList(user.teams) : null });
     if (!error && data && Array.isArray(data.w) && Array.isArray(data.t) && data.w.every(callBoardRowOk_) && data.t.every(callBoardRowOk_)) { callBoardKeep_(db, scope, data); return data; }
-    soft = isTransient(error); why = errWords(error);
-  } catch (e) { soft = isTransient(e); why = errWords(e); /* a client that throws is a function that failed */ }
+    soft = isBusyFailure(error); why = errWords(error);
+  } catch (e) { soft = isBusyFailure(e); why = errWords(e); /* a client that throws is a function that failed */ }
   callBoardFailed.set(db, { at: Date.now(), soft });
   // Said once for each failure (the five minutes of pause ask nothing, so say nothing), never on a good answer: the reason is in the server's own log.
   console.warn('[boards] ' + CALL_BOARD_FN + ' did not answer: ' + why + (soft ? ' -- the database was busy or unreachable: the last good board for this scope stands in, else the week is read the old way' : ' -- a fault: the week is read the old way'));

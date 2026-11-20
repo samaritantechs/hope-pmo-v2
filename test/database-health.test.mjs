@@ -28,10 +28,13 @@ test('RUN-ME-079 reads only Postgres\'s own counters and the catalogue, and chan
   assert.ok(!/\b(insert|update|delete|drop|create|alter|truncate|grant|revoke|vacuum|analyze|copy|reset|listen|notify|lock|refresh)\b/i.test(code), 'no word that writes or locks');
   const bare = code.replace(/'[^']*'/g, "''");                              // the words inside the quoted labels are not tables
   const from = new Set([...bare.matchAll(/\bfrom\s+([a-z_]+)/gi)].map(m => m[1].toLowerCase()));
-  const allowed = new Set(['pg_stat_database', 'pg_statio_user_tables', 'pg_stat_activity', 'pg_roles', 'd', 't', 'x']);
+  const allowed = new Set(['pg_stat_database', 'pg_statio_user_tables', 'pg_stat_activity', 'pg_roles', 'pg_index', 'd', 't', 'x']);
   assert.deepEqual([...from].filter(n => !allowed.has(n)), [], 'it reads nothing else: no table of the book, so no customer can be in it: ' + [...from].join(','));
   assert.ok(!/\bpublic\.[a-z_]+/i.test(code), 'and names no table of the book');
-  assert.match(code, /where schemaname = 'public'\norder by pg_total_relation_size\(relid\) desc\nlimit 8/, 'the eight biggest tables, by name and counters only');
+  assert.match(code, /where s\.schemaname = 'public'\norder by bytes desc\nlimit 8/, 'the eight biggest tables, by name and counters only');
+  assert.ok(!/pg_total_relation_size|pg_relation_size|pg_table_size|pg_indexes_size/.test(code), 'and measured from the catalogue\'s own page counts: the size functions take a lock on every table they measure, and wait behind anybody who holds a stronger one');
+  assert.match(code, /c\.relpages \+ coalesce\(tt\.relpages, 0\) \+ coalesce\(\(select sum\(ci\.relpages\) from pg_index i join pg_class ci on ci\.oid = i\.indexrelid where i\.indrelid = c\.oid\), 0\)/, 'table, TOAST and indexes: pages, not a function');
+  assert.match(F, /taken WITHOUT a lock on any table/, 'and the file says so');
 });
 
 test('RUN-ME-079 prints what the reading in the chat promises, in this order', () => {
@@ -72,10 +75,11 @@ test('RUN-ME-080 is a block the owner can paste: small, flush-left, plain text, 
   assert.equal((code80.match(/;/g) || []).length, 1, 'one statement, ended by its one semicolon');
 });
 test('RUN-ME-080 reads one view of Postgres\'s own counters, changes nothing, and leaves the owner\'s own scripts out', () => {
-  assert.ok(!/\b(insert|update|delete|drop|alter|truncate|grant|revoke|vacuum|analyze|copy|reset|listen|notify|lock|refresh)\b/i.test(code80.replace(/'[^']*'/g, "''").replace(/\(do\|create\|alter\|drop\|grant\|revoke\|copy\|set\|show\|begin\|commit\|truncate\|vacuum\)/g, '')), 'no word that writes or locks (outside the list of statements it leaves out)');
+  assert.ok(!/\b(insert|update|delete|drop|alter|truncate|grant|revoke|vacuum|analyze|copy|reset|listen|notify|lock|refresh)\b/i.test(code80.replace(/'[^']*'/g, "''").replace(/\(select\|with\|insert\|update\|delete\|merge\)/g, '')), 'no word that writes or locks (outside the list of statements it leaves out)');
   const from = new Set([...code80.replace(/'[^']*'/g, "''").matchAll(/\bfrom\s+([a-z_]+)/gi)].map(m => m[1].toLowerCase()));
   assert.deepEqual([...from], ['pg_stat_statements'], 'it reads nothing else');
-  assert.equal((code80.match(/query !~\* '\^\\s\*\(do\|create\|alter\|drop\|grant\|revoke\|copy\|set\|show\|begin\|commit\|truncate\|vacuum\)\\y'/g) || []).length, 2, 'both rankings leave out DO blocks and utility statements, whose text can carry what was typed');
+  assert.equal((code80.match(/query ~\* '\^\\s\*\(select\|with\|insert\|update\|delete\|merge\)\\y'/g) || []).length, 2, 'both rankings list ONLY statements Postgres normalises (SELECT, WITH, INSERT, UPDATE, DELETE, MERGE): a CALL keeps its arguments and a DO block its body, so a blacklist of the kinds to leave out leaks the ones it forgot');
+  assert.ok(!/query !~\*/.test(code80), 'no blacklist');
   assert.match(code80, /left\(regexp_replace\(query, '\\s\+', ' ', 'g'\), 150\)/, 'the text is cut at 150 characters, runs of blanks as one');
   assert.match(code80, /order by temp_blks_written desc\nlimit 10\)/);
   assert.match(code80, /order by shared_blks_read desc\nlimit 10\)/);

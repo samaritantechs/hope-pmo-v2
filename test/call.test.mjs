@@ -3707,6 +3707,106 @@ test('called today: every way the database can be briefly unreachable stands in:
   }
 });
 
+/* WHAT THE SECOND READER OF #767 FOUND (handbook Part 126): the stand-in read the threshold on every list request while it stood in; the kind of
+   a failure was read back from memory another list might have overwritten; a failure's kind was judged by the reader's loose retry test; and a
+   failure that cannot be turned into words made the LIST throw. */
+test('called today: while the held set stands in NOTHING is read, the threshold included: the settings read of every list request is gone', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));                             // the function answers: the set is built
+    state.fail = TIMEOUT_;
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(40 * 1000));                     // the first bad moment: the function is asked, fails, the held set stands in, five minutes of pause begin
+    const seen = watch_(db);
+    for (const s of [45, 60, 90, 150, 200, 250, 300]) {                                      // seven lists inside the pause, each past the half-minute
+      const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(s * 1000));
+      assert.equal(d.rows.find(r => r.ref === '222').called, true, s + ' s: still ticked');
+    }
+    const asked = t => seen.tables.filter(x => x === t).length;
+    assert.equal(asked('settings'), 0, 'the threshold is not read while the held set stands in: ' + seen.tables.join(','));
+    assert.equal(asked('call_logs'), 0, 'nor the day');
+    assert.equal(seen.rpcs.filter(([n]) => n === 'called_phones_today').length, 0, 'nor is the function asked');
+  } finally { c.restore(); }
+});
+
+test('called today: two lists that meet different failures at the same instant each act on THEIR OWN: a bad moment is not turned into a fault by the other list\'s', async () => {
+  const c = clock_();
+  try {
+    const { db, state } = await flakyCalled_();
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+    await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+    const pending = [];
+    state.fail = () => new Promise(res => pending.push(res));                                // the function is asked and does not answer yet
+    const seen = watch_(db);
+    const at = c.at(40 * 1000);
+    const a = callApi(db, 'api_callList', ['d1', 'today'], at), b = callApi(db, 'api_callList', ['d1', 'today'], at);     // two lists, both past the half-minute, both asking
+    for (let i = 0; i < 400 && pending.length < 2; i++) await new Promise(r => setImmediate(r));
+    assert.equal(pending.length, 2, 'both lists asked the function');
+    pending[0](TIMEOUT_);                                                                    // the first asked sees a bad moment ...
+    pending[1]({ data: null, error: { code: '42501', message: 'permission denied for function called_phones_today' } });   // ... and the second a fault, in the same instant
+    const [ra, rb] = await Promise.all([a, b]);
+    assert.equal(ra.rows.find(r => r.ref === '222').called, true);
+    assert.equal(rb.rows.find(r => r.ref === '222').called, true);
+    assert.equal(readsOf_(seen), 1, 'the list that saw a fault read the day the old way, ONCE; the list that saw a bad moment was handed the held set (read back from memory, it would have found the other\'s fault and read the day too): ' + readsOf_(seen));
+  } finally { c.restore(); }
+});
+
+test('called today: a failure that cannot even be turned into words never fails a list: it is a fault, and the day is read the old way', async () => {
+  const unreadable = {
+    'a null-prototype object, thrown': () => { throw Object.create(null); },
+    'an object whose toString throws, thrown': () => { throw { toString() { throw new Error('x'); } }; },
+    'a null-prototype object, returned as the error': { data: null, error: Object.create(null) },
+  };
+  for (const [name, fail] of Object.entries(unreadable)) {
+    const c = clock_();
+    try {
+      const { db, state } = await flakyCalled_();
+      await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+      await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+      state.fail = fail;
+      const seen = watch_(db);
+      const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+      assert.equal(d.rows.find(r => r.ref === '222').called, true, name + ': the list answered, ticked');
+      assert.ok(readsOf_(seen) >= 1, name + ': nobody can say it was a bad moment, so it is a fault: the day is read the old way');
+    } finally { c.restore(); }
+  }
+});
+
+test('called today: a fault whose message merely CONTAINS 502, network or timeout is a fault; PostgREST\'s schema-cache code and a refused connection are bad moments', async () => {
+  const faults = {
+    'a bad value whose text holds 502': { data: null, error: { code: '22P02', message: 'invalid input syntax for type integer: "15022"' } },
+    'a missing column called network_id': { data: null, error: { code: '42703', message: 'column "network_id" does not exist' } },
+    'no right on a schema called timeouts': { data: null, error: { code: '42501', message: 'permission denied for schema "timeouts"' } },
+    'a bug of ours that mentions a timeout': () => { throw new TypeError("Cannot read properties of undefined (reading 'timeout')"); },
+  };
+  const moments = {
+    'the schema cache is being rebuilt': { data: null, error: { code: 'PGRST002', message: 'Could not query the database for the schema cache. Retrying.' } },
+    'a refused connection': () => { throw new Error('connect ECONNREFUSED 10.0.0.1:443'); },
+    'a connection that failed (08006)': { data: null, error: { code: '08006', message: 'connection failure' } },
+  };
+  for (const [kind, table, wantRead] of [['fault', faults, true], ['bad moment', moments, false]]) {
+    for (const [name, fail] of Object.entries(table)) {
+      const c = clock_();
+      try {
+        const { db, state } = await flakyCalled_();
+        await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], c.at(0));
+        await callApi(db, 'api_callList', ['d1', 'today'], c.at(0));
+        state.fail = fail;
+        const seen = watch_(db);
+        const d = await callApi(db, 'api_callList', ['d1', 'today'], c.at(40000));
+        assert.equal(d.rows.find(r => r.ref === '222').called, true, name);
+        if (wantRead) {
+          assert.ok(readsOf_(seen) >= 1, kind + ' ' + name + ': the day is read the old way, the held set is not handed out under a log line that says the database was busy');
+          const before = readsOf_(seen);
+          await callApi(db, 'api_callList', ['d1', 'today'], c.at(90000));                      // inside the five minutes of pause the failure began
+          assert.ok(readsOf_(seen) > before, kind + ' ' + name + ': and inside the pause a fault is still answered by the old read: the held set is for bad moments only');
+        } else assert.equal(readsOf_(seen), 0, kind + ' ' + name + ': the held set stands in and the day is not read');
+      } finally { c.restore(); }
+    }
+  }
+});
+
 /* A FAILED SMALL ANSWER SAYS WHY, IN THE SERVER'S OWN LOG (handbook Part 123): one line for each failure, never on a good answer, nothing
    from the five minutes of pause (the function is not asked then). The words are the database's own: pg_stat_statements cannot say them,
    because a cancelled statement is not in it. */
