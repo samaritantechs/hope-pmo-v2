@@ -772,6 +772,14 @@ async function rebuildFollowup(db, user, args, nowMs) {
   const remaining = (missing.length - doMissing.length) + (blanked.length - doBlanked.length);
   const added = await write(doMissing, true);
   const restored = await write(doBlanked, false);
+  /* THE SAME STAMP AN UPLOAD MOVES. This writes the register -- customers' numbers and their
+     guarantors' -- and, unlike an upload, moved nothing the phones watch, so a phone's index of
+     "whose number is this" went on holding the old register until its own timer ran out (five
+     minutes, and since matter 3c of the Postgres war thirty after the first ten). The call app's
+     index and every handset's figures follow DATA_VERSION (handbook Part 120). Reached only when
+     something is written (a register with nothing to restore returns above, and moves nothing); quiet
+     on failure, as the upload's own stamp is: the register is written either way. */
+  await runQuery(() => db.from('settings').upsert({ key: 'DATA_VERSION', value: String(nowMs) }, { onConflict: 'key' }));
   const parts = [];
   if (added) parts.push(`${added} customer(s) were in the current deck but missing from the `
     + 'follow-up register, so HOPE Calls could not show them at all.');

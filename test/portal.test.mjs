@@ -11113,6 +11113,25 @@ test('rebuilding the register puts her back, so the phone can see her', async ()
   assert.equal(reg.ds, '2-4');
 });
 
+test('rebuilding the register moves DATA_VERSION when it wrote something, so every phone\'s index follows; a rebuild that wrote nothing moves nothing', async () => {
+  /* The phone index (call-core.js phoneIndex) is kept against DATA_VERSION and, once an upload has
+     settled, for thirty minutes (handbook Part 120). Restoring the register writes customers' numbers
+     and moved nothing the phones watch. */
+  const t = estherBook('TUE');
+  t.followup_status = t.followup_status.filter(r => r.ref !== '2-209-72865');
+  const db = dbWithRpc(t);
+  const stamp = () => { const r = db._dump('settings').find(x => x.key === 'DATA_VERSION'); return r ? r.value : null; };
+  const before = stamp();
+  const first = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW);
+  assert.ok(first.added >= 1);
+  assert.equal(stamp(), String(NOW), 'the stamp an upload moves is moved, with the server\'s own clock');
+  assert.notEqual(stamp(), before);
+  const after = stamp();
+  const second = await portalApi(db, ADMIN, 'rebuildFollowup', {}, NOW + 60000);
+  assert.equal(second.added, 0);
+  assert.equal(stamp(), after, 'nothing was written, so nothing is moved');
+});
+
 test('rebuilding NEVER touches a row that is already there', async () => {
   /* An officer's follow-up status, promise and comments live on that row. Overwriting them
      would be a far worse fault than the one being repaired. */
