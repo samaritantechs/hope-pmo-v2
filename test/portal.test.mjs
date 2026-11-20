@@ -3283,12 +3283,21 @@ test('issuing a notice stores what it prints, under a citable reference', async 
   assert.equal(byRef.html, h);
   await assert.rejects(() => portalApi(db, GMO, 'demandNoticePrint', { id: 'nope' }, NOW), e => e.status === 400);
 
-  // Serving the same person again the same day gets its own reference, never a duplicate.
+  /* "Avoid duplicate demand notices - one cant create a second when the last one is not yet
+     cleared" (the owner, 20 Nov 2026): the same customer, the same day, is refused outright, the
+     notice that stands is named, and nothing is filed. (It used to be given its own reference,
+     "-2": that was the duplicate. See the dedicated test further down.) */
+  await assert.rejects(() => portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW),
+    e => e.status === 400 && e.message.includes(a.noticeId) && /not cleared yet/.test(e.message));
+  assert.equal(db._dump('demand_notices').filter(r => r.ref === '555').length, 1, 'nothing was filed');
+  /* The reference still counts up for a DIFFERENT customer whose initials give the same number on
+     the same day: AMINA JOHN MWANGA is AJM too. */
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === '111' && r.snapshot_type === 'current') r.full_name = 'AMINA JOHN MWANGA';
   const b = await portalApi(db, ADMIN, 'addDemandNotice',
-    { ref: '555', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
+    { ref: '111', noticeDate: '2026-03-16', noticeDays: 7 }, NOW);
   assert.equal(b.noticeId, 'HMCL/AJM/16/03/2026-2');
   assert.match(b.html, /Kumb\.Na\. HMCL\/AJM\/16\/03\/2026-2<\/strong>/);
-  assert.match(b.html, /<title>ASHA JUMA MOSHI<\/title>/, 'still the customer\'s name: the reference is on the letter, not in the file name');
+  assert.match(b.html, /<title>AMINA JOHN MWANGA<\/title>/, 'the customer\'s name: the reference is on the letter, not in the file name');
 
   // Team scoping holds: MBAGALA's 999 is not GMO's to serve.
   await assert.rejects(() => portalApi(db, GMO, 'legalPreview', { ref: '999' }, NOW),
@@ -3300,15 +3309,19 @@ test('issuing a notice stores what it prints, under a citable reference', async 
 test('the officer\'s own number prints when the teams sheet holds one; the stored letter survives a database without the column', async () => {
   /* "each notice goes with legal own number": the issuing officer's, by the role they hold on
      the customer's team; else the team's legal officer's. */
-  const t = notice_fixture_(tables());
-  t.teams[0].legal = 'THE ADMIN'; t.teams[0].legal_no = '0677111910'; t.teams[0].region = 'DAR ES SALAAM';
-  const db = fakeDb(t);
+  const mkDb = () => {
+    const t = notice_fixture_(tables());
+    t.teams[0].legal = 'THE ADMIN'; t.teams[0].legal_no = '0677111910'; t.teams[0].region = 'DAR ES SALAAM';
+    return fakeDb(t);
+  };
+  const db = mkDb();
   const a = await portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-16', noticeDays: 14 }, NOW);
   assert.match(a.html, /Kwa maelezo zaidi piga simu: 0677111910/);
   assert.match(a.html, /<p>DAR ES SALAAM\.<\/p>/, 'the team\'s region closes the address, as the sample letter');
   assert.match(a.html, /NDANI YA SIKU 14 TU\./, 'a notice of other than seven days prints its number');
   const other = { ...GMO, name: 'JUMA G' };          // KONGOWE's recovery officer, with no number of his own
-  const g = await portalApi(db, other, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
+  // A book where this customer has no notice yet: a second notice to ASHA would be refused (the owner's rule of 20 Nov).
+  const g = await portalApi(mkDb(), other, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
   assert.match(g.html, /Kwa maelezo zaidi piga simu: 0677111910/, 'falls to the team\'s legal officer');
   assert.match(g.html, /<strong>RHOBI MSIRA<\/strong>/, 'and the lawyer still signs');
 
@@ -3338,8 +3351,8 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   // A reprint by somebody with no handset on file carries the issuer's number, as the original.
   const re = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id }, NOW);
   assert.match(re.html, /0659 123 456/);
-  // No handset registered: the chain falls through exactly as before.
-  const g = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
+  // No handset registered: the chain falls through exactly as before. (On a book where this customer has no notice yet: a second would be refused.)
+  const g = await portalApi(fakeDb(notice_fixture_(tables())), { ...GMO, name: 'JUMA G' }, 'addDemandNotice', { ref: '555', noticeDate: '2026-03-17', noticeDays: 7 }, NOW);
   assert.match(g.html, /Kwa maelezo zaidi piga simu: \+255 659 077 770/);
   /* "phone number of current login user who prints" -- "Legal phone is not from what i set but
      their login phone": once JUMA G has registered HOPE Calls, a reprint by him carries HIS
@@ -3379,11 +3392,12 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   const jUnknown = await portalApi(db, { ...GMO, name: 'JUMA G' }, 'demandNoticePrint', { id: row.id, device: 'DEV-NOPE' }, NOW);
   assert.equal(jUnknown.phone, '0712 000 111');
   assert.equal(jUnknown.phoneFrom, 'name');
-  const issued = await portalApi(db, { ...GMO, name: 'NOBODY N' }, 'addDemandNotice',
+  // A book where this customer has no notice yet (a second would be refused), with the same handset registered.
+  const dbDev = fakeDb(notice_fixture_(tables()));
+  dbDev._dump('call_users').push({ user_id: 'U9', name: 'Rhobi M', phone: '655000999', team: 'KONGOWE', role: 'LEGAL', device_id: 'DEV-RHOBI' });
+  const issued = await portalApi(dbDev, { ...GMO, name: 'NOBODY N' }, 'addDemandNotice',
     { ref: '555', noticeDate: '2026-03-10', noticeDays: 7, device: 'DEV-RHOBI' }, NOW);
   assert.equal(issued.phone, '0655 000 999', 'a new notice issued from that handset carries its number too');
-  // Taken off the register again: the served-today checks further down count notices by date.
-  db._dump('demand_notices').splice(db._dump('demand_notices').findIndex(r => r.notice_id === issued.noticeId), 1);
   /* BY NAME, A LONGER REGISTRATION STILL MATCHES WHEN IT IS THE ONLY ONE -- "ADV. RHOBI MSIRA"
      for the code RHOBI MSIRA -- and never when two could be meant: a wrong number on a legal
      letter is worse than none. */
@@ -3416,7 +3430,11 @@ test('the lawyer\'s number is the handset they registered the call app with; the
   assert.deepEqual(other.rows, []);
   await assert.rejects(() => portalApi(db, ADMIN, 'legalFind', { q: 'as' }, NOW), e => e.status === 400);
 
-  /* Served already: said on the preview, so the drawer offers the reprint first. */
+  /* Served already: said on the preview, so the drawer offers the reprint first. An earlier notice of
+     the 17th is in the register too (what an upload of the register leaves: the owner's rule of 20 Nov
+     stops a second one being ISSUED while the customer owes, it does not remove what is there). */
+  db._dump('demand_notices').push({ id: 'n-17', ref: '555', team: 'KONGOWE', full_name: 'ASHA JUMA MOSHI', notice_id: 'HMCL/AJM/17/03/2026',
+    notice_date: '2026-03-17', issued_by: 'JUMA G', created_at: '2026-03-17T08:00:00Z' });
   const p = await portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: '2026-03-16' }, NOW);
   assert.deepEqual(p.servedToday.map(s => s.noticeId), [a.noticeId]);
   assert.equal(p.servedToday[0].id, row.id, 'with the row to reprint');
@@ -3640,6 +3658,129 @@ test('the 2 DC rule does not apply at D.S 11-12, where there cannot be two, and 
   assert.equal(f.rows.find(r => r.ref === '555').eligible, false, 'and holds 10-11 to the rule');
   const g = await portalApi(fakeDb(t), ADMIN, 'legalFind', { q: '111' }, NOW);
   assert.equal(g.rows.find(r => r.ref === '111').eligible, true, 'a customer at DC 3 is eligible as before');
+});
+
+/* "Avoid duplicate demand notices - one cant create a second when the last one is not yet cleared" --
+   the owner, 20 Nov 2026, after the register had shown one customer served six times on one day, 60
+   customers with a same-day repeat and 48 served on several days. "Cleared" is the register's own test
+   (noticeCleared_: the customer owes nothing today -- the State column's "Amemaliza / Cleared"); a
+   customer must be on the deck to be served at all, so a customer who has a notice of ANY date and
+   still owes is refused. The preview names the notice that stands in the way, creation refuses it
+   whether or not the preview was looked at, reprints are never gated, and the register's state and the
+   guard are asked of the same row, so they cannot disagree. */
+test('no second demand notice while the last one is not cleared: the preview names it, creation refuses it, the register\'s own Cleared test lets the customer through', async () => {
+  const db = fakeDb(notice_fixture_(tables()));
+  const preview = (d = TODAY, ref = '555') => portalApi(db, ADMIN, 'legalPreview', { ref, noticeDate: d }, NOW);
+  const issue = (user = ADMIN, d = TODAY, ref = '555') => portalApi(db, user, 'addDemandNotice', { ref, noticeDate: d, noticeDays: 7 }, NOW);
+  const filed = ref => db._dump('demand_notices').filter(r => r.ref === ref).length;
+  // 1. No notice yet: nothing in the way, and the letter goes out.
+  let p = await preview();
+  assert.equal(p.openNotice, null); assert.equal(p.eligible, true);
+  const a = await issue();
+  assert.ok(a.noticeId);
+  const row = db._dump('demand_notices').find(r => r.notice_id === a.noticeId);
+  // 2. The customer still owes: the preview names the notice that stands in the way, whatever date is being asked for ...
+  p = await preview();
+  assert.deepEqual({ id: p.openNotice.id, noticeId: p.openNotice.noticeId, date: p.openNotice.date }, { id: row.id, noticeId: a.noticeId, date: TODAY });
+  assert.equal(p.eligible, true, 'the DC rule is a different question and is not touched');
+  const later = new Date(Date.parse(TODAY + 'T00:00:00Z') + 9 * 864e5).toISOString().slice(0, 10);
+  assert.equal((await preview(later)).openNotice.noticeId, a.noticeId, 'a week later it is the same unresolved notice');
+  // ... and creation refuses it outright: the same day, a later day, another officer, and with no preview ever looked at.
+  const refused = e => e.status === 400 && e.message.includes(a.noticeId) && e.message.includes(TODAY) && /not cleared yet/.test(e.message) && /haijamalizika/.test(e.message);
+  await assert.rejects(() => issue(), refused, 'the same day');
+  await assert.rejects(() => issue(ADMIN, later), refused, 'a week later');
+  await assert.rejects(() => issue({ ...GMO, name: 'JUMA G' }), refused, 'by another officer');
+  assert.equal(filed('555'), 1, 'nothing was filed');
+  // 3. Reprints are never gated: that letter was issued.
+  const again = await portalApi(db, ADMIN, 'demandNoticePrint', { id: row.id }, NOW);
+  assert.equal(again.html, a.html);
+  // 4. Another customer is not held back by this one's notice ...
+  assert.equal((await preview(TODAY, '111')).openNotice, null);
+  // ... but a notice that came from the register's upload, weeks ago, stands in the way of ITS customer too.
+  db._dump('demand_notices').push({ id: 'imp', ref: '111', team: 'KONGOWE', full_name: 'C111', notice_id: 'HMCL/C/01/03/2026', notice_date: '2026-03-01', issued_by: 'LEGAL', upload_batch: 'U1', created_at: '2026-03-01T08:00:00Z' });
+  const imp = await preview(TODAY, '111');
+  assert.equal(imp.openNotice.noticeId, 'HMCL/C/01/03/2026'); assert.equal(imp.openNotice.date, '2026-03-01');
+  await assert.rejects(() => issue(ADMIN, TODAY, '111'), e => e.status === 400 && e.message.includes('HMCL/C/01/03/2026') && /not cleared yet/.test(e.message));
+  assert.equal(filed('111'), 1, 'only the imported one');
+  // 5. The register's own Cleared test lets the customer through, and the tab says the same of the same row.
+  for (const r of db._dump('defaulter_snapshots')) if (r.ref === '555' && r.snapshot_type === 'current') r.arrears = 0;
+  assert.equal((await preview()).openNotice, null, 'the customer owes nothing: the last notice is cleared');
+  const tab = await portalApi(db, ADMIN, 'demandNotices', {}, NOW);
+  assert.match(tab.rows.find(r => r.notice_id === a.noticeId).notice_state, /Cleared/, 'the tab reads that notice as Cleared');
+  const b = await issue();
+  assert.ok(b.noticeId && b.noticeId !== a.noticeId, 'so a second notice may be issued');
+  assert.equal(filed('555'), 2);
+  // 6. The two readings are ONE definition in the source: the tab's state and the guard ask noticeCleared_, and the guard is asked at creation and on the preview.
+  const core = await readFile(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8');
+  assert.match(core, /notice_state: noticeCleared_\(current\) \? 'Amemaliza \/ Cleared'/);
+  assert.match(core, /if \(!served\.length\) return null;\s*if \(noticeCleared_\(num\(d\.arrears\)\)\) return null;\s*return \(await legalClearedSince_\(db, d, served\[0\]\.date\)\) \? null : served\[0\];/);
+  assert.match(core, /const open = await legalOpenNotice_\(db, served, d\);\s*if \(open\) throw badRequest\(legalOpenMsg_\(open\)\);/);
+  assert.match(core, /openNotice: await legalOpenNotice_\(db, served, d\) \};/);
+  assert.match(core, /\.filter\(r => !noticeCleared_\(num\(r\.arrears\)\)\)/, 'the history asks the same cleared test of every day\'s arrears');
+});
+
+/* "so one can create demand for the same ref no if the existing is cleared and the new one is 2dc+ or ds
+   11/12" -- the owner, 20 Nov 2026, asked what the rule above allows. TWO QUESTIONS, BOTH MUST PASS: is
+   the new letter allowed at all (2 DC and above, or D.S 11-12: unchanged) and does an earlier notice
+   stand in the way (the last one is not cleared). "Cleared" is applied to the TIME SINCE THE NOTICE: a
+   customer who owes nothing today, or who on any day a deck was uploaded after it was off that day's
+   current deck or owed nothing on it, has cleared. A customer who has stood on every deck since has not. */
+test('a customer who has cleared since the last notice may be served again if the DC rule is met; one who has stood on every deck since may not', async () => {
+  const dk = n => new Date(Date.parse(TODAY + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+  const OLD = { id: 'old', ref: '555', team: 'KONGOWE', full_name: 'ASHA JUMA MOSHI', notice_id: 'HMCL/AJM/OLD', notice_date: dk(-7), issued_by: 'LEGAL', created_at: dk(-7) + 'T08:00:00Z' };
+  /* A book where the customer was served seven days ago and the deck calendar is `cal` (days, relative to today, on which a
+     defaulters deck was uploaded); `present` are the days after the notice on which the customer stood on that day's current deck, owing
+     (`settled` the days they stood on it owing nothing). `last` moves every current row to that day: today's file not in yet. */
+  const mk = ({ present = [], cal = [-7, -6, -5, -4, -3, -2, -1, 0], settled = [], last = 0, noCalendar = false, dc, ds } = {}) => {
+    const t = notice_fixture_(tables());
+    for (const r of t.defaulter_snapshots) if (r.snapshot_type === 'current') r.snapshot_date = dk(last);
+    for (const r of t.defaulter_snapshots) if (r.ref === '555' && r.snapshot_type === 'current') { if (dc !== undefined) r.dc = dc; if (ds !== undefined) r.ds = ds; }
+    t.demand_notices.push({ ...OLD });
+    if (!noCalendar) t.deck_totals_days = cal.map(n => ({ kind: 'defaulter', snapshot_date: dk(n) }));
+    const row = (n, arrears) => ({ ref: '555', team: 'KONGOWE', snapshot_type: 'current', snapshot_date: dk(n), weekday: 'MON', arrears, full_name: 'ASHA JUMA MOSHI' });
+    for (const n of present) if (n !== last) t.defaulter_snapshots.push(row(n, 100000));
+    for (const n of settled) t.defaulter_snapshots.push(row(n, 0));
+    return fakeDb(t, noCalendar ? { missingTables: ['deck_totals_days'] } : {});   // migrations are run by hand: the calendar's table may not be there
+  };
+  const preview = db => portalApi(db, ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW);
+  const issue = db => portalApi(db, ADMIN, 'addDemandNotice', { ref: '555', noticeDate: TODAY, noticeDays: 7 }, NOW);
+  const held = e => e.status === 400 && e.message.includes('HMCL/AJM/OLD') && /not cleared yet/.test(e.message);
+  const six = [-6, -5, -4, -3, -2, -1];
+  // A. On every deck since the notice: not cleared, held, and the preview names the notice.
+  let db = mk({ present: six });
+  assert.equal((await preview(db)).openNotice.noticeId, 'HMCL/AJM/OLD');
+  await assert.rejects(() => issue(db), held, 'stood on every deck since');
+  // B. Off the deck on one day a deck was uploaded (the 4th day back), and back now at the DC rule: cleared in between, so a second notice is allowed.
+  db = mk({ present: [-6, -5, -3, -2, -1] });
+  let p = await preview(db);
+  assert.equal(p.openNotice, null, 'cleared in between'); assert.equal(p.eligible, true);
+  const b = await issue(db);
+  assert.ok(b.noticeId && b.noticeId !== 'HMCL/AJM/OLD', 'the second notice is issued');
+  assert.equal(db._dump('demand_notices').filter(r => r.ref === '555').length, 2);
+  // ... and now THAT notice stands in the way of a third: it was issued today and nothing has been uploaded since.
+  assert.equal((await preview(db)).openNotice.noticeId, b.noticeId);
+  await assert.rejects(() => issue(db), e => e.status === 400 && e.message.includes(b.noticeId));
+  // C. The same absence on a day NO deck was uploaded (a Sunday, a missed file) is not a day they could have cleared on: held.
+  db = mk({ present: [-6, -5, -3, -2, -1], cal: [-7, -6, -5, -3, -2, -1, 0] });
+  await assert.rejects(() => issue(db), held, 'no deck that day: nothing to clear on');
+  // D. No calendar at all (no deck_totals_days, or empty): the register's own reading of today stands, and the customer owes today.
+  await assert.rejects(() => issue(mk({ present: [-6, -5, -3, -2, -1], noCalendar: true })), held, 'table not there');
+  await assert.rejects(() => issue(mk({ present: [-6, -5, -3, -2, -1], cal: [] })), held, 'empty calendar');
+  // E. Standing on a deck but owing nothing that day is clearing too.
+  db = mk({ present: [-6, -5, -3, -2, -1], settled: [-4] });
+  assert.equal((await preview(db)).openNotice, null, 'a settled row on the deck: cleared that day');
+  // F. The other question is asked first and on its own: cleared in between, but below the DC rule, is refused by THAT rule ...
+  db = mk({ present: [-6, -5, -3, -2, -1], dc: 1, ds: '5-12' });
+  p = await preview(db);
+  assert.equal(p.openNotice, null); assert.equal(p.eligible, false);
+  await assert.rejects(() => issue(db), e => e.status === 400 && /2 DC/.test(e.message) && !/not cleared yet/.test(e.message), 'refused for the DC rule, not for the old notice');
+  // ... and at D.S 11-12 the DC rule is waived, so a customer who cleared in between is served at DC 1.
+  db = mk({ present: [-6, -5, -3, -2, -1], dc: 1, ds: '11-12' });
+  assert.equal((await preview(db)).eligible, true);
+  assert.ok((await issue(db)).noticeId, 'cleared in between and at D.S 11-12');
+  // G. Today's file is not in yet: the customer is read from yesterday's deck, and the day with only its initial deck (today) is not a day they could have cleared on.
+  db = mk({ present: [-6, -5, -4, -3, -2, -1], last: -1, cal: [-7, -6, -5, -4, -3, -2, -1, 0] });
+  await assert.rejects(() => issue(db), held, 'the days after the deck being read do not count');
 });
 
 /* THE REGISTER'S TEAM IS THE TEAM -- "the demand importer misworked ... team moved from kijichi
