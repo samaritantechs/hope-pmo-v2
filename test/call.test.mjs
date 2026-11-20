@@ -7,7 +7,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC, SNAPSHOT_TOTALS_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
+import { CALL_REPORT_RPC, EXPECTED_PHONE_WINDOW_RPC, SNAPSHOT_TOTALS_RPC, DEFAULTER_GHOST_ROWS_RPC, CALLED_PHONES_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -3470,4 +3470,136 @@ test('boot says which call.html the server has, and it is the one in public/', a
   const d = await callApi(db, 'api_callBoot', ['d1'], NOW);
   assert.equal(d.callBuild, want);
   assert.match(want, /^\d{4}-\d{2}-\d{2}-[a-z]$/, 'the same shape as app.html\'s BUILD, bumped on every change to the file');
+});
+
+/* =====================================================================================
+   THE DAY'S CALLED NUMBERS FROM ONE SMALL DATABASE ANSWER -- db/RUN-ME-077, 20 Nov 2026.
+   =====================================================================================
+     "postgress war please; and that shouldnt distract efficiency of system operations"
+
+   The owner's pg_stat_statements put `select phone, duration from call_logs where call_date =
+   today` at the top of the whole book: 272,573 page reads, 87,148 seconds. calledTodaySet now asks
+   called_phones_today(p_day, p_min) first -- ONE value holding the distinct numbers -- and keeps
+   the page-by-page read as the answer when the function is not installed or fails. The ticks
+   must be exactly the ticks the old read gave, the table must not be read when the function
+   answers, and a broken function must never become a list with nobody ticked. */
+async function calledDb_(rpc) {
+  const { _clearWidgetCache } = await import('../api/_lib/call-core.js');
+  _clearWidgetCache();
+  const db = fakeDb(makeTables(), rpc === undefined ? {} : { rpc });
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['d2', '', '', 'LEAD1', '0788111222'], NOW);
+  return db;
+}
+/* What the database is asked, during the one call being watched. */
+function watch_(db) {
+  const seen = { tables: [], rpcs: [] };
+  const from = db.from.bind(db), rpc = db.rpc.bind(db);
+  db.from = n => { seen.tables.push(n); return from(n); };
+  db.rpc = (n, a) => { seen.rpcs.push([n, a]); return rpc(n, a); };
+  seen.clear = () => { seen.tables.length = 0; seen.rpcs.length = 0; };
+  return seen;
+}
+const ticks_ = d => d.rows.map(r => r.ref + ':' + (r.called ? 1 : 0)).sort().join(' ');
+
+test('called today, RUN-ME-077 installed: the same ticks as the page-by-page read, and call_logs is not read', async () => {
+  const calls = [
+    { ts: T1, dur: 2, dir: 'out', num: '0712000001' },          // rang out: no tick
+    { ts: T1, dur: 30, dir: 'out', num: '0712000002' },         // spoken to: tick
+    { ts: T1 + 1000, dur: 5, dir: 'out', num: '0712000001' },   // exactly the threshold: still a dial attempt
+  ];
+  const withFn = await calledDb_(CALLED_PHONES_RPC), without = await calledDb_();
+  for (const db of [withFn, without]) await callApi(db, 'api_callSync', ['d1', calls], NOW);
+  const seen = watch_(withFn);
+  const a = await callApi(withFn, 'api_callList', ['d1', 'today'], NOW);
+  const b = await callApi(without, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(ticks_(a), ticks_(b), 'the same customers are ticked either way');
+  assert.equal(a.rows.find(r => r.ref === '222').called, true);
+  assert.equal(a.rows.find(r => r.ref === '111').called, false);
+  assert.ok(!seen.tables.includes('call_logs'), 'the day\'s calls were not read: ' + seen.tables.join(','));
+  const asked = seen.rpcs.filter(([n]) => n === 'called_phones_today');
+  assert.equal(asked.length, 1, 'the function is asked once');
+  assert.deepEqual(asked[0][1], { p_day: '2026-07-24', p_min: 5 }, 'for today, with the threshold the setting names');
+});
+
+test('called today: a number rung from ANOTHER handset ticks for this officer, through the function', async () => {
+  const db = await calledDb_(CALLED_PHONES_RPC);
+  await callApi(db, 'api_callSync', ['d2', [{ ts: T1, dur: 45, dir: 'out', num: '+255 712 000 002' }]], NOW);   // written another way
+  // And a row that arrived with the number as it was typed (the v1 history was imported so): the
+  // function hands numbers back AS STORED, and pnorm decides here that this is customer 111.
+  db._dump('call_logs').push({ id: 'OLD1', user_id: null, officer: 'IMPORTED', team: 'KONGOWE', phone: '0712 000 001', direction: 'OUT',
+    call_date: '2026-07-24', duration: 50, portfolio: true });
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(d.rows.find(r => r.ref === '222').called, true, 'pnorm still decides what a number is');
+  assert.equal(d.rows.find(r => r.ref === '111').called, true, 'a number stored with blanks in it is the same number');
+});
+
+test('called today: the threshold setting travels to the function, and the answer is kept for half a minute', async () => {
+  const db = await calledDb_(CALLED_PHONES_RPC);
+  db._dump('settings').push({ key: 'CALL_MIN_SECS', value: '20' });
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 12, dir: 'out', num: '0712000001' }, { ts: T1, dur: 21, dir: 'out', num: '0712000002' }]], NOW);
+  const seen = watch_(db);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.equal(d.rows.find(r => r.ref === '111').called, false, '12 s is under the 20 s the owner set');
+  assert.equal(d.rows.find(r => r.ref === '222').called, true);
+  assert.equal(seen.rpcs.find(([n]) => n === 'called_phones_today')[1].p_min, 20);
+  seen.clear();
+  await callApi(db, 'api_callList', ['d1', 'today'], NOW + 10000);
+  assert.equal(seen.rpcs.filter(([n]) => n === 'called_phones_today').length, 0, 'inside the half-minute nothing is asked again');
+  assert.ok(!seen.tables.includes('call_logs'));
+});
+
+test('called today: an officer\'s own new call ticks at once, with no second question to the database', async () => {
+  const db = await calledDb_(CALLED_PHONES_RPC);
+  await callApi(db, 'api_callList', ['d1', 'today'], NOW);                       // builds the set from the function
+  const seen = watch_(db);
+  await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 40, dir: 'out', num: '0712000001' }]], NOW + 1000);
+  seen.clear();
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW + 2000);
+  assert.equal(d.rows.find(r => r.ref === '111').called, true, 'merged into the warm set by the sync');
+  assert.equal(seen.rpcs.filter(([n]) => n === 'called_phones_today').length, 0);
+});
+
+test('called today: a function that is not installed, that throws or that answers a wrong shape falls back to the read, never to nobody ticked', async () => {
+  const shapes = {
+    'not installed': undefined,
+    'throws (a statement timeout)': { called_phones_today: () => { throw new Error('canceling statement due to statement timeout'); } },
+    'answers a list, not the value': { called_phones_today: () => ['0712000002'] },
+    'answers a value with no phones': { called_phones_today: () => ({ nothing: 1 }) },
+    'answers phones that are not a list': { called_phones_today: () => ({ phones: 'oops' }) },
+    'answers nothing': { called_phones_today: () => null },
+  };
+  for (const [name, rpc] of Object.entries(shapes)) {
+    const db = await calledDb_(rpc);
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], NOW);
+    const seen = watch_(db);
+    const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+    assert.equal(d.rows.find(r => r.ref === '222').called, true, name + ': the customer spoken to is still ticked');
+    assert.ok(seen.tables.includes('call_logs'), name + ': the day\'s calls were read the old way');
+  }
+});
+
+test('called today: a function that failed is not asked again for five minutes, and is asked again after', async () => {
+  const realNow = Date.now;
+  try {
+    let asked = 0;
+    const db = await calledDb_({ called_phones_today: () => { asked++; throw new Error('boom'); } });
+    await callApi(db, 'api_callSync', ['d1', [{ ts: T1, dur: 30, dir: 'out', num: '0712000002' }]], NOW);
+    await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+    assert.equal(asked, 1);
+    await callApi(db, 'api_callList', ['d1', 'today'], NOW + 40000);             // the half-minute is over: the read is rebuilt
+    assert.equal(asked, 1, 'but the function is not asked again inside its pause');
+    const t0 = realNow();
+    Date.now = () => t0 + 6 * 60 * 1000;
+    await callApi(db, 'api_callList', ['d1', 'today'], NOW + 80000);
+    assert.equal(asked, 2, 'after the pause it is asked once more');
+  } finally { Date.now = realNow; }
+});
+
+test('called today: a quiet day is an empty answer from the function, not a reason to read the table', async () => {
+  const db = await calledDb_(CALLED_PHONES_RPC);
+  const seen = watch_(db);
+  const d = await callApi(db, 'api_callList', ['d1', 'today'], NOW);
+  assert.ok(d.rows.length > 0 && d.rows.every(r => r.called === false));
+  assert.ok(!seen.tables.includes('call_logs'));
 });

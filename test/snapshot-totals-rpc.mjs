@@ -598,3 +598,25 @@ export const EXPDF_RECOVERY_RPC = {
     return [...byKey.values()].sort((x, y) => x.snapshot_date.localeCompare(y.snapshot_date) || String(x.team).localeCompare(String(y.team)));
   },
 };
+
+/* called_phones_today(p_day, p_min) -- db/RUN-ME-077, clause for clause: the DISTINCT numbers, as
+   stored, of the day's calls longer than p_min, as ONE value ({ phones: [...] }) so that
+   PostgREST's row cap and paging never apply to it. Written out here rather than calling
+   anything from api/_lib/call-core.js (that is the fallback this is compared against), and held
+   to the real function on a PostgreSQL by tools/db-checks/called-phones.mjs.
+   Use it:  fakeDb(tables, { rpc: CALLED_PHONES_RPC })  -- leave it out and the fake is a database
+   where RUN-ME-077 has not been run, the state calledTodaySet must keep working in. */
+export const CALLED_PHONES_RPC = {
+  called_phones_today: (store, a = {}) => {
+    const rows = store.call_logs ? store.call_logs.rows : [];
+    const day = String(a.p_day == null ? '' : a.p_day).slice(0, 10);
+    const seen = new Set();
+    for (const r of rows) {
+      if (String(r.call_date == null ? '' : r.call_date).slice(0, 10) !== day) continue;          // call_date = p_day
+      if (r.duration == null || !(Number(r.duration) > Number(a.p_min))) continue;                // duration > p_min (null is never greater)
+      if (r.phone == null || r.phone === '') continue;                                             // phone is not null and phone <> ''
+      seen.add(String(r.phone));                                                                   // distinct
+    }
+    return { phones: [...seen].sort() };
+  },
+};

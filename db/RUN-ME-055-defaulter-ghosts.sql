@@ -104,6 +104,11 @@ returns table(ref text, full_name text, contact text, guarantor_name text, guara
 -- GHOST_BUDGET_MS): the request is never held up past its budget, whether or not the
 -- underlying read is still running underneath. This SET clause is kept as the second,
 -- database-side half of that same belt-and-suspenders, not the one guarantee either half relies on alone.)
+-- CORRECTED 20 Nov 2026 (handbook Part 115): the paragraph above is true of a call made directly in SQL
+-- and NOT of how the app calls it. PostgREST hoists a function's own statement_timeout into the request's
+-- transaction before the call starts (db-hoisted-tx-settings), so through the API this 800ms limit IS
+-- enforced: pg_stat_statements shows the function's worst run at exactly 800 ms, where statements with
+-- no limit of their own reach the role's ~8 s. A lookup that needs more than 800 ms is cancelled.
 language plpgsql stable set statement_timeout = '800ms' as $$
 declare
   v_team text;

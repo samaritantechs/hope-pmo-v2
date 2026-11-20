@@ -543,19 +543,58 @@ function noteCalledToday(db, nowMs, records) {
     if (d) hit.value[d] = 1;
   }
 }
+/* THE DAY'S CALLED NUMBERS, AS ONE SMALL ANSWER FROM THE DATABASE -- 20 Nov 2026.
+
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   The owner's pg_stat_statements put this read at the top of the whole book: `select phone,
+   duration from call_logs where call_date = today` ran 272,573 times, 320 ms each and 7,991 ms
+   at worst, 87,148 seconds of database time -- a quarter of the twelve heaviest statements put
+   together, and it sits under EVERY officer's list. It reads the whole company's calls of the
+   day, in pages, every time a warm server instance's half-minute is up, and again at every cold
+   start; on a big day the first list of a cold instance waited for all of it.
+
+   What the list needs is ONE FACT PER NUMBER: was it rung today, for longer than a dial attempt.
+   Collapsing the day's calls to their distinct numbers is the database's job, exactly as
+   expected_phone_window does it for the two-week window below. db/RUN-ME-077 adds
+   called_phones_today(p_day, p_min): one value ({"phones": [...]}) holding the distinct numbers
+   of the day's calls longer than p_min, so there is no paging and no row cap, and the numbers
+   come back AS STORED: pnorm still decides what a number is, here, in one place.
+
+   Where the function is not installed yet -- or it fails -- the read is the one it always was,
+   page by page, and the failure is remembered for five minutes so a broken function is not
+   asked again on every list. Never heavier than before, never a failed list. */
+const CALLED_FN = 'called_phones_today';
+const CALLED_FN_PAUSE_MS = 5 * 60 * 1000;
+const calledFnFailed = new WeakMap();           // db -> when the function last failed or was found missing
+async function calledPhonesFromDb_(db, day, min) {
+  const failed = calledFnFailed.get(db);
+  if (failed && (Date.now() - failed) < CALLED_FN_PAUSE_MS) return null;
+  try {
+    const { data, error } = await db.rpc(CALLED_FN, { p_day: day, p_min: min });
+    if (!error && data && Array.isArray(data.phones)) return data.phones;
+  } catch (e) { /* a client that throws is a function that failed */ }
+  calledFnFailed.set(db, Date.now());
+  return null;
+}
 async function calledTodaySet(db, nowMs) {
   const day = todayKey(nowMs);
   const hit = calledCache.get(db);
   if (hit && hit.day === day && hit.at <= nowMs && (nowMs - hit.at) < CALLED_TTL_MS) return hit.value;
   const raw = parseInt(String(await settingGet(db, 'CALL_MIN_SECS') || '').replace(/[^0-9]/g, ''), 10);
   const min = (isNaN(raw) || raw < 0) ? CALL_MIN_SECS_DEFAULT : raw;
-  // Filtered here rather than in the query: durations are numbers, and PostgREST-style range
-  // filters on this path compare as text, where '60' sorts below '6'.
-  const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', day));
   const set = {};
-  for (const r of rows) {
-    if (num(r.duration) <= min) continue;
-    const d = pnorm(r.phone); if (d) set[d] = 1;
+  const phones = await calledPhonesFromDb_(db, day, min);
+  if (phones) {
+    for (const p of phones) { const d = pnorm(p); if (d) set[d] = 1; }
+  } else {
+    // Filtered here rather than in the query: durations are numbers, and PostgREST-style range
+    // filters on this path compare as text, where '60' sorts below '6'.
+    const rows = await fetchAll(() => db.from('call_logs').select('phone, duration').eq('call_date', day));
+    for (const r of rows) {
+      if (num(r.duration) <= min) continue;
+      const d = pnorm(r.phone); if (d) set[d] = 1;
+    }
   }
   calledCache.set(db, { at: nowMs, day, min, value: set });
   return set;
