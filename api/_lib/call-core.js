@@ -1551,22 +1551,83 @@ async function summaryCompute(db, user, nowMs) {
    its answer to the next test. In production that is one long-lived client per warm lambda,
    which is where the sharing happens. */
 const PHONE_INDEX_TTL_MS = 300000;
-const phoneIndexCache = new WeakMap();          // db -> { key, at, value }
+const phoneIndexCache = new WeakMap();          // db -> { lists, nums, built }
 
-/** `version` is DATA_VERSION plus NEW_NUMBER_VERSION, which the caller has ALREADY read --
-    sync fetches both in one trip anyway (DATA_VERSION goes to the phone on every request so
-    the handset knows when its figures went stale). Passing them in rather than re-reading
-    them here keeps the cache free on a hit: a served index costs zero queries, not one. */
-async function phoneIndex(db, nowMs, version) {
+/* THE INDEX IS READ IN TWO PARTS, AND ONE BUILD IS SHARED -- 20 Nov 2026.
+
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   The index used to be one thing, thrown away whole and read again whole: the register
+   (followup_status), today's and tomorrow's sheet, the two-week window (expected_phone_window)
+   and the numbered comments -- five reads -- every time its key moved. The owner's
+   pg_stat_statements (20 Nov) ranks them: the window is the third heaviest statement in the book
+   (149,469 runs, 50,631 s, 339 ms each) and the register read the fifth (197,252 runs, 16,852 s).
+   The key is two stamps, and they do not mean the same thing:
+
+     DATA_VERSION         moves when something is UPLOADED. The register, the two sheets and the
+                          window are what an upload changes.
+     NEW_NUMBER_VERSION   moves when an officer records an "Ana namba nyingine". Only the
+                          numbered comments change.
+
+   So one recorded number made every warm server instance read the whole book again to learn one
+   number. Now the four big reads (the LISTS) are kept against today and DATA_VERSION, the one
+   small read (the numbered comments) against NEW_NUMBER_VERSION, each for the same five minutes as
+   before, and the index is made again -- with arithmetic, no database -- from the two when either
+   has changed. A recorded number costs a server instance ONE small read instead of five.
+
+   AND A BUILD IS SHARED. A server instance can have several syncs in flight (the platform may hand
+   one instance many requests at once); each of them found the cache empty or past its five minutes
+   and each started the same reads, side by side. Now the first one asks and the others wait for its
+   answer: one set of reads for each key and instance, however many syncs ask at the same moment. A
+   build that FAILS is forgotten at once, so the next sync asks again, exactly as before.
+
+   WHAT DID NOT CHANGE. The index is byte for byte what the old code made from the same rows
+   (test/phone-index.test.mjs keeps the old build and compares them over random books and random
+   sequences of uploads, recorded numbers and clock). The five minutes. Every key: today,
+   DATA_VERSION, NEW_NUMBER_VERSION. The first sync after an upload, and the first after a recorded
+   number, sees it. A served index costs no read. The ONE difference, and only toward fewer reads: a
+   rebuild forced by a recorded number no longer also reads the lists again, so a change to the
+   register or the sheets that moved NO stamp (an admin restoring the register from the deck is the
+   only one the code has) is seen at the lists' own five-minute mark, as it always could be, and no
+   longer also at the next recorded number.
+
+   Held against the DATABASE CLIENT, as above: a test's fake cannot hand its answer to the next
+   test, and in production that is one long-lived client per warm instance. */
+
+/** `dataVersion` and `numberVersion` are DATA_VERSION and NEW_NUMBER_VERSION, which the caller has
+    ALREADY read -- sync fetches both in one trip anyway (DATA_VERSION goes to the phone on every
+    request so the handset knows when its figures went stale). Passing them in rather than
+    re-reading them here keeps the cache free on a hit: a served index costs zero queries. */
+export async function phoneIndex(db, nowMs, dataVersion, numberVersion) {
   const today = todayKey(nowMs);
-  const key = today + '|' + String(version == null ? '' : version);
-  const hit = phoneIndexCache.get(db);
-  if (hit && hit.key === key && hit.at <= nowMs && (nowMs - hit.at) < PHONE_INDEX_TTL_MS) {
-    return hit.value;
-  }
-  const value = await phoneIndexCompute(db, nowMs, today);
-  phoneIndexCache.set(db, { key, at: nowMs, value });
+  let c = phoneIndexCache.get(db);
+  if (!c) { c = { lists: null, nums: null, built: null }; phoneIndexCache.set(db, c); }
+  const [lists, nums] = await Promise.all([
+    phonePart_(c, 'lists', today + '|' + String(dataVersion == null ? '' : dataVersion), nowMs, () => phoneIndexLists(db, today)),
+    phonePart_(c, 'nums', String(numberVersion == null ? '' : numberVersion), nowMs, () => phoneNumberRows(db)),
+  ]);
+  // The same two parts as the index already held: the same index, no arithmetic. Building is
+  // synchronous, so of several syncs waiting on the same reads the first builds and the rest find it.
+  if (c.built && c.built.lists === lists && c.built.nums === nums) return c.built.value;
+  const value = phoneIndexBuild(lists, nums);
+  c.built = { lists, nums, value };
   return value;
+}
+
+/** One part of the index: what `load` read, for one key, for five minutes -- or the read already
+    in flight for that key. A read that fails is not kept. */
+function phonePart_(c, slot, key, nowMs, load) {
+  const hit = c[slot];
+  if (hit && hit.key === key) {
+    if (hit.pending) return hit.pending;
+    // hit.at <= nowMs guards a clock that jumps backwards (the same guard the whole index had).
+    if (hit.at <= nowMs && (nowMs - hit.at) < PHONE_INDEX_TTL_MS) return Promise.resolve(hit.value);
+  }
+  const e = { key, at: nowMs, value: undefined, pending: null };
+  e.pending = load().then(value => { e.value = value; e.pending = null; return value; },
+    err => { if (c[slot] === e) c[slot] = null; throw err; });
+  c[slot] = e;
+  return e.pending;
 }
 
 /* THE SIX COLUMNS THE PHONE INDEX READS OFF AN EXPECTED SHEET -- 20 Nov 2026.
@@ -1587,8 +1648,8 @@ async function phoneIndex(db, nowMs, version) {
    red test (test/call.test.mjs pins this list and breaks it on purpose). */
 const PHONE_INDEX_SHEET_COLS = 'ref, full_name, contact, guarantor_name, guarantor_contact, team';
 
-async function phoneIndexCompute(db, nowMs, today) {
-  const [fu, eT, eM, eWin, cm] = await Promise.all([
+async function phoneIndexLists(db, today) {
+  const [fu, eT, eM, eWin] = await Promise.all([
     // The phone index needs names and numbers, nothing else.
     fetchAll(() => db.from('followup_status').select('ref, full_name, contact, guarantor_name, guarantor_contact, team')),
     latestSnapshot(db, 'repayment_snapshots', { snapshot_type: 'today' }, { notAfter: today, columns: PHONE_INDEX_SHEET_COLS }),
@@ -1611,13 +1672,22 @@ async function phoneIndexCompute(db, nowMs, today) {
        followup_status with contacts and guarantors, and fu above is that whole register. */
     rpcAll(db, 'expected_phone_window', { p_from: addDaysKey(today, -13) })
       .then(r => (r.error || !Array.isArray(r.data)) ? [] : r.data),
-    /* ONLY the comments that carry a replacement phone number. This read every comment ever
-       written -- after the v1 history import, hundreds of thousands of rows -- to find the few
-       hundred with a number on them. The portal's copy of this was fixed weeks ago and the
-       phone's was not, which is why the app felt slower than the portal on the same data. */
-    fetchAll(() => db.from('followup_comments').select('ref, new_number, full_name, team')
-      .not('new_number', 'is', null).neq('new_number', '')),
   ]);
+  return { fu, eT, eM, eWin };
+}
+
+async function phoneNumberRows(db) {
+  /* ONLY the comments that carry a replacement phone number. This read every comment ever
+     written -- after the v1 history import, hundreds of thousands of rows -- to find the few
+     hundred with a number on them. The portal's copy of this was fixed weeks ago and the
+     phone's was not, which is why the app felt slower than the portal on the same data. */
+  return fetchAll(() => db.from('followup_comments').select('ref, new_number, full_name, team')
+    .not('new_number', 'is', null).neq('new_number', ''));
+}
+
+/** The index itself: pure arithmetic over what the two reads brought, no database. */
+function phoneIndexBuild(lists, cm) {
+  const { fu, eT, eM, eWin } = lists;
   const byNum = {};
   const add = (numRaw, name, ref, team, role, src) => {
     const d = pnorm(numRaw);
@@ -1695,7 +1765,7 @@ async function sync(db, [dev, calls], nowMs) {
   // What the handset compares carries its scope (handsetVersion_); the index key stays the raw stamp.
   const dataVersion = handsetVersion_(rawVersion, user.teams);
   if (!calls.length) return { ok: true, added: 0, dup: 0, watermark: wm, portfolio: 0, nonPortfolio: 0, dataVersion };
-  const byNum = await phoneIndex(db, nowMs, rawVersion + '|' + (vs('NEW_NUMBER_VERSION') || ''));
+  const byNum = await phoneIndex(db, nowMs, rawVersion, vs('NEW_NUMBER_VERSION') || '');
   const records = [];
   const seenBatch = {};
   let pf = 0, npf = 0, batchDup = 0;
@@ -2958,7 +3028,7 @@ async function find(db, [dev, q], nowMs) {
   const has = (v, what) => String(v || '').toUpperCase().includes(what);
   const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
   const [byNum, loansRes] = await Promise.all([
-    phoneIndex(db, nowMs, (vs('DATA_VERSION') || '') + '|' + (vs('NEW_NUMBER_VERSION') || '')),
+    phoneIndex(db, nowMs, vs('DATA_VERSION') || '', vs('NEW_NUMBER_VERSION') || ''),
     runQuery(() => {
       const like = '%' + needle.replace(/[%_\\]/g, m => '\\' + m) + '%';
       const clauses = ['full_name.ilike.' + like, 'guarantor_name.ilike.' + like];
