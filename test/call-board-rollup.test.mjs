@@ -189,6 +189,55 @@ test('the order of ties follows the order the officers first appear, as it alway
   assert.deepEqual(b.callWeek.map(r => r.agent), ['ALICE', 'BOB', 'CHARLIE']);
 });
 
+/* ---- FOUND BY THE SECOND READER OF #759 (handbook Part 119) ---- */
+test('an officer whose typed name is a key every object has ("__proto__", "constructor", "toString") is a person like any other, and nothing is ever written onto Object.prototype', async () => {
+  // A name is typed at registration and is free text. The boards were keyed on a plain object, so "__proto__" was Object.prototype
+  // itself: the board wrote the officer's team onto it, and every object in the server process read that team until it restarted.
+  const names = ['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf'];
+  try {
+    for (const opts of [{}, { rpc: CALL_BOARD_RPC }]) {
+      const where = opts.rpc ? 'from the function' : 'from the rows';
+      const t = tables();
+      t.call_logs = names.map((n, i) => L('p' + i, n, 'KONGOWE', '071200002' + i, TODAY, { duration: 5 + i, portfolio: true, ref: 'R' + i }));
+      t.call_users = [{ user_id: 'U9', name: '__proto__', team: 'KONGOWE', role: 'OFFICER' }];       // and a handset registered under that name too
+      const b = await run(fakeDb(t, opts));
+      for (const n of names) {
+        const w = b.callWeek.find(r => r.agent === n), d = b.callToday.find(r => r.agent === n);
+        assert.ok(w && d, n + ' is on both boards ' + where);
+        assert.equal(w.calls, 1, n + ' made one call ' + where);
+        assert.equal(w.team, 'KONGOWE', n + ' keeps their team ' + where);
+      }
+      assert.equal(b.callWeek.filter(r => r.agent === '__proto__').length, 1, 'one line, though a handset is registered under that name too');
+      assert.equal(({}).team, undefined, 'no plain object has a team it was never given ' + where);
+      assert.equal(Object.prototype.hasOwnProperty('team'), false, 'Object.prototype was not written to ' + where);
+    }
+  } finally { delete Object.prototype.team; }                                                          // never leave the runner polluted, whatever happened
+});
+
+test('a function that answers a figure that is not a number (null, a string, or one of the eight missing) is a wrong shape: the board is read the old way', async () => {
+  const want = boards(await run(fakeDb(tables())));
+  const row = over => ({ name: 'X', team: 'KONGOWE', dials: 1, calls: 1, duration: 5, otherDuration: 0, portfolio: 1, nonPortfolio: 0, connected: 1, customers: 1, ...over });
+  const states = {};
+  for (const k of ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected', 'customers']) {
+    states['a null ' + k] = row({ [k]: null });
+    states['a string ' + k] = row({ [k]: '5' });
+    const gone = row({}); delete gone[k]; states[k + ' missing'] = gone;
+  }
+  states['every figure but no name'] = row({ name: undefined });                       // the figures alone must not carry a row
+  states['a name that is not text'] = row({ name: 7 });
+  for (const [label, bad] of Object.entries(states)) {
+    const db = fakeDb(tables(), { rpc: { call_board_rollup: () => ({ w: [bad], t: [] }) } }), log = watch(db);
+    const got = await run(db);
+    assert.deepEqual(boards(got), want, label + ': the boards are the boards the rows give');
+    assert.ok(log.reads.length >= 1, label + ': and they were read the old way');
+  }
+  // and the shape the function really answers passes
+  const db = fakeDb(tables(), { rpc: { call_board_rollup: () => ({ w: [row({})], t: [] }) } }), log = watch(db);
+  const ok = await run(db);
+  assert.equal(log.reads.length, 0, 'a whole row is believed');
+  assert.ok(ok.callWeek.find(r => r.agent === 'X'));
+});
+
 /* ---- THE OLD CODE, KEPT AS THE YARDSTICK ----
    The refactor moves the adding-up out of the screen (callBoard in officerBoardsUncached, which summed the rows itself) into
    boardRowsFromLogs (call-core.js), and it is live the moment this deploys, before anybody has run RUN-ME-078: every board a person is

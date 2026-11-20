@@ -14249,7 +14249,22 @@ async function legalWeekReport(db, user, args, nowMs = Date.now()) {
       paidToday: rows.reduce((s, r) => s + r.paid_today, 0) },
     allTeams: L.allTeams, unheld: L.unheldTeams };
 }
-function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
+/* AN OWN PROPERTY ONLY -- found by the second reader of #759, 20 Nov 2026. This was
+   `if (!map[key]) map[key] = ...`, and every map it is given is a plain object: for a key that
+   every object already HAS ("__proto__", "constructor", "toString") `map[key]` was not empty, so the
+   caller was handed Object.prototype itself (or a built-in function) and wrote its figures onto it.
+   An officer's name is free text typed at registration, and the call board keys on it: one call
+   from an officer who typed "__proto__" left `({}).team` reading that officer's team for every
+   object in the server process until it restarted, and the officer was on no board. The key is
+   now looked for among the map's OWN properties and made with defineProperty, which gives
+   "__proto__" an own property of its own instead of setting the map's prototype. For every other key
+   the property is the same one an assignment would have made, in the same order. */
+function bucket(map, key, init) {
+  if (Object.prototype.hasOwnProperty.call(map, key)) return map[key];
+  const b = Object.assign({ key }, init);
+  Object.defineProperty(map, key, { value: b, enumerable: true, writable: true, configurable: true });
+  return b;
+}
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
 
 /* THE CALL BOARDS' SOURCE, AS ONE SMALL ANSWER FROM THE DATABASE -- 20 Nov 2026.
@@ -14270,13 +14285,21 @@ function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
    it always was.
 
    WHERE THE FUNCTION IS NOT INSTALLED, OR FAILS, THE READ IS THE OLD ONE, unchanged, added up by
-   the same boardRowsFromLogs, and the failure is remembered for five minutes: never a failed board,
-   never heavier than before. A viewer who holds no teams at all sees nobody's calls (teamAllowed
+   the same boardRowsFromLogs, and the failure is remembered for five minutes: never a failed board.
+   (Not "never heavier than before", as this first said, and the second reader of #759 was right to
+   say so: a function that is missing answers at once from PostgREST's schema cache, which is the usual
+   case, but one that TIMES OUT is waited for until the role's limit, about eight seconds, and only then
+   is the old read made. That costs one wait for each server instance and then nothing for five minutes,
+   and the requests that start during the wait wait with it. The pause is for the whole process, not for
+   one viewer's scope: if only the all-teams admin's call times out, every smaller scope is read the old
+   way for those five minutes too. Neither was changed: handbook Part 119.) A viewer who holds no teams at all sees nobody's calls (teamAllowed
    drops every row), so nothing is read for them. */
 const CALL_BOARD_FN = 'call_board_rollup';
 const CALL_BOARD_PAUSE_MS = 5 * 60 * 1000;
 const callBoardFailed = new WeakMap();           // db -> when the function last failed or was found missing
-const callBoardRowOk_ = r => !!r && typeof r.name === 'string' && Number.isFinite(Number(r.calls)) && Number.isFinite(Number(r.dials));
+// Every one of the eight figures a board draws must BE a number: Number(null) is 0, so a null or a string used to pass for one.
+const CALL_BOARD_FIGS_ = ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected', 'customers'];
+const callBoardRowOk_ = r => !!r && typeof r.name === 'string' && CALL_BOARD_FIGS_.every(k => Number.isFinite(r[k]));
 async function callBoardFromDb_(db, user, mon, sun, today) {
   const failed = callBoardFailed.get(db);
   if (failed && (Date.now() - failed) < CALL_BOARD_PAUSE_MS) return null;

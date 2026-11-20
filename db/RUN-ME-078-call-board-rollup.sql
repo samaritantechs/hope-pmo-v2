@@ -8,7 +8,7 @@
 --   every row in a random place (worst):   old 2,436,420 pages, 3.8 s, 20.9 MB  ->  this 14,616 pages, 0.66 s, 104 KB
 --   That is 86 to 167 times fewer pages, 3.7 to 5.8 times less database time and 205 times fewer bytes. The live seconds are NOT known: the live table is bigger and on disk. The check compares the answer with the app's own adding-up (boardRowsFromLogs) on 150 random books and breaks this file on purpose: every break is caught.
 -- WHAT IT COSTS: nothing to /api/upload or /api/call (a portal screen). It reads one week of call_logs through the existing date index and changes no row; no index is added (call_logs is written by the phones' sync: the sacred path).
--- UNTIL IT IS RUN the app reads the week page by page exactly as it always did and asks for the function again every five minutes. If the function ever fails the same happens: never a failed board, never heavier than before. Safe to run again (create or replace). Only service_role may call it.
+-- UNTIL IT IS RUN the app reads the week page by page exactly as it always did and asks for the function again every five minutes. If the function ever fails the same happens: never a failed board (a function that TIMES OUT is waited for until the role's limit before the old read is made: handbook Part 119). Safe to run again (create or replace). Only service_role may call it.
 -- HOW TO RUN: paste all of it into a NEW SQL editor tab and press Run. The last line before the END line answers two numbers.
 create or replace function call_board_rollup(p_from date, p_to date, p_day date, p_teams text[] default null)
 returns jsonb
