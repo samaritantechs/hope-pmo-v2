@@ -321,6 +321,17 @@ test('RUN-ME-078 reads call_logs and changes nothing; only service_role may call
   assert.ok(!/\bset statement_timeout\b/i.test(FN), 'no limit of its own: the role\'s limit applies (PostgREST would enforce a tighter one on every call)');
 });
 
+test('RUN-ME-078 says what it saves, how it was measured, what is not known, what it costs, and what happens until it is run', () => {
+  assert.match(F078, /121,746 times/, 'the statement it replaces, in the owner\'s own numbers');
+  assert.match(F078, /MEASURED by tools\/db-checks\/call-board-rollup\.mjs/);
+  assert.match(F078, /buffers touched/, 'pages are counted, not only milliseconds');
+  assert.match(F078, /The live seconds are NOT known/, 'what was not measured is said');
+  assert.match(F078, /WHAT IT COSTS: nothing to \/api\/upload or \/api\/call/, 'CLAUDE.md section 1: what the two sacred paths pay, written beside the change');
+  assert.match(F078, /IT IS EXACTLY THE BOARD'S OWN RULE, NOT RUN-ME-042's/, 'the category difference is said where the owner reads it');
+  assert.match(F078, /UNTIL IT IS RUN the app reads the week page by page exactly as it always did/, 'a code path that depends on a migration works without it');
+  assert.ok(!/CHECK_NUMBERS/.test(F078), 'no placeholder is left in what the owner pastes');
+});
+
 test('the SQL, the app and the stand-in use the same function name and the same four argument names, and the old read stays', () => {
   assert.match(APP, /const CALL_BOARD_FN = 'call_board_rollup';/);
   assert.match(APP, /db\.rpc\(CALL_BOARD_FN, \{ p_from: mon, p_to: sun, p_day: today,\n {6}p_teams: user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\) : null \}\)/, 'the same list onTeams sends, or none');

@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, DEFAULTER_GHOST_ROWS_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, DEFAULTER_GHOST_ROWS_RPC, CALL_BOARD_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -572,7 +572,12 @@ const WORLDS = [
   /* The migrated world means EVERY migration, not just the totals: the pipeline funnel's eight
      counts collapse into one grouped call the same way the team-day sums do, and a budget that
      leaves that out is measuring a deployment nobody is running. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC, ...EXPDF_RECOVERY_RPC } }, 6, 7],
+  /* db/RUN-ME-078 (call_board_rollup) is in this list too, as every migration is: the Officer boards screen asks for it first
+     and, where it is not installed, adds the week of call logs up from the rows (boardRowsFromLogs). Measured on this fixture
+     (2026-11-20): 26 trips before the change, 27 un-migrated (one cheap failed call, remembered five minutes per server
+     instance), 21 here, unchanged by it: the function REPLACES the week's read. Budgets unchanged: the ceilings above are
+     far over all of these. */
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC, ...EXPDF_RECOVERY_RPC, ...CALL_BOARD_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {
