@@ -53,7 +53,7 @@ import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } f
 import { isSettled } from './settled.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals, dsParts } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostReportBudgetMs_ } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
@@ -3554,6 +3554,19 @@ async function findDefaulter(db, user, ref, nowMs) {
    through. Reprints of letters already served are not gated: those were issued. */
 const LEGAL_MIN_DC = 2;
 const legalDcMsg_ = dc => `Notisi hutolewa kwa mdaiwa wa DC ${LEGAL_MIN_DC} na zaidi tu; huyu ana DC ${dc}. / A demand notice is issued only to a customer at ${LEGAL_MIN_DC} DC and above — this one is at ${dc}.`;
+/* THE RULE OF 2 DOES NOT APPLY AT D.S 11-12 -- "The rule of 2 installments shouldnt apply for DS
+   11-12 because there cant be two there" (the owner, 20 Nov 2026). A loan has twelve
+   installments and D.S is paid-of-target: at 11-12 eleven of the twelve are paid, so only the
+   LAST one can be missing and the deck's D.C can never reach 2. Held to the rule, such a
+   customer could never be served at all, however long the finished loan stands unpaid. D.S is
+   read by the one reader the phone reads it with (dsParts: "11-12" or "11/12"), and the DC is
+   not asked: the rule is simply not theirs. Everything else is held to it exactly as before
+   (a customer at 10-11 CAN still reach two, so the rule stands for them). ONE definition of who
+   may be served: the preview, the pick list and the guard at creation all ask it. The fine's own
+   rule (a single missed payment on a loan that has not expired owes no fine, legalFine) is a
+   different rule and is not changed here. */
+const legalDcWaived_ = d => { const p = dsParts(dsOf(d)); return !!p && p.paid === 11 && p.target === 12; };
+const legalEligible_ = d => legalDcWaived_(d) || missedDc_(d) >= LEGAL_MIN_DC;
 
 async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
   if (!ref) throw badRequest('A customer REF# is required.');
@@ -3580,7 +3593,7 @@ async function legalPreview(db, user, { ref, noticeDate }, nowMs) {
     ratePct: Math.round(f.rate * 1000) / 10, fine,
     disb_date: d.disb_date, expire_date: d.expire_date, landmark: d.nearest_landmark,
     ...a, noticeDate: noticeKey,
-    dc, minDc: LEGAL_MIN_DC, eligible: dc >= LEGAL_MIN_DC,
+    dc, minDc: LEGAL_MIN_DC, eligible: legalEligible_(d), dcWaived: legalDcWaived_(d),
     served, servedToday: served.filter(s => s.date === noticeKey) };
 }
 
@@ -3608,9 +3621,10 @@ async function legalFind(db, user, args, nowMs) {
   for (const r of scoped(user, rows).sort((x, y) => String(y.snapshot_date).localeCompare(String(x.snapshot_date)))) {
     const k = K(r.ref);
     if (!k || seen.has(k)) continue;
-    // The DC rides along so the pick list can say who is below LEGAL_MIN_DC before a tap.
+    // The DC rides along, and WHETHER THE RULE LETS THEM BE SERVED (the same question the preview and
+    // the guard ask), so the pick list can say who cannot be before a tap and never re-decides it.
     seen.set(k, { ref: r.ref, name: r.full_name || '', team: r.team || '', contact: r.contact || '',
-      arrears: num(r.arrears), status: r.status || '', ds: r.ds || '', dc: missedDc_(r),
+      arrears: num(r.arrears), status: r.status || '', ds: r.ds || '', dc: missedDc_(r), eligible: legalEligible_(r),
       date: String(r.snapshot_date || '').slice(0, 10), weekday: r.weekday || '' });
   }
   return { q, rows: [...seen.values()].slice(0, LEGAL_FIND_LIMIT), capped: seen.size > LEGAL_FIND_LIMIT, minDc: LEGAL_MIN_DC };
@@ -3643,7 +3657,7 @@ async function addDemandNotice(db, user, p, nowMs) {
   if (!d) throw badRequest('That REF# is not in the current Defaulters list.');
   // Refused here as well as withheld on the screen: the rule holds at creation, whatever the
   // browser showed. See LEGAL_MIN_DC.
-  if (missedDc_(d) < LEGAL_MIN_DC) throw badRequest(legalDcMsg_(missedDc_(d)));
+  if (!legalEligible_(d)) throw badRequest(legalDcMsg_(missedDc_(d)));
   const noticeKey = /^\d{4}-\d{2}-\d{2}$/.test(String(p.noticeDate)) ? p.noticeDate : todayKey(nowMs);
   const days = Math.max(1, Math.floor(num(p.noticeDays) || 7));
   const f = legalFine(d, Date.parse(noticeKey + 'T00:00:00Z'));

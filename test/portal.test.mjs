@@ -3599,6 +3599,49 @@ test('a demand notice is issued only to a customer at 2 DC and above', async () 
   assert.equal((await portalApi(fakeDb(t), ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW)).eligible, false);
 });
 
+/* "The rule of 2 installments shouldnt apply for DS 11-12 because there cant be two there" -- the
+   owner, 20 Nov 2026. D.S is paid-of-target and a loan has twelve installments: at 11-12 only the
+   last one can be missing, so the deck's D.C can never reach 2 and the rule would bar such a
+   customer from every notice for ever. The preview, the pick list and the guard at creation all
+   ask ONE question (legalEligible_); everything that is not 11-12 is held to the rule as before. */
+test('the 2 DC rule does not apply at D.S 11-12, where there cannot be two, and holds everywhere else', async () => {
+  const t = tables();
+  const setRow = (ds, dc) => {
+    for (const r of t.defaulter_snapshots) if (r.ref === '555' && r.snapshot_type === 'current') {
+      if (ds === undefined) delete r.ds; else r.ds = ds;
+      if (dc === undefined) delete r.dc; else r.dc = dc;
+    }
+  };
+  const preview = () => portalApi(fakeDb(t), ADMIN, 'legalPreview', { ref: '555', noticeDate: TODAY }, NOW);
+  const issue = () => portalApi(fakeDb(t), ADMIN, 'addDemandNotice', { ref: '555', noticeDate: TODAY, noticeDays: 7 }, NOW);
+  // The case that was said: D.S 11-12 at DC 1 may be served, the screen is told why, and the letter is issued.
+  setRow('11-12', 1);
+  let p = await preview();
+  assert.equal(p.dc, 1); assert.equal(p.minDc, 2); assert.equal(p.eligible, true, 'D.S 11-12 at DC 1 may be served'); assert.equal(p.dcWaived, true, 'and the screen is told why');
+  const a = await issue();
+  assert.ok(a.noticeId, 'and the letter is issued');
+  // Read the way the phone reads D.S: the slash form, spaces around the dash, and a deck row with no D.C at all (the rule is not theirs).
+  for (const ds of ['11/12', ' 11 - 12 ']) { setRow(ds, 1); assert.equal((await preview()).eligible, true, JSON.stringify(ds)); }
+  setRow('11-12', undefined); p = await preview();
+  assert.equal(p.eligible, true, 'no D.C on the row: still waived'); assert.equal(p.dcWaived, true);
+  // Everything else is held to the rule exactly as before: at 10-11 a second installment CAN still fall due.
+  for (const ds of ['10-11', '9-10', '8-9', '11-11', '12-12', '1-12', '11-13', '', 'n/a', undefined]) {
+    setRow(ds, 1); p = await preview();
+    assert.equal(p.eligible, false, 'D.S ' + JSON.stringify(ds) + ' at DC 1 is below the rule'); assert.equal(p.dcWaived, false);
+    await assert.rejects(() => issue(), e => e.status === 400 && /2 DC/.test(e.message) && /DC 1/.test(e.message), 'and issuing is refused for ' + JSON.stringify(ds));
+  }
+  // At the rule by its own DC a D.S that is not 11-12 is as before, and 10-12 (two missing) is simply DC 2.
+  setRow('9-12', 3); assert.equal((await preview()).eligible, true);
+  setRow('10-12', 2); assert.equal((await preview()).eligible, true, 'two is enough');
+  // The pick list carries the server's answer for every line, so the drawer never re-decides the rule.
+  setRow('11-12', 1); let f = await portalApi(fakeDb(t), ADMIN, 'legalFind', { q: '555' }, NOW);
+  assert.equal(f.rows.find(r => r.ref === '555').eligible, true, 'the pick list lets D.S 11-12 through');
+  setRow('10-11', 1); f = await portalApi(fakeDb(t), ADMIN, 'legalFind', { q: '555' }, NOW);
+  assert.equal(f.rows.find(r => r.ref === '555').eligible, false, 'and holds 10-11 to the rule');
+  const g = await portalApi(fakeDb(t), ADMIN, 'legalFind', { q: '111' }, NOW);
+  assert.equal(g.rows.find(r => r.ref === '111').eligible, true, 'a customer at DC 3 is eligible as before');
+});
+
 /* THE REGISTER'S TEAM IS THE TEAM -- "the demand importer misworked ... team moved from kijichi
    to msamvu". The first upload re-filed each notice under the team today's deck gave the
    customer; the legal unit's own Team column is the current team, so a notice is filed under

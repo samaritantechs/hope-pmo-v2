@@ -156,11 +156,15 @@ function lgIssue(){
           + esc(String(e.disb_date||'—').slice(0,10))+' → '+esc(String(e.expire_date||'—').slice(0,10))+'</span></div>'
         /* THE DC, AND WHETHER IT ALLOWS A LETTER -- "a demand notice cant be generated for an
            expected/defaulter not from 2 DC and above". The server (legalPreview) decides; the
-           screen says it and withholds the button below LEGAL_MIN_DC. */
+           screen says it and withholds the button below LEGAL_MIN_DC. At D.S 11-12 the rule is not
+           theirs ("there cant be two there"): the server says so (dcWaived) and the screen says why
+           the button is there at DC 1. */
         + '<div class="frow"><span>DC (marejesho yaliyokosekana / missed)</span><b class="'+(e.eligible ? 'good' : 'bad')+'">'
           + esc(String(e.dc == null ? '—' : e.dc))+'</b></div></div>'
         + (e.eligible ? '' : '<div class="note bad">⛔ Notisi hutolewa kwa mdaiwa wa DC <b>'+esc(String(e.minDc))+'</b> na zaidi tu; huyu ana DC <b>'+esc(String(e.dc))+'</b>.'
             + ' / A demand notice is issued only to a customer at <b>'+esc(String(e.minDc))+'</b> DC and above — this one is at <b>'+esc(String(e.dc))+'</b>.</div>')
+        + (e.dcWaived ? '<div class="note">✔ DS 11-12: sheria ya DC <b>'+esc(String(e.minDc))+'</b> haitumiki hapa — awamu moja tu inaweza kukosekana.'
+            + ' / D.S 11-12: the <b>'+esc(String(e.minDc))+'</b> DC rule does not apply — only one installment can be missing.</div>' : '')
         + '<div class="kpis sm">'
         + kpi('DS (default summary)', esc(e.ds || '—'))
         + kpi('Wiki za faini / Weeks late', (e.weeks||0)+' ('+e.ratePct+'%)')
@@ -204,8 +208,8 @@ function lgIssue(){
       $('#lgHits').innerHTML = '<div class="sub">Chagua mteja / Pick the customer'
         + (f.capped ? ' (orodha imekatwa — andika zaidi / list cut short — type more)' : '') + '</div><div class="facts">'
         + f.rows.map(function(r, i){
-          // The DC on every line, red below the rule, so the officer sees who cannot be served before a tap.
-          var low = f.minDc != null && (r.dc == null || r.dc < f.minDc);
+          // The DC on every line, red where the rule (decided on the server, r.eligible: it waives itself at D.S 11-12) says no, so the officer sees who cannot be served before a tap.
+          var low = !r.eligible;
           return '<div class="frow lgHit" data-i="'+i+'" style="cursor:pointer"><span><b>'+esc(r.name)+'</b><br>'
             + '<small>'+esc(r.ref)+' · '+esc(r.contact||'—')+' · '+esc(r.team)
             + ' · <b class="'+(low ? 'bad' : 'good')+'">DC '+esc(String(r.dc == null ? '—' : r.dc))+'</b></small></span><span>'+money(r.arrears)+'</span></div>';
