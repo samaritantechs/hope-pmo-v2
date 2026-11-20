@@ -53,7 +53,7 @@ import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } f
 import { isSettled } from './settled.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, callRollupRows, callTotals, dsParts } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostReportBudgetMs_ } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
@@ -14252,6 +14252,58 @@ async function legalWeekReport(db, user, args, nowMs = Date.now()) {
 function bucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function pctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
 
+/* THE CALL BOARDS' SOURCE, AS ONE SMALL ANSWER FROM THE DATABASE -- 20 Nov 2026.
+
+     "postgress war please; and that shouldnt distract efficiency of system operations" -- the owner
+
+   The owner's pg_stat_statements put this read second in the whole book: every call of the week
+   (all teams, for an admin), eight columns of it, in pages of ten thousand -- each page running the
+   whole query again and sorting the whole week by id again -- 121,746 times, 577 ms each, 7,654 ms
+   at worst, 70,285 seconds in all. It was read to be added up here, in JavaScript, into one line of
+   figures per officer for the week and one for today.
+
+   db/RUN-ME-078 adds call_board_rollup(p_from, p_to, p_day, p_teams): the same adding up, inside
+   the database, answered as ONE value ({ w: [...], t: [...] }) so there is no paging and no row
+   cap. It is boardRowsFromLogs (call-core.js) in SQL, held equal to it on random books by
+   tools/db-checks/call-board-rollup.mjs, officer by officer and in the same order. The viewer's
+   teams go to the database as the same list onTeams sends (teamMatchList), so the scope is the one
+   it always was.
+
+   WHERE THE FUNCTION IS NOT INSTALLED, OR FAILS, THE READ IS THE OLD ONE, unchanged, added up by
+   the same boardRowsFromLogs, and the failure is remembered for five minutes: never a failed board,
+   never heavier than before. A viewer who holds no teams at all sees nobody's calls (teamAllowed
+   drops every row), so nothing is read for them. */
+const CALL_BOARD_FN = 'call_board_rollup';
+const CALL_BOARD_PAUSE_MS = 5 * 60 * 1000;
+const callBoardFailed = new WeakMap();           // db -> when the function last failed or was found missing
+const callBoardRowOk_ = r => !!r && typeof r.name === 'string' && Number.isFinite(Number(r.calls)) && Number.isFinite(Number(r.dials));
+async function callBoardFromDb_(db, user, mon, sun, today) {
+  const failed = callBoardFailed.get(db);
+  if (failed && (Date.now() - failed) < CALL_BOARD_PAUSE_MS) return null;
+  try {
+    const { data, error } = await db.rpc(CALL_BOARD_FN, { p_from: mon, p_to: sun, p_day: today,
+      p_teams: user.teams && user.teams.length ? teamMatchList(user.teams) : null });
+    if (!error && data && Array.isArray(data.w) && Array.isArray(data.t) && data.w.every(callBoardRowOk_) && data.t.every(callBoardRowOk_)) return data;
+  } catch (e) { /* a client that throws is a function that failed */ }
+  callBoardFailed.set(db, Date.now());
+  return null;
+}
+async function callBoardSource_(db, user, mon, sun, today) {
+  if (user.teams && !user.teams.length) return { w: [], t: [] };
+  const viaDb = await callBoardFromDb_(db, user, mon, sun, today);
+  if (viaDb) return viaDb;
+  /* THE COLUMNS THE CALL BOARDS DRAW, not every column of every call in the week. select('*')
+     here carried the phone number, the customer, the match type and the sync stamp of every
+     call two hundred officers made -- none of which appears on a board of counts and talk
+     time. (No category either: every portfolio call has always been one kind on these boards,
+     and the function in db/RUN-ME-078 ignores it too.) */
+  const rows = await fetchAll(() => onTeams(db.from('call_logs')
+    .select('officer, team, duration, portfolio, ref, phone, outcome, call_date')
+    .gte('call_date', mon).lte('call_date', sun), user.teams));
+  const mine = scoped(user, rows);
+  return { w: boardRowsFromLogs(mine, mon, sun), t: boardRowsFromLogs(mine, today, today) };
+}
+
 /* The officer boards are the dashboard's twin: pure sums over a whole week of snapshots, and
    the second half of what the Presentation deck waits for. Same one-minute answer, same
    reasoning -- see answer-cache.js. Opening the deck straight after the Dashboard now costs
@@ -14279,7 +14331,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      Keep this list honest: if a figure below starts reading a new column, it has to be added
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
-  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callLogs, csRoster, phoneUsers,
+  const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callSrc, csRoster, phoneUsers,
          codeRows, cfgS, adj, expInitWeek, notices, ledger] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
@@ -14296,13 +14348,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     fetchAll(() => onTeams(db.from('loans')
       .select('id, stage, team, created_at, approved_date, approved_by, created_by, requested_amt, principal_amt, loan_amt, track_no, upload_date')
       .or(`approved_date.gte.${mon},upload_date.gte.${mon}`), user.teams)),
-    /* THE COLUMNS THE CALL BOARDS DRAW, not every column of every call in the week. select('*')
-       here carried the phone number, the customer, the match type and the sync stamp of every
-       call two hundred officers made -- none of which appears on a board of counts and talk
-       time. */
-    fetchAll(() => onTeams(db.from('call_logs')
-      .select('officer, team, duration, portfolio, ref, phone, outcome, call_date')
-      .gte('call_date', mon).lte('call_date', sun), user.teams)),
+    // The call boards' figures, per officer, for the week and for today: from the database in one answer, or the old read (callBoardSource_).
+    callBoardSource_(db, user, mon, sun, today),
     /* TWO DIFFERENT KINDS OF "AGENT", which the deck had been showing as one.
        call_agents is the CUSTOMER CARE roster -- the people named as CREATED BY on application
        reports. call_users is the HOPE Calls app roster -- field officers with a phone. They do
@@ -14341,7 +14388,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const myExp = scoped(user, expWeek), myDef = scoped(user, defWeek);
   const myExpInit = scoped(user, expInitWeek);
   const myTmrw = scoped(user, tomorrow.rows), myFu = scoped(user, fu);
-  const myLoans = scoped(user, loansAll), myCalls = scoped(user, callLogs);
+  const myLoans = scoped(user, loansAll);
   const myPhoneUsers = scoped(user, phoneUsers);
   const legal = legalBoard_(codeRows, scoped(user, notices), ledger, user, today, mon, sun,
     cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
@@ -14726,19 +14773,21 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   }
   const unitOf = name => unitBy[K(name)] || null;
 
-  function callBoard(from, to) {
-    /* THE SAME RULE AS RIPOTI AND THE CALLS TAB -- callRollupRows in call-core.js, the one
-       definition of what a call is: a number rung is one call per day however many times it
-       was dialled, talk time is portfolio talk time, and the dials ride beside the figures
-       unscored. Keyed by the officer's NAME, which is what this board is drawn by. */
-    const nameOf = c => String(c.officer || '(unknown)').trim() || '(unknown)';
-    const inRange = myCalls.filter(c => { const d = String(c.call_date || '').slice(0, 10); return d && d >= from && d <= to; });
-    const rollBy = {};
-    for (const r of callRollupRows(inRange, nameOf)) (rollBy[r.user_id] || (rollBy[r.user_id] = [])).push(r);
-    const m = {};
-    for (const c of inRange) {
-      const b = bucket(m, nameOf(c), { team: c.team || '' });
-      if (!b.team) b.team = c.team || '';
+  /* One window of the call boards, from the per-officer rows callBoardSource_ answers: the same
+     counting rule as Ripoti and the Calls tab (callRollupRows in call-core.js, the one definition
+     of what a call is: a number rung is one call per day however many times it was dialled, talk
+     time is portfolio talk time, and the dials ride beside the figures unscored), keyed by the
+     officer's NAME, which is what this board is drawn by -- and with one difference that has
+     always been there: this board's query never selected the category column, so a portfolio
+     call is one kind here (Ripoti splits it into EXPECTED, DEFAULTER and UNCATEGORIZED). Noted in
+     handbook Part 116; not changed. */
+  const CALL_ZERO = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0, customers: 0 };
+  function callBoard(rows) {
+    const m = {}, figBy = new Map();
+    for (const r of rows) {
+      const b = bucket(m, r.name, { team: r.team || '' });
+      if (!b.team) b.team = r.team || '';
+      figBy.set(r.name, r);
     }
     for (const u of myPhoneUsers) {
       if (u.active === false) continue;
@@ -14748,7 +14797,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       if (!b.team) b.team = u.team || '';
     }
     return Object.values(m).map(b => {
-      const t = callTotals(rollBy[b.key] || []);
+      const f = figBy.get(b.key) || CALL_ZERO;
+      const t = { dials: f.dials, calls: f.calls, duration: f.duration, otherDuration: f.otherDuration,
+        portfolio: f.portfolio, nonPortfolio: f.nonPortfolio, connected: f.connected, customers: f.customers };
       return { agent: b.key, team: b.team, ...t,
         /* WHICH OF THE THREE PMO UNITS THIS PERSON BELONGS TO, or null for everybody else.
            "For the presentation slides am interested in the 3 PMO department's Units (expected,
@@ -14761,8 +14812,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
         connectPct: pctOf(t.connected, t.calls), portfolioPct: pctOf(t.portfolio, t.calls) };
     }).sort((a, b) => b.calls - a.calls);
   }
-  const callToday = callBoard(today, today);
-  const callWeek = callBoard(mon, sun);
+  const callToday = callBoard(callSrc.t);
+  const callWeek = callBoard(callSrc.w);
   /* The other end of the same list, for the slide that asks who needs help. Deliberately the
      same rows in the other order rather than a separate calculation -- two boards that could
      disagree about the same week would be worse than no board at all. */

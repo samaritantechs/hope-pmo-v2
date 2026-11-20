@@ -620,3 +620,22 @@ export const CALLED_PHONES_RPC = {
     return { phones: [...seen].sort() };
   },
 };
+
+/* call_board_rollup(p_from, p_to, p_day, p_teams) -- db/RUN-ME-078: the call boards' figures per officer NAME for a window (`w`) and for a
+   day (`t`) as ONE value, so PostgREST's row cap and paging never apply to it. The database does here what boardRowsFromLogs
+   (api/_lib/call-core.js) does, held equal to it on a real PostgreSQL by tools/db-checks/call-board-rollup.mjs, so this stand-in calls
+   it: what it adds is the DATABASE'S side of the bargain -- the team list is matched exactly (the .in() the board always sent), the
+   rows come in id order, and the eight columns the board's query selects are the only ones that exist (no category).
+   Use it:  fakeDb(tables, { rpc: CALL_BOARD_RPC })  -- leave it out and the fake is a database where RUN-ME-078 has not been run, the
+   state the boards must keep working in. */
+export const CALL_BOARD_RPC = {
+  call_board_rollup: async (store, a = {}) => {
+    const { boardRowsFromLogs } = await import('../api/_lib/call-core.js');
+    const teams = Array.isArray(a.p_teams) ? a.p_teams : null;
+    const rows = (store.call_logs ? store.call_logs.rows : [])
+      .filter(r => teams == null || teams.includes(r.team))
+      .slice().sort((x, y) => (String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0))
+      .map(r => ({ officer: r.officer, team: r.team, duration: r.duration, portfolio: r.portfolio, ref: r.ref, phone: r.phone, outcome: r.outcome, call_date: r.call_date }));
+    return { w: boardRowsFromLogs(rows, a.p_from, a.p_to), t: boardRowsFromLogs(rows, a.p_day, a.p_day) };
+  },
+};
