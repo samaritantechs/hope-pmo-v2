@@ -59,6 +59,7 @@ import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostR
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
+import { planLeaderSync, groupPatches } from './leaders-sync.js';
 
 /** Every read and write behind the portal (public/app.html), one function per tab, all
     team-scoped through the same teamAllowed the rest of the system uses. Ported from the
@@ -7804,8 +7805,10 @@ async function teams(db, user) {
   const withPortfolio_ = r => {
     const T = String(r.team || '').trim().toUpperCase();
     const patch = {};
-    if (!r.collection) { const hit = collByTeam.get(T); if (hit) patch.collection = hit.name; }
-    if (!r.legal) { const hit = legalByTeam.get(T); if (hit) patch.legal = hit.name; }
+    // THE CODE WINS, where a code names the team ("the access codes hold the latest ... unless not there, will be set at teams and staff");
+    // a team no code names keeps whatever its row says. (It used to fill only a blank: a name typed on the row won.)
+    { const hit = collByTeam.get(T); if (hit && hit.name !== r.collection) patch.collection = hit.name; }
+    { const hit = legalByTeam.get(T); if (hit && hit.name !== r.legal) patch.legal = hit.name; }
     return Object.keys(patch).length ? { ...r, ...patch } : r;
   };
   let mine = rows.filter(r => teamAllowed(user, r.team)).map(r => overlayPhones(withPortfolio_(r), book));
@@ -8232,7 +8235,7 @@ async function accessCodes(db, user) {
 }
 /** Add or edit one code from the UI, so a new officer does not require an upload or SQL.
     'ALL' / blank teams means every team -- the same convention auth.js reads. */
-async function saveAccessCode(db, user, p) {
+async function saveAccessCode(db, user, p, nowMs = Date.now()) {
   requireAdmin(user);
   const code = String((p && p.code) || '').trim();
   if (!code) throw badRequest('code is required');
@@ -8262,7 +8265,7 @@ async function saveAccessCode(db, user, p) {
   const typed = list(p.teams);
   const nextTeams = typed ? registrySpellings(typed, await readTeamsRaw(db)) : null;
   let prevName = null;
-  if (roleColumnOf(nextRole)) {
+  if (leaderColumnOf_(nextRole)) {
     const { data: was } = await db.from('access_codes').select('name')
       .eq('code', oldCode || code).maybeSingle();
     prevName = was ? was.name : null;
@@ -8308,13 +8311,21 @@ async function saveAccessCode(db, user, p) {
      the roster did not follow, rather than a lost save. */
   const staff = await syncStaffFromCode(db, user,
     { name: nextName, prevName, role: nextRole, teams: nextTeams });
+  /* AND THEN EVERY OTHER CODE'S SHARE OF THE SAME FACT. The save above carries THIS code across; the
+     leaders of every other team are whatever the last save of each left them. Quiet on failure for the same reason: the code
+     is saved either way (handbook Part 121). */
+  let leaders = null;
+  try {
+    const r = await syncLeadersFromCodes_(db, user, nowMs);
+    leaders = { changed: r.changed, conflicts: r.conflicts.length };
+  } catch (e) { leaders = { error: String((e && e.message) || e).slice(0, 160) }; }
 
   const notes = [];
   if (hasSup && !supSaved) notes.push(ADV_ROUTE_NOTE);
   if (roleSup && !roleSup.saved) notes.push(ADV_DEPT_NOTE);
   // The supervisor named here (for this code, or for its whole role) gets the approval tab on their own code.
   const grantedTab = supervisor && supSaved && (!forRole || (roleSup && roleSup.saved)) ? await grantApprovalToCode_(db, supervisor) : null;
-  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff,
+  return { code, renamedFrom: (oldCode && oldCode !== code) ? oldCode : null, staff, leaders,
     supervisor: supSaved ? (forRole ? null : supervisor) : undefined, roleSupervisor: roleSup,
     ...(grantedTab ? { grantedTab } : {}),
     note: notes.length ? notes.join(' ') : null };
@@ -8371,7 +8382,7 @@ function roleColumnOf(role) {
 /** Carry a code's name and team list across to the teams table. Returns what changed, so the
     admin is told rather than left to notice. */
 async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
-  const roleCol = roleColumnOf(role);
+  const roleCol = leaderColumnOf_(role);
   if (!roleCol) return null;                              // rule 1
   const now = String(name || '').trim();
   if (!now) return null;
@@ -8405,6 +8416,123 @@ async function syncStaffFromCode(db, user, { name, prevName, role, teams }) {
     if (error) throw new Error(error.message);
   }
   return writes.length ? { role: roleCol, name: now, renamedOn, added, cleared } : null;
+}
+
+/* =======================================================================================
+   THE WHOLE OF THE SHEET, FROM THE WHOLE OF THE CODES -- the owner, 20 Nov 2026.
+
+     "The access codes hold the latest staff / leader per team, so unless not there, will be set
+      at teams and staff but teams and staff ... must always update the leaders as from settings
+      (Misimbo ya kuingia / Access codes)" ... "and that should affect all the current teams and
+      staff nav data right away"
+
+   The plan (which cells, which are kept, which cannot be decided and why) is leaders-sync.js,
+   pure; this is the part that reads the book, writes the cells, keeps the way back and tells the
+   caller what it did. It runs when somebody asks (leadersSync: the Teams & Staff screen asks as
+   it opens, so the data on it is current the moment it is looked at) and after every access code
+   is saved. Who held a team is recorded around it by the same door as every other save (holders.js).
+   ======================================================================================= */
+/** ONE DEFINITION OF WHICH COLUMN A CODE'S ROLE NAMES, for everything that carries a code across to
+    the sheet. roleColumnOf (the exact names and aliases: GMO, MANAGER, OPM, CREDIT ANALYST ...) was
+    all the save used, and codeColumn_ (the words RECOVER..., EXPECT.../EARLY...) all the boards'
+    overlay used, so a "PMO RECOVERY" code laid itself over every board and was never written to the
+    sheet, and a team dropped from it stayed on the sheet to re-assert itself. The collection officer is
+    left out on purpose: their teams live on the code itself and the list fills the column from it at
+    read time (teams, withPortfolio_). */
+function leaderColumnOf_(role) {
+  const exact = roleColumnOf(role);
+  if (exact) return exact;
+  const word = codeColumn_(role);
+  return word === 'collection' ? null : word;
+}
+const LEADERS_SYNC_LOG_KEY = 'LEADERS_SYNC_LOG';
+async function syncLeadersFromCodes_(db, user, nowMs, { preview = false } = {}) {
+  const [teamRows, codeRows] = await Promise.all([
+    readTeamsRaw(db),                                       // writers see the sheet as stored, not the code overlay
+    fetchAll(() => db.from('access_codes').select('name, role, teams')),    // the code itself is never read: it is a password
+  ]);
+  const plan = planLeaderSync({ teams: teamRows, codes: codeRows, cols: TEAM_ROLE_COLS, colOf: leaderColumnOf_,
+    phoneOf: TEAM_PHONE_OF, idOf: TEAM_ID_OF, allowed: t => teamAllowed(user, t) });
+  const at = new Date(nowMs).toISOString();
+  if (plan.changes.length && !preview) {
+    /* THE WAY BACK IS WRITTEN BEFORE THE FIRST CELL IS. The log holds what every cell was and what it
+       becomes; undoing it puts back only a cell that still holds what this wrote, so a log for cells that
+       were never reached (a write that failed half way) undoes nothing it should not. If the log cannot be
+       written nothing is changed. */
+    const log = { at, by: String((user && user.name) || ''), changes: plan.changes.map(c =>
+      ({ team: c.team, col: c.col, was: c.was, now: c.now, why: c.why, undo: c.undo })) };
+    const { error: logErr } = await db.from('settings').upsert({ key: LEADERS_SYNC_LOG_KEY, value: JSON.stringify(log) }, { onConflict: 'key' });
+    if (logErr) throw new Error(logErr.message);
+    noteSettingsWritten(db);
+    for (const group of groupPatches(plan.changes, at)) {
+      for (const batch of chunk_(group, 200)) {
+        const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+        noteTeamsWritten(db);
+        if (error) throw new Error(error.message);
+      }
+    }
+  }
+  /* THE LAST SYNC THAT CHANGED SOMETHING, for the screen's Undo: just written, or read from the log (one row). */
+  let last = null;
+  if (plan.changes.length && !preview) last = { at, by: String((user && user.name) || ''), n: plan.changes.length };
+  else {
+    const { data: lg } = await db.from('settings').select('value').eq('key', LEADERS_SYNC_LOG_KEY).maybeSingle();
+    try {
+      const j = lg && lg.value ? JSON.parse(lg.value) : null;
+      if (j && Array.isArray(j.changes) && j.changes.length) last = { at: j.at || null, by: j.by || '', n: j.changes.length };
+    } catch (e) { last = null; }
+  }
+  return {
+    ok: true, preview: !!preview, applied: !preview && plan.changes.length > 0, at, last,
+    changed: plan.changes.length,
+    changes: plan.changes.map(c => ({ team: c.team, col: c.col, was: c.was, now: c.now, why: c.why })),
+    kept: plan.kept, conflicts: plan.conflicts, offCode: plan.offCode,
+    unmapped: plan.unmapped, allTeamsCodes: plan.allTeamsCodes,
+  };
+}
+async function leadersSync(db, user, p, nowMs) {
+  requireAdmin(user);
+  return syncLeadersFromCodes_(db, user, nowMs, { preview: !!(p && p.preview) });
+}
+/** THE QUESTION BEFORE THE WRITE. The Teams & Staff screen asks this as it opens -- a READ, open to a
+    view-only admin too, never audited and never recorded in the history of who held what -- and calls
+    leadersSync only when it says something differs. So an open of a book that agrees costs two small
+    reads and leaves nothing in the audit log, instead of a "write" in it and six reads of the history
+    on every open (handbook Part 121). */
+async function leadersCheck(db, user, p, nowMs) {
+  requireAdmin(user);
+  return syncLeadersFromCodes_(db, user, nowMs, { preview: true });
+}
+/** The way back: every cell the last sync changed that still holds what it wrote goes back to what it
+    held; a cell somebody has changed since is left as they changed it. */
+async function leadersSyncUndo(db, user, p, nowMs) {
+  requireAdmin(user);
+  const { data: row } = await db.from('settings').select('value').eq('key', LEADERS_SYNC_LOG_KEY).maybeSingle();
+  let log = null;
+  try { log = row && row.value ? JSON.parse(row.value) : null; } catch (e) { log = null; }
+  if (!log || !Array.isArray(log.changes) || !log.changes.length) {
+    throw badRequest('Hakuna usasishaji wa kurudisha. / There is no sync to undo.');
+  }
+  const byTeam = new Map((await readTeamsRaw(db)).map(t => [K(t.team), t]));
+  const restore = [];
+  let skipped = 0;
+  for (const c of log.changes) {
+    const t = byTeam.get(K(c.team));
+    if (!t || !teamAllowed(user, t.team) || K(t[c.col]) !== K(c.now)) { skipped++; continue; }
+    restore.push({ team: t.team, patch: c.undo || {} });
+  }
+  const at = new Date(nowMs).toISOString();
+  for (const group of groupPatches(restore, at)) {
+    for (const batch of chunk_(group, 200)) {
+      const { error } = await db.from('teams').upsert(batch, { onConflict: 'team' });
+      noteTeamsWritten(db);
+      if (error) throw new Error(error.message);
+    }
+  }
+  const { error: delErr } = await db.from('settings').delete().eq('key', LEADERS_SYNC_LOG_KEY);
+  if (delErr) throw new Error(delErr.message);
+  noteSettingsWritten(db);
+  return { ok: true, restored: restore.length, skipped, from: log.at || null };
 }
 
 async function deleteAccessCode(db, user, p) {
@@ -10646,7 +10774,7 @@ const FN = {
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
   systemOpenGet, systemOpenSet, settingDelete,
-  accessCodes, saveAccessCode, deleteAccessCode, callUsers, removeCallUser,
+  accessCodes, saveAccessCode, deleteAccessCode, leadersCheck, leadersSync, leadersSyncUndo, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */
   deviceList, deviceEnrol, deviceIssue, deviceSetState, deviceHistory,
@@ -11055,6 +11183,7 @@ const FN_TAB = {
   perfHistory: ['perf'],
   defaulters: ['defexp', 'followup'],
   teams: ['teams', 'settings', 'adjust'], staffRoster: ['teams'], callAgents: ['teams', 'dashboard'],
+  leadersCheck: ['teams'], leadersSync: ['teams'], leadersSyncUndo: ['teams'],
   /* THE PHONE REGISTER. Both panes see the whole fleet, so reading is gated on holding
      EITHER. The orders are gated separately and more narrowly, inside the functions
      themselves, on the state being asked for rather than on the pane that asked -- see

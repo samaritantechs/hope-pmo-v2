@@ -40,7 +40,7 @@ import { fetchAll, runQuery } from './supabase.js';
 export const AUDITED = new Set([
   // teams & staff
   'saveTeam', 'deleteTeam', 'saveStaffTeams', 'saveRole', 'deleteRole', 'resetApprovals',
-  'saveAccessCode', 'deleteAccessCode', 'changeMyCode',
+  'saveAccessCode', 'deleteAccessCode', 'changeMyCode', 'leadersSync', 'leadersSyncUndo',
   'saveCallAgent', 'removeCallUser', 'saveOfficerAccount', 'deleteOfficerAccount',
   // settings & the system switch
   'settingSet', 'settingDelete', 'systemOpenSet', 'commissionSave', 'announceSave',
