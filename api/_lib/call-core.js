@@ -2110,6 +2110,36 @@ export function callTotals(roll) {
   }
   return t;
 }
+/** ONE WINDOW OF THE OFFICER BOARDS (the dashboard's and the Presentation's call boards), per officer
+    NAME, from the call rows themselves -- the definition that db/RUN-ME-078's call_board_rollup is held
+    equal to by tools/db-checks/call-board-rollup.mjs, and what the board falls back to where the function
+    is not installed. The boards are drawn by the NAME a call was filed under (not by user_id), so a
+    renamed officer is two lines and two officers of one name are one; the figures are callRollupRows'
+    (a number rung is one call per day however many times it was dialled, talk time is portfolio talk
+    time, the dials ride beside) added up by callTotals; the team is the first non-empty team the
+    officer's calls were filed under. `logs` come in the order the database gives them (by id), and the
+    result is in the order the officers first appear in them. The rows the boards read carry NO category
+    column, so every portfolio call is one kind here, as it has always been on the boards.
+    One object per officer: { name, team, dials, calls, duration, otherDuration, portfolio,
+    nonPortfolio, connected, customers }. */
+export function boardRowsFromLogs(logs, from, to) {
+  const nameOf = c => String(c.officer || '(unknown)').trim() || '(unknown)';
+  const inRange = (logs || []).filter(c => { const d = String(c.call_date || '').slice(0, 10); return d && d >= from && d <= to; });
+  const roll = new Map();
+  for (const r of callRollupRows(inRange, nameOf)) {
+    let a = roll.get(r.user_id);
+    if (!a) roll.set(r.user_id, a = []);
+    a.push(r);
+  }
+  const order = new Map();
+  for (const c of inRange) {
+    const name = nameOf(c);
+    let b = order.get(name);
+    if (!b) order.set(name, b = { name, team: '' });
+    if (!b.team) b.team = c.team || '';
+  }
+  return [...order.values()].map(b => ({ name: b.name, team: b.team, ...callTotals(roll.get(b.name) || []) }));
+}
 /* A rollup from before RUN-ME-042 has 'g' rows and no 'd' rows. Rather than fall back to
    reading every call row -- the 45-second tab the rollup exists to prevent -- the dials
    stand in for the numbers, which is the figure the report showed before, and the report
