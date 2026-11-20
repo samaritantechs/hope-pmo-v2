@@ -278,6 +278,61 @@ test('who led each month: the GMO table and matrix, the OPM table, and the legal
   assert.ok(has(r, 'Legal officers: the teams they hold') && has(r, 'LEGAL 0') && has(r, 'LEGAL 2'), 'the legal officer on each team, judged as any leader is');
 });
 
+/* "please study the content in the annual report ppt to make sure everything is okay" (the owner, 20 Nov): the deck was built from the test book,
+   drawn by LibreOffice, and every slide read. Five things were wrong and are pinned here: the contents slide named "who led each month" twice (GMOs and
+   OPMs both come to the same line), the first-time and returning colours were swapped between the bars and the doughnut beside them, a fixed sentence
+   claimed "collection holds steadiest" whatever the year did (on the test book sales was the flat line, under a chart that showed it), "A OPM", and
+   "GMO 3 6" for six months led. */
+const spreadsOf = M => {
+  const both = M.had.filter(m => m.colPct != null && m.recPct != null && m.salesPct != null);
+  return [['Sales', 'salesPct'], ['Collection', 'colPct'], ['Recovery', 'recPct']]
+    .map(([n, k]) => [n, Math.max(...both.map(m => m[k])) - Math.min(...both.map(m => m[k]))])
+    .sort((a, b) => a[1] - b[1] || (a[0] < b[0] ? -1 : 1));
+};
+test('the deck says what the data says: the contents line once, the same colours for the same series, the steadiest measure read off the months, plain notes', async () => {
+  const t = withBooks(book());
+  const r = await slidesOf(await annual(t, 2026), await annual(t, 2025), await annualBook(t, 2026));
+  // 1. GMOs and OPMs both have a "who led each month" slide; the contents slide says it once
+  const contents = r.slides.find(s => s.text.includes('What this report covers')).text;
+  assert.equal((contents.match(/who led each month/g) || []).length, 1, 'once: ' + contents);
+  assert.ok(has(r, 'GMOs: who led each month') && has(r, 'OPMs: who led each month'), 'and both slides are still in the deck');
+  // 2. first-time and returning wear the same colours in the bars and in the doughnut beside them
+  const si = r.slides.findIndex(s => s.text.includes('First-time and returning customers')) + 1;
+  const rels = await r.zip.file('ppt/slides/_rels/slide' + si + '.xml.rels').async('string');
+  const charts = [...rels.matchAll(/charts\/(chart\d+\.xml)/g)].map(m => m[1]);
+  assert.equal(charts.length, 2, 'the bars and the doughnut');
+  let bars = null, ring = null;
+  for (const c of charts) { const x = await r.zip.file('ppt/charts/' + c).async('string'); if (x.includes('<c:doughnutChart')) ring = x; else bars = x; }
+  const sers = [...bars.matchAll(/<c:ser>([\s\S]*?)<\/c:ser>/g)].map(m => ({ name: (m[1].match(/<c:tx>[\s\S]*?<c:v>([^<]*)<\/c:v>/) || [])[1], color: (m[1].match(/<c:spPr>[\s\S]*?<a:srgbClr val="([0-9A-Fa-f]{6})"/) || [])[1] }));
+  const pts = [...ring.matchAll(/<c:dPt>([\s\S]*?)<\/c:dPt>/g)].map(m => (m[1].match(/<a:srgbClr val="([0-9A-Fa-f]{6})"/) || [])[1]);
+  assert.deepEqual(sers.map(s => s.name), ['First-time (TRK 1)', 'Returning'], 'the bars: first-time, then returning');
+  assert.deepEqual(pts, sers.map(s => s.color), 'the doughnut: the same colour for the same series, in the same order: ' + JSON.stringify({ sers, pts }));
+  // 3. "How the year moved": which measure holds steadiest and which swings most is read off the months, not assumed
+  const says = (res, sp) => {
+    const tx = res.slides.find(s => s.text.includes('How the year moved')).text;
+    assert.ok(tx.includes(sp[0][0] + ' holds steadiest'), 'the steadiest is ' + sp[0][0] + ': ' + tx);
+    assert.ok(tx.includes('(within ' + sp[0][1].toFixed(1) + ' points); ' + sp[2][0] + ' swings the most (' + sp[2][1].toFixed(1) + ' points from its lowest month to its highest).'), 'and ' + sp[2][0] + ' swings most, with the points: ' + tx);
+    return tx;
+  };
+  const sp1 = spreadsOf(r.model);
+  assert.equal(sp1[0][0], 'Sales', 'on this book sales is the flat line (every team sells the same each month on average)');
+  const tx1 = says(r, sp1);
+  assert.ok(!tx1.includes('Collection holds steadiest'), 'the old fixed sentence is gone');
+  // a book where the order is different: collection flat, recovery moving, sales jumping in May
+  const t2 = withBooks(book());
+  t2.team_months.forEach(x => { if (/^2026-/.test(x.ym)) { x.collected = Math.round(x.expected * 0.9); x.uncollected = x.expected - x.collected; x.recovered = Math.round(x.uncollected * (0.3 + (Number(x.ym.slice(5)) % 4) / 10)); } });
+  t2.teams.forEach(tm => { for (let j = 0; j < 6; j++) t2.loans.push({ id: tm.team + 'X' + j, team: tm.team, stage: 'approved', principal_amt: 7500000, loan_amt: 10200000, approved_date: '2026-05-10', track_no: '1' }); });
+  const r2 = await slidesOf(await annual(t2, 2026), null, await annualBook(t2, 2026));
+  const sp2 = spreadsOf(r2.model);
+  assert.deepEqual([sp2[0][0], sp2[2][0]], ['Collection', 'Sales'], 'on this book collection is flat and sales jumps: ' + JSON.stringify(sp2));
+  says(r2, sp2);
+  // 4. plain notes: "An OPM" (not "A OPM"), and a count in brackets after each name
+  const gmoNote = r.slides.find(s => s.text.includes('GMOs: who led each month')).text, opmNote = r.slides.find(s => s.text.includes('OPMs: who led each month')).text;
+  assert.ok(/Most months led: [^.]*\(\d+\)/.test(gmoNote) && /Most months led: [^.]*\(\d+\)/.test(opmNote), 'who led how many months, the count in brackets: ' + gmoNote.slice(-160));
+  assert.ok(opmNote.includes('An OPM is judged') && !opmNote.includes('A OPM'), 'an OPM, not a OPM');
+  assert.ok(gmoNote.includes('A GMO is judged'), 'and still a GMO');
+});
+
 test('the map data is the 31 regions of Tanzania today: Songwe is there, and the five of Zanzibar', () => {
   const ctx = deckCtx();
   const T = vm.runInContext('ANPPT_TZ', ctx);

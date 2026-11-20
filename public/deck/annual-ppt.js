@@ -203,7 +203,7 @@ function anPptBuild_(Pptx, M, A) {
     s.addChart(pres.charts.LINE, data, opts);
   }
   function doughnut(s, labels, values, o) {
-    var opts = { x: o.x, y: o.y, w: o.w, h: o.h, holeSize: 55, chartColors: PALETTE.slice(0, labels.length), showLegend: true, legendPos: o.legend || 'r', legendFontSize: 10, legendColor: C.text1,
+    var opts = { x: o.x, y: o.y, w: o.w, h: o.h, holeSize: 55, chartColors: o.colors || PALETTE.slice(0, labels.length), showLegend: true, legendPos: o.legend || 'r', legendFontSize: 10, legendColor: C.text1,
       showPercent: true, showValue: false, showLabel: false, dataLabelColor: 'FFFFFF', dataLabelFontSize: 10, dataLabelFormatCode: '0%', dataBorder: { pt: 1.5, color: 'FFFFFF' }, showTitle: false, objectName: o.name };
     for (var k in fontOpts) opts[k] = fontOpts[k];
     s.addChart(pres.charts.DOUGHNUT, [{ name: o.series, labels: labels, values: values }], opts);
@@ -722,7 +722,8 @@ function anPptBuild_(Pptx, M, A) {
     var s = content('First-time and returning customers');
     chart(s, labels, [{ name: 'First-time (TRK 1)', values: had.map(function (m) { return m.trk1; }) }, { name: 'Returning', values: had.map(function (m) { return m.retained; }) }],
       { x: 0.3, y: 1.0, w: 4.4, h: 4.1, stacked: true, colors: [C.a2, C.a1], name: 'First-time and returning', fmt: '#,##0', dl: 8, gap: 35 });
-    doughnut(s, ['First-time', 'Returning'], [Y.trk1, Y.retained], { x: 4.75, y: 1.0, w: 2.2, h: 2.9, name: 'Share first-time and returning', series: 'Loans', legend: 'b' });
+    // the same two colours as the bars beside it: first-time light blue, returning dark blue (the doughnut took the palette's order and swapped them)
+    doughnut(s, ['First-time', 'Returning'], [Y.trk1, Y.retained], { x: 4.75, y: 1.0, w: 2.2, h: 2.9, name: 'Share first-time and returning', series: 'Loans', legend: 'b', colors: [C.a2, C.a1] });
     var ret = had.map(function (m) { return m.retentionPct; });
     var bi = ret.indexOf(Math.max.apply(null, ret.filter(function (v) { return v != null; }))), wi = ret.indexOf(Math.min.apply(null, ret.filter(function (v) { return v != null; })));
     var b = [[{ text: anPptN0_(Y.loans) + ' loans, ', bold: true }, { text: anPptN0_(Y.trk1) + ' first-time and ' + anPptN0_(Y.retained) + ' returning.' }],
@@ -799,9 +800,14 @@ function anPptBuild_(Pptx, M, A) {
     lineChart(s, both.map(function (m) { return anPptMon_(m.ym); }), [{ name: 'Sales %', values: pick('salesPct') }, { name: 'Collection %', values: pick('colPct') }, { name: 'Recovery %', values: pick('recPct') }, { name: 'General %', values: pick('general') }],
       { x: 0.3, y: 1.0, w: 6.6, h: 4.1, colors: [C.a1, C.a3, C.a4, C.text2], name: 'The measures by month', fmt: '0', dl: 8, min: 0, max: Math.max(100, Math.ceil(top / 10) * 10) });
     var g = both.map(function (m) { return m.general; }), bi = g.indexOf(Math.max.apply(null, g)), wi = g.indexOf(Math.min.apply(null, g));
-    bullets(s, [[{ text: anPptLong_(both[bi].ym) + ' was the best month overall, ', bold: true }, { text: 'General ' + anPptPc_(g[bi]) + '.' }],
-      [{ text: anPptLong_(both[wi].ym) + ' the weakest, ', bold: true }, { text: 'General ' + anPptPc_(g[wi]) + '.' }],
-      [{ text: 'Collection holds steadiest; ', bold: true }, { text: 'sales and recovery swing the most from month to month.' }]], 7.1, 1.2, 2.4, 3.6, 12);
+    var bl = [[{ text: anPptLong_(both[bi].ym) + ' was the best month overall, ', bold: true }, { text: 'General ' + anPptPc_(g[bi]) + '.' }],
+      [{ text: anPptLong_(both[wi].ym) + ' the weakest, ', bold: true }, { text: 'General ' + anPptPc_(g[wi]) + '.' }]];
+    // Which of the three measures moves least and which most is read off the months on the chart, never assumed: a fixed sentence here
+    // said "collection holds steadiest" whatever the year did, and on a year where sales was the flat line it contradicted its own chart.
+    var spreadOf = function (k) { var v = both.map(function (m) { return m[k]; }); return Math.max.apply(null, v) - Math.min.apply(null, v); };
+    var sp = [['Sales', spreadOf('salesPct')], ['Collection', spreadOf('colPct')], ['Recovery', spreadOf('recPct')]].sort(function (a, b) { return a[1] - b[1] || (a[0] < b[0] ? -1 : 1); });
+    if (sp[2][1] - sp[0][1] >= 0.5) bl.push([{ text: sp[0][0] + ' holds steadiest ', bold: true }, { text: '(within ' + sp[0][1].toFixed(1) + ' points); ' + sp[2][0] + ' swings the most (' + sp[2][1].toFixed(1) + ' points from its lowest month to its highest).' }]);
+    bullets(s, bl, 7.1, 1.2, 2.4, 3.6, 12);
     if (!sectionsIn.some(function (x) { return x[0] === 'Recovery'; })) sectionsIn.push(['The year\'s trend', 'the measures month by month']);
   })();
 
@@ -898,12 +904,12 @@ function anPptBuild_(Pptx, M, A) {
     var ranked = ms.map(function (m) { return { ym: m.ym, list: rows.filter(function (r) { return r.m && r.m[m.ym] && r.m[m.ym].general != null; }).sort(function (a, b) { return b.m[m.ym].general - a.m[m.ym].general; }) }; });
     var led = {}; ranked.forEach(function (x) { if (x.list[0]) led[x.list[0].name] = (led[x.list[0].name] || 0) + 1; });
     var ledTop = Object.keys(led).sort(function (a, b) { return led[b] - led[a] || (a < b ? -1 : 1); });
-    tlItems.push('who led each month');
+    if (tlItems.indexOf('who led each month') < 0) tlItems.push('who led each month');       // GMOs and OPMs both come here: the contents line says it once
     var s = content(label + 's: who led each month');
     var cell = function (x, i) { var r = x.list[i]; return r ? [short(r.name, 22), anPptPc0_(r.m[x.ym].general)] : ['—', '—']; };
     var body = ranked.map(function (x) { return [anPptLong_(x.ym)].concat(cell(x, 0), cell(x, 1), cell(x, 2)); });
     table(s, [['Month', 'Led by', 'General', 'Second', 'General', 'Third', 'General']].concat(body), 0.5, 1.0, 9.0, [1.1, 2.1, 0.75, 1.9, 0.75, 1.65, 0.75], { fs: 9.5, rowH: Math.min(0.29, 3.7 / (body.length + 1)), name: label + ' leaders by month', textCols: [0, 1, 3, 5] });
-    note(s, 'Most months led: ' + ledTop.slice(0, 3).map(function (n) { return n + ' ' + led[n]; }).join(', ') + '. A ' + label + ' is judged each month on the teams they held that month: the average of those teams\' sales, collection and recovery.', 4.72, 0.5);
+    note(s, 'Most months led: ' + ledTop.slice(0, 3).map(function (n) { return n + ' (' + led[n] + ')'; }).join(', ') + '. ' + (/^[AEIOU]/.test(label) ? 'An ' : 'A ') + label + ' is judged each month on the teams they held that month: the average of those teams\' sales, collection and recovery.', 4.72, 0.5);
     if (!withMatrix) return;
     var pick = rows.slice(0, 10), seen = {}; pick.forEach(function (r) { seen[r.name] = 1; });
     rows.forEach(function (r) { if (led[r.name] && !seen[r.name] && pick.length < 14) { pick.push(r); seen[r.name] = 1; } });
