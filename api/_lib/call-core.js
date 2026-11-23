@@ -253,7 +253,8 @@ function callBuild_() {
   return callBuildStamp;
 }
 async function boot(db, [dev], nowMs) {
-  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK', 'CALL_LOCATION'];
+  // CALL_MIN_SECS rides the same one `in` query (23 Nov 2026): the officer's own day says how many numbers were reached, by the one rule.
+  const BOOT_KEYS = ['CALL_BRAND', 'CALL_LOGO_URL', 'CALL_SYNC_SECONDS', 'CALL_LOGOUT_ENABLED', FU_STATUS_KEY, 'DATA_VERSION', 'OFFLINE_PACK', 'CALL_LOCATION', 'CALL_MIN_SECS'];
   let cu = null, accountOff = false;
   const [teamRows, setting] = await Promise.all([
     fetchAll(() => db.from('teams').select('team, gmo, manager, bike')),
@@ -388,7 +389,7 @@ async function boot(db, [dev], nowMs) {
     callBuild: callBuild_(),
     syncEverySec: (!syncSec || isNaN(syncSec)) ? 300 : Math.max(60, Math.min(3600, syncSec)),
     logoutEnabled: logoutSetting !== 'NO' && logoutSetting !== 'FALSE' && logoutSetting !== '0',
-    today: callTotals(callRollupRows(logs, () => cu.user_id)),
+    today: callTotals(callRollupRows(logs, () => cu.user_id, callMinSecsOf(setting('CALL_MIN_SECS')))),
   };
 }
 
@@ -496,7 +497,15 @@ async function register(db, [dev, name, team, accessCode, phone, passcode], nowM
     tiny duration. Ticking those off marked customers as done who had never been spoken to,
     and the officer moved on. Anything at or under CALL_MIN_SECS seconds is a dial attempt,
     not a call, and no longer counts. */
-const CALL_MIN_SECS_DEFAULT = 5;
+export const CALL_MIN_SECS_DEFAULT = 5;
+/** The setting "Minimum seconds to count a call" (CALL_MIN_SECS) as a number: the ONE reading of it in JavaScript. Digits only; nothing
+    readable is the default; never above two thousand million, so that the number is the same one db/RUN-ME-088 reads from the same
+    cell and fits the integer the database functions take. Used by the called-today tick and by what "reached" means (outcomeOf). */
+export const CALL_MIN_SECS_MAX = 2000000000;
+export function callMinSecsOf(v) {
+  const raw = parseInt(String(v || '').replace(/[^0-9]/g, ''), 10);
+  return (isNaN(raw) || raw < 0) ? CALL_MIN_SECS_DEFAULT : Math.min(raw, CALL_MIN_SECS_MAX);
+}
 /* "AMEPIGIWA LEO" -- THE SECOND WHOLE-TABLE READ ON A HOT PATH, and the one that gets worse
    as the day goes on.
 
@@ -617,8 +626,7 @@ async function calledTodaySet(db, nowMs) {
   // The pause that follows a busy failure is running: the held set stands in BEFORE anything is read, the threshold included.
   const paused = calledFnFailed.get(db);
   if (paused && paused.soft && (Date.now() - paused.at) < CALLED_FN_PAUSE_MS) { const s = heldSet(); if (s) return s; }
-  const raw = parseInt(String(await settingGet(db, 'CALL_MIN_SECS') || '').replace(/[^0-9]/g, ''), 10);
-  const min = (isNaN(raw) || raw < 0) ? CALL_MIN_SECS_DEFAULT : raw;
+  const min = callMinSecsOf(await settingGet(db, 'CALL_MIN_SECS'));
   const set = {};
   const got = await calledPhonesFromDb_(db, day, min);
   if (got.phones) {
@@ -2196,7 +2204,40 @@ export function positionOf(posOf, name, role) {
   return role.charAt(0).toUpperCase() + role.slice(1).toLowerCase();
 }
 const categoryOf = r => (!r.portfolio ? 'OTHER' : (K(r.category) === 'EXPECTED' || K(r.category) === 'DEFAULTER') ? K(r.category) : 'UNCATEGORIZED');
-const outcomeOf = r => { const o = K(r.outcome); return (o === 'MISSED' || o === 'REJECTED' || o === 'BLOCKED') ? o : 'CONNECTED'; };
+/* WHAT BECAME OF ONE DIAL -- one definition, and since 23 Nov 2026 it reads the call's length.
+
+     "At calls slide in presentation "REACHED %" Should be percentage of connected calls against calls not just dialled b/se some ring
+      but dont get connected" -- the owner, 23 Nov 2026.
+
+   Android files a call the moment it is placed and has no word for "it rang and nobody took it": an outgoing call that rang out is
+   OUTGOING, exactly like one that was answered. So everything that was not MISSED, REJECTED or BLOCKED (Android's words for an
+   incoming call nobody took) used to read CONNECTED here, and Reached % sat near a hundred. The system already had ONE definition of a
+   real conversation, the one that ticks a customer "Amepigiwa leo": a call LONGER than the setting "Minimum seconds to count a call"
+   (CALL_MIN_SECS, five by default); anything at or under it is a dial attempt. A dial is now CONNECTED only when it was that; one that
+   rang out, or was taken and dropped inside the minimum, is NO ANSWER. A number is REACHED on a day when one of its dials was
+   CONNECTED. db/RUN-ME-088 is the same rule in the two database functions (call_report_rollup, call_board_rollup), held to this one by
+   tools/db-checks/reached-rule.mjs; with `min` = -1 the rule is the one it was before (a length is never negative). */
+export const NO_ANSWER = 'NO ANSWER';
+export const outcomeOf = (r, min) => {
+  const o = K(r.outcome);
+  return (o === 'MISSED' || o === 'REJECTED' || o === 'BLOCKED') ? o : (num(r.duration) > min ? 'CONNECTED' : NO_ANSWER);
+};
+/* WHICH RULE A ROLLUP'S REACHED NUMBERS WERE COUNTED BY. Every 'd' row says it in its `outcome` cell, which a 'd' row never used:
+   'MIN:5' = reached means a call longer than five seconds. A 'd' row with no mark came from a database function older than
+   db/RUN-ME-088 and counted every dial that was not missed: its reached figure is NOT shown (reachOf_ answers known: false, the
+   report prints a dash and names the file). A window with no 'd' row at all has nothing to show and is known. */
+export const reachMark = min => 'MIN:' + min;
+const REACH_MARK_RE = /^MIN:(\d+)$/;
+export function reachOf_(roll) {
+  let min = null;
+  for (const r of roll || []) {
+    if (r.kind !== 'd') continue;
+    const m = REACH_MARK_RE.exec(String(r.outcome == null ? '' : r.outcome));
+    if (!m) return { known: false, min: null };
+    min = Number(m[1]);
+  }
+  return { known: true, min };
+}
 
 /* =====================================================================================
    THE CALL COUNTING RULE -- one definition; every figure in the system is read off it.
@@ -2227,14 +2268,18 @@ export const CALL_RULE_TXT = 'Simu = namba moja kwa siku, hata ikipigwa mara nyi
   + 'Muda = simu za portfolio pekee. / A call is one number per day however many times it was dialled '
   + '(dials are shown beside it). Talk time counts portfolio calls only.';
 /** The three kinds of row call_report_rollup returns, built from call rows. `keyOf` names the
-    officer a row belongs to (user_id by default; the deck's boards key by name). */
-export function callRollupRows(logs, keyOf = r => r.user_id) {
-  const g = new Map(), d = new Map(), u = new Map();
+    officer a row belongs to (user_id by default; the deck's boards key by name). `min` is the
+    setting "Minimum seconds to count a call" (callMinSecsOf): a dial is CONNECTED only when it
+    lasted longer, and a number is reached when one of its dials was (outcomeOf). Every caller
+    passes it; the default is the setting's own default. Each 'd' row says which minimum its
+    reached numbers were counted by (reachMark). */
+export function callRollupRows(logs, keyOf = r => r.user_id, min = CALL_MIN_SECS_DEFAULT) {
+  const g = new Map(), d = new Map(), u = new Map(), mark = reachMark(min);
   for (const r of logs || []) {
     const k0 = keyOf(r), key = k0 == null ? null : String(k0);
     const day = String(r.call_date == null ? '' : r.call_date).slice(0, 10);
     const team = r.team == null ? null : String(r.team);
-    const pf = !!r.portfolio, cat = categoryOf(r), outc = outcomeOf(r);
+    const pf = !!r.portfolio, cat = categoryOf(r), outc = outcomeOf(r, min);
     const dur = num(r.duration), phone = String(r.phone == null ? '' : r.phone);
     const gk = [day, key, team, cat, outc].join('\u0001');
     let gr = g.get(gk);
@@ -2242,7 +2287,7 @@ export function callRollupRows(logs, keyOf = r => r.user_id) {
     gr.calls += 1; gr.dur += dur;
     const dk = [day, key, team, cat].join('\u0001');
     let dr = d.get(dk);
-    if (!dr) d.set(dk, dr = { row: { kind: 'd', day, user_id: key, team, category: cat, outcome: null, portfolio: pf, calls: 0, dur: 0, uniq: 0 }, nums: new Set(), reached: new Set() });
+    if (!dr) d.set(dk, dr = { row: { kind: 'd', day, user_id: key, team, category: cat, outcome: mark, portfolio: pf, calls: 0, dur: 0, uniq: 0 }, nums: new Set(), reached: new Set() });
     dr.row.dur += dur; dr.nums.add(phone);
     if (outc === 'CONNECTED') dr.reached.add(phone);
     if (pf) {
@@ -2281,12 +2326,13 @@ export function callTotals(roll) {
     result is in the order the officers first appear in them. The rows the boards read carry NO category
     column, so every portfolio call is one kind here, as it has always been on the boards.
     One object per officer: { name, team, dials, calls, duration, otherDuration, portfolio,
-    nonPortfolio, connected, customers }. */
-export function boardRowsFromLogs(logs, from, to) {
+    nonPortfolio, connected, customers }. `min` is the minimum seconds a call must pass to have reached its
+    number (callRollupRows); db/RUN-ME-088 is the same rule in the database function. */
+export function boardRowsFromLogs(logs, from, to, min = CALL_MIN_SECS_DEFAULT) {
   const nameOf = c => String(c.officer || '(unknown)').trim() || '(unknown)';
   const inRange = (logs || []).filter(c => { const d = String(c.call_date || '').slice(0, 10); return d && d >= from && d <= to; });
   const roll = new Map();
-  for (const r of callRollupRows(inRange, nameOf)) {
+  for (const r of callRollupRows(inRange, nameOf, min)) {
     let a = roll.get(r.user_id);
     if (!a) roll.set(r.user_id, a = []);
     a.push(r);
@@ -2309,6 +2355,22 @@ const RULE_NOTE = 'Sheria ya kuhesabu simu (namba moja = simu moja kwa siku) ina
   + 'iendeshwe; hadi hapo "simu" hapa ni majaribio yote. / The call counting rule (one number is one '
   + 'call per day) needs db/RUN-ME-042-call-counting-rule.sql run in the Supabase SQL editor; until '
   + 'then "calls" here are dials, every redial counted.';
+/* REACHED, WHERE THE DATABASE IS BEHIND THE RULE (23 Nov 2026). A rollup whose 'd' rows carry no mark (reachOf_) was counted by the
+   function as it stood before db/RUN-ME-088: every dial that was not missed counted as reached, the near-hundred figure the owner
+   ordered against. It is not shown as if it were the new one and the heavy row read is not made to work it out: Reached and Reached %
+   are a dash (null here) and the report SAYS which file to run, in the same red line the counting rule uses (ruleNote). */
+export const REACH_NOTE = 'Walipatikana (Reached): hesabu sahihi (simu iliyoongewa kwa zaidi ya sekunde chache, si iliyoita tu) '
+  + 'inahitaji db/RUN-ME-088 iendeshwe; hadi hapo Reached na Reached % hazionyeshwi, na CONNECTED kwenye matokeo bado inajumuisha '
+  + 'simu zilizoita tu. / Reached: the right count (a call that was spoken on for longer than the minimum seconds, not one that only '
+  + 'rang) needs db/RUN-ME-088-reached-is-a-conversation.sql run in the Supabase SQL editor; until then Reached and Reached % are '
+  + 'not shown, and CONNECTED under "By outcome" still includes dials that only rang.';
+/** The rule as the screen says it, with what "reached" means when the figures were counted by it. */
+export function callRuleTxt(reach) {
+  return CALL_RULE_TXT + (reach && reach.known && reach.min != null
+    ? ' Walipatikana = namba iliyoongewa nayo zaidi ya sekunde ' + reach.min + '; iliyoita tu ni NO ANSWER. / Reached = a number '
+      + 'spoken to for longer than ' + reach.min + ' seconds; a dial that only rang, or ended within them, is NO ANSWER.'
+    : '');
+}
 function legacyRollup_(roll) {
   if (!roll.length || roll.some(r => r.kind === 'd') || !roll.some(r => r.kind === 'g')) return { roll, legacy: false };
   const d = new Map();
@@ -2352,8 +2414,11 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
       if (!error && Array.isArray(data)) rollup = data;
     })(),
   ]);
-  let logs = [];
+  let logs = [], rowMin = CALL_MIN_SECS_DEFAULT;
   if (!rollup) {
+    /* The row road counts "reached" itself, so it reads the minimum seconds: ONE read of one settings row, made only here, where the
+       database function is not installed -- not the state of the live book, where the function reads the same cell itself. */
+    rowMin = await settingGet(db, 'CALL_MIN_SECS').then(callMinSecsOf, () => CALL_MIN_SECS_DEFAULT);
     /* Scoped at the database. A leader over one team read every call the whole company made
        in the window and discarded the rest here -- on the table that grows fastest of all.
        AND ONLY THE COLUMNS THE REPORT READS: the hash id, direction, call_time, match_type,
@@ -2386,7 +2451,10 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
      when the call synced -- a reassignment must not strand old calls under a team nobody is
      scoped to see anymore -- and a leader's OWN calls always count in their OWN report even
      if their home team isn't in scope. */
-  const { roll, legacy } = legacyRollup_(rollup || callRollupRows(logs));
+  const { roll, legacy } = legacyRollup_(rollup || callRollupRows(logs, undefined, rowMin));
+  // Which minimum the reached numbers were counted by; not known for a rollup from before RUN-ME-088 (or before RUN-ME-042).
+  const reach = legacy ? { known: false, min: null } : reachOf_(roll);
+  const reachedOr = n => (reach.known ? n : null);
   const byDayUser = {}, users = {}, teams = {}, byCategory = {}, byOutcome = {};
   const totals = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0 };
   const newUser = (uid, name, team) => ({ name, team, role: curRole[uid] || '', phone: curPhone[uid] || '',
@@ -2450,7 +2518,7 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
   }
 
   const CAT_ORDER = { EXPECTED: 1, DEFAULTER: 2, UNCATEGORIZED: 3, OTHER: 4 };
-  const OUT_ORDER = { CONNECTED: 1, MISSED: 2, REJECTED: 3, BLOCKED: 4 };
+  const OUT_ORDER = { CONNECTED: 1, [NO_ANSWER]: 2, MISSED: 3, REJECTED: 4, BLOCKED: 5 };
   const ratioOf = (a, b) => (b ? a / b : 0);
   totals.ratio = ratioOf(totals.portfolio, totals.calls);
   /* SAY IT WHEN THE RANGE REACHES BEFORE WHAT IS KEPT.
@@ -2472,8 +2540,11 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
     keepFrom,
     ...(prunedNote ? { prunedNote } : {}),
     // The rule, said on the screen; and said to be MISSING where the database is behind it.
-    rule: CALL_RULE_TXT,
-    ...(legacy ? { ruleNote: RULE_NOTE } : {}),
+    rule: callRuleTxt(reach),
+    ...(legacy ? { ruleNote: RULE_NOTE } : !reach.known ? { ruleNote: REACH_NOTE } : {}),
+    // Whether the reached figures are the rule's (false: they are null and ruleNote says which file to run), and the minimum
+    // seconds they were counted by (null in a window with no call).
+    reachKnown: reach.known, reachMin: reach.min,
     byDay: Object.keys(byDayUser).sort().map(k => byDayUser[k]),
     users: Object.keys(users).sort((a, b) => users[a].name < users[b].name ? -1 : users[a].name > users[b].name ? 1 : 0).map(k => {
       const u = users[k];
@@ -2483,13 +2554,13 @@ async function reportCore(db, scopeTeams, from, to, alwaysUid, nowMs) {
         dials: u.dials, calls: u.calls, duration: u.dur, otherDuration: u.odur,
         portfolio: u.pf, nonPortfolio: u.npf, ratio: ratioOf(u.pf, u.calls),
         uniqCustomers: u.uniqN, days: Object.keys(u.days).length,
-        expected: u.expected, defaulter: u.defaulter, connected: u.connected, connectRatio: ratioOf(u.connected, u.calls) };
+        expected: u.expected, defaulter: u.defaulter, connected: reachedOr(u.connected), connectRatio: reachedOr(ratioOf(u.connected, u.calls)) };
     }),
     teams: Object.keys(teams).sort().map(k => { const t = teams[k]; return { team: t.team, branch: teamBranch.get(K(t.team)) || null, dials: t.dials, calls: t.calls, duration: t.dur, otherDuration: t.odur, portfolio: t.pf, nonPortfolio: t.npf, ratio: ratioOf(t.pf, t.calls) }; }),
-    byCategory: Object.keys(byCategory).sort((a, b) => (CAT_ORDER[a] || 9) - (CAT_ORDER[b] || 9)).map(k => { const c = byCategory[k]; return { category: c.category, dials: c.dials, calls: c.calls, duration: c.dur, connected: c.connected, connectRatio: ratioOf(c.connected, c.calls) }; }),
+    byCategory: Object.keys(byCategory).sort((a, b) => (CAT_ORDER[a] || 9) - (CAT_ORDER[b] || 9)).map(k => { const c = byCategory[k]; return { category: c.category, dials: c.dials, calls: c.calls, duration: c.dur, connected: reachedOr(c.connected), connectRatio: reachedOr(ratioOf(c.connected, c.calls)) }; }),
     // Outcomes belong to dials: the same number can be missed four times and reached once.
     byOutcome: Object.keys(byOutcome).sort((a, b) => (OUT_ORDER[a] || 9) - (OUT_ORDER[b] || 9)).map(k => { const o = byOutcome[k]; return { outcome: o.outcome, dials: o.dials, duration: o.dur }; }),
-    totals,
+    totals: { ...totals, connected: reachedOr(totals.connected) },
   };
 }
 async function report(db, [dev, from, to, team, leader], nowMs) {
@@ -2683,6 +2754,7 @@ export async function reportCoreForPortal(db, user, { from, to, team, leader, us
       for (const f of ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected']) {
         out.totals[f] = out.users.reduce((s, u) => s + (u[f] || 0), 0);
       }
+      if (out.reachKnown === false) out.totals.connected = null;   // not known for anybody: never a nought that reads as "nobody reached"
       out.totals.ratio = out.totals.calls ? out.totals.portfolio / out.totals.calls : 0;
     }
     out.userTeams = [...theirTeams];

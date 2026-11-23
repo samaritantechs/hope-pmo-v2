@@ -78,7 +78,9 @@ const norm = rows => JSON.stringify(rows.map(r => Object.fromEntries(Object.keys
 const both = (from, to, day, teams) => {
   const v = JSON.parse(psqlTo(call(from, to, day, teams), DB).trim());
   const rows = refRows(teams);
-  return { sql: v, js: { w: boardRowsFromLogs(rows, from, to), t: boardRowsFromLogs(rows, day, day) } };
+  // -Infinity: no minimum at all, which is the rule this file was written to (every dial that was not missed has reached its number).
+  // Since 23 Nov 2026 the live function is db/RUN-ME-088's, held to the rule with the setting's minimum by tools/db-checks/reached-rule.mjs.
+  return { sql: v, js: { w: boardRowsFromLogs(rows, from, to, -Infinity), t: boardRowsFromLogs(rows, day, day, -Infinity) } };
 };
 
 /* ---- 1. the answer ---- */

@@ -278,8 +278,20 @@ export const UPLOAD_STATUS_RPC = {
     call-core.js. Deliberately NOT written by calling callRollupRows: this is the SQL's
     transcription, and the agreement test exists to hold the two to the same rows. */
 const KU = v => String(v == null ? '' : v).trim().toUpperCase();
-export const CALL_REPORT_RPC = {
-  call_report_rollup(store, a = {}) {
+/* call_min_secs() -- db/RUN-ME-088: the cell of the setting "Minimum seconds to count a call" as the DATABASE reads it: digits only,
+   nothing readable is 5, never above two thousand million. Transcribed from the SQL, not imported from call-core.js, so that the
+   agreement tests hold the two readings to each other (on a real PostgreSQL: tools/db-checks/reached-rule.mjs). */
+export const callMinSecsSql = store => {
+  const row = tbl(store.settings).find(r => r.key === 'CALL_MIN_SECS');
+  const digits = String(row && row.value != null ? row.value : '').replace(/[^0-9]/g, '');
+  if (digits === '') return 5;
+  const n = Number(digits);
+  return n > 2000000000 ? 2000000000 : n;
+};
+/* The report's rollup under one of its two bodies. `min` null = as db/RUN-ME-042 left it (every dial that was not missed is CONNECTED,
+   a number row carries no mark); a number = as db/RUN-ME-088 replaced it in place (a dial is CONNECTED only when it lasted longer
+   than `min`, otherwise NO ANSWER; every number row says 'MIN:<min>'). */
+function callReportRollup_(store, a, min) {
     const from = day10(a.p_from), to = day10(a.p_to);
     const teams = a.p_teams || null;
     const want = teams ? teams.map(KU) : null;
@@ -293,11 +305,12 @@ export const CALL_REPORT_RPC = {
       if (!inScope(r)) continue;
       const pf = !!r.portfolio;
       const cat = !pf ? 'OTHER' : (['EXPECTED', 'DEFAULTER'].includes(KU(r.category)) ? KU(r.category) : 'UNCATEGORIZED');
-      const out = ['MISSED', 'REJECTED', 'BLOCKED'].includes(KU(r.outcome)) ? KU(r.outcome) : 'CONNECTED';
+      const day = day10(r.call_date), dur = Number(r.duration) || 0;
+      const out = ['MISSED', 'REJECTED', 'BLOCKED'].includes(KU(r.outcome)) ? KU(r.outcome)
+        : (min == null || dur > min) ? 'CONNECTED' : 'NO ANSWER';
       const uid = r.user_id == null ? null : String(r.user_id);
       const team = r.team == null ? null : String(r.team);
       const phone = r.phone == null ? '' : String(r.phone);           // coalesce(phone, '')
-      const day = day10(r.call_date), dur = Number(r.duration) || 0;
       const k = [day, uid, team, cat, out, pf].join('|');
       let row = g.get(k);
       if (!row) g.set(k, row = { kind: 'g', day, user_id: uid, team, category: cat, outcome: out, portfolio: pf, calls: 0, dur: 0, uniq: null });
@@ -314,11 +327,18 @@ export const CALL_REPORT_RPC = {
       }
     }
     return [...g.values()]
-      .concat([...d.values()].map(x => ({ kind: 'd', day: x.day, user_id: x.uid, team: x.team, category: x.cat, outcome: null,
+      .concat([...d.values()].map(x => ({ kind: 'd', day: x.day, user_id: x.uid, team: x.team, category: x.cat, outcome: min == null ? null : 'MIN:' + min,
         portfolio: x.pf, calls: x.nums.size, dur: x.dur, uniq: x.reached.size })))
       .concat([...u.entries()].map(([uid, set]) =>
         ({ kind: 'u', day: null, user_id: uid, team: null, category: null, outcome: null, portfolio: null, calls: 0, dur: 0, uniq: set.size })));
-  },
+}
+/** The database with db/RUN-ME-088 run: the function reads the setting's cell itself. */
+export const CALL_REPORT_RPC = {
+  call_report_rollup(store, a = {}) { return callReportRollup_(store, a, callMinSecsSql(store)); },
+};
+/** The database as it stood before db/RUN-ME-088 (RUN-ME-042's body): the state in which Reached must NOT be shown. */
+export const CALL_REPORT_OLD_RPC = {
+  call_report_rollup(store, a = {}) { return callReportRollup_(store, a, null); },
 };
 
 /** storage_usage_by_date() -- the Settings tab's counting function, transcribed from
@@ -628,14 +648,29 @@ export const CALLED_PHONES_RPC = {
    rows come in id order, and the eight columns the board's query selects are the only ones that exist (no category).
    Use it:  fakeDb(tables, { rpc: CALL_BOARD_RPC })  -- leave it out and the fake is a database where RUN-ME-078 has not been run, the
    state the boards must keep working in. */
+const callBoardRows_ = (store, a) => {
+  const teams = Array.isArray(a.p_teams) ? a.p_teams : null;
+  return (store.call_logs ? store.call_logs.rows : [])
+    .filter(r => teams == null || teams.includes(r.team))
+    .slice().sort((x, y) => (String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0))
+    .map(r => ({ officer: r.officer, team: r.team, duration: r.duration, portfolio: r.portfolio, ref: r.ref, phone: r.phone, outcome: r.outcome, call_date: r.call_date }));
+};
+/* Since db/RUN-ME-088 (23 Nov 2026) the function reads the setting "Minimum seconds to count a call" itself (call_min_secs), a number is
+   reached only when one of its calls lasted longer, and the value says which minimum it counted by: { w, t, min }. */
 export const CALL_BOARD_RPC = {
   call_board_rollup: async (store, a = {}) => {
     const { boardRowsFromLogs } = await import('../api/_lib/call-core.js');
-    const teams = Array.isArray(a.p_teams) ? a.p_teams : null;
-    const rows = (store.call_logs ? store.call_logs.rows : [])
-      .filter(r => teams == null || teams.includes(r.team))
-      .slice().sort((x, y) => (String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0))
-      .map(r => ({ officer: r.officer, team: r.team, duration: r.duration, portfolio: r.portfolio, ref: r.ref, phone: r.phone, outcome: r.outcome, call_date: r.call_date }));
-    return { w: boardRowsFromLogs(rows, a.p_from, a.p_to), t: boardRowsFromLogs(rows, a.p_day, a.p_day) };
+    const rows = callBoardRows_(store, a), min = callMinSecsSql(store);
+    return { w: boardRowsFromLogs(rows, a.p_from, a.p_to, min), t: boardRowsFromLogs(rows, a.p_day, a.p_day, min), min };
+  },
+};
+/* The database as it stood before db/RUN-ME-088 (RUN-ME-078's body): every dial that was not missed has reached its number (the rule
+   with no minimum at all: a length is never below minus infinity) and the value carries no `min` -- the state in which the boards
+   must NOT show Reached. */
+export const CALL_BOARD_OLD_RPC = {
+  call_board_rollup: async (store, a = {}) => {
+    const { boardRowsFromLogs } = await import('../api/_lib/call-core.js');
+    const rows = callBoardRows_(store, a);
+    return { w: boardRowsFromLogs(rows, a.p_from, a.p_to, -Infinity), t: boardRowsFromLogs(rows, a.p_day, a.p_day, -Infinity) };
   },
 };

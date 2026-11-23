@@ -853,7 +853,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-16-a';
+var CALL_BUILD = '2026-11-23-a';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -2851,6 +2851,8 @@ function drawReports(){
       return a;
     }, { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0 });
     t.ratio = t.calls ? t.portfolio / t.calls : 0;
+    // Reached is "not known" (null) for everybody while the database is behind the rule: the group's figure is not known either.
+    if (d.reachKnown === false) t.connected = null;
   }
   // The category chips are the SCOPE's aggregates; shown only for the whole scope, where they
   // are true, never beside a one-role table they were not computed from.
@@ -2882,10 +2884,15 @@ function drawReports(){
     + '<div class="kpi"><div class="k-l">Portfolio</div><div class="k-v" style="color:var(--ok)">' + money(t.portfolio) + '</div></div>'
     + '<div class="kpi"><div class="k-l">Nje ya portfolio</div><div class="k-v">' + money(t.nonPortfolio) + '</div></div>'
     + '<div class="kpi"><div class="k-l">% ya portfolio</div><div class="k-v">' + (t.calls ? pct(t.ratio) : '—') + '</div></div>'
-    + '<div class="kpi"><div class="k-l">Walipatikana / Reached</div><div class="k-v">' + money(t.connected) + (t.calls ? ' <span style="color:var(--soft);font-size:12px">' + pct(t.connected / t.calls) + '</span>' : '') + '</div></div>'
+    /* WALIPATIKANA / REACHED = namba iliyoongewa nayo (simu ndefu kuliko sekunde za chini), si iliyoita tu. Where the database is
+       still counting by the rule before db/RUN-ME-088 the server sends null and says which file to run (d.ruleNote, in red above):
+       a dash here, never a nought that reads as "nobody was reached" and never the old near-hundred figure. */
+    + '<div class="kpi"><div class="k-l">Walipatikana / Reached</div><div class="k-v">' + (t.connected == null ? '\u2014'
+        : money(t.connected) + (t.calls ? ' <span style="color:var(--soft);font-size:12px">' + pct(t.connected / t.calls) + '</span>' : '')) + '</div></div>'
     + '</div>'
     + (cats.length ? '<div style="display:flex;gap:8px;margin:2px 0 12px;flex-wrap:wrap">' + cats.map(function(c){
-        return '<span class="chip" style="font-size:11.5px">' + esc(CALL_CAT_LABEL_[c.category] || c.category) + ': ' + money(c.calls) + ' \u00B7 ' + pct(c.connectRatio) + ' walipatikana</span>';
+        return '<span class="chip" style="font-size:11.5px">' + esc(CALL_CAT_LABEL_[c.category] || c.category) + ': ' + money(c.calls)
+          + (c.connectRatio == null ? '' : ' \u00B7 ' + pct(c.connectRatio) + ' walipatikana') + '</span>';
       }).join('') + '</div>' : '')
     /* The two columns asked for by name: non-portfolio AFTER defaulter, and the share of
        portfolio calls among ALL calls -- the number the whole categorisation exists to

@@ -1015,7 +1015,11 @@ VIEWS.calls = function(){
       + kpi('Talk time', fmtDur(t.duration), 'portfolio only · other talk ' + fmtDur(t.otherDuration))
       + kpi('Portfolio', money(t.portfolio), Math.round(100*(t.ratio||0))+'% of calls', 'good')
       + kpi('Non-portfolio', money(t.nonPortfolio))
-      + kpi('Reached', money(t.connected), t.calls ? Math.round(100*t.connected/t.calls)+'% of numbers' : '')
+      /* REACHED = spoken to (a call longer than the minimum seconds), not merely dialled. Where the database is still counting
+         by the rule before db/RUN-ME-088 the server sends null and the red line below says which file to run: a dash, never a
+         nought and never the old near-hundred figure. */
+      + (t.connected == null ? kpi('Reached', '\u2014', 'inasubiri / waits for db/RUN-ME-088')
+          : kpi('Reached', money(t.connected), t.calls ? Math.round(100*t.connected/t.calls)+'% of numbers' : ''))
       + '</div>'
       + (d.rule ? '<div class="note">' + esc(d.rule) + '</div>' : '')
       + (d.ruleNote ? '<div class="note bad">' + esc(d.ruleNote) + '</div>' : '')
@@ -1059,11 +1063,11 @@ VIEWS.calls = function(){
       + board('clCat','Kwa aina / By category', 'numbers rung, what they were about, how many were reached', d.byCategory||[],
           [col('category','Category'), col('calls','Calls','num'), col('dials','Dials','num'), col('duration','Talk time','dur'),
            col('connected','Reached','num'),
-           {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }}],
+           {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return r.connectRatio == null ? null : Math.round((r.connectRatio||0)*1000)/10; }}],
           sumRow(d.byCategory||[], ['calls','dials','duration','connected']))
       /* Outcomes belong to DIALS, not calls: the same number can be missed four times and
          reached once, so this board counts attempts and says so in its heading. */
-      + board('clOut','Kwa matokeo / By outcome', 'what happened on each dial', d.byOutcome||[],
+      + board('clOut','Kwa matokeo / By outcome', 'what happened on each dial: CONNECTED was spoken on, NO ANSWER only rang or ended at once', d.byOutcome||[],
           [col('outcome','Outcome'), col('dials','Dials','num'), col('duration','Talk time','dur')],
           sumRow(d.byOutcome||[], ['dials','duration']))
       + '</div>'
@@ -1099,7 +1103,7 @@ VIEWS.calls = function(){
       {key:'ratio', label:'Portfolio %', kind:'pct', get:function(r){ return Math.round((r.ratio||0)*1000)/10; }},
       col('expected','Expected','num'), col('defaulter','Defaulter','num'),
       col('connected','Reached','num'),
-      {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return Math.round((r.connectRatio||0)*1000)/10; }},
+      {key:'connectRatio', label:'Reached %', kind:'pct', get:function(r){ return r.connectRatio == null ? null : Math.round((r.connectRatio||0)*1000)/10; }},
       col('uniqCustomers','Customers','num'), col('days','Days','num')];
     ONROW = null;
     S.foot = money(t.calls)+' calls ('+money(t.dials)+' dials) · '+fmtDur(t.duration)+' portfolio talk time · '
