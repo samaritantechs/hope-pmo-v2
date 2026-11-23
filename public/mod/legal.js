@@ -5,6 +5,9 @@
    loader fetches it as /mod/legal.js?v=BUILD. */
 
 VIEWS.legal = function(){
+  // A fresh read of the register: whatever the week arrows remembered (answers by week, the week last
+  // asked for) belongs to the screen before it, and the card below is drawn on this week.
+  if (typeof LGW_ === 'object') { LGW_.c = {}; LGW_.want = ''; LGW_.wantMon = ''; LGW_.busy = false; }
   return srv('demandNotices', { device: hcDevice_() }).then(function(d){
     var br = d.brand || {};
     var tick = function(ok){ return ok ? '✓' : '✗'; };
@@ -39,8 +42,11 @@ VIEWS.legal = function(){
             : n + ' · bofya kuona orodha / tap for the list'; };
           return kpi('Imerejeshwa leo / Recovered today', (lg.tPct != null ? pct(lg.tPct) + ' · ' : '') + money(lg.tRecovered || 0),
               sub('leo ' + esc(lg.today || '') + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed'), (lg.tRecovered || 0) > 0 ? 'good' : '', 'lgRecT')
-            + kpi('Imerejeshwa wiki hii / Recovered this week', (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0),
-              sub(esc(lg.mon || '') + ' → ' + esc(lg.sun || '') + ' · owed TZS ' + money(lg.owed || 0)), (lg.recovered || 0) > 0 ? 'good' : '', 'lgRecW'); })()
+            /* THE WEEK'S CARD CARRIES ITS OWN ARROWS -- "Legal recovery weekly report at the top right card should
+               have foward and backward arrows so that we get last week(s) reports". Drawn by lgWeekCard_ (the
+               core page) from the same reading every arrow press draws it from, between two markers so the
+               copy inside HEAD can be replaced when the reader moves to another week. */
+            + '<!--lgw-->' + lgWeekCard_(lg) + '<!--/lgw-->'; })()
       + '</div>'
       + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040, kisha RUN-ME-041a na 041b, kwenye SQL editor.'
           + ' / Payments made after a notice are not read yet: run db/RUN-ME-040, then RUN-ME-041a and 041b, in the SQL editor.'

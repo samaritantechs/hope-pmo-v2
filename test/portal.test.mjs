@@ -3589,6 +3589,116 @@ test('the Legal tab carries recovered-today and recovered-this-week, and lists t
   assert.equal(offList.on, false); assert.deepEqual(offList.rows, []);
 });
 
+/* "Legal recovery weekly report at the top right card should have foward and backward arrows so that we
+   get last week(s) reports" -- the owner, 23 Nov 2026. The Legal tab's weekly card and the list behind it
+   were always THIS week's; the list now takes a week (`weekOf`: any day of it) and answers, with the list,
+   the card's own reading of that week, so the card and the list cannot differ and the card is drawn from
+   one shape whichever week it is on. */
+test('the Legal weekly card and the list behind it can be read for any week, bounded, cheaper than this week, and equal to the dashboard\'s legal card for that week', async () => {
+  const t = tables();
+  t.demand_notices = [];
+  t.demand_notices.push(
+    { id: 'n2', ref: '555', team: 'KONGOWE', full_name: 'C555', contact: '0714000555', notice_id: 'HMCL/C/01/07/2026', notice_date: '2026-07-01', arrears_at_notice: 1000, created_at: '2026-07-01T05:00:00Z' },
+    { id: 'n3', ref: '555', team: 'KONGOWE', full_name: 'C555', contact: '0714000555', notice_id: 'HMCL/C/10/07/2026', notice_date: '2026-07-10', arrears_at_notice: 800, created_at: '2026-07-10T05:00:00Z' },
+    { id: 'n4', ref: '999', team: 'MBAGALA', full_name: 'C999', notice_id: 'HMCL/C9/24/07/2026', notice_date: TODAY, arrears_at_notice: 0, created_at: TODAY + 'T05:00:00Z' });
+  t.notice_payment_ledger = [
+    { ref: '555', since: '2026-07-01', payment_id: 'p1', paid_at: TODAY, amount: 300 },
+    { ref: '555', since: '2026-07-10', payment_id: 'p1', paid_at: TODAY, amount: 300 },        // the same payment under the second notice: once
+    { ref: '555', since: '2026-07-10', payment_id: 'p2', paid_at: MON, amount: 100 },          // this week
+    { ref: '555', since: '2026-07-10', payment_id: 'p3', paid_at: '2026-07-13', amount: 500 }, // LAST week, Monday
+    { ref: '555', since: '2026-07-10', payment_id: 'p8', paid_at: '2026-07-17', amount: 250 }, // last week, Friday: the same customer again
+    { ref: '555', since: '2026-07-01', payment_id: 'p7', paid_at: '2026-07-06', amount: 70 },  // the week before, under the FIRST notice
+    { ref: '555', since: '2026-01-01', payment_id: 'p6', paid_at: '2026-07-14', amount: 9999 }, // under no notice this register holds
+    { ref: '999', since: TODAY, payment_id: 'p4', paid_at: TODAY, amount: 50 },
+  ];
+  const folds = [];
+  const mk = () => fakeDb(t, { rpc: {
+    notice_payments: (store, args) => args.p_refs.map((ref, i) => ({ ref, since: args.p_dates[i], paid: 0, n: 0, last_paid: null, n_phone: 0 })),
+    fold_notice_payments: (store, args) => { folds.push(args.p_before); return 0; } } });
+  const ask = (user, args) => portalApi(mk(), user, 'legalRecoveries', args, NOW);
+  const LAST = '2026-07-13', BEFORE = '2026-07-06';
+
+  // LAST WEEK: the list and the card's reading of it.
+  const last = await ask(ADMIN, { period: 'week', weekOf: LAST });
+  assert.equal(last.weekOf, LAST); assert.equal(last.from, LAST); assert.equal(last.to, '2026-07-19'); assert.equal(last.period, 'week');
+  assert.deepEqual(last.rows.map(r => [r.ref, r.paid, r.payments, r.first_paid, r.last_paid, r.owed, r.notice_id]),
+    [['555', 750, 2, LAST, '2026-07-17', 800, 'HMCL/C/10/07/2026']], 'last week\'s customer, both Mondays\' and Fridays\' payments, under the latest notice; p6 is under no notice');
+  assert.equal(last.rows[0].days, LAST + ' 500 · 2026-07-17 250'); assert.equal(last.rows[0].pct, 93.8);
+  assert.equal(last.totals.paid, 750); assert.equal(last.totals.customers, 1); assert.equal(last.totals.noticed, 2);
+  const c = last.legal;
+  assert.equal(c.on, true); assert.equal(c.mon, LAST); assert.equal(c.sun, '2026-07-19');
+  assert.equal(c.recovered, 750, 'the card\'s figure is the list\'s total'); assert.equal(c.owed, 800); assert.equal(c.customers, 2); assert.equal(c.pct, 93.8);
+  assert.equal(c.thisWeek, MON, 'the forward arrow\'s ceiling'); assert.equal(c.since, '2026-06-29', 'the backward arrow\'s floor: the Monday of the first notice (a Wednesday)');
+  assert.equal(c.today, TODAY, 'today stays today');
+  // THE WEEK BEFORE: a payment under the first notice, still the customer's.
+  const before = await ask(ADMIN, { period: 'week', weekOf: BEFORE });
+  assert.equal(before.legal.recovered, 70); assert.equal(before.legal.pct, 8.8); assert.deepEqual(before.rows.map(r => r.paid), [70]);
+  // ANY DAY of a week names the week.
+  for (const day of ['2026-07-13', '2026-07-15', '2026-07-19']) assert.equal((await ask(ADMIN, { period: 'week', weekOf: day })).weekOf, LAST, day);
+  // THIS WEEK, however it is asked: the same answer the card and list always gave.
+  const now = await ask(ADMIN, { period: 'week' });
+  assert.equal(now.weekOf, MON); assert.equal(now.legal.recovered, 450); assert.equal(now.legal.pct, 56.3); assert.equal(now.totals.paid, 450);
+  for (const weekOf of ['', undefined, null, MON, '2026-07-22', 'next week', '2026-13-45', 12345, {}]) {
+    const w = await ask(ADMIN, { period: 'week', weekOf });
+    assert.equal(w.weekOf, MON, 'blank, unreadable or this week\'s own day is this week: ' + JSON.stringify(weekOf)); assert.equal(w.totals.paid, 450);
+  }
+  // A WEEK THAT HAS NOT BEGUN is read as this one: nobody has paid in it, and the forward arrow stops here.
+  const future = await ask(ADMIN, { period: 'week', weekOf: '2026-08-03' });
+  assert.equal(future.weekOf, MON); assert.equal(future.totals.paid, 450); assert.equal(future.legal.mon, MON);
+  // TODAY's list ignores a week.
+  const today = await ask(ADMIN, { period: 'today', weekOf: LAST });
+  assert.equal(today.period, 'today'); assert.equal(today.from, TODAY); assert.equal(today.to, TODAY); assert.equal(today.totals.paid, 350);
+  // A SCOPED reader is scoped for any week: KONGOWE's officer reads KONGOWE's customer only, and the card is theirs.
+  const g = await ask(GMO, { period: 'week', weekOf: LAST });
+  assert.deepEqual(g.rows.map(r => r.ref), ['555']); assert.equal(g.legal.customers, 1); assert.equal(g.legal.owed, 800); assert.equal(g.legal.recovered, 750);
+  assert.equal(g.legal.since, '2026-06-29');
+
+  // CHEAPER THAN THIS WEEK: only this week folds the live book into the ledger first (as it always did); another week
+  // reads what is filed. (The tab folded when it opened and every dashboard read folds.)
+  folds.length = 0;
+  await ask(ADMIN, { period: 'week' }); assert.equal(folds.length, 1, 'this week: the fold, as before');
+  folds.length = 0;
+  await ask(ADMIN, { period: 'week', weekOf: LAST }); await ask(ADMIN, { period: 'week', weekOf: BEFORE });
+  assert.equal(folds.length, 0, 'another week: no fold');
+  folds.length = 0;
+  await ask(ADMIN, { period: 'week', weekOf: '2026-08-03' }); assert.equal(folds.length, 1, 'a week that has not begun is this week, and folds like it');
+  folds.length = 0;
+  await ask(ADMIN, { period: 'today' }); assert.equal(folds.length, 1, 'today folds as before');
+
+  // The card and the list are folded from ONE scoped set of notices (the database filter is the scope; this is the second, in code):
+  // the card must never be read off a wider set than the list under it. (In this fixture the two sets are equal, so the break
+  // "the card reads every notice" changes nothing a figure can show: the source is what holds it.)
+  const lr = /async function legalRecoveries\([\s\S]*?\n\}\n/.exec(await readFile(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8'))[0];
+  assert.ok(/const mine = scoped\(user, notices\);/.test(lr) && /legalFold_\(mine, ledger/.test(lr) && /legalCard_\(mine, ledger/.test(lr), 'one scoped set for the list and the card');
+  // THE TAB'S OWN CARD carries the same bounds, so it is drawn from one shape.
+  const tab = await portalApi(mk(), ADMIN, 'demandNotices', {}, NOW);
+  assert.equal(tab.legal.thisWeek, MON); assert.equal(tab.legal.mon, MON); assert.equal(tab.legal.since, '2026-06-29');
+  assert.equal(tab.legal.recovered, now.legal.recovered, 'the tab\'s card and the list\'s reading of this week are one figure');
+  assert.deepEqual({ ...now.legal, since: undefined }, { ...tab.legal, since: undefined }, 'the whole object, field for field');
+  // A notice with no date does not move the floor, and does not break the card.
+  t.demand_notices.push({ id: 'n9', ref: '888', team: 'KONGOWE', full_name: 'C888', notice_id: 'X', notice_date: null, arrears_at_notice: 10, created_at: '2026-01-01T05:00:00Z' });
+  const odd = await portalApi(mk(), ADMIN, 'legalRecoveries', { period: 'week', weekOf: LAST }, NOW);
+  assert.equal(odd.legal.since, '2026-06-29'); assert.equal(odd.legal.owed, 810, 'its owed still counts as noticed');
+  t.demand_notices.pop();
+
+  // THE SAME FIGURE AS THE DASHBOARD'S LEGAL CARD for that week (the dashboard's own week bar reaches it already):
+  // customers, owed, recovered and the percentage, for last week and the week before.
+  for (const weekOf of [LAST, BEFORE, MON]) {
+    const dash = await portalApi(mk(), ADMIN, 'dashboardFull', { weekOf }, NOW);
+    const mine = (await ask(ADMIN, { period: 'week', weekOf })).legal;
+    assert.deepEqual([dash.legal.customers, dash.legal.owed, dash.legal.recovered, dash.legal.pct],
+      [mine.customers, mine.owed, mine.recovered, mine.pct], 'the dashboard and the Legal tab say one thing about the week of ' + weekOf);
+  }
+
+  // WITHOUT THE LEDGER (RUN-ME-041a) the list and the card say so, for any week, rather than show nothing as nought.
+  const db = mk();
+  const from = db.from.bind(db);
+  db.from = n => { if (n === 'notice_payment_ledger') throw new Error('relation "notice_payment_ledger" does not exist'); return from(n); };
+  const off = await portalApi(db, ADMIN, 'legalRecoveries', { period: 'week', weekOf: LAST }, NOW);
+  assert.equal(off.on, false); assert.deepEqual(off.rows, []); assert.equal(off.legal.on, false); assert.match(off.legal.note, /RUN-ME-041a/);
+  assert.equal(off.legal.owed, 800, 'the register still reads (800 + 0)'); assert.equal(off.legal.recovered, 0);
+});
+
 /* "a demand notice cant be generated for an expected/defaulter not from 2 DC and above ... we
    only apply these measures when a customer defaults 2 DC+ at demand creation". The deck's D.C
    decides, at creation: the preview says so, and issuing is refused outright below it. */

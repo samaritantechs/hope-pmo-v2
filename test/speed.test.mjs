@@ -476,6 +476,10 @@ const BUDGETS = [
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN, 10,   800, 10,  800],
   /* The list behind either card: the register, the fold and the week's ledger. */
   ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 3, 800, 3, 800],
+  /* ANOTHER WEEK (the Legal tab's week arrows, 23 Nov): the register and that week's ledger, TWO trips -- no fold, since
+     the tab folded when it opened and what is filed for a week that has gone is all there is to read. Never more than
+     this week's list asks, which is the ceiling a press of an arrow must keep. */
+  ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 2, 800, 2, 800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither

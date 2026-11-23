@@ -125,6 +125,15 @@
   .kpi.tap{cursor:pointer;transition:border-color .12s}
   .kpi.tap:hover,.kpi.tap:focus-visible{border-color:var(--b500);outline:none}
   .kpi.tap.on{border-color:var(--b500);background:var(--b50)}
+  /* THE LEGAL TAB'S WEEKLY CARD carries its own week arrows in its top right corner (lgWeekCard_): two small
+     buttons that step the card, and the list behind it, a week back or forward. Lit (tap.on) while the card
+     is on a week that is not this one. */
+  .kpi.lgwk{position:relative}
+  .kpi.lgwk .l{padding-right:62px}
+  .lgwkNav{position:absolute;top:6px;right:6px;display:flex;gap:3px}
+  .lgwkb{border:1px solid var(--line);background:var(--card);color:var(--mut);border-radius:7px;width:27px;height:25px;font-size:10px;line-height:1;cursor:pointer;padding:0}
+  .lgwkb:hover:not(:disabled),.lgwkb:focus-visible{border-color:var(--b500);color:var(--b500);outline:none}
+  .lgwkb:disabled{opacity:.35;cursor:default}
   .good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
@@ -779,7 +788,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-20-e';
+var BUILD = '2026-11-23-a';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5871,12 +5880,121 @@ VIEWS.restructure = function(){
 /* THE CUSTOMERS BEHIND A LEGAL RECOVERY CARD -- the dashboard's recoveryCustomersDrawer_ for
    the Legal tab: who paid in the period, how much, on which days, under which notice and
    against what it demanded, with the grand total, which is the card's own figure (same fold
-   on the server). Exports wired here because the drawer is drawn after the screen's wiring. */
-function legalRecoveriesDrawer_(period){
+   on the server). Exports wired here because the drawer is drawn after the screen's wiring.
+
+   ANY WEEK -- "Legal recovery weekly report at the top right card should have foward and backward
+   arrows so that we get last week(s) reports" (23 Nov 2026). The weekly card carries ◀ ▶ in its corner
+   (lgWeekCard_) and the list behind it carries the same two, so last week's report -- who paid, how
+   much, on which days, with the Excel / JPG / CSV of that week -- is one tap away from this week's, and
+   the card behind the drawer always says the week the drawer is on. One answer per week serves both:
+   lgWeekAsk_ keeps it a couple of minutes, so stepping back and forth asks the server once. */
+var LGW_ = { c: {}, want: '', wantMon: '', busy: false };
+function lgWeekAsk_(weekOf){
+  var key = weekOf || '', hit = LGW_.c[key];
+  if (hit && Date.now() - hit.at < 120000) return hit.p;
+  var p = srv('legalRecoveries', { period: 'week', weekOf: key });
+  LGW_.c[key] = { at: Date.now(), p: p };
+  p.catch(function(){ if (LGW_.c[key] && LGW_.c[key].p === p) delete LGW_.c[key]; });   // a read that failed is not kept
+  return p;
+}
+/* THE CARD, drawn from one reading (the server's `legal`: legalCard_). Used at first paint by the Legal tab
+   and again, whole, by every arrow press, so the card on screen is always a function of ONE week's figures.
+   Arrows are inline handlers on purpose: a table search or sort repaints the whole screen from HEAD, and
+   what wireForms() attached to the old elements is gone with them (lgWeekPaint_ keeps HEAD in step). The
+   forward arrow stops at this week (nobody has paid in a week that has not begun); the backward arrow stops
+   at the week of the earliest notice. Without the ledger (RUN-ME-041a) both are off and the card says why. */
+function lgWeekCard_(lg){
+  lg = lg || {};
+  var mon = lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek, off = lg.on === false;
+  var canBack = !off && !!mon && (!lg.since || mon > lg.since), canFwd = !off && !cur;
+  var sub = off ? esc(lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
+    : esc(mon) + ' → ' + esc(lg.sun || '') + ' · owed TZS ' + money(lg.owed || 0) + ' · bofya kuona orodha / tap for the list'
+      + (cur ? '' : ' · <a href="#" onclick="return lgWeekStep_(0, event)">Rudi wiki hii / Back to this week</a>');
+  var arrow = function(n, glyph, ok, tip){
+    return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
+      + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
+  };
+  return '<div class="kpi tap lgwk' + (cur ? '' : ' on') + '" id="lgWkCard" role="button" tabindex="0" data-mon="' + esc(mon) + '"'
+    + ' data-this="' + esc(lg.thisWeek || mon) + '" data-since="' + esc(lg.since || '') + '"'
+    + ' title="Bofya kuona orodha / Tap for the list" onclick="lgWeekOpen_()" onkeydown="lgWeekKey_(event)">'
+    + '<span class="lgwkNav">' + arrow(-1, '◀', canBack, 'Wiki iliyopita / previous week') + arrow(1, '▶', canFwd, 'Wiki ijayo / next week') + '</span>'
+    + '<div class="l">' + (cur ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa wiki iliyopita / Recovered, past week') + '</div>'
+    + '<div class="v' + ((lg.recovered || 0) > 0 ? ' good' : '') + '" id="lgRecW">'
+    + (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0) + '</div>'
+    + '<div class="s" id="lgRecWS">' + sub + '</div></div>';
+}
+/* Put a reading on the card: the card on screen AND the copy of it inside HEAD (between the markers
+   VIEWS.legal wrote), so a repaint from HEAD brings back the week the reader chose, not this one. */
+function lgWeekPaint_(lg){
+  if (!lg || !lg.mon) return;
+  var html = lgWeekCard_(lg), old = document.getElementById('lgWkCard');
+  HEAD = String(HEAD || '').replace(/<!--lgw-->[\s\S]*?<!--\/lgw-->/, function(){ return '<!--lgw-->' + html + '<!--/lgw-->'; });
+  if (!old) return;
+  var had = old.contains(document.activeElement) ? (document.activeElement.getAttribute('data-lgwk') || 'card') : '';
+  old.outerHTML = html;
+  if (had) {
+    var nb = had === 'card' ? null : document.querySelector('#lgWkCard [data-lgwk="' + had + '"]');
+    (nb && !nb.disabled ? nb : document.getElementById('lgWkCard')).focus();
+  }
+}
+/* Ask for a week ('' is this one) and paint the card with it. A later press wins: an answer that comes
+   back after the reader has already moved on is dropped, not painted over their choice. `mon` is the Monday
+   being asked for (this week's own Monday for ''): a press made while an answer is still on its way steps
+   from THAT week, not from the one still on the screen, so two quick presses are two weeks, not one. */
+function lgWeekGo_(target, mon){
+  var want = target || '', card = document.getElementById('lgWkCard');
+  LGW_.want = want; LGW_.wantMon = mon || ''; LGW_.busy = true;
+  if (card) card.style.opacity = '.55';
+  return lgWeekAsk_(want).then(function(d){
+    if (LGW_.want !== want) return d;
+    LGW_.busy = false;
+    lgWeekPaint_(d.legal);
+    var c = document.getElementById('lgWkCard'); if (c) c.style.opacity = '';
+    return d;
+  }).catch(function(e){
+    if (LGW_.want !== want) return;
+    LGW_.busy = false;
+    var c = document.getElementById('lgWkCard'); if (c) c.style.opacity = '';
+    toast('Imeshindikana / Could not load: ' + String((e && e.message) || e), true);
+  });
+}
+function lgWeekStep_(n, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  var card = document.getElementById('lgWkCard');
+  if (!card) return false;
+  var ceil = card.getAttribute('data-this') || '', floor = card.getAttribute('data-since') || '';
+  var mon = (LGW_.busy && LGW_.wantMon) ? LGW_.wantMon : (card.getAttribute('data-mon') || '');
+  var target = n === 0 ? '' : addDays(mon, 7 * n);
+  if (n > 0 && ceil && target >= ceil) target = '';                 // this week is the last week there is
+  if (n < 0 && floor && target < floor) return false;               // no notice before this week: nothing to read
+  lgWeekGo_(target, target || ceil || mon);
+  return false;
+}
+function lgWeekOpen_(){
+  var card = document.getElementById('lgWkCard');
+  legalRecoveriesDrawer_('week', card ? card.getAttribute('data-mon') || '' : '');
+}
+function lgWeekKey_(e){ if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); lgWeekOpen_(); } }
+/* The same two arrows, and a way home, at the top of the list. */
+function lgWeekBar_(d){
+  var lg = d.legal || {}, mon = d.weekOf || lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek, off = d.on === false;
+  var canBack = !off && !!mon && (!lg.since || mon > lg.since), canFwd = !off && !cur;
+  return bar('<button class="btn sm ghost" type="button" data-lgwd="-1" title="Wiki iliyopita / previous week"' + (canBack ? '' : ' disabled') + '>◀</button>'
+    + '<b style="padding:0 8px">' + esc(d.from) + ' → ' + esc(d.to) + '</b>'
+    + '<button class="btn sm ghost" type="button" data-lgwd="1" title="Wiki ijayo / next week"' + (canFwd ? '' : ' disabled') + '>▶</button>'
+    + (cur ? '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>'
+           : '<span class="chip warn" style="margin-left:8px">Wiki iliyopita / past week</span> <button class="btn sm ghost" type="button" data-lgwd="0">Rudi wiki hii / Back to this week</button>'));
+}
+function legalRecoveriesDrawer_(period, weekOf){
   var week = period === 'week';
-  var title = week ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa leo / Recovered today';
+  var title = week ? 'Imerejeshwa wiki / Recovered by the week' : 'Imerejeshwa leo / Recovered today';
   drawer('<h3>' + title + '</h3><div class="sub">Inapakia... / Loading...</div>', { wide: true });
-  srv('legalRecoveries', { period: week ? 'week' : 'today' }).then(function(d){
+  (week ? lgWeekAsk_(weekOf || '') : srv('legalRecoveries', { period: 'today' })).then(function(d){
+    if (week) {
+      LGW_.want = d.weekOf || ''; LGW_.wantMon = ''; LGW_.busy = false;
+      lgWeekPaint_(d.legal);                                           // the card behind says the week the list is on
+      title = d.weekOf && d.legal && d.weekOf !== d.legal.thisWeek ? 'Imerejeshwa wiki iliyopita / Recovered, past week' : 'Imerejeshwa wiki hii / Recovered this week';
+    }
     var when = week ? (d.from + ' → ' + d.to) : (wdLabel(weekdayOf_(d.today)) + ' ' + d.today);
     var all = d.rows || [];
     var cols = [col('full_name', 'Mteja / Customer'), col('ref', 'REF#'), col('team', 'Timu / Team'),
@@ -5891,11 +6009,18 @@ function legalRecoveriesDrawer_(period){
       return money(d.totals.customers) + ' waliolipa / paid · ' + money(d.totals.noticed) + ' wenye notisi / noticed'
         + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
     };
-    drawer('<h3>' + title + ' · ' + esc(when) + '</h3>'
+    drawer('<h3>' + title + ' · ' + esc(when) + '</h3>' + (week ? lgWeekBar_(d) : '')
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>'
         : all.length
           ? '<div class="bar"><input id="lgRecQ" placeholder="Tafuta jina / ref / timu — search"></div><div id="lgRecBoard"></div>'
           : '<div class="note">Hakuna malipo kutoka kwa wateja wenye notisi katika kipindi hiki. / No payments from noticed customers in this period.</div>'), { wide: true });
+    // The week arrows at the top of the list: another week is the same drawer on that week.
+    Array.prototype.forEach.call(document.querySelectorAll('#drawer [data-lgwd]'), function(el){
+      el.onclick = function(){
+        var n = Number(el.getAttribute('data-lgwd')) || 0;
+        legalRecoveriesDrawer_('week', n === 0 ? '' : addDays(d.weekOf, 7 * n));
+      };
+    });
     if (d.on === false || !all.length) return;
     var host = document.getElementById('lgRecBoard');
     function paint_(){
@@ -5904,7 +6029,8 @@ function legalRecoveriesDrawer_(period){
         if (!q) return true;
         return [r.full_name, r.ref, r.team, r.contact, r.notice_id].some(function(v){ return String(v || '').toUpperCase().indexOf(q) >= 0; });
       });
-      host.innerHTML = board('lgRec', 'Malipo yaliyorekodiwa dhidi ya notisi / Payments recorded against notices', sub(rows), rows, cols,
+      // The week is in the title so a download of last week's list says whose week it is.
+      host.innerHTML = board('lgRec', 'Malipo yaliyorekodiwa dhidi ya notisi / Payments recorded against notices' + (week ? ' · ' + d.from + ' → ' + d.to : ''), sub(rows), rows, cols,
         sumRow(rows, ['owed', 'paid', 'payments']));
       var root = document.getElementById('drawer');
       Array.prototype.forEach.call(root.querySelectorAll('[data-jpg]'), function(el){
@@ -6971,9 +7097,12 @@ function wireForms(){
   // for the wrong amount with the company's stamp on it. They are computed now.
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
-  // The two recovery cards open the customers and payments behind them -- the whole card,
-  // as the dashboard's recovery tiles do, not just the figure.
-  [['lgRecT', 'today'], ['lgRecW', 'week']].forEach(function(p){
+  // The recovery cards open the customers and payments behind them -- the whole card,
+  // as the dashboard's recovery tiles do, not just the figure. TODAY's is wired here. The WEEK's card
+  // wires itself (lgWeekCard_: inline handlers and its own week arrows), so that a table repaint, which
+  // rebuilds the screen and drops what is attached here, cannot leave it dead -- and so that a tap opens
+  // the week the card is ON, not always this one.
+  [['lgRecT', 'today']].forEach(function(p){
     var v = document.getElementById(p[0]), card = v && v.closest ? v.closest('.kpi') : null;
     if (!card) return;
     card.style.cursor = 'pointer'; card.setAttribute('role', 'button'); card.setAttribute('tabindex', '0');
