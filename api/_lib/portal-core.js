@@ -14425,7 +14425,10 @@ function legalSince_(notices) {
     backward arrow's floor (`since`). demandNotices gives it for this week and legalRecoveries for any
     week, so the card is drawn from the same shape whichever week it is on. */
 function legalCard_(notices, ledger, today, mon, sun, thisWeek) {
-  return { ...legalTotals_(notices, ledger, today, mon, sun), today, mon, sun, thisWeek, since: legalSince_(notices) };
+  /* A scope with no notice (or none with a readable date) has nothing earlier to read: its floor is this week, so the
+     backward arrow is off. Found by the second reader of #775 (Part 131): a null floor read as "no bound" and a reader
+     whose teams were never served a notice could step back week after week, two trips a press, for ever. */
+  return { ...legalTotals_(notices, ledger, today, mon, sun), today, mon, sun, thisWeek, since: legalSince_(notices) || thisWeek };
 }
 /** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or

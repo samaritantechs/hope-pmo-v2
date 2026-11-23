@@ -5,9 +5,10 @@
    loader fetches it as /mod/legal.js?v=BUILD. */
 
 VIEWS.legal = function(){
-  // A fresh read of the register: whatever the week arrows remembered (answers by week, the week last
-  // asked for) belongs to the screen before it, and the card below is drawn on this week.
-  if (typeof LGW_ === 'object') { LGW_.c = {}; LGW_.want = ''; LGW_.wantMon = ''; LGW_.busy = false; }
+  // A fresh open of the tab (go() cleared S.args): whatever the week arrows remembered belongs to the screen before
+  // it, and the card below is drawn on this week. A QUIET REFRESH of a remembered screen keeps S.args.lgWeek, so it
+  // keeps the answers and the card stays on the week the reader chose (lgWeekKept_; the second reader of #775).
+  if (typeof LGW_ === 'object' && !(S.args && S.args.lgWeek)) { LGW_.c = {}; LGW_.want = ''; LGW_.wantMon = ''; LGW_.busy = false; LGW_.lastList = null; }
   return srv('demandNotices', { device: hcDevice_() }).then(function(d){
     var br = d.brand || {};
     var tick = function(ok){ return ok ? '✓' : '✗'; };
@@ -46,7 +47,7 @@ VIEWS.legal = function(){
                have foward and backward arrows so that we get last week(s) reports". Drawn by lgWeekCard_ (the
                core page) from the same reading every arrow press draws it from, between two markers so the
                copy inside HEAD can be replaced when the reader moves to another week. */
-            + '<!--lgw-->' + lgWeekCard_(lg) + '<!--/lgw-->'; })()
+            + '<!--lgw-->' + lgWeekCard_((typeof lgWeekKept_ === 'function' && lgWeekKept_()) || lg) + '<!--/lgw-->'; })()
       + '</div>'
       + (d.paymentsOn ? '' : '<div class="note">⚠ Malipo baada ya notisi hayajasomwa bado: endesha db/RUN-ME-040, kisha RUN-ME-041a na 041b, kwenye SQL editor.'
           + ' / Payments made after a notice are not read yet: run db/RUN-ME-040, then RUN-ME-041a and 041b, in the SQL editor.'
