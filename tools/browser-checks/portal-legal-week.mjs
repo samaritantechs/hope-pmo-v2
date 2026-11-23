@@ -86,7 +86,7 @@ const makeBook = ({ noLedger = false, big = 0 } = {}) => {
 };
 let db = makeBook();
 const USER = { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['legal', 'dashboard'] };
-const REAL = new Set(['demandNotices', 'legalRecoveries']);
+const REAL = new Set(['demandNotices', 'legalRecoveries', 'dashboardFull']);   // dashboardFull: the dashboard's own Legal card (section 12)
 const calls = [];                       // [fn, args] for everything the page asked, in order
 let failFn = null;                      // a portal function the server answers with a 500
 const delayWeek = {};                   // weekOf -> ms the server holds a legalRecoveries answer for that week
@@ -408,6 +408,55 @@ check('the big register is on the screen (5,000 rows and the fixture\'s own)', r
 check('wireForms() is a small share of the repaint it rides on: ' + cost.wire.toFixed(1) + ' ms of ' + cost.paint.toFixed(0) + ' ms', cost.wire < cost.paint * 0.2 && cost.wire < 25, JSON.stringify(cost));
 await page.close();
 } catch (e) { fail.push('the run stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 200)); }
+
+// --- 12. THE DASHBOARD'S OWN LEGAL CARD (Part 133): "the legal recovery card at dashboard should be able to openup too - with the
+// backward and foward arrows as usual". The same card, the same arrows, the same list, under the dashboard's own name; the
+// dashboard's week bar still moves the whole screen and resets the card to its week. Red on the page as merged (no arrows there).
+try {
+db = makeBook();
+page = await open();
+await page.evaluate(() => go('dashboard'));
+await page.waitForSelector('#lgWkCard', { timeout: 6000 }).catch(() => {});
+await page.waitForTimeout(400);
+const todayFig = async (weekOf) => { const lg = (await ask('dashboardFull', { weekOf: weekOf || '', teams: null })).legal; return page.evaluate(l => money(l.tRecovered || 0), lg); };
+check('the dashboard draws the Legal card with arrows, on THIS week, under its own name', await has(page, '#lgWkCard [data-lgwk="-1"]') && (await cardWeek(page)) === THIS && (await text(page, '#lgWkCard .l')) === 'Legal recovery', await text(page, '#lgWkCard .l'));
+check('this week: today\'s figure first, the week beneath, as the dashboard always read it', (await text(page, '#lgRecW')) === await todayFig('') && /wiki \/ week TZS/.test(await text(page, '#lgRecWS')) && /tap for the list/.test(await text(page, '#lgRecWS')), await text(page, '#lgWkCard'));
+check('forward is off, backward is on', (await off(page, 1)) === true && (await off(page, -1)) === false);
+// the card's own backward arrow steps the card alone: the week bar and the boards stay on this week
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+check('the card steps back a week by itself: the week\'s figure as the headline, lit, a way home', (await cardWeek(page)) === LAST && (await text(page, '#lgRecW')) === await figure(page, LAST) && /past week/.test(await text(page, '#lgWkCard .l')) && /Back to this week/.test(await text(page, '#lgRecWS')), await text(page, '#lgWkCard'));
+check('and the dashboard\'s week bar is still on this week', (await attr(page, '[data-week]', 'value')) === THIS, String(await attr(page, '[data-week]', 'value')));
+// a tap opens the list of the week the card is on
+await page.click('#lgRecW'); await page.waitForTimeout(800);
+check('a tap on the dashboard card opens the list of the week it is on', await drawerOpen(page) && new RegExp(LAST + ' → ' + add(LAST, 6)).test(await text(page, '#drawer h3')), (await text(page, '#drawer h3')).slice(0, 120));
+await page.evaluate(() => closeDrawer());
+await page.focus('#lgWkCard'); await page.keyboard.press('Enter'); await page.waitForTimeout(800);
+check('and so does Enter on it', await drawerOpen(page));
+await page.evaluate(() => closeDrawer());
+// the week bar moves the whole dashboard and resets the card to the bar's week
+await page.evaluate(() => { LGW_.c = {}; });
+await page.click('[data-week-step="-1"]'); await waitFor(page, w => (document.querySelector('[data-week]') || {}).value === w, LAST); await page.waitForTimeout(500);
+check('the week bar slides the dashboard to last week and the card follows it', (await attr(page, '[data-week]', 'value')) === LAST && (await cardWeek(page)) === LAST && (await page.evaluate(() => !S.args.lgWeek)), 'card ' + await cardWeek(page) + ' lgWeek ' + await page.evaluate(() => String(S.args.lgWeek)));
+check('on the bar\'s past week the card\'s forward arrow is on: its ceiling is the real this week', (await off(page, 1)) === false);
+await page.click('#lgWkCard [data-lgwk="1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS);
+check('the card steps forward to this week on its own while the bar stays on last week', (await cardWeek(page)) === THIS && (await attr(page, '[data-week]', 'value')) === LAST && (await text(page, '#lgRecW')) === await todayFig(''), await text(page, '#lgWkCard'));
+await page.click('[data-week-set=""]'); await waitFor(page, w => (document.querySelector('[data-week]') || {}).value === w, THIS); await page.waitForTimeout(500);
+check('the bar\'s way home brings the dashboard and the card back to this week', (await attr(page, '[data-week]', 'value')) === THIS && (await cardWeek(page)) === THIS);
+// a quiet refresh of the remembered dashboard keeps the week the reader chose on the card (Part 131's fix, on this screen too)
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+await page.evaluate(() => go('legal')); await page.waitForTimeout(400);
+delayFn.dashboardFull = 1200;
+await page.evaluate(() => go('dashboard')); await page.waitForTimeout(150);
+check('the remembered dashboard is up at once with the card on the chosen week', (await has(page, '#lgWkCard')) && (await cardWeek(page)) === LAST, 'card ' + await cardWeek(page));
+await page.waitForTimeout(1900);
+delete delayFn.dashboardFull;
+check('and the quiet refresh behind it keeps the card there', (await cardWeek(page)) === LAST, 'card ' + await cardWeek(page));
+// a table search on the dashboard repaints the screen from HEAD: the card keeps its week
+const dq = await has(page, '#tblQ');
+if (dq) { await page.fill('#tblQ', 'KONG'); await page.waitForTimeout(500); }
+check('a table search on the dashboard keeps the card on its week', dq && (await cardWeek(page)) === LAST, 'search box: ' + dq);
+await page.close();
+} catch (e) { fail.push('the dashboard section stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 200)); }
 
 check('no script error anywhere', errs.length === 0, errs.join(' | ').slice(0, 400));
 await browser.close(); srv.close();
