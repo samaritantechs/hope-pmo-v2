@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-e';
+var BUILD = '2026-11-23-f';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -6486,7 +6486,7 @@ function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
    portal opened on the tab a person last used, nobody touching anything. Nine screens had head handlers to lose
    (Legal, Teams & Staff, PMO deductions, Complaints, Restructuring, HR staff, Adjust, the Imprest request form and
    Imprest approval): tools/browser-checks/portal-repaint-wiring.mjs compares every screen that loads, and
-   test/pages.test.mjs RUNS wireForms() to prove it starts nothing (Part 132). */
+   test/pages.test.mjs RUNS wireForms() to prove it starts nothing (Part 133). */
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
   if (window.bpWire_) bpWire_();   // the daily bonus preview's own boxes (its module); a no-op on every other screen
@@ -7059,7 +7059,7 @@ function wireForms(){
   /* RUN AFTER EVERY PAINT of #view (paintNow_, paintHeadOnly): once per keystroke in a table search. Everything below is an
      assignment to an element that is on the page now, or a write that reads the page; nothing may start a timer, a request, a
      listener on the document or the window, or a focus at wiring time (inside a click handler is another matter). A new line
-     that must do one of those guards itself (as bpWire_ marks its root) or lives outside this function. Part 132. */
+     that must do one of those guards itself (as bpWire_ marks its root) or lives outside this function. Part 133. */
   /* Any code box drawn by a tab or a drawer gets masked here. brand.js does the pass at page
      load, which is too early for anything this file renders -- the Change-my-code form is built
      when Settings opens, and an unmasked box that is SUPPOSED to be masked is worse than one
@@ -7179,7 +7179,7 @@ function wireForms(){
    ['lgWho','LEGAL_SIGNATORY'], ['lgTitle','LEGAL_SIGNATORY_TITLE'], ['lgPhone','LEGAL_PHONE']].forEach(function(p){
     var el = document.getElementById(p[0]);
     /* settingForm lives in the admin module, which loads when Settings or Teams & Staff opens -- not when this tab does, so
-       in a session that opened the Legal tab first these links threw "settingForm is not defined" (found 23 Nov, Part 132).
+       in a session that opened the Legal tab first these links threw "settingForm is not defined" (found 23 Nov, Part 133).
        Asked for here, then called; modLoad_ answers at once when the module is already in. */
     if (el) el.onclick = function(ev){
       ev.preventDefault();

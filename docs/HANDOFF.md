@@ -9068,7 +9068,7 @@ The rule of CHAT.md section 7: merge first, then one reader, nothing owed. One r
 
 **Not done, said plainly.** Nothing seen on the live screen; the reader's probes live in the chat's scratch folder and are not kept (the kept check carries the same points).
 
-## Part 132 — The cure of Part 129 proved on every screen that loads: nine screens, a repaint nobody typed, the letterhead links that never reached their module, and what `wireForms()` may and may not do (23 Nov)
+## Part 133 — The cure of Part 129 proved on every screen that loads: nine screens, a repaint nobody typed, the letterhead links that never reached their module, and what `wireForms()` may and may not do (23 Nov)
 
 > The brief this chat was given for the matter Part 128 found: "find the safest cure and prove it on more than one screen ... do not slow any screen down, do not change what a screen shows ... break the fix on purpose ... say plainly what was not done."
 

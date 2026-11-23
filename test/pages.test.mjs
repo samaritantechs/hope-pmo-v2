@@ -3159,7 +3159,7 @@ test('PAR all-time shows one decimal on the KPI, the table column, its Excel exp
 });
 
 /* ===================================================================================================================
-   WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 132; tools/browser-checks/portal-repaint-wiring.mjs is the same
+   WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 133; tools/browser-checks/portal-repaint-wiring.mjs is the same
    thing in a real browser, on every screen that loads).
 
      #776 (Part 129) moved wireForms() -- the head's own buttons and boxes: Teams & Staff, Legal, PMO deductions, Complaints,
@@ -3226,7 +3226,7 @@ function wireFormsStandIn_() {
   return { ids, sels, ctx, makePage, run, signature, started };
 }
 
-test('RUN: wireForms() attaches every head button and box, attaches them again the same on a rebuilt page, and starts nothing (Part 132)', () => {
+test('RUN: wireForms() attaches every head button and box, attaches them again the same on a rebuilt page, and starts nothing (Part 133)', () => {
   const w = wireFormsStandIn_();
   const clickable = ['newAgent', 'newStaff', 'newRole', 'newTeam', 'resetRoles', 'undoRoles', 'newComplaint', 'newDeduction', 'dedReport', 'advSubmit', 'newAdvStaff', 'newRestructure',
     'newNotice', 'lgLogo', 'lgStamp', 'lgSign', 'lgWho', 'lgTitle', 'lgPhone', 'sgOfficerLoc', 'soToggle', 'hlToggle', 'newSetting', 'newCode', 'adjSave', 'newOfficer', 'imqSend', 'imqSetRateBtn', 'rlAdd', 'ppSave'];
@@ -3252,7 +3252,7 @@ test('RUN: wireForms() attaches every head button and box, attaches them again t
   assert.equal(w.signature(page2), sig1, 'and leaves it as it was');
 });
 
-test('wireForms() is a list of attachments that may be run once per keystroke: what it calls by name, and what it may not use, are pinned, and nothing else calls it (Part 132)', () => {
+test('wireForms() is a list of attachments that may be run once per keystroke: what it calls by name, and what it may not use, are pinned, and nothing else calls it (Part 133)', () => {
   const code = stripComments_(topFn_(appCore(), 'wireForms'));
   // one definition and two callers, in the page and in every module: a screen's wiring is never done by hand somewhere new
   assert.equal((stripComments_(appSrc()).match(/\bwireForms\(\)/g) || []).length, 3, 'wireForms() is the definition and the two draw functions, and nothing else');
@@ -3265,7 +3265,7 @@ test('wireForms() is a list of attachments that may be run once per keystroke: w
     + 'not a timer, a request, a listener or a focus -- then add the name to this list');
 });
 
-test('a letterhead link on the Legal tab loads the admin module its form lives in, and says so if it cannot (Part 132)', async () => {
+test('a letterhead link on the Legal tab loads the admin module its form lives in, and says so if it cannot (Part 133)', async () => {
   const w = wireFormsStandIn_();
   const page = w.makePage();
   w.run(page);
@@ -3290,5 +3290,5 @@ test('a letterhead link on the Legal tab loads the admin module its form lives i
   const at = app.indexOf("[['lgLogo','BRAND_LOGO']");
   const block = stripComments_(app.slice(at, app.indexOf('/* Closing the system turns', at)));
   assert.ok(/modLoad_\('admin'\)\.then\(function\(\)\{ settingForm\(p\[1\], val\); \}/.test(block) && !/ev\.preventDefault\(\); settingForm\(/.test(block), 'the handler loads the admin module before it calls settingForm');
-  assert.ok(!/var BUILD = '2026-11-23-d'/.test(app), 'BUILD moved');
+  assert.ok(!/var BUILD = '2026-11-23-e'/.test(app), 'BUILD moved');
 });

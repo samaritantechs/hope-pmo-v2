@@ -11,7 +11,7 @@
    arrive (tipsStart), so the same buttons went dead about three seconds after the portal opened, with nobody touching anything.
    The cure (wireForms() run by every paint) was merged as #776 (Part 129) while this check was being written; this is its proof on
    every screen that loads, and it found what #776 left: the letterhead links on the Legal tab call settingForm(), which lives in the
-   admin module, and threw "settingForm is not defined" in any session that had not opened Settings or Teams & Staff first. Part 132.
+   admin module, and threw "settingForm is not defined" in any session that had not opened Settings or Teams & Staff first. Part 133.
 
    What it proves:
 
