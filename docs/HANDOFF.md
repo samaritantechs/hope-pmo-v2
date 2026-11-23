@@ -9027,6 +9027,25 @@ The settings read: `work_mem` 5 MB, `maintenance_work_mem` 128 MB, `temp_file_li
 
 **Not done, said plainly.** Nothing seen on the live screen. The search's own cost on a big table (above) is not changed. Elements a module wires inside its own view function after a `setTimeout` (none were found; the modules wire through `wireBar`'s hooks) would still need the same treatment if one is ever written that way.
 
+## Part 130 — The list behind the Legal recovery cards names the lawyer on every row, first after S/N (23 Nov)
+
+> "add 'Legal Officer' name between s/n and custoimer name in the legal weekly recovery customer list table" — the owner, 23 Nov 2026.
+
+**Where.** The list behind the Legal tab's two recovery cards (*Recovered today*, *Recovered this week* and, since Part 128, any week): `legalRecoveriesDrawer_` on the page, `legalRecoveries` on the server. Its table draws S/N itself (`tableSimple`), then the board's columns, which are also what its Excel / JPG / CSV export; the first of them is now **Afisa wa sheria / Legal officer**, then the customer, as asked. The list's search box finds a lawyer's name too.
+
+**Who the lawyer is: one definition, not a new one.** The dashboard's two Legal boards and the week's [Report] (Part 26) credit a noticed customer to *the access codes whose ROLE is legal, by the teams they carry* (`legalLines_`: the role word decides, so a recovery or credit code given the Legal tab to read the register is not a lawyer; a customer on a team no legal code holds stands under "(unassigned)"; a lawyer whose code holds every team is named, not credited). `legalRecoveries` now builds its rows from those same lines, so the list names exactly the lawyer the board credits. A customer stands under every lawyer whose code holds their team (the boards count them under each); on the list the names are joined with " / " in the codes' order, one row, the money once.
+
+| Where | What |
+|---|---|
+| `legalRecoveries` (`api/_lib/portal-core.js`) | reads the access codes (`readCodesAll`) and the legal-role setting (`settingsMany`) beside the register and the week's ledger, runs `legalLines_` on the scoped notices, groups the lines by customer; each row carries `officer`; `totals.noticed` is the customers in scope (`L.customers`), as before. The card's reading (`legalCard_`) is unchanged. |
+| `legalRecoveriesDrawer_` (`public/app.html`) | `col('officer', 'Afisa wa sheria / Legal officer')` first; the search reads `r.officer` too. `BUILD 2026-11-23-c`. |
+
+**Cost, CLAUDE.md section 1.** Nothing on `/api/upload` or `/api/call`. The list, opened by a tap, makes two more reads — the two memoised reads the dashboard's legal boards already make (the codes, fifteen seconds per instance; the settings, twenty): a cold instance pays them, a warm one does not. `test/speed.test.mjs`: this week's list 3 → 5 trips, another week 2 → 4, the reason beside each row (the fixture is always cold).
+
+**Checked.** `test/portal.test.mjs`: on the dashboard's own legal fixture (two lawyers, a recovery code and a credit code holding teams with the Legal tab, a team no legal code holds) the list names JOAKIMU ISSA on 555, EMMANUEL NASSARI on 999 and "(unassigned)" on 777, for today and for the week, with the figures as before; a second legal code on MBAGALA names both ("EMMANUEL NASSARI / SECOND LAWYER") on one row and the money once; a scoped reader sees their own lawyer; the register with no legal code names "(unassigned)". `test/pages.test.mjs`: the column first, before the customer; the search reads it; S/N drawn by the table ahead of it. `tools/browser-checks/portal-legal-week.mjs` (the real page, the real `portalApi`): the list reads *S/N, Legal officer, Customer*; ASHA ONE under LAWYER ONE while the recovery code holding the same team is never named; the customer on a team with no legal code under "(unassigned)"; the lawyer in the board's own columns (the Excel); typing a lawyer's name in the list's search keeps their customers only. **8 of 8 deliberate breaks** (6 of the server: the lawyer left blank, only the first of two lawyers named, a second lawyer doubling the customer, every code read as a lawyer, `noticed` counting rows, the codes not read; 2 of the page: the column not first, the search ignoring the lawyer) each turn a test red. **A mistake of mine:** the first run of the break runner was pointed at a test name that does not exist, so two breaks (the two-lawyer ones) were reported MISSED until it was pointed at the test that holds them; the tests had caught them all along.
+
+**Not done, said plainly.** Nothing seen on the live screen. The dashboard's boards, the week's [Report] and the Legal register's own table are untouched (the report already carried *Legal officer*). The column is on both lists the drawer draws (today's and the week's), not only the weekly one: they are one table.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here

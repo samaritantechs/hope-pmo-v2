@@ -72,7 +72,11 @@ const makeBook = ({ noLedger = false, big = 0 } = {}) => {
     notice_id: 'HMCL/B/' + i, notice_date: add(THIS, -((i % 60) + 7)), arrears_at_notice: 1000 + i, created_at: add(THIS, -((i % 60) + 7)) + 'T05:00:00Z' });
   const db = fakeDb({ demand_notices: NOTICES.map(n => ({ ...n })).concat(more), notice_payment_ledger: LEDGER.map(l => ({ ...l })),
     teams: [{ team: 'KONGOWE', team_code: 'C-K', zone: null }, { team: 'MBAGALA', team_code: 'C-M', zone: null }],
-    access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['legal'] }],
+    access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['legal'] },
+      // The lawyer whose code holds KONGOWE: the list names them on ASHA ONE's row; MBAGALA has no legal code.
+      { code: 'LG1', name: 'LAWYER ONE', role: 'LEGAL', teams: ['KONGOWE'], tabs: ['legal'] },
+      // A recovery code holding KONGOWE with the Legal tab is NOT a lawyer (Part 26's rule): never named on a row.
+      { code: 'R1', name: 'NOT A LAWYER', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: ['legal'] }],
     settings: [], call_users: [], roles: [], audit_log: [], defaulter_snapshots: [] }, { rpc });
   if (noLedger) {
     const from = db.from.bind(db);
@@ -230,6 +234,12 @@ check('the list opens on the week the card shows (the first week)', await drawer
 const payers = () => page.evaluate(() => (BOARDS.lgRec ? BOARDS.lgRec.rows : []).map(r => [r.full_name, r.paid]));
 const same = (x, y) => JSON.stringify(x) === JSON.stringify(y);
 check('its rows are that week\'s payers (one: ASHA ONE, 70)', same(await payers(), [['ASHA ONE', 70]]), JSON.stringify(await payers()));
+// "add 'Legal Officer' name between s/n and customer name" (23 Nov): the first columns of the list on screen.
+const heads = await page.evaluate(() => [...document.querySelectorAll('#drawer #lgRec thead th')].slice(0, 3).map(th => th.textContent.trim().replace(/\s*[▲▼↑↓]+$/, '')));
+check('the list reads S/N, Legal officer, Customer', same(heads, ['S/N', 'Afisa wa sheria / Legal officer', 'Mteja / Customer']), JSON.stringify(heads));
+const lawyers = () => page.evaluate(() => (BOARDS.lgRec ? BOARDS.lgRec.rows : []).map(r => [r.full_name, r.officer]));
+check('ASHA ONE stands under LAWYER ONE, whose code holds KONGOWE; the recovery code with the tab is not named', same(await lawyers(), [['ASHA ONE', 'LAWYER ONE']]), JSON.stringify(await lawyers()));
+check('the lawyer is in the Excel too (the board\'s own columns)', await page.evaluate(() => (BOARDS.lgRec.cols[0] || {}).key === 'officer' && (BOARDS.lgRec.cols[1] || {}).key === 'full_name'));
 check('the list has both arrows and its own way home; backward is off here', await has(page, '#drawer [data-lgwd="-1"]') && await has(page, '#drawer [data-lgwd="1"]') && await has(page, '#drawer [data-lgwd="0"]')
   && await page.evaluate(() => document.querySelector('#drawer [data-lgwd="-1"]').disabled) === true);
 check('the Excel of the list carries the week in its title', await page.evaluate(w => /→/.test((BOARDS.lgRec || {}).title || '') && (BOARDS.lgRec.title || '').indexOf(w) >= 0, BEFORE), await page.evaluate(() => (BOARDS.lgRec || {}).title));
@@ -241,6 +251,11 @@ await page.click('#drawer [data-lgwd="0"]');
 const dHome = await waitFor(page, w => /Recovered this week/.test(document.getElementById('drawer').textContent) && document.getElementById('drawer').textContent.indexOf(w) >= 0, THIS + ' → ' + add(THIS, 6));
 check('the way home is this week, in the list and on the card', dHome && (await cardWeek(page)) === THIS && !(await page.evaluate(() => document.getElementById('lgWkCard').classList.contains('on'))));
 check('this week\'s list has both payers, biggest first', same(await payers(), [['ASHA ONE', 100], [HOSTILE, 50]]), JSON.stringify(await payers()));
+check('a customer on a team no legal code holds is listed under "(unassigned)", as the boards count them', same(await lawyers(), [['ASHA ONE', 'LAWYER ONE'], [HOSTILE, '(unassigned)']]), JSON.stringify(await lawyers()));
+// The search box finds a lawyer's name.
+await page.fill('#lgRecQ', 'LAWYER'); await page.waitForTimeout(300);
+check('typing a lawyer\'s name in the list\'s search keeps their customers only', same(await lawyers(), [['ASHA ONE', 'LAWYER ONE']]), JSON.stringify(await lawyers()));
+await page.fill('#lgRecQ', ''); await page.waitForTimeout(300);
 check('and the customer whose name is markup is drawn as text, never run', (await dr()).indexOf('<img src=x') >= 0 && !(await page.evaluate(() => window.__pwned)) && !(await has(page, '#drawer img[src="x"]')));
 await page.evaluate(() => closeDrawer());
 

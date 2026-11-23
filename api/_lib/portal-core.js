@@ -3786,20 +3786,34 @@ async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.n
   const readable = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || '')) && Number.isFinite(Date.parse(String(weekOf) + 'T09:00:00Z'));
   const picked = week && readable ? asOfWeek(nowMs, weekOf) : null;
   const mon = picked && !picked.future ? picked.weekOf : thisMon, sun = addDaysKey(mon, 6);
-  const [notices, ledger] = await Promise.all([
+  /* THE LAWYER ON EVERY ROW -- "add 'Legal Officer' name between s/n and customer name in the legal weekly
+     recovery customer list table" (23 Nov 2026). Who holds a customer has ONE definition, legalLines_: the
+     access codes whose ROLE is legal, by the teams they carry (Part 26; the dashboard's boards and the week's
+     [Report] are summed from the same lines), '(unassigned)' when no legal code holds the team. The codes and
+     the role setting are the two memoised reads the boards make (fifteen and twenty seconds per instance). */
+  const [notices, ledger, codeRows, cfgS] = await Promise.all([
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, full_name, contact, notice_id, notice_date, arrears_at_notice'), user.teams)),
     legalLedgerWeek_(db, mon, sun, { fold: mon === thisMon }),
+    readCodesAll(db, nowMs),
+    settingsMany(db, [LEGAL_ROLE_KEY]),
   ]);
   const mine = scoped(user, notices);
-  const { latest, paid } = legalFold_(mine, ledger, today, mon, sun);
+  const L = legalLines_(codeRows, mine, ledger, user, today, mon, sun, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
   const from = week ? mon : today, to = week ? sun : today;
+  // One row per customer. A customer stands under every lawyer whose code holds their team (the boards count
+  // them under each); here the names are joined, in the roster's order, so the figure is never doubled.
+  const byRef = new Map();
+  for (const l of L.lines) {
+    let r = byRef.get(l.ref);
+    if (!r) { r = { c: l, officers: [] }; byRef.set(l.ref, r); }
+    if (!r.officers.includes(l.officer)) r.officers.push(l.officer);
+  }
   const rows = [];
-  for (const c of latest.values()) {
-    const pays = [...(paid.get(c.ref) || new Map()).values()].filter(p => p.day >= from && p.day <= to)
-      .sort((a, b) => a.day.localeCompare(b.day));
+  for (const { c, officers } of byRef.values()) {
+    const pays = c.pays.filter(p => p.day >= from && p.day <= to).sort((a, b) => a.day.localeCompare(b.day));
     if (!pays.length) continue;
     const amount = pays.reduce((s, p) => s + p.amount, 0);
-    rows.push({ ref: c.ref, full_name: c.name, team: c.team, contact: c.contact, notice_id: c.noticeId, notice_date: c.date,
+    rows.push({ officer: officers.join(' / '), ref: c.ref, full_name: c.name, team: c.team, contact: c.contact, notice_id: c.noticeId, notice_date: c.date,
       owed: c.owed, paid: amount, payments: pays.length, first_paid: pays[0].day, last_paid: pays[pays.length - 1].day,
       pct: pctOf(amount, c.owed),
       // The payments one by one, for the eye: "2026-10-12 30,000 · 2026-10-14 20,000".
@@ -3809,7 +3823,7 @@ async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.n
   const on = Array.isArray(ledger);
   return { period: week ? 'week' : 'today', from, to, today, weekOf: mon, on, note: on ? null : LEGAL_NOTE, rows,
     totals: { customers: rows.length, paid: rows.reduce((s, r) => s + r.paid, 0),
-      owed: rows.reduce((s, r) => s + r.owed, 0), noticed: latest.size },
+      owed: rows.reduce((s, r) => s + r.owed, 0), noticed: L.customers },
     legal: legalCard_(mine, ledger, today, mon, sun, thisMon) };
 }
 

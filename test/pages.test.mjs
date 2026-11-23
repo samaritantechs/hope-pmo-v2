@@ -1980,6 +1980,19 @@ test('every paint wires the whole screen: wireForms runs from paintNow_ and pain
   assert.ok(/Calling it again is free: a box already masked is left alone/.test(wf[0]), 'hopeSecrets is the one call that is not an assignment, and it says it is safe to repeat');
 });
 
+/* "add 'Legal Officer' name between s/n and customer name in the legal weekly recovery customer list table" (the
+   owner, 23 Nov 2026). The on-screen table draws S/N itself (tableSimple), so the lawyer is the first column of the
+   list and the customer the second, in the Excel / JPG / CSV too (the board's cols are what they export), and the
+   list's search box finds a lawyer's name. */
+test('the list behind the Legal recovery cards names the lawyer first, before the customer, and its search finds them', () => {
+  const app = appSrc();
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(dr, 'the drawer is where it was');
+  assert.match(dr[0], /var cols = \[col\('officer', 'Afisa wa sheria \/ Legal officer'\), col\('full_name', 'Mteja \/ Customer'\), col\('ref', 'REF#'\)/, 'Legal officer, then Customer, then REF#');
+  assert.match(dr[0], /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.contact, r\.notice_id\]\.some\(/, 'the search box reads the lawyer too');
+  assert.match(app, /<th class="sn">S\/N<\/th>'\+cols\.map\(/, 'S/N is drawn by the table itself, ahead of the first column');
+});
+
 /* "i need expected defaulters report to have the weekly forward and backward buttons there
    too" / "add weekly recovered 3 cards (GMO, Manager, Bike) so that weeks shift shows weekly
    recovery total on the cards" -- and since then "Exp.Def Report should be daily . . put a
