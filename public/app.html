@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-d';
+var BUILD = '2026-11-23-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -7232,11 +7232,13 @@ function wireForms(){
     var t = (document.getElementById('adjTarget') || {}).value;
     var v = Number((document.getElementById('adjAmt') || {}).value);
     var up = !(v < 0);                                   // blank or positive reads as received
+    /* ONE MIAMALA, BOTH EXPECTED BOOKS (23 Nov 2026, Part 132): "single input of Miamala should reflrct in both
+       initial and current expected reports since miamala are always already collected". An entry against either
+       expected book moves today's collected AND early collection alike, so both say so, in the same words. */
     h.textContent =
-      t === 'expected-current'  ? (up ? 'Makusanyo ya leo yataongezeka / today\u2019s collected goes UP'
-                                      : 'Makusanyo ya leo yatapungua / today\u2019s collected goes DOWN')
-    : t === 'expected-initial'  ? (up ? 'Early col itaongezeka / early collection goes UP'
-                                      : 'Early col itapungua / early collection goes DOWN')
+      (t === 'expected-current' || t === 'expected-initial')
+                                ? (up ? 'Makusanyo ya leo NA early col yataongezeka / today\u2019s collected AND early collection go UP'
+                                      : 'Makusanyo ya leo NA early col yatapungua / today\u2019s collected AND early collection go DOWN')
     : t === 'defaulter-current' ? (up ? 'Deni la deki la jioni litaongezeka — urejeshaji utapungua '
                                         + '/ evening arrears go UP — recovery goes DOWN'
                                       : 'Deni la deki la jioni litapungua — UREJESHAJI UTAONGEZEKA '

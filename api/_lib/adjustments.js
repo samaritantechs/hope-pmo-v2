@@ -300,23 +300,39 @@ export async function adjReceived_(db, user, { from, to, budgetMs = 0 } = {}) {
     const a = num(r.amount);
     if (!r.team) { unattributed += a; continue; }
     if (!teamAllowed(user, r.team)) continue;
-    add(byTeam, tg + '|' + K(r.team), a);
-    /* PER DAY AS WELL AS PER TEAM, because a report that applies a correction to its team
-       table and not to its day strip shows two figures for the same money on the same screen
-       -- and only after a correction, which is exactly when somebody is already hunting a
-       discrepancy. Every figure on a report moves together or none of them does. */
+    /* ONE EXPECTED ENTRY, BOTH EXPECTED BOOKS.
+         "single input of Miamala should reflrct in both initial and current expected reports
+          since miamala are always already collected so early collection officers are
+          lalamenting why it doesnt count for them" -- the owner, 23 Nov 2026.
+       A Miamala is money RECEIVED and verified: it is collected on the day (the current sheet)
+       and it was collected early (the initial sheet) alike, so an entry filed against EITHER
+       expected book counts in BOTH, wherever a collection figure is read -- the day's Col, the
+       early collection, the commission count of customers (adjCountableRefs_), the month
+       ledger. One rule, here, where the register is keyed; the row keeps the book it was typed
+       against (the register is the record of what was typed). The arrears pair is untouched:
+       the morning and evening decks are two different positions, not two readings of one
+       payment. A payment filed TWICE, once against each book, now counts twice; db/RUN-ME-086
+       lists such pairs on the live book. */
+    const books = ADJ_RECEIVED_TARGETS.includes(tg) ? ADJ_RECEIVED_TARGETS : [tg];
     const d = String(r.adj_date || '').slice(0, 10);
-    if (d) {
-      add(byDay, tg + '|' + d, a); add(byCell, tg + '|' + r.team + '|' + d, a);
-      /* NETTED PER REF AS WELL, for the commission side. Two rows against the same customer on
-         the same day are ONE customer -- a second entry is a correction to the first, not a
-         second person paying -- and a ref whose entries net to nothing or less is not somebody
-         who paid at all. Both of those are decided here, once, rather than by whoever counts. */
-      const ref = String(r.ref == null ? '' : r.ref).trim();
-      if (ref) add(byRef, tg + '|' + r.team + '|' + d + '|' + ref, a);
+    const ref = String(r.ref == null ? '' : r.ref).trim();
+    for (const b of books) {
+      add(byTeam, b + '|' + K(r.team), a);
+      /* PER DAY AS WELL AS PER TEAM, because a report that applies a correction to its team
+         table and not to its day strip shows two figures for the same money on the same screen
+         -- and only after a correction, which is exactly when somebody is already hunting a
+         discrepancy. Every figure on a report moves together or none of them does. */
+      if (d) {
+        add(byDay, b + '|' + d, a); add(byCell, b + '|' + r.team + '|' + d, a);
+        /* NETTED PER REF AS WELL, for the commission side. Two rows against the same customer on
+           the same day are ONE customer -- a second entry is a correction to the first, not a
+           second person paying -- and a ref whose entries net to nothing or less is not somebody
+           who paid at all. Both of those are decided here, once, rather than by whoever counts. */
+        if (ref) add(byRef, b + '|' + r.team + '|' + d + '|' + ref, a);
+      }
+      total[b] = (total[b] || 0) + a;
+      seen[b] = (seen[b] || 0) + 1;
     }
-    total[tg] = (total[tg] || 0) + a;
-    seen[tg] = (seen[tg] || 0) + 1;
   }
   return { total, seen, unattributed,
     of: (target, team) => byTeam.get(target + '|' + K(team)) || 0,
@@ -370,7 +386,7 @@ export async function adjReceived_(db, user, { from, to, budgetMs = 0 } = {}) {
 
    Where the migration has not been run, or the read fails, NOTHING is counted. Paying nobody by
    accident is a complaint; paying twice by accident is a loss and an argument. */
-export async function adjCountableRefs_(db, adj, { target, snapshotType, from, to }) {
+export async function adjCountableRefs_(db, adj, { target, from, to }) {
   /* Never called from the call path -- the commission board is a portal screen -- so this one
      has no budget and is allowed to take the time it needs to be right about somebody's pay. */
   const empty = new Set();
@@ -382,9 +398,12 @@ export async function adjCountableRefs_(db, adj, { target, snapshotType, from, t
   const refs = [...new Set(named.map(c => c.ref))];
   let rows = [];
   try {
+    /* BOTH SHEETS ARE ASKED, since 23 Nov 2026 (Part 132): one Miamala counts on both expected books, so a
+       customer the deck already shows PAID on EITHER sheet that day has been paid for by the deck, and the
+       register must not pay for them a second time on either scheme. (Until then the sheet of the row's own
+       book was asked alone, which is the same answer for a row that reaches one book only.) */
     rows = await fetchAll(() => db.from('repayment_snapshots')
       .select('ref, team, snapshot_date, todays_status')
-      .eq('snapshot_type', snapshotType)
       .in('ref', refs)
       .gte('snapshot_date', from).lte('snapshot_date', to));
   } catch (e) {

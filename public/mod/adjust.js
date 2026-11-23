@@ -64,8 +64,10 @@ VIEWS.adjust = function(){
     };
     HEAD = '<div class="kpis">'
       + kpi('Miamala / Adjustments', money((d.rows||[]).length))
-      + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net', (tg['expected-initial']||0) < 0 ? 'bad' : '')
-      + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net', (tg['expected-current']||0) < 0 ? 'bad' : '')
+      /* THE TWO EXPECTED TILES ARE WHAT WAS TYPED AGAINST EACH BOOK; what each entry COUNTS in is both (the note
+         under them): "single input of Miamala should reflrct in both initial and current expected reports" (23 Nov). */
+      + kpi('Expected — Initial', money(tg['expected-initial'] || 0), 'jumla / net · inahesabika kwenye vitabu vyote viwili / counts in both expected books', (tg['expected-initial']||0) < 0 ? 'bad' : '')
+      + kpi('Expected — Current', money(tg['expected-current'] || 0), 'jumla / net · inahesabika kwenye vitabu vyote viwili / counts in both expected books', (tg['expected-current']||0) < 0 ? 'bad' : '')
       /* WHICH WAY EACH ARREARS BOOK'S NET MOVES RECOVERY. They pull opposite ways -- recovery
          is morning arrears minus evening arrears -- so a net figure without its direction is
          half a fact. And the SIGN of the net decides it: these captions were fixed text until
