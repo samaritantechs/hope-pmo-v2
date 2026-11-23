@@ -3566,6 +3566,8 @@ test('the Legal tab carries recovered-today and recovered-this-week, and lists t
     [['555', 300, 1, 800, 'HMCL/C/10/07/2026'], ['999', 50, 1, 0, 'HMCL/C9/24/07/2026']], 'largest first, under the latest notice');
   assert.equal(today.rows[0].full_name, 'C555'); assert.equal(today.rows[0].contact, '0714000555');
   assert.equal(today.rows[0].pct, 37.5); assert.equal(today.rows[1].pct, null);
+  // "add 'Legal Officer' name between s/n and customer name" (23 Nov): no legal code holds these teams here.
+  assert.deepEqual(today.rows.map(r => r.officer), ['(unassigned)', '(unassigned)'], 'the lawyer column, as the boards name a team no legal code holds');
   assert.equal(today.totals.paid, tab.legal.tRecovered, 'the list adds up to the card');
   assert.equal(today.totals.customers, 2); assert.equal(today.totals.noticed, 2);
   // The WEEK card's list carries Monday's payment too, day by day.
@@ -3669,7 +3671,7 @@ test('the Legal weekly card and the list behind it can be read for any week, bou
   // the card must never be read off a wider set than the list under it. (In this fixture the two sets are equal, so the break
   // "the card reads every notice" changes nothing a figure can show: the source is what holds it.)
   const lr = /async function legalRecoveries\([\s\S]*?\n\}\n/.exec(await readFile(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8'))[0];
-  assert.ok(/const mine = scoped\(user, notices\);/.test(lr) && /legalFold_\(mine, ledger/.test(lr) && /legalCard_\(mine, ledger/.test(lr), 'one scoped set for the list and the card');
+  assert.ok(/const mine = scoped\(user, notices\);/.test(lr) && /legalLines_\(codeRows, mine, ledger/.test(lr) && /legalCard_\(mine, ledger/.test(lr), 'one scoped set for the list (through legalLines_, which names the lawyer) and the card');
   // THE TAB'S OWN CARD carries the same bounds, so it is drawn from one shape.
   const tab = await portalApi(mk(), ADMIN, 'demandNotices', {}, NOW);
   assert.equal(tab.legal.thisWeek, MON); assert.equal(tab.legal.mon, MON); assert.equal(tab.legal.since, '2026-06-29');
@@ -4023,6 +4025,24 @@ test('the legal recovery board credits each lawyer with the payments of the noti
   assert.deepEqual(b.legalAll, ['RHOBI MSIRA']);
   assert.equal(b.legalCustomers, 3);
   assert.deepEqual(b.legalUnheld, ['NOWHERE']);
+  /* THE LAWYER ON EVERY ROW OF THE LIST BEHIND THE LEGAL TAB'S CARDS -- "add 'Legal Officer' name between s/n and
+     customer name in the legal weekly recovery customer list table" (23 Nov): the same lines the boards are summed
+     from, so the list names the lawyer the board credits: a recovery or credit code holding the team is not one. */
+  const list = await portalApi(fakeDb(t), ADMIN, 'legalRecoveries', { period: 'today' }, NOW);
+  assert.deepEqual(list.rows.map(r => [r.ref, r.officer, r.paid]), [['555', 'JOAKIMU ISSA', 300], ['999', 'EMMANUEL NASSARI', 50], ['777', '(unassigned)', 20]],
+    'each customer under the lawyer whose code holds their team; the unheld team under "(unassigned)"; the figures as before');
+  assert.equal(list.totals.noticed, 3);
+  const wk = await portalApi(fakeDb(t), ADMIN, 'legalRecoveries', { period: 'week' }, NOW);
+  assert.deepEqual(wk.rows.map(r => [r.ref, r.officer, r.paid]), [['555', 'JOAKIMU ISSA', 400], ['999', 'EMMANUEL NASSARI', 50], ['777', '(unassigned)', 20]]);
+  // Two legal codes holding one team: both names, in the codes' order, one row, the figure once.
+  const t2 = JSON.parse(JSON.stringify(t));
+  t2.access_codes.push({ code: 'L4', name: 'SECOND LAWYER', role: 'LEGAL', teams: ['MBAGALA'], tabs: [] });
+  const two = await portalApi(fakeDb(t2), ADMIN, 'legalRecoveries', { period: 'today' }, NOW);
+  assert.deepEqual(two.rows.filter(r => r.ref === '999').map(r => [r.officer, r.paid]), [['EMMANUEL NASSARI / SECOND LAWYER', 50]]);
+  assert.equal(two.totals.paid, list.totals.paid, 'a second lawyer on a team does not double the money');
+  // Scoped: KONGOWE's officer lists KONGOWE's customer under KONGOWE's lawyer.
+  const gl = await portalApi(fakeDb(t), GMO, 'legalRecoveries', { period: 'today' }, NOW);
+  assert.deepEqual(gl.rows.map(r => [r.ref, r.officer]), [['555', 'JOAKIMU ISSA']]);
   // Scoped: KONGOWE's leader sees KONGOWE's lawyer and customers, nobody else's.
   const g = await portalApi(fakeDb(t), GMO, 'officerBoards', {}, NOW);
   assert.deepEqual(g.legal.map(r => r.officer), ['JOAKIMU ISSA']);

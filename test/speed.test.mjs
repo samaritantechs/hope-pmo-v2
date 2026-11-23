@@ -475,11 +475,15 @@ const BUDGETS = [
      reading, so the two screens say one figure. No fold trip: notice_payments just folded. */
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN, 10,   800, 10,  800],
   /* The list behind either card: the register, the fold and the week's ledger. */
-  ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 3, 800, 3, 800],
-  /* ANOTHER WEEK (the Legal tab's week arrows, 23 Nov): the register and that week's ledger, TWO trips -- no fold, since
-     the tab folded when it opened and what is filed for a week that has gone is all there is to read. Never more than
-     this week's list asks, which is the ceiling a press of an arrow must keep. */
-  ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 2, 800, 2, 800],
+  /* 3 -> 5 (23 Nov, "add 'Legal Officer' name between s/n and customer name"): the access codes and the legal-role
+     setting, so each row names the lawyer whose code holds the customer's team -- the two memoised reads the dashboard's
+     legal boards already make (readCodesAll fifteen seconds, settings twenty, per instance); a cold instance pays them,
+     a warm one does not, and this fixture is always cold. A drawer opened by a tap, never a sync or an upload. */
+  ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 5, 800, 5, 800],
+  /* ANOTHER WEEK (the Legal tab's week arrows, 23 Nov): the register and that week's ledger, plus the two memoised reads
+     above, FOUR trips -- no fold, since the tab folded when it opened and what is filed for a week that has gone is all
+     there is to read. Never more than this week's list asks, which is the ceiling a press of an arrow must keep. */
+  ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 4, 800, 4, 800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
