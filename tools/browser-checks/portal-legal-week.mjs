@@ -442,12 +442,17 @@ await page.click('#lgWkCard [data-lgwk="1"]'); await waitFor(page, w => document
 check('the card steps forward to this week on its own while the bar stays on last week', (await cardWeek(page)) === THIS && (await attr(page, '[data-week]', 'value')) === LAST && (await text(page, '#lgRecW')) === await todayFig(''), await text(page, '#lgWkCard'));
 await page.click('[data-week-set=""]'); await waitFor(page, w => (document.querySelector('[data-week]') || {}).value === w, THIS); await page.waitForTimeout(500);
 check('the bar\'s way home brings the dashboard and the card back to this week', (await attr(page, '[data-week]', 'value')) === THIS && (await cardWeek(page)) === THIS);
-// a quiet refresh of the remembered dashboard keeps the week the reader chose on the card (Part 131's fix, on this screen too)
+// a quiet refresh of the remembered dashboard keeps the week the reader chose on the card (Part 131's fix, on this screen too).
+// A fresh open of the dashboard first (the bar's way home leaves `weekOf: ''` in its args, which is another remembered key than
+// a fresh open's), then the press, then away and back inside the window: the card must be on the chosen week AT ONCE (from the
+// remembered screen itself, lgWeekPaint_ having told it) and stay there when the held refresh lands behind it.
+await page.evaluate(() => go('legal')); await page.waitForTimeout(400);
+await page.evaluate(() => go('dashboard')); await waitFor(page, () => !!document.getElementById('lgWkCard')); await page.waitForTimeout(400);
 await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
 await page.evaluate(() => go('legal')); await page.waitForTimeout(400);
 delayFn.dashboardFull = 1200;
 await page.evaluate(() => go('dashboard')); await page.waitForTimeout(150);
-check('the remembered dashboard is up at once with the card on the chosen week', (await has(page, '#lgWkCard')) && (await cardWeek(page)) === LAST, 'card ' + await cardWeek(page));
+check('the remembered dashboard is up at once with the card on the chosen week', (await has(page, '#lgWkCard')) && (await cardWeek(page)) === LAST, 'card ' + await cardWeek(page) + ' remembered ' + await page.evaluate(() => Object.keys(VC.store).join(',')));
 await page.waitForTimeout(1900);
 delete delayFn.dashboardFull;
 check('and the quiet refresh behind it keeps the card there', (await cardWeek(page)) === LAST, 'card ' + await cardWeek(page));

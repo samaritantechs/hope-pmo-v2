@@ -3211,3 +3211,30 @@ test('the dashboard\'s Legal card is the Legal tab\'s card under its own name: t
   const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('VIEWS.dashboard = function') + 4000);
   assert.ok(/lgWeekReset_\(\);/.test(view) && /lgWeekKept_\(\)\) \|\| d\.legal\)/.test(view));
 });
+
+/* THE REMEMBERED SCREEN LEARNS THE CARD'S WEEK (Part 133): the kept reading rides in S.args and the remembered snapshot is told at
+   once, so coming back to a tab inside the window finds the chosen week by design, not by the luck of a refresh in flight; and
+   the two screens' shared cache can start afresh without undoing each other's remembered week. */
+test('the Legal card\'s chosen week rides in the screen\'s own args and its remembered snapshot, not in the shared cache', () => {
+  const app = appSrc();
+  const kept = /function lgWeekKept_\(\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(kept, /var w = \(S\.args && S\.args\.lgWeek\) \|\| '', k = S\.args && S\.args\.lgLegal;/);
+  assert.match(kept, /return w && k && k\.mon === w && Date\.now\(\) - \(Number\(S\.args\.lgAt\) \|\| 0\) < 120000 \? k : null;/);
+  assert.ok(!/LGW_\.c/.test(kept), 'the kept week never reads the shared cache');
+  const paint = /function lgWeekPaint_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(paint, /if \(S\.args\) \{ S\.args\.lgLegal = lg; S\.args\.lgAt = Date\.now\(\); \}/);
+  assert.match(paint, /var snap = \(typeof VC === 'object' && VC && VC\.store\) \? VC\.store\[VC\.key\] : null;\n  if \(snap\) \{ snap\.head = HEAD; snap\.args = JSON\.parse\(JSON\.stringify\(S\.args \|\| \{\}\)\); \}/);
+  // RUN: a paint tells the live args and the remembered snapshot; a kept week is served from the args alone.
+  const S = { args: { lgWeek: '2026-07-13' } }, VC = { key: 'dashboard|', store: { 'dashboard|': { head: 'old', args: {} } } };
+  const doc = { getElementById: () => null, activeElement: null, querySelector: () => null };
+  const run = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'LGW_', 'HEAD',
+    /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0] + kept + paint
+    + '\nlgWeekPaint_({ on: true, mon: "2026-07-13", sun: "2026-07-19", thisWeek: "2026-07-20", recovered: 7, owed: 10, pct: 70 });'
+    + '\nreturn { kept: lgWeekKept_(), snapHead: VC.store["dashboard|"].head, snapArgs: VC.store["dashboard|"].args };');
+  const out = run(S, VC, doc, s => String(s), n => String(n), v => v + '%', { c: {} }, '<!--lgw-->x<!--/lgw-->');
+  assert.equal(out.kept && out.kept.mon, '2026-07-13', 'the kept reading is the one just painted');
+  assert.equal(out.snapArgs.lgWeek, '2026-07-13'); assert.equal(out.snapArgs.lgLegal.recovered, 7, 'the snapshot carries the reading');
+  assert.ok(/data-mon="2026-07-13"/.test(out.snapHead), 'and the patched HEAD');
+  S.args.lgWeek = '2026-07-06';
+  assert.equal(run(S, VC, doc, s => String(s), n => String(n), v => v + '%', { c: {} }, 'x').kept, null, 'a reading of another week is not served as the kept one');
+});

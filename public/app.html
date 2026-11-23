@@ -5908,9 +5908,11 @@ function lgWeekAsk_(weekOf){
    the arrows are on: it is snapshotted with the remembered screen and cleared by go() on a tab switch, so a quiet
    refresh keeps the week and a fresh open of the tab starts on this week. Found by the second reader of #775 (Part 131). */
 function lgWeekKept_(){
-  var w = (S.args && S.args.lgWeek) || '';
-  var hit = w ? LGW_.c[w] : null;
-  return hit && hit.d && hit.d.legal && Date.now() - hit.at < 120000 ? hit.d.legal : null;
+  /* The kept reading rides in S.args itself (lgWeekPaint_ puts it there, and the remembered screen's snapshot carries it),
+     not in the shared two-minute cache: the dashboard and the Legal tab share that cache and each starts afresh on a
+     fresh open (lgWeekReset_), which must not undo the other screen's remembered week (Part 133). */
+  var w = (S.args && S.args.lgWeek) || '', k = S.args && S.args.lgLegal;
+  return w && k && k.mon === w && Date.now() - (Number(S.args.lgAt) || 0) < 120000 ? k : null;
 }
 /* What the arrows remember (the answers per week, the press in flight, the last list) starts afresh each time a screen
    that carries the card reads the register anew (the Legal tab, the dashboard), unless the screen is a remembered one
@@ -5969,6 +5971,13 @@ function lgWeekPaint_(lg){
   if (!lg || !lg.mon) return;
   var html = lgWeekCard_(lg), old = document.getElementById('lgWkCard');
   HEAD = String(HEAD || '').replace(/<!--lgw-->[\s\S]*?<!--\/lgw-->/, function(){ return '<!--lgw-->' + html + '<!--/lgw-->'; });
+  /* THE REMEMBERED SCREEN LEARNS THE WEEK TOO (Part 133). The reading rides in S.args (lgWeekKept_), and the snapshot a
+     return to this tab is drawn from takes the patched HEAD and these args now, not whenever a refresh next completes:
+     before this, coming back inside the window found the chosen week only if a quiet refresh had happened to land after
+     the press and re-snapshot the screen (the kept check showed it on the dashboard). */
+  if (S.args) { S.args.lgLegal = lg; S.args.lgAt = Date.now(); }
+  var snap = (typeof VC === 'object' && VC && VC.store) ? VC.store[VC.key] : null;
+  if (snap) { snap.head = HEAD; snap.args = JSON.parse(JSON.stringify(S.args || {})); }
   if (!old) return;
   var had = old.contains(document.activeElement) ? (document.activeElement.getAttribute('data-lgwk') || 'card') : '';
   old.outerHTML = html;
