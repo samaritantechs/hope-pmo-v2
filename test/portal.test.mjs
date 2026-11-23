@@ -18,6 +18,7 @@ const dbWithRpc = t => fakeDb(t || tables(), { rpc: { ...SNAPSHOT_TOTALS_RPC, ..
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
+const { adjReceived_ } = await import('../api/_lib/adjustments.js');
 const { ghostRowsFor_, GHOST_BUDGET_MS, GHOST_REPORT_BUDGET_MS } = await import('../api/_lib/expdf.js');
 const { sameName } = await import('../api/_lib/expdf.js');
 // The announcement is READ without an access code -- it has to reach the sign-in screen -- so
@@ -5199,6 +5200,91 @@ test('the Iliyonasia tab says what the commission side did with every row', asyn
   assert.ok(!by.a.reopened, 'and the expected books are untouched by any of this');
   assert.equal(d.superseded, 1, 'and the tab can lead with the count that needs a person');
   for (const r of d.rows) assert.ok(r.countNote, 'every row explains itself in words');
+});
+
+/* =====================================================================================
+   ONE MIAMALA, BOTH EXPECTED BOOKS.
+   =====================================================================================
+     "single input of Miamala should reflrct in both initial and current expected reports since
+      miamala are always already collected so early collection officers are lalamenting why it
+      doesnt count for them" -- the owner, 23 Nov 2026 (handbook Part 132).
+
+   A Miamala is money received and verified: collected on the day (the day sheet) and collected
+   early (the initial sheet) alike. One entry against EITHER expected book counts in BOTH, wherever
+   a collection figure is read -- decided once, where the register is keyed (adjReceived_), never
+   by the screens. The arrears pair is untouched. */
+test('a Miamala filed against the day sheet pays the early scheme too, and one against the early sheet moves the day\'s Col', async () => {
+  // 1. the commission's early scheme: an entry against expected-CURRENT names 901, UNPAID on the initial sheet
+  const plain = await portalApi(dbWithRpc(earlyBook_()), ADMIN, 'commission', {}, NOW);
+  const t = earlyBook_();
+  t.pmo_adjustments = [{ id: 'm1', adj_date: TODAY, target: 'expected-current', team: 'KONGOWE', amount: 1000, ref: '901', reason: 'muamala' }];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(plain).weekN, 1);
+  assert.equal(earlyRow_(d).weekN, 2, 'the early scheme counts the customer a day-sheet entry names');
+  assert.ok(earlyRow_(d).weekCommission > earlyRow_(plain).weekCommission, 'and is paid for them');
+  assert.ok(earlyRow_(d).weekPct > earlyRow_(plain).weekPct, 'and the amount is in early collection');
+  // 2. the dashboard: an entry against expected-INITIAL moves today's Col and the strip's Col %
+  const t2 = tables();
+  t2.pmo_adjustments = [{ id: 'm2', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 40000, reason: 'muamala' }];
+  const plain2 = await portalApi(dbWithRpc(tables()), ADMIN, 'dashboardFull', {}, NOW);
+  const d2 = await portalApi(dbWithRpc(t2), ADMIN, 'dashboardFull', {}, NOW);
+  const dayOf = (x, date) => x.colTrend.find(r => r.date === date);
+  assert.equal(dayOf(d2, TODAY).collected, dayOf(plain2, TODAY).collected + 40000, 'the day sheet moves by an entry filed against the early sheet');
+  assert.ok(d2.perf.colPct > plain2.perf.colPct);
+  // 3. the strip's Early Collection tile moves by an entry filed against the day sheet
+  const ecolBook = () => { const x = tables(); x.repayment_snapshots.push(E('e1', 'KONGOWE', 1000, 'PAID', 0, TODAY, 'initial'), E('e2', 'MBAGALA', 1000, 'UNPAID', 0, TODAY, 'initial')); return x; };
+  const base3 = await run('dashboardFull', {}, ADMIN, dbWithRpc(ecolBook()));
+  assert.equal(base3.perf.ecolPct, 50);
+  const t3 = ecolBook();
+  t3.pmo_adjustments = [{ id: 'm3', adj_date: TODAY, target: 'expected-current', team: 'MBAGALA', amount: 1000, reason: 'muamala' }];
+  const d3 = await run('dashboardFull', {}, ADMIN, dbWithRpc(t3));
+  assert.equal(d3.perf.ecolPct, 100, "MBAGALA's 1,000 is early collection too");
+});
+
+test('the register keys one expected entry under both expected books and leaves the arrears pair apart', async () => {
+  const t = tables();
+  t.pmo_adjustments = [
+    { id: 'x1', adj_date: TODAY, target: 'expected-current', team: 'KONGOWE', amount: 1000, ref: '901' },
+    { id: 'x2', adj_date: TODAY, target: 'expected-initial', team: 'MBAGALA', amount: 500, ref: null },
+    { id: 'x3', adj_date: TODAY, target: 'defaulter-current', team: 'KONGOWE', amount: 700, ref: '901' },
+  ];
+  const adj = await adjReceived_(dbWithRpc(t), ADMIN, { from: TODAY, to: TODAY });
+  for (const b of ['expected-current', 'expected-initial']) {
+    assert.equal(adj.of(b, 'KONGOWE'), 1000, b + ' KONGOWE');
+    assert.equal(adj.of(b, 'MBAGALA'), 500, b + ' MBAGALA');
+    assert.equal(adj.onDay(b, TODAY), 1500, b + ' the day');
+    assert.equal(adj.total[b], 1500); assert.equal(adj.seen[b], 2);
+    assert.deepEqual(adj.refCells(b), [{ team: 'KONGOWE', date: TODAY, ref: '901', amount: 1000 }]);
+  }
+  assert.deepEqual(adj.cells('expected-current'), adj.cells('expected-initial'), 'the same cells, in the same order');
+  assert.equal(adj.of('defaulter-current', 'KONGOWE'), 700);
+  assert.equal(adj.of('defaulter-initial', 'KONGOWE'), 0, 'the arrears pair is two positions of one day, never one reading');
+  assert.equal(adj.refCells('defaulter-initial').length, 0);
+  assert.equal(adj.total['defaulter-initial'] || 0, 0);
+});
+
+test('the Iliyonasia tab judges a Miamala by both sheets: paid on either, the deck already pays for them', async () => {
+  const t = earlyBook_();   // the initial sheet: 901 UNPAID, 902 PAID; the day sheet (tables): 111 UNPAID, 222 PAID, 333 UNPAID
+  t.pmo_adjustments = [
+    { id: 'a', adj_date: TODAY, target: 'expected-current', team: 'KONGOWE', amount: 1000, ref: '901' },   // no sheet shows 901 paid: counted, on both books
+    { id: 'b', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: '902' },   // the initial sheet shows 902 PAID
+    { id: 'c', adj_date: TODAY, target: 'expected-initial', team: 'KONGOWE', amount: 1000, ref: '222' },   // the DAY sheet shows 222 PAID: the deck carries it, whichever book the row names
+    { id: 'd', adj_date: TODAY, target: 'expected-current', team: 'KONGOWE', amount: 1000, ref: '111' },   // 111 UNPAID on the day sheet, absent from the initial one: counted
+  ];
+  const d = await portalApi(dbWithRpc(t), ADMIN, 'adjustments', {}, NOW);
+  const by = {}; for (const r of d.rows) by[r.id] = r;
+  assert.equal(by.a.countState, 'counted'); assert.deepEqual(by.a.countBooks, { initial: 'not paid', today: 'not paid' });
+  assert.match(by.a.countNote, /both expected books/);
+  assert.equal(by.b.countState, 'superseded'); assert.deepEqual(by.b.countBooks, { initial: 'paid', today: 'not paid' });
+  assert.match(by.b.countNote, /early-collection sheet shows/);
+  assert.equal(by.c.countState, 'superseded'); assert.deepEqual(by.c.countBooks, { initial: 'not paid', today: 'paid' });
+  assert.match(by.c.countNote, /the day sheet shows/);
+  assert.equal(by.d.countState, 'counted');
+  assert.equal(d.superseded, 2, 'the two the deck already pays for');
+  // and the commission board agrees, from the one test (adjCountableRefs_): 901 and 111 are paid for on the early scheme, 902 and 222 are not
+  const plain = await portalApi(dbWithRpc(earlyBook_()), ADMIN, 'commission', {}, NOW);
+  const c = await portalApi(dbWithRpc(t), ADMIN, 'commission', {}, NOW);
+  assert.equal(earlyRow_(c).weekN, earlyRow_(plain).weekN + 2, 'two customers more: 901 and 111; 902 and 222 the deck already pays for');
 });
 
 test('every field of a register row is editable, and absent means untouched', async () => {

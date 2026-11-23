@@ -7250,11 +7250,13 @@ function wireForms(){
     var t = (document.getElementById('adjTarget') || {}).value;
     var v = Number((document.getElementById('adjAmt') || {}).value);
     var up = !(v < 0);                                   // blank or positive reads as received
+    /* ONE MIAMALA, BOTH EXPECTED BOOKS (23 Nov 2026, Part 132): "single input of Miamala should reflrct in both
+       initial and current expected reports since miamala are always already collected". An entry against either
+       expected book moves today's collected AND early collection alike, so both say so, in the same words. */
     h.textContent =
-      t === 'expected-current'  ? (up ? 'Makusanyo ya leo yataongezeka / today\u2019s collected goes UP'
-                                      : 'Makusanyo ya leo yatapungua / today\u2019s collected goes DOWN')
-    : t === 'expected-initial'  ? (up ? 'Early col itaongezeka / early collection goes UP'
-                                      : 'Early col itapungua / early collection goes DOWN')
+      (t === 'expected-current' || t === 'expected-initial')
+                                ? (up ? 'Makusanyo ya leo NA early col yataongezeka / today\u2019s collected AND early collection go UP'
+                                      : 'Makusanyo ya leo NA early col yatapungua / today\u2019s collected AND early collection go DOWN')
     : t === 'defaulter-current' ? (up ? 'Deni la deki la jioni litaongezeka — urejeshaji utapungua '
                                         + '/ evening arrears go UP — recovery goes DOWN'
                                       : 'Deni la deki la jioni litapungua — UREJESHAJI UTAONGEZEKA '

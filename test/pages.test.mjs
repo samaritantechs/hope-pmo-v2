@@ -3158,6 +3158,23 @@ test('PAR all-time shows one decimal on the KPI, the table column, its Excel exp
   assert.ok(!/var BUILD = '2026-11-05-f'/.test(app), 'BUILD moved');
 });
 
+/* ONE MIAMALA, BOTH EXPECTED BOOKS (23 Nov 2026, handbook Part 132): the Iliyonasia form's hint says, for an entry against
+   either expected book, that today's collected AND early collection move together -- the old one-book words promised less
+   than the register now does. */
+test('the Iliyonasia form says that an entry against either expected book moves today\'s collected AND early collection', () => {
+  const src = readFileSync(new URL('../public/app.html', import.meta.url), 'utf8');
+  const fn = /var adjHint = function\(\)\{[\s\S]*?\n  \};/.exec(src);
+  assert.ok(fn, 'adjHint is there');
+  assert.match(fn[0], /\(t === 'expected-current' \|\| t === 'expected-initial'\)/, 'one branch for both expected books');
+  assert.match(fn[0], /Makusanyo ya leo NA early col yataongezeka \/ today\\u2019s collected AND early collection go UP/);
+  assert.match(fn[0], /Makusanyo ya leo NA early col yatapungua \/ today\\u2019s collected AND early collection go DOWN/);
+  assert.ok(!/Early col itaongezeka/.test(fn[0]) && !/today\\u2019s collected goes UP/.test(fn[0]), 'the old one-book words are gone');
+  // and the Iliyonasia tab's two expected tiles say that each book's net counts in both
+  const mod = readFileSync(new URL('../public/mod/adjust.js', import.meta.url), 'utf8');
+  const tiles = mod.match(/kpi\('Expected — (?:Initial|Current)'[^\n]*/g) || [];
+  assert.equal(tiles.length, 2, 'the two expected tiles');
+  for (const t of tiles) assert.match(t, /inahesabika kwenye vitabu vyote viwili \/ counts in both expected books/);
+
 /* ===================================================================================================================
    WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 133; tools/browser-checks/portal-repaint-wiring.mjs is the same
    thing in a real browser, on every screen that loads).
