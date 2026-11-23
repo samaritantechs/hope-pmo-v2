@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-h';
+var BUILD = '2026-11-23-i';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5209,7 +5209,9 @@ function tableSimple(rows, cols, totalRow, boardId){
 }
 function sumRow(rows, fields){
   var o = {};
-  fields.forEach(function(f){ o[f] = rows.reduce(function(s,r){ return s + (Number(r[f])||0); }, 0); });
+  fields.forEach(function(f){
+    o[f] = allNull_(rows, function(r){ return r[f]; }) ? null : rows.reduce(function(s,r){ return s + (Number(r[f])||0); }, 0);
+  });
   return o;
 }
 
@@ -5303,6 +5305,11 @@ var PCT_AVG_OF = {
 
    A cell the caller filled itself is never overwritten -- a board that knows its own answer
    knows better than this does. Returns whether it filled anything. */
+/* A FIGURE THE SERVER SENT AS "NOT KNOWN" IS NOT A NOUGHT (23 Nov 2026, handbook Part 137). The call reports send Reached as null
+   on every row while the database is behind the rule (the report then says which file to run): a total of those is blank too, never
+   a 0 that reads as "nobody was reached". Only an explicit null on EVERY row is read this way; a field a board simply does not carry
+   (undefined) adds up as it always did. Used by sumRow, autoTotals and fillPctTotals. */
+function allNull_(rows, get){ return !!(rows && rows.length) && rows.every(function(r){ return get(r) === null; }); }
 function fillPctTotals(t, rows, cols){
   if (!t || !rows || !rows.length || !cols) return false;
   var did = false;
@@ -5320,6 +5327,9 @@ function fillPctTotals(t, rows, cols){
        recovery to be the percentage of recovered vs uncollected not average of the above
        percentages": the parts are on the rows now, and the column says which they are. */
     var src = c.from || PCT_FROM[c.key];
+    // The part on top is "not known" on every row (an explicit null): no ratio is worked out from it. The rows' own cells are null
+    // too, so the average below finds nothing and the cell stays blank.
+    if (src && allNull_(rows, function(r){ return r[src[0]]; })) src = null;
     if (src){
       var n = rows.reduce(function(s, r){ return s + (Number(r[src[0]]) || 0); }, 0);
       var d = rows.reduce(function(s, r){ return s + (Number(r[src[1]]) || 0); }, 0);
@@ -5380,6 +5390,8 @@ function autoTotals(rows, cols){
   cols.forEach(function(c){
     var k = c.key, kind = c.kind;
     if (kind === 'num' || kind === 'money' || kind === 'dur'){
+      // not known on every row (an explicit null): the total is not known either, and the cell stays blank
+      if (allNull_(rows, function(r){ return c.get ? c.get(r) : r[k]; })) { t[k] = null; return; }
       t[k] = rows.reduce(function(s, r){
         var v = c.get ? c.get(r) : r[k];
         return s + (Number(v) || 0); }, 0);

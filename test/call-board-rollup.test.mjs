@@ -665,7 +665,8 @@ test('the SQL, the app and the stand-in use the same function name and the same 
   assert.match(APP, /callBoardFailed\.set\(db, \{ at: Date\.now\(\), soft \}\);\n {2}console\.warn\(.*\);\n {2}return soft \? callBoardLast_\(db, scope\) : null;/, 'every failure path is remembered, with whether the database was briefly unreachable, says why in the server\'s own log, and falls back');
   assert.match(APP, /\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)\n {4}\.gte\('call_date', mon\)\.lte\('call_date', sun\), user\.teams\)\);/, 'the old read, unchanged: the same eight columns, and no category');
   assert.equal((APP.match(/\.select\('officer, team, duration, portfolio, ref, phone, outcome, call_date'\)/g) || []).length, 1, 'the week\'s calls are read in exactly one place');
-  assert.match(APP, /boardRowsFromLogs\(mine, mon, sun\), t: boardRowsFromLogs\(mine, today, today\)/, 'the fall-back adds the rows up with the one definition');
+  assert.match(APP, /const min = callMinSecsOf\(await settingGet\(db, 'CALL_MIN_SECS'\)\.catch\(\(\) => null\)\);\n {2}return \{ w: boardRowsFromLogs\(mine, mon, sun, min\), t: boardRowsFromLogs\(mine, today, today, min\), min \};/,
+    'the fall-back adds the rows up with the one definition, by the setting\'s minimum seconds, and says which minimum it counted by');
   assert.ok(!/callRollupRows|callTotals/.test(APP), 'portal-core keeps no second copy of the counting rule');
   const mock = read('test/snapshot-totals-rpc.mjs');
   assert.match(mock, /call_board_rollup: async \(store, a = \{\}\) =>/);
@@ -681,7 +682,7 @@ test('the last good board stands in only for a failure that is the database bein
   assert.match(APP, /\{ callBoardKeep_\(db, scope, data\); return data; \}/, 'only an answer that passed the shape check is kept');
   assert.match(APP, /JSON\.stringify\(\[mon, sun, today, user\.teams && user\.teams\.length \? teamMatchList\(user\.teams\)\.slice\(\)\.sort\(\) : null\]\)/,
     'the scope is the three things the function is asked: the week, today and the teams (an admin is its own scope), written so that no team NAME can make two lists one key');
-  assert.match(APP, /return v && age >= 0 && age < STALE_OK_MS \? \{ w: v\.data\.w, t: v\.data\.t, staleS: Math\.round\(age \/ 1000\) \} : null;/, 'younger than ten minutes, never from the future, and it says how old it is');
+  assert.match(APP, /return v && age >= 0 && age < STALE_OK_MS \? \{ w: v\.data\.w, t: v\.data\.t, min: v\.data\.min, staleS: Math\.round\(age \/ 1000\) \} : null;/, 'younger than ten minutes, never from the future, it says how old it is, and it keeps the minimum the kept answer was counted by');
   assert.match(APP, /if \(now - v\.at >= STALE_OK_MS\) m\.delete\(k\);/, 'nothing older than it may be used is kept');
   assert.match(APP, /\.\.\.\(callSrc\.staleS \? \{ callsStaleS: callSrc\.staleS \} : \{\}\),/, 'the answer says when the boards are an older answer, and carries nothing when they are not');
   assert.equal((APP.match(/\? callBoardLast_\(db, scope\)/g) || []).length, 2, 'handed out in the pause and after a failure, nowhere else');

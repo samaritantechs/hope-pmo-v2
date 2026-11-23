@@ -407,7 +407,12 @@ function presSlides(){
        dials sit beside them so a redialler is visible; talk time is portfolio talk time. */
     slides.push({ id:'calls', kind:'table',
       title:'HOPE Calls — busiest first (namba, si majaribio / numbers rung, not dials)'
-        + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set'),
+        + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set')
+        /* REACHED % = the numbers really spoken to (a call longer than the minimum seconds) out of the numbers rung, not every
+           number dialled. The server says which minimum it counted by (callsReachMin); where the database is still behind the rule
+           it sends no figure at all (the cells are blank) and the slide says which file to run. */
+        + (b.callsReachNote ? ' · Reached % inasubiri / waits for db/RUN-ME-088'
+          : b.callsReachMin != null ? ' · Reached = waliongea zaidi ya sek ' + b.callsReachMin + ' / spoken to for over ' + b.callsReachMin + ' s' : ''),
       rows: callRows,
       cols:[{ key:'end', label:'', cls:function(r){ return r.end==='Busiest' ? 'good' : r.end==='Least active' ? 'bad' : ''; } },
         col('agent','Officer'), col('unit','Unit'), col('team','Team'), col('calls','Calls','num'), col('dials','Dials','num'),

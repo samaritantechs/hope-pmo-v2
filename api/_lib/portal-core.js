@@ -53,7 +53,7 @@ import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } f
 import { isSettled } from './settled.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts, callMinSecsOf, REACH_NOTE } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
@@ -14632,8 +14632,15 @@ function callBoardKeep_(db, scope, data) {
 function callBoardLast_(db, scope) {
   const m = callBoardGood.get(db), v = m && m.get(scope);
   const age = v ? Date.now() - v.at : -1;
-  return v && age >= 0 && age < STALE_OK_MS ? { w: v.data.w, t: v.data.t, staleS: Math.round(age / 1000) } : null;
+  return v && age >= 0 && age < STALE_OK_MS ? { w: v.data.w, t: v.data.t, min: v.data.min, staleS: Math.round(age / 1000) } : null;
 }
+/* WHICH RULE THE BOARD'S REACHED NUMBERS WERE COUNTED BY (23 Nov 2026, handbook Part 137). Since db/RUN-ME-088 the function's answer
+   carries `min`: the minimum seconds a call must pass to have reached its number (outcomeOf, call-core.js; the function reads the
+   setting's own cell). An answer with no `min` came from the function as RUN-ME-078 left it, which counted every dial that was not
+   missed: its figures are used as they are except `connected`, which is NOT shown (callBoardReach_ answers known: false; the boards carry
+   null for Reached and Reached %, and the answer says which file to run). The heavy read is never made to work it out. */
+const callBoardReach_ = src => (src && src.nobody ? { known: true, min: null }                 // a viewer who holds no team: nothing to count
+  : src && Number.isFinite(src.min) && src.min >= 0 ? { known: true, min: src.min } : { known: false, min: null });
 // Every one of the eight figures a board draws must BE a number: Number(null) is 0, so a null or a string used to pass for one.
 const CALL_BOARD_FIGS_ = ['dials', 'calls', 'duration', 'otherDuration', 'portfolio', 'nonPortfolio', 'connected', 'customers'];
 const callBoardRowOk_ = r => !!r && typeof r.name === 'string' && CALL_BOARD_FIGS_.every(k => Number.isFinite(r[k]));
@@ -14654,7 +14661,7 @@ async function callBoardFromDb_(db, user, mon, sun, today) {
   return soft ? callBoardLast_(db, scope) : null;
 }
 async function callBoardSource_(db, user, mon, sun, today) {
-  if (user.teams && !user.teams.length) return { w: [], t: [] };
+  if (user.teams && !user.teams.length) return { w: [], t: [], nobody: true };
   const viaDb = await callBoardFromDb_(db, user, mon, sun, today);
   if (viaDb) return viaDb;
   /* THE COLUMNS THE CALL BOARDS DRAW, not every column of every call in the week. select('*')
@@ -14666,7 +14673,9 @@ async function callBoardSource_(db, user, mon, sun, today) {
     .select('officer, team, duration, portfolio, ref, phone, outcome, call_date')
     .gte('call_date', mon).lte('call_date', sun), user.teams));
   const mine = scoped(user, rows);
-  return { w: boardRowsFromLogs(mine, mon, sun), t: boardRowsFromLogs(mine, today, today) };
+  // The rows road counts "reached" itself, by the setting's minimum seconds (the memoised settings read every screen shares).
+  const min = callMinSecsOf(await settingGet(db, 'CALL_MIN_SECS').catch(() => null));
+  return { w: boardRowsFromLogs(mine, mon, sun, min), t: boardRowsFromLogs(mine, today, today, min), min };
 }
 
 /* The officer boards are the dashboard's twin: pure sums over a whole week of snapshots, and
@@ -15147,6 +15156,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      call is one kind here (Ripoti splits it into EXPECTED, DEFAULTER and UNCATEGORIZED). Noted in
      handbook Part 116; not changed. */
   const CALL_ZERO = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0, customers: 0 };
+  // Reached is the rule's only when the source says which minimum it was counted by; otherwise it is not shown (null), never the old figure.
+  const reach = callBoardReach_(callSrc), reachKnown = reach.known;
   function callBoard(rows) {
     const m = {}, figBy = new Map();
     for (const r of rows) {
@@ -15164,7 +15175,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     return Object.values(m).map(b => {
       const f = figBy.get(b.key) || CALL_ZERO;
       const t = { dials: f.dials, calls: f.calls, duration: f.duration, otherDuration: f.otherDuration,
-        portfolio: f.portfolio, nonPortfolio: f.nonPortfolio, connected: f.connected, customers: f.customers };
+        portfolio: f.portfolio, nonPortfolio: f.nonPortfolio, connected: reachKnown ? f.connected : null, customers: f.customers };
       return { agent: b.key, team: b.team, ...t,
         /* WHICH OF THE THREE PMO UNITS THIS PERSON BELONGS TO, or null for everybody else.
            "For the presentation slides am interested in the 3 PMO department's Units (expected,
@@ -15174,7 +15185,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
            re-derive it from the teams table it does not hold, and a second derivation of "who is
            a recovery officer" is a second answer that can disagree with the boards above. */
         unit: unitOf(b.key),
-        connectPct: pctOf(t.connected, t.calls), portfolioPct: pctOf(t.portfolio, t.calls) };
+        connectPct: reachKnown ? pctOf(t.connected, t.calls) : null, portfolioPct: pctOf(t.portfolio, t.calls) };
     }).sort((a, b) => b.calls - a.calls);
   }
   const callToday = callBoard(callSrc.t);
@@ -15390,6 +15401,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const unassignedTeams = { early: noOne('expected'), col: loose.slice().sort(), rec: noOne('recovery') };
 
   return { weekday: wd, weekOf: mon, today, deckWarning, unassignedTeams,
+    // The minimum seconds "reached" was counted by on the call boards, or the line that says which file to run when it is not shown.
+    ...(reachKnown ? (reach.min != null ? { callsReachMin: reach.min } : {}) : { callsReachNote: REACH_NOTE }),
     ...(callSrc.staleS ? { callsStaleS: callSrc.staleS } : {}),     // the call boards are an older answer (seconds): the database was briefly unreachable (Part 123)
     initialCount: iniCustomers, currentCount: curCustomers,
     earlyToday, earlyWeek, recToday, recWeek, creditToday, creditWeek,
