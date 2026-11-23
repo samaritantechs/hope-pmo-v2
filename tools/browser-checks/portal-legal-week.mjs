@@ -90,6 +90,7 @@ const REAL = new Set(['demandNotices', 'legalRecoveries']);
 const calls = [];                       // [fn, args] for everything the page asked, in order
 let failFn = null;                      // a portal function the server answers with a 500
 const delayWeek = {};                   // weekOf -> ms the server holds a legalRecoveries answer for that week
+const delayFn = {};                     // fn -> ms the server holds that function's answer (demandNotices, for the quiet-refresh race)
 
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
@@ -109,7 +110,7 @@ const srv = http.createServer((req, res) => {
       let out;
       try { out = REAL.has(fn) ? await portalApi(db, USER, fn, args || {}) : { rows: [] }; }
       catch (e) { res.writeHead(e.status || 500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) })); return; }
-      const hold = fn === 'legalRecoveries' ? (delayWeek[(args || {}).weekOf || ''] || 0) : 0;
+      const hold = fn === 'legalRecoveries' ? (delayWeek[(args || {}).weekOf || ''] || 0) : (delayFn[fn] || 0);
       setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...out, workspace: 'hopepmo' })); }, hold);
     });
     return;
@@ -224,7 +225,7 @@ check('where backward is OFF', (await off(page, -1)) === true && (await off(page
 const before = calls.length;
 await page.click('#lgWkCard [data-lgwk="-1"]', { force: true }).catch(() => {});
 await page.waitForTimeout(300);
-check('a press on the disabled arrow asks nothing', calls.length === before);
+check('a press on the disabled arrow asks nothing', (await off(page, -1)) === true && calls.length === before);
 
 // --- 5. the list behind the card carries the arrows, a way home, the week in its title, and keeps the card in step
 await page.click('#lgRecW');
@@ -305,6 +306,90 @@ page = await open();
 check('without the ledger the card says so', /RUN-ME-041a/.test(await text(page, '#lgRecWS')), (await text(page, '#lgRecWS')).slice(0, 160));
 check('and both arrows are off', (await off(page, -1)) === true && (await off(page, 1)) === true);
 await page.close();
+
+// --- 11. THE SECOND READER'S SEVEN (Part 131), each a point that failed on the page as merged in #775.
+db = makeBook();
+page = await open();
+// (1) Enter and Space on the card's way home go home and never open the list.
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+await page.focus('#lgWkCard .lgwkhome, #lgWkCard a'); await page.keyboard.press('Enter');
+const homeByKey = await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS);
+check('Enter on the card\'s way home goes back to this week', homeByKey && !(await drawerOpen(page)), 'card on ' + await cardWeek(page) + ', drawer ' + await drawerOpen(page));
+await page.evaluate(() => closeDrawer());                      // on the page as merged the list opened here; close it so the next points run
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+await page.focus('#lgWkCard .lgwkhome, #lgWkCard a'); await page.keyboard.press('Space');
+check('and so does Space', await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS) && !(await drawerOpen(page)));
+await page.evaluate(() => closeDrawer());
+if ((await cardWeek(page)) !== THIS) { await page.click('#lgWkCard [data-lgwk="1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS); }
+// (5) the way home reads in the dark theme too (contrast of its colour against the lit card)
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+const contrast = await page.evaluate(() => {
+  const lum = c => { const [r, g, b] = c.match(/\d+/g).map(Number).map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const ratio = (a, b) => { const l1 = lum(a), l2 = lum(b); return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05); };
+  const read = () => { const h = document.querySelector('#lgWkCard .lgwkhome, #lgWkCard a'), c = document.getElementById('lgWkCard'); return ratio(getComputedStyle(h).color, getComputedStyle(c).backgroundColor); };
+  const light = read(); document.body.classList.add('dark'); const dark = read(); document.body.classList.remove('dark');
+  return { light, dark };
+});
+check('the way home reads in both themes (contrast at least 4.5:1): light ' + contrast.light.toFixed(2) + ', dark ' + contrast.dark.toFixed(2), contrast.light >= 4.5 && contrast.dark >= 4.5);
+// (4) a slow answer for a list the reader has closed neither re-opens it nor paints over a later arrow press
+await page.click('#lgWkCard [data-lgwk="1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS);
+await page.evaluate(() => { LGW_.c = {}; });
+delayWeek[THIS] = 1500;                                        // the list opened from the card asks for the card's OWN week (its data-mon), never ''
+await page.click('#lgRecW'); await page.waitForTimeout(200);
+await page.evaluate(() => closeDrawer());
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+await page.waitForTimeout(1800);
+check('a slow answer for a closed list does not re-open it', !(await drawerOpen(page)));
+check('and does not paint over the arrow pressed after it', (await cardWeek(page)) === LAST, 'card on ' + await cardWeek(page));
+delete delayWeek[THIS];
+await page.evaluate(() => closeDrawer());                      // on the page as merged the late answer re-opened the list; close it so the next points run
+// (6) a keyboard press on the list's arrow keeps the focus on that arrow, so the next press steps again
+if ((await cardWeek(page)) !== THIS) { await page.click('#lgWkCard [data-lgwk="1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS); }   // (on the page as merged the stale answer above has already put it there)
+await page.click('#lgRecW'); await page.waitForTimeout(700);
+await page.focus('#drawer [data-lgwd="-1"]'); await page.keyboard.press('Enter');
+await waitFor(page, w => document.getElementById('drawer').textContent.indexOf(w) >= 0, LAST + ' → ' + add(LAST, 6));
+check('after Enter on the list\'s arrow the focus is still on that arrow', await page.evaluate(() => (document.activeElement || {}).getAttribute && document.activeElement.getAttribute('data-lgwd')) === '-1');
+await page.keyboard.press('Enter');
+check('so a second Enter steps again', await waitFor(page, w => document.getElementById('drawer').textContent.indexOf(w) >= 0, BEFORE + ' → ' + add(BEFORE, 6)));
+// (7) a failed step inside the list keeps its week bar, so the reader can try again or go home
+failFn = 'legalRecoveries'; await page.evaluate(() => { LGW_.c = {}; });
+await page.click('#drawer [data-lgwd="1"]'); await page.waitForTimeout(900);
+failFn = null;
+check('a failed step says so and keeps the week bar', /Could not|timeout|statement/.test(await dr()) && await has(page, '#drawer [data-lgwd="0"]') && await has(page, '#drawer [data-lgwd="1"]'), (await dr()).slice(0, 160));
+if (await has(page, '#drawer [data-lgwd="0"]')) await page.click('#drawer [data-lgwd="0"]');   // (absent on the page as merged: the point below fails, the run goes on)
+check('and the way home on that bar still works', await waitFor(page, w => /Recovered this week/.test(document.getElementById('drawer').textContent) && document.getElementById('drawer').textContent.indexOf(w) >= 0, THIS + ' → ' + add(THIS, 6)));
+await page.evaluate(() => closeDrawer());
+// (3) a quiet refresh of the remembered screen does not put the card back on this week after an arrow press.
+// The page forgets its remembered screens after any non-read call (the hints, notifications and push polls among
+// them), so the Legal screen is loaded whole once more here, which remembers it afresh, and the point then checks
+// that the remembered screen really was up at once: a cold load would show no card until the held read landed, and
+// the race below would never be run (that is how the first form of this point passed on the page as merged).
+delete delayFn.demandNotices;
+await page.evaluate(() => go('dashboard')); await page.waitForTimeout(300);
+await page.evaluate(() => go('legal')); await waitFor(page, () => !!document.getElementById('lgWkCard')); await page.waitForTimeout(400);
+delayFn.demandNotices = 1500;
+await page.evaluate(() => go('dashboard')); await page.waitForTimeout(300);
+await page.evaluate(() => go('legal')); await page.waitForTimeout(150);                 // remembered screen up at once, the register read held 1.5 s behind it
+check('the remembered Legal screen is up at once, so the refresh below really races the press', await has(page, '#lgWkCard'));
+await page.click('#lgWkCard [data-lgwk="-1"]'); await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, LAST);
+await page.waitForTimeout(2200);                                                        // the held read has landed and repainted
+delete delayFn.demandNotices;
+check('a quiet refresh keeps the card on the week the reader chose', (await cardWeek(page)) === LAST && /past week/.test(await text(page, '#lgWkCard .l')), 'card on ' + await cardWeek(page));
+await page.evaluate(() => go('dashboard')); await page.waitForTimeout(200); await page.evaluate(() => go('legal')); await page.waitForTimeout(900);
+check('coming back to the tab inside the remembered-screen window finds the week the reader left it on, as a remembered screen keeps its filters', (await cardWeek(page)) === LAST, 'card on ' + await cardWeek(page));
+await page.evaluate(() => go('dashboard')); await page.waitForTimeout(200);
+await page.evaluate(() => { VC.store = {}; S.args = {}; go('legal'); });                 // nothing remembered: a fresh open of the tab
+await waitFor(page, () => !!document.getElementById('lgWkCard')); await page.waitForTimeout(300);
+check('while a fresh open of the tab is this week', (await cardWeek(page)) === THIS, 'card on ' + await cardWeek(page));
+await page.close();
+// (2) a reader whose scope holds no notice: the backward arrow is off, never endless
+USER.teams = ['NOWHERE'];
+page = await open();
+check('a reader with no notice in scope has the backward arrow off', (await off(page, -1)) === true && (await off(page, 1)) === true, 'since=' + await attr(page, '#lgWkCard', 'data-since'));
+const n0 = calls.length; await page.click('#lgWkCard [data-lgwk="-1"]', { force: true }).catch(() => {}); await page.waitForTimeout(300);
+check('and a press on it asks nothing', calls.length === n0);
+await page.close();
+USER.teams = null;
 
 // --- 10. THE COST OF WIRING ON EVERY REPAINT, measured: a register of 5,000 notices, the whole repaint a search
 // keystroke makes (paint(true)) against wireForms() alone, medians of 15 runs each. Said in the handbook; the
