@@ -3175,3 +3175,138 @@ test('the Iliyonasia form says that an entry against either expected book moves 
   assert.equal(tiles.length, 2, 'the two expected tiles');
   for (const t of tiles) assert.match(t, /inahesabika kwenye vitabu vyote viwili \/ counts in both expected books/);
 });
+
+/* ===================================================================================================================
+   WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 133; tools/browser-checks/portal-repaint-wiring.mjs is the same
+   thing in a real browser, on every screen that loads).
+
+     #776 (Part 129) moved wireForms() -- the head's own buttons and boxes: Teams & Staff, Legal, PMO deductions, Complaints,
+     Restructuring, HR staff, Adjust, the Imprest request form and approval -- into paintNow_() and paintHeadOnly(), so a table
+     search, a sort, a filter and the hints answer that repaints the list three seconds after sign-in (tipsStart) no longer leave
+     those elements new and unwired. It is now run once per keystroke, so what it may do is held here: it ATTACHES, and it starts
+     nothing. The pin of the two draw functions is #776's own test above; these RUN them. */
+const stripComments_ = s => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+const topFn_ = (src, name) => { const m = new RegExp('function ' + name + '\\([^)]*\\)\\{[\\s\\S]*?\\n\\}\\n').exec(src); assert.ok(m, 'function ' + name + ' is where it was'); return m[0]; };
+
+test('RUN: a full draw and a repaint each wire the screen exactly once, in the order the first draw always had', () => {
+  const app = appCore();
+  const src = ['paint', 'paintNow_', 'drawView_'].map(n => topFn_(app, n)).join('\n') + '\n' + /function paintHeadOnly\(\)\{[^\n]*\}\n/.exec(app)[0];
+  const log = [];
+  const rec = n => () => { log.push(n); };
+  const ctx = {
+    S: { cols: [{ key: 'a' }], rows: [{ a: 1 }], foldMain: '', foot: '' }, HEAD: '<p>head</p>', ONROW: null,
+    $: () => ({ set innerHTML(v) { log.push('innerHTML'); } }), sorted: r => r, filtered: () => [{ a: 1 }], tableSearchHtml_: () => '', tableHtml: () => '', fold_: () => '', esc: String,
+    wireTable: rec('wireTable'), wireTableSearch: rec('wireTableSearch'), wireBar: rec('wireBar'), wireOfficerFind: rec('wireOfficerFind'), wireForms: rec('wireForms'),
+    bpWire_: rec('bpWire_'), imprestOpenDeepLink_: rec('imprestOpenDeepLink_'),
+    document: { querySelector: () => null }, window: { bpWire_: true, scrollY: 0, scrollTo() {} },
+  };
+  vm.createContext(ctx); vm.runInContext(src, ctx);
+  const LIST = ['innerHTML', 'wireTable', 'wireTableSearch', 'wireBar', 'wireOfficerFind', 'wireForms'];
+  const seq = f => { log.length = 0; f(); return log.slice(); };
+  assert.deepEqual(seq(() => ctx.paint(true)), LIST, 'a repaint (a keystroke in the table search, a sort, the hints) wires the whole screen again, forms last');
+  assert.deepEqual(seq(() => ctx.paint()), LIST, 'and so does a paint that keeps no scroll position');
+  assert.deepEqual(seq(() => ctx.drawView_()), LIST.concat(['bpWire_', 'imprestOpenDeepLink_']), 'a full draw of a screen with a table wires once and then runs what it always ran');
+  ctx.S.cols = [];
+  assert.deepEqual(seq(() => ctx.drawView_()), ['innerHTML', 'wireBar', 'wireForms', 'bpWire_', 'imprestOpenDeepLink_'], 'a full draw of a screen with no table: the head, the bar, the forms');
+});
+
+/* wireForms() on a stand-in page, built from what the function itself looks up. The calls that START something (a timer, a request, a
+   redraw, a drawer, a confirm box, a focus) are recorded rather than defined away; every other name a handler uses is left undefined, so a
+   call of those at wiring time is a ReferenceError and fails the run. */
+function wireFormsStandIn_() {
+  const code = stripComments_(topFn_(appCore(), 'wireForms'));
+  // an id is looked up by its literal, or by the first of a pair in a list the function walks (the letterhead links, today's recovery card: [['lgRecT', 'today']])
+  const ids = [...new Set([...code.matchAll(/getElementById\('([A-Za-z0-9_]+)'\)/g), ...code.matchAll(/\[\s*'([A-Za-z][A-Za-z0-9_]*)'\s*,\s*'[^']*'\s*\]/g)].map(m => m[1]))];
+  const sels = [...new Set([...code.matchAll(/querySelectorAll\('([^']+)'\)/g)].map(m => m[1]))];
+  const started = [];
+  class El {
+    constructor(attrs) { this.attrs = { ...attrs }; this.style = {}; this.value = ''; this.textContent = ''; this.title = ''; this.disabled = false; this.checked = false; this.selectedOptions = []; this.card = null; }
+    getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; }
+    setAttribute(k, v) { this.attrs[k] = String(v); }
+    hasAttribute(k) { return k in this.attrs; }
+    closest() { return this.card; }
+    querySelectorAll() { return []; }
+    focus() { started.push('focus'); }
+  }
+  const makePage = () => {
+    const byId = {}, bySel = {}, all = [];
+    ids.forEach(id => { const e = new El({ id }); byId[id] = e; all.push(e); });
+    if (byId.lgRecT) { byId.lgRecT.card = new El({}); all.push(byId.lgRecT.card); }
+    sels.forEach(s => { const attr = (/\[([a-z-]+)/.exec(s) || [])[1] || 'x'; bySel[s] = [0, 1].map(i => { const e = new El({ [attr]: attr === 'name' ? 'pp_IMPREST' : 'v' + i }); all.push(e); return e; }); });
+    return { all, byId, bySel, document: { getElementById: id => byId[id] || null, querySelectorAll: s => bySel[s] || [], querySelector: () => null } };
+  };
+  const ctx = { S: { workspace: 'hopepmo' }, window: { hopeSecrets: () => started.push('hopeSecrets') }, money: n => String(n) };
+  ['setTimeout', 'setInterval', 'fetch', 'srv', 'render', 'go', 'paint', 'drawer', 'toast', 'confirm'].forEach(n => { ctx[n] = () => { started.push(n); return { then() { return this; }, catch() { return this; } }; }; });
+  vm.createContext(ctx);
+  const run = pg => { started.length = 0; ctx.document = pg.document; vm.runInContext(code + '\nwireForms();', ctx); return started.slice(); };
+  const signature = pg => pg.all.map((e, i) => i + ':' + (e.attrs.id || Object.values(e.attrs).join('/')) + ':' + Object.keys(e).filter(k => /^on/.test(k) && typeof e[k] === 'function').sort().join('+')
+    + ':' + (e.attrs.role || '') + '/' + (e.attrs.tabindex || '') + '/' + (e.style.cursor || '') + '/' + e.title).join('\n');
+  return { ids, sels, ctx, makePage, run, signature, started };
+}
+
+test('RUN: wireForms() attaches every head button and box, attaches them again the same on a rebuilt page, and starts nothing (Part 133)', () => {
+  const w = wireFormsStandIn_();
+  const clickable = ['newAgent', 'newStaff', 'newRole', 'newTeam', 'resetRoles', 'undoRoles', 'newComplaint', 'newDeduction', 'dedReport', 'advSubmit', 'newAdvStaff', 'newRestructure',
+    'newNotice', 'lgLogo', 'lgStamp', 'lgSign', 'lgWho', 'lgTitle', 'lgPhone', 'sgOfficerLoc', 'soToggle', 'hlToggle', 'newSetting', 'newCode', 'adjSave', 'newOfficer', 'imqSend', 'imqSetRateBtn', 'rlAdd', 'ppSave'];
+  for (const id of clickable) assert.ok(w.ids.includes(id), id + ' is still looked up by wireForms()');
+  assert.ok(w.sels.length >= 9, 'and so are its attribute selectors (the staff, agent, role, code, officer and setting rows; the imprest chips and rates)');
+  const page1 = w.makePage();
+  const started1 = w.run(page1);
+  assert.deepEqual(started1.filter(x => x !== 'hopeSecrets'), [], 'wiring a screen starts nothing -- no timer, request, redraw, drawer, confirm box or focus: it is run once per keystroke in a table search');
+  assert.ok(started1.includes('hopeSecrets'), 'an access-code box drawn by the screen is masked');
+  for (const id of clickable) assert.equal(typeof page1.byId[id].onclick, 'function', id + ' answers a click');
+  assert.ok(page1.bySel['[data-staff]'].every(e => typeof e.onclick === 'function') && page1.bySel['[data-impq]'].every(e => typeof e.onclick === 'function'), 'every row and chip the selectors reach answers a click');
+  const card = page1.byId.lgRecT.card;
+  assert.ok(card.attrs.role === 'button' && card.attrs.tabindex === '0' && card.style.cursor === 'pointer' && /Tap for the list/.test(card.title) && typeof card.onclick === 'function' && typeof card.onkeydown === 'function',
+    'today\'s recovery card is dressed (a button, a tab stop, the pointer, its title) and answers a click and a key');
+  const sig1 = w.signature(page1);
+  // the page is rebuilt (a repaint) and wired again: the same, and still nothing started
+  const page2 = w.makePage();
+  const started2 = w.run(page2);
+  assert.deepEqual(started2, started1, 'a second wiring does what the first did and nothing more');
+  assert.equal(w.signature(page2), sig1, 'on a rebuilt page every element has what it had the first time');
+  // the same page wired a third time (an element that is still there when a repaint comes): the same again, nothing piled up
+  assert.deepEqual(w.run(page2), started1, 'and a third wiring of the same page starts nothing either');
+  assert.equal(w.signature(page2), sig1, 'and leaves it as it was');
+});
+
+test('wireForms() is a list of attachments that may be run once per keystroke: what it calls by name, and what it may not use, are pinned, and nothing else calls it (Part 133)', () => {
+  const code = stripComments_(topFn_(appCore(), 'wireForms'));
+  // one definition and two callers, in the page and in every module: a screen's wiring is never done by hand somewhere new
+  assert.equal((stripComments_(appSrc()).match(/\bwireForms\(\)/g) || []).length, 3, 'wireForms() is the definition and the two draw functions, and nothing else');
+  assert.ok(!/\baddEventListener\b/.test(code), 'no listener on the document or the window: one would be added again at every repaint (wireBar guards its own with window.__teamPickDoc)');
+  assert.ok(!/\b(setInterval|requestAnimationFrame|MutationObserver|IntersectionObserver|sendBeacon|XMLHttpRequest)\b/.test(code), 'nothing that keeps running after the wiring');
+  // The calls it makes by name, once each per wiring. A new one is welcome -- when it is safe to run at every repaint: say so by adding it here.
+  const called = [...new Set([...code.matchAll(/\b(wire[A-Za-z_]*|hopeSecrets|adjHint|recalc)\(/g)].map(m => m[1]))].filter(n => n !== 'wireForms').sort();
+  assert.deepEqual(called, ['adjHint', 'hopeSecrets', 'recalc', 'wireLnAssessPlan_', 'wireLnCs_', 'wireLnFinance_', 'wireLnGm_', 'wireLnReversals_'],
+    'wireForms() calls ' + called.join(', ') + ': each of them must be safe to run at every repaint (an assignment to elements that are on the page now, a write that reads the page), '
+    + 'not a timer, a request, a listener or a focus -- then add the name to this list');
+});
+
+test('a letterhead link on the Legal tab loads the admin module its form lives in, and says so if it cannot (Part 133)', async () => {
+  const w = wireFormsStandIn_();
+  const page = w.makePage();
+  w.run(page);
+  const ev = { preventDefault() { ev.prevented = true; } };
+  const asked = [], told = [];
+  page.byId.lgWho.attrs['data-val'] = 'RHOBI';
+  // the module loads: settingForm is asked for the setting this link is for, with the value the link carries
+  w.ctx.modLoad_ = n => { asked.push('load ' + n); return Promise.resolve(); };
+  w.ctx.settingForm = (k, v) => asked.push('form ' + k + ' ' + v);
+  w.ctx.toast = (m, bad) => told.push([m, !!bad]);
+  page.byId.lgWho.onclick(ev); await new Promise(r => setImmediate(r));
+  assert.ok(ev.prevented, 'the link does not navigate');
+  assert.deepEqual(asked, ['load admin', 'form LEGAL_SIGNATORY RHOBI'], 'the module is asked for first, and the form after it');
+  // the module cannot be fetched: the loader's own words are said, and no form is opened on a function that is not there
+  asked.length = 0;
+  w.ctx.modLoad_ = () => Promise.reject(new Error('This screen did not load (admin).'));
+  page.byId.lgLogo.onclick(ev); await new Promise(r => setImmediate(r));
+  assert.deepEqual(asked, [], 'nothing is opened');
+  assert.deepEqual(told, [['This screen did not load (admin).', true]], 'and the failure is said, as an error');
+  // pinned in the source: no letterhead link calls settingForm bare
+  const app = appCore();
+  const at = app.indexOf("[['lgLogo','BRAND_LOGO']");
+  const block = stripComments_(app.slice(at, app.indexOf('/* Closing the system turns', at)));
+  assert.ok(/modLoad_\('admin'\)\.then\(function\(\)\{ settingForm\(p\[1\], val\); \}/.test(block) && !/ev\.preventDefault\(\); settingForm\(/.test(block), 'the handler loads the admin module before it calls settingForm');
+  assert.ok(!/var BUILD = '2026-11-23-e'/.test(app), 'BUILD moved');
+});
