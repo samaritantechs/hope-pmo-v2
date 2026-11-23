@@ -788,7 +788,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-c';
+var BUILD = '2026-11-23-e';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5900,8 +5900,9 @@ function lgWeekAsk_(weekOf){
 }
 /* THE CARD, drawn from one reading (the server's `legal`: legalCard_). Used at first paint by the Legal tab
    and again, whole, by every arrow press, so the card on screen is always a function of ONE week's figures.
-   Arrows are inline handlers on purpose: a table search or sort repaints the whole screen from HEAD, and
-   what wireForms() attached to the old elements is gone with them (lgWeekPaint_ keeps HEAD in step). The
+   Arrows are inline handlers on purpose: every press replaces the card whole (lgWeekPaint_, in place, with HEAD
+   kept in step), and no paint() follows it, so nothing would wire the new card. (A repaint of the screen wires
+   wireForms()'s elements again since #776: the card does not depend on it.) The
    forward arrow stops at this week (nobody has paid in a week that has not begun); the backward arrow stops
    at the week of the earliest notice. Without the ledger (RUN-ME-041a) both are off and the card says why. */
 function lgWeekCard_(lg){
@@ -6440,7 +6441,13 @@ function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
    it), masks code boxes (hopeSecrets leaves a masked box alone) and recomputes two previews from the boxes'
    current values; it starts no timer, no read and no focus. Measured in Chromium on a register of 5,000
    notices: 2.5 ms, inside a repaint (paint(true)) of about 1.2 s that the keystroke was already paying for
-   (tools/browser-checks/portal-legal-week.mjs, points 3 and 10). */
+   (tools/browser-checks/portal-legal-week.mjs, points 3 and 10).
+   A KEYSTROKE IS NOT THE ONLY REPAINT. tipsStart() asks for the hints 2.5 s after sign-in and, when they arrive,
+   repaints the list on screen (paint(true)), so before this the same buttons died about three seconds after the
+   portal opened on the tab a person last used, nobody touching anything. Nine screens had head handlers to lose
+   (Legal, Teams & Staff, PMO deductions, Complaints, Restructuring, HR staff, Adjust, the Imprest request form and
+   Imprest approval): tools/browser-checks/portal-repaint-wiring.mjs compares every screen that loads, and
+   test/pages.test.mjs RUNS wireForms() to prove it starts nothing (Part 132). */
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
   if (window.bpWire_) bpWire_();   // the daily bonus preview's own boxes (its module); a no-op on every other screen
@@ -7010,6 +7017,10 @@ function openRestructure(r){
 function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'</label><input id="'+id+'"'+(type?' type="'+type+'"':'')+'></div>'; }
 
 function wireForms(){
+  /* RUN AFTER EVERY PAINT of #view (paintNow_, paintHeadOnly): once per keystroke in a table search. Everything below is an
+     assignment to an element that is on the page now, or a write that reads the page; nothing may start a timer, a request, a
+     listener on the document or the window, or a focus at wiring time (inside a click handler is another matter). A new line
+     that must do one of those guards itself (as bpWire_ marks its root) or lives outside this function. Part 132. */
   /* Any code box drawn by a tab or a drawer gets masked here. brand.js does the pass at page
      load, which is too early for anything this file renders -- the Change-my-code form is built
      when Settings opens, and an unmasked box that is SUPPOSED to be masked is worse than one
@@ -7111,10 +7122,10 @@ function wireForms(){
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
   // The recovery cards open the customers and payments behind them -- the whole card,
-  // as the dashboard's recovery tiles do, not just the figure. TODAY's is wired here. The WEEK's card
-  // wires itself (lgWeekCard_: inline handlers and its own week arrows), so that a table repaint, which
-  // rebuilds the screen and drops what is attached here, cannot leave it dead -- and so that a tap opens
-  // the week the card is ON, not always this one.
+  // as the dashboard's recovery tiles do, not just the figure. TODAY's is wired here, again after every
+  // repaint of the screen (paintNow_ runs this function). The WEEK's card wires itself (lgWeekCard_: inline
+  // handlers and its own week arrows), because every arrow press replaces the card in place with no repaint
+  // after it -- and so that a tap opens the week the card is ON, not always this one.
   [['lgRecT', 'today']].forEach(function(p){
     var v = document.getElementById(p[0]), card = v && v.closest ? v.closest('.kpi') : null;
     if (!card) return;
@@ -7128,7 +7139,14 @@ function wireForms(){
   [['lgLogo','BRAND_LOGO'], ['lgStamp','BRAND_STAMP'], ['lgSign','BRAND_SIGN'],
    ['lgWho','LEGAL_SIGNATORY'], ['lgTitle','LEGAL_SIGNATORY_TITLE'], ['lgPhone','LEGAL_PHONE']].forEach(function(p){
     var el = document.getElementById(p[0]);
-    if (el) el.onclick = function(ev){ ev.preventDefault(); settingForm(p[1], el.getAttribute('data-val') || ''); };
+    /* settingForm lives in the admin module, which loads when Settings or Teams & Staff opens -- not when this tab does, so
+       in a session that opened the Legal tab first these links threw "settingForm is not defined" (found 23 Nov, Part 132).
+       Asked for here, then called; modLoad_ answers at once when the module is already in. */
+    if (el) el.onclick = function(ev){
+      ev.preventDefault();
+      var val = el.getAttribute('data-val') || '';
+      modLoad_('admin').then(function(){ settingForm(p[1], val); }, function(e){ toast(String((e && e.message) || e), true); });
+    };
   });
   /* Closing the system turns two hundred people away from a screen they were using a minute
      ago, so it asks first. Opening it does not -- letting people back in is not the move

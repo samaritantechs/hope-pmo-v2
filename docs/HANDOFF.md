@@ -9046,6 +9046,79 @@ The settings read: `work_mem` 5 MB, `maintenance_work_mem` 128 MB, `temp_file_li
 
 **Not done, said plainly.** Nothing seen on the live screen. The dashboard's boards, the week's [Report] and the Legal register's own table are untouched (the report already carried *Legal officer*). The column is on both lists the drawer draws (today's and the week's), not only the weekly one: they are one table.
 
+## Part 132 — The cure of Part 129 proved on every screen that loads: nine screens, a repaint nobody typed, the letterhead links that never reached their module, and what `wireForms()` may and may not do (23 Nov)
+
+> The brief this chat was given for the matter Part 128 found: "find the safest cure and prove it on more than one screen ... do not slow any screen down, do not change what a screen shows ... break the fix on purpose ... say plainly what was not done."
+
+**What happened, said first.** While this chat read all of `wireForms()` and built the proof, the chat that wrote CHAT.md merged the same cure as #776 (Part 129): `wireForms()` is run by `paintNow_()` and `paintHeadOnly()` and no longer by `drawView_()`. The two chats arrived at the same two lines independently, and this chat's own copy of them was dropped when its branch was restarted from `main`. **What follows is what #776 did not have:** the proof on every screen that loads, a trigger it did not name, one defect it left, and tests that RUN `wireForms()` instead of reading it.
+
+**How far the defect reached (the page as it was before #776, commit `0e126a4`).** A real browser, the real page, the real `portalApi` over the fake database, every screen that loads (48 views, 41 with a table search): after ONE keystroke in the table search, nine screens had lost handlers from their head, and the other 32 had lost nothing. Legal: today's recovery card, the six letterhead links, **+ New demand notice**. Teams & Staff: **+ New team**, **+ New**, **+ Agent** and every staff and agent row. PMO deductions: **+ New case**, **Report**. Complaints, Restructuring and HR staff: their one **+ New** button each. Adjust: the target's hint, the amount box, Save. **The Imprest request form: the role box, every fare and night box (so the live total), and Send.** Imprest approval: the state chips, the rate editor, the phone-alert policy. #776 had seen Legal and Teams & Staff.
+
+**A repaint nobody typed.** `tipsStart()` asks for the hints 2.5 seconds after sign-in and, when they arrive, repaints the list on screen so the colours appear (`if (document.getElementById('mainCard')) paint(true)`). **Verified on the page as it was before #776, nobody touching it:** the Legal tab drew and **+ New demand notice** answered; four seconds after the page opened the tab had been repainted once, by itself, and the button was dead. The portal opens on the tab a person last used (`lastView_()`), so on those nine screens the buttons went dead about three seconds after opening. Whether an earlier report of a button not working (the imprest request's Send is quoted in the comments of `wireForms()`) was this is not known.
+
+**What `wireForms()` is: all 420 lines read before anything was said about repeating it.**
+
+| What it does | Repeat-safe? |
+|---|---|
+| `window.hopeSecrets()`: masks `input[data-secret]` boxes not yet masked | yes: one scan; brand.js marks a masked box (`data-secret-on`) and leaves it alone |
+| the HOPE Loan wirers `wireLnCs_`, `wireLnFinance_`, `wireLnReversals_`, `wireLnGm_`, `wireLnAssessPlan_` (only in that workspace) | yes: `.onclick` / `.onchange` assigned to elements looked up by id (`public/mod/loan.js`) |
+| about 30 buttons and links by id, and nine families by attribute (`[data-agent]`, `[data-staff]`, `[data-role]`, `[data-skey]`, `[data-code]`, `[data-user]`, `[data-impq]`, `[data-rle]`, `[data-rld]`) and `input[name^="pp_"]` | yes: an assignment replaces |
+| today's recovery card: `cursor`, `role`, `tabindex`, `title`, two handlers | yes: set on the element that is there |
+| `adjHint()`; the Imprest request form's `recalc()` | yes: they read the page they are on (fare, nights, total, whether Send is open, the line saying why) |
+
+**It starts nothing:** no timer, no request, no listener on the document or the window, no focus; every `srv()`, `render()`, `go()`, `drawer()`, `confirm()` and `toast()` in it is inside a handler. **Once per keystroke it does** 44 lookups of an id by name, eleven scans of the page for an attribute (ten in `wireForms()`, one in `hopeSecrets()`) and two writes that read the page.
+
+**A second defect, found by the kept check and fixed here.** The letterhead links on the Legal tab (set logo, stamp, signature, signatory, title, phone; admin only) call `settingForm()`, which lives in the **admin** module. That module loads when Settings or Teams & Staff opens, not when Legal does, so **in a session that opened Legal first, a click threw `ReferenceError: settingForm is not defined`**, repaint or no repaint, and #776 as merged still did. The handler now asks for the module (`modLoad_('admin')`, which answers at once when it is in) and then calls `settingForm`; if the module cannot be fetched the loader's own words are said as an error. These links are the only place `wireForms()` calls into a module its element does not come from (read, every handler: the others are drawn by the module that owns their function).
+
+**Why this cure and not the others** (the choice was #776's and this chat's alike). *Inline handlers screen by screen* (what the weekly card did): nine screens, about fifty elements and the rows of four tables, each with its own chance to miss one, and the next screen built the old way is dead again. *Not rebuilding the head on a table-only repaint*: it would keep typed values too (below), but several screens call `paint()` after changing `HEAD` and rely on it being redrawn (`frSet_` in the fraud module, `presRedraw_`), so it changes what every one of sixty screens does on a repaint.
+
+**What was built here** (`public/app.html`, `BUILD 2026-11-23-d`): the letterhead handler above; a note at the top of `wireForms()` and a paragraph in #776's comment above `drawView_()` saying what it may do now that every paint runs it and that a keystroke is not the only repaint; the two comments of #775 that said a repaint drops what `wireForms()` attached are corrected (the weekly card stays inline for its own reason: every arrow press replaces the card in place, with no paint after it).
+
+**Cost, CLAUDE.md section 1.** Nothing on `/api/upload` or `/api/call` (a change to the portal page); no read added to any screen (one keystroke makes no request: counted on all nine screens). **Measured** on the Legal tab's 22-column table: `wireForms()` 0.15 ms on 500 rows (a repaint 76 ms), 3.0 ms on 5,000 rows (a repaint 965 ms), 1.7 ms on 3,000 rows (a repaint 537 to 572 ms): about a third of one per cent of the repaint it joins (#776 measured 2.5 ms on 5,000 notices). The only new cost to anybody is the admin module (one script, fetched once) the first time somebody presses a letterhead link before opening Settings or Teams & Staff.
+
+**Checked.**
+
+- `tools/browser-checks/portal-repaint-wiring.mjs` (new, a real browser, 52 points; `APP_FILE` runs it on another copy of `app.html`): every screen that loads, one keystroke and then a sort: no handler lost from any head, and the nine screens each really compared (41 of 48 views have a table search; the other seven never repaint through `paint()`); the page's own repaint at about three seconds; after a repaint the buttons **do their work** on each of the nine screens (the drawer that opens, three nights at the role's rate making a live total of 150,000 and opening Send, Send asking the server, the rate editor filling its boxes, the hint under the adjustment's target following the amount's sign, the form left in the state a first draw gives it), on Settings (no table: the head alone is drawn, the other road to the same wiring), and on the letterhead links in a session that has not loaded the admin module; today's card dressed again; three keys typed in a row land in the box, which keeps its focus and its caret; **one keystroke runs `wireForms()` once and makes no request, sets no timer, adds no listener to the document or the window**, and every paint wires the bar and the forms exactly once; the cost against the repaint. **On the page as it was before #776: 32 of 52 points fail. On #776 as merged (`BUILD 2026-11-23-c`): the 3 of the letterhead links fail and 49 pass: its cure holds on all nine screens. On this change: 52 of 52.**
+- `test/pages.test.mjs`, four new tests, beside #776's pin of the two draw functions (it reads the source): **the draw functions RUN on stand-ins and the order of wiring is recorded** (a repaint, a paint that keeps no scroll, a full draw with a table, a full draw without); **`wireForms()` RUN on a stand-in page built from what it looks up** (the ids, the attribute selectors, and the pairs the letterhead links are looked up by), three times (a rebuilt page, then the same page again): every button answers a click, the card is dressed, the third wiring leaves it as the first, and **anything that starts something at wiring time (a timer, a request, a redraw, a drawer, a confirm box, a focus) fails the test**, every name a handler uses being left undefined so a wiring-time call of one is a `ReferenceError`; the names it calls are pinned (a new one must be added to the list, which is the moment somebody asks whether it is safe once per keystroke), a listener on the document or window is refused and nothing else calls it; the letterhead handler loads the module first and says so when it cannot. **On #776 as merged the letterhead test is the only one of the four that fails** (the other three guard the property its cure relies on, which was true).
+- **Sixteen deliberate breaks of the cure** (what #776's pin, the new unit tests and the browser check each turned red; the browser's figure is its failing points of 52):
+  | # | the break | #776's pin | the new unit tests | browser, points failing |
+  |---|---|---|---|---|
+  | 1 | `paintNow_()` no longer wires the forms | red | draw, names | 42 |
+  | 2 | `paintHeadOnly()` no longer wires the forms | red | draw, names | 2 |
+  | 3 | `drawView_()` wires again: a full draw wires twice | red | draw, names | 11 |
+  | 4 | `wireForms()` run before `wireBar()` in `paintNow_()` | red | draw | none (the browser cannot see an order) |
+  | 5 | a timer started at wiring time | red | stand-in | 9 |
+  | 6 | a request made at wiring time | passes | stand-in | 9 |
+  | 7 | a document listener added in `wireForms()` | red | stand-in, names, letterhead | 9 |
+  | 8 | the letterhead links calling `settingForm` bare again | passes | letterhead | 3 |
+  | 9 | `+ New demand notice` not wired | passes | stand-in | 2 |
+  | 10 | access-code masking dropped from `wireForms()` | passes | stand-in, names | none (no masked box on a table screen to see) |
+  | 11 | `paintNow_()` wires the forms twice | passes | draw, names | 19 |
+  | 12 | `wireForms()` that works only once per page | passes | stand-in | 24 |
+  | 13 | today's recovery card no longer dressed | passes | stand-in | 1 |
+  | 14 | `BUILD` not bumped | passes | letterhead | none |
+  | 15 | the Imprest form's `recalc()` dropped | passes | names (and an older pin) | 1 |
+  | 16 | a head-only draw that no longer wires the bar | red | draw | 1 |
+
+  Every break turns at least one unit test red; **nine of the sixteen pass #776's pin** (it reads the source: it cannot see what the function does), and the browser check catches thirteen. The first run of the browser check passed two more (the form's `recalc()` dropped; a head-only draw without the bar) for want of a point: the form's state after a repaint and a count of `wireBar()` were added, and now catch them.
+
+**What a person will see.** The buttons and boxes in the head of those nine screens answer after typing in a table search, sorting, choosing a filter, and about three seconds after the portal opens (the first two were #776's; the third is the same cure, proved). The letterhead links open their setting in any session. Nothing else on any screen changes.
+
+**Not done, said plainly.**
+
+- **A repaint still clears what was typed into the head.** Verified before and after: on the Imprest request form, "DODOMA" in the destination and 3 nights become empty and 0 after one keystroke in the table search below it; the Adjust amount likewise; the hints repaint at about three seconds does the same to a form started within the first three seconds. The form is alive again after a repaint but empty. The cure is not rebuilding the head on a table-only repaint (above): offered, not done (CHAT.md section 8).
+- **`wireOfficerFind()` adds one listener to the document for every repaint of the Calls report** (counted: one per keystroke in its table search, on the page as it was and as it is; each holds on to the detached boxes of its own paint). Harmless in size and not caused by any of this; not touched.
+- **HOPE Loan (`ln_*`) was not run in the browser:** the harness has no loan endpoint. Its five wirers were read and are assignments only; **the call app and the other pages were not touched.**
+- **Not compared, 7 of the 48 views:** those with no table search (`expdfrep`, `findcust`, `bonusplan`, `checklist`, `teamtrend`, `settings`, `officerloc`); they never repaint through `paint()`, and Settings is covered by the head-only points. `bpWire_` (the bonus plan's boxes) guards itself with a `data-wired` mark and has no repaint.
+- Nothing was seen on the live screen (a chat has no sign-in). No `hints` tip: there is nothing for a person to discover.
+
+**Mistakes of mine.**
+
+- **I built for hours a cure that had been merged while I worked.** I read `git log` at the start (it ended at #775, as CHAT.md said) and did not fetch `main` again until I went to push. Another chat had been given the same matter in the owner's words ("fix the handlers lost after table search") and merged it as #776. A chat that has been working for a while fetches `main` and reads the new Parts before it commits to a Part number.
+- My first comment on `paintHeadOnly` claimed the same cause had left an access-code box clear after a repaint; I had not seen that on any screen (the only masked boxes are in Settings, which has no table). It was taken out before it was committed. A claim in a comment is checked like one in a message.
+- The first form of the check's imprest point used the wrong column for the rate table (`rate` for `accommodation_per_day`), so the total read 0 on a screen that was working; its first form of the page's own repaint waited for a repaint after zeroing its counters, which on a slow machine could have raced the hints (it now counts from before sign-in); and its first run passed two breaks (the form's `recalc()` dropped; a head-only draw without the bar) for want of a point, which were then added.
+- My first stand-in page for `wireForms()` was built only from ids written as literals and so missed the letterhead links and today's card, which are looked up through a list of pairs; the test said so by failing.
+
 ---
 
 *This document describes the system as built. If a future change makes any statement here
