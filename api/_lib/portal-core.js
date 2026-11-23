@@ -12763,7 +12763,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   // The REAL today, kept before the pin: a finished week's standing is read at its Sunday,
   // and `today` below is pinned to that week's Friday for every "leo" cell.
   const realToday = todayKey(nowMs);
-  const realMon = weekMondayKey(nowMs);          // the REAL this week: the ceiling of the Legal card's own arrows (Part 133)
+  const realMon = weekMondayKey(nowMs);          // the REAL this week: the ceiling of the Legal card's own arrows (Part 134)
   nowMs = asOf.ms;
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
   const wdToday = currentWeekday(nowMs);
@@ -13806,7 +13806,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        AS ONE OBJECT WITH ITS WEEK BOUNDS (legalCard_), the same shape the Legal tab's card and the
        list behind it read, so the dashboard draws it with the same card builder: arrows and a list
        ("the legal recovery card at dashboard should be able to openup too - with the backward and
-       foward arrows as usual", 23 Nov 2026, Part 133). `today` is the dashboard's own clock (a
+       foward arrows as usual", 23 Nov 2026, Part 134). `today` is the dashboard's own clock (a
        finished week's Friday); the arrows' ceiling is the REAL this week. */
     legal: legalCard_(scoped(user, notices), legalLedger, today, mon, sun, realMon),
     appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, edrTrend, edrTrendTotal, edrNote, ...recoveryRuleOf_(stand, db),

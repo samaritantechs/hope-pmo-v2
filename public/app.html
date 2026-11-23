@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-f';
+var BUILD = '2026-11-23-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3627,7 +3627,7 @@ function weekBar(d, extra){
 /* Wired once, beside the other global handlers, so every screen that prints a week bar gets
    the same behaviour rather than three copies that drift apart. */
 function wireWeekBar(){
-  /* THE WEEK BAR MOVES THE WHOLE SCREEN, and with it the Legal card's own week (Part 133): a card stepped on its own
+  /* THE WEEK BAR MOVES THE WHOLE SCREEN, and with it the Legal card's own week (Part 134): a card stepped on its own
      by its arrows follows the bar the moment the bar is moved, so the two never show different weeks for no reason. */
   Array.prototype.forEach.call(document.querySelectorAll('[data-week]'), function(el){
     el.onchange = function(){
@@ -3798,7 +3798,7 @@ function teamPick_(d){
 VIEWS.dashboard = function(){
   return srv('dashboardFull', { weekOf: S.args.weekOf || '', teams: teamPickLoad_() }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
-    lgWeekReset_();                                  // the Legal card's arrows start afresh with the screen (Part 133)
+    lgWeekReset_();                                  // the Legal card's arrows start afresh with the screen (Part 134)
     /* The unlabeled dot beside the week bar opens the month report and CARRIES the chosen
        week -- and the team pick -- so a dashboard slid back to July opens July's report for
        the same teams. Deliberately nameless -- see the .syncdot note in the stylesheet. */
@@ -3822,7 +3822,7 @@ VIEWS.dashboard = function(){
          the week and the count of noticed customers under it, against what the letters
          demanded (Rec %). The payments recorded against notices by REF# or phone, once per
          customer -- the same reading as the legal slide and the boards below. */
-      /* DRAWN BY THE LEGAL TAB'S OWN CARD BUILDER since 23 Nov 2026 (Part 133): "the legal recovery card at
+      /* DRAWN BY THE LEGAL TAB'S OWN CARD BUILDER since 23 Nov 2026 (Part 134): "the legal recovery card at
          dashboard should be able to openup too - with the backward and foward arrows as usual". A tap opens
          the list of the week the card is on; ◀ ▶ step the card by itself (the week bar still moves the whole
          dashboard, and resets the card to its week); a quiet refresh keeps the week the reader chose
@@ -5910,7 +5910,7 @@ function lgWeekAsk_(weekOf){
 function lgWeekKept_(){
   /* The kept reading rides in S.args itself (lgWeekPaint_ puts it there, and the remembered screen's snapshot carries it),
      not in the shared two-minute cache: the dashboard and the Legal tab share that cache and each starts afresh on a
-     fresh open (lgWeekReset_), which must not undo the other screen's remembered week (Part 133). */
+     fresh open (lgWeekReset_), which must not undo the other screen's remembered week (Part 134). */
   var w = (S.args && S.args.lgWeek) || '', k = S.args && S.args.lgLegal;
   return w && k && k.mon === w && Date.now() - (Number(S.args.lgAt) || 0) < 120000 ? k : null;
 }
@@ -5923,15 +5923,16 @@ function lgWeekReset_(){
 }
 /* THE CARD, drawn from one reading (the server's `legal`: legalCard_). Used at first paint by the Legal tab
    and again, whole, by every arrow press, so the card on screen is always a function of ONE week's figures.
-   Arrows are inline handlers on purpose: a table search or sort repaints the whole screen from HEAD, and
-   what wireForms() attached to the old elements is gone with them (lgWeekPaint_ keeps HEAD in step). The
+   Arrows are inline handlers on purpose: every press replaces the card whole (lgWeekPaint_, in place, with HEAD
+   kept in step), and no paint() follows it, so nothing would wire the new card. (A repaint of the screen wires
+   wireForms()'s elements again since #776: the card does not depend on it.) The
    forward arrow stops at this week (nobody has paid in a week that has not begun); the backward arrow stops
    at the week of the earliest notice. Without the ledger (RUN-ME-041a) both are off and the card says why. */
 function lgWeekCard_(lg){
   lg = lg || {};
   var mon = lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek, off = lg.on === false;
   var canBack = !off && !!mon && (!lg.since || mon > lg.since), canFwd = !off && !cur;
-  /* THE DASHBOARD'S FLAVOUR (Part 133): the same card, the same arrows, the same list, under the name the dashboard
+  /* THE DASHBOARD'S FLAVOUR (Part 134): the same card, the same arrows, the same list, under the name the dashboard
      always gave it. On this week it reads as it always did there: today's figure first, the week and the noticed
      customers beneath; on another week (its own arrows, or the dashboard's week bar) the week's figure is the headline,
      since "today" is not a day of that week. The Legal tab's card is unchanged. */
@@ -5971,7 +5972,7 @@ function lgWeekPaint_(lg){
   if (!lg || !lg.mon) return;
   var html = lgWeekCard_(lg), old = document.getElementById('lgWkCard');
   HEAD = String(HEAD || '').replace(/<!--lgw-->[\s\S]*?<!--\/lgw-->/, function(){ return '<!--lgw-->' + html + '<!--/lgw-->'; });
-  /* THE REMEMBERED SCREEN LEARNS THE WEEK TOO (Part 133). The reading rides in S.args (lgWeekKept_), and the snapshot a
+  /* THE REMEMBERED SCREEN LEARNS THE WEEK TOO (Part 134). The reading rides in S.args (lgWeekKept_), and the snapshot a
      return to this tab is drawn from takes the patched HEAD and these args now, not whenever a refresh next completes:
      before this, coming back inside the window found the chosen week only if a quiet refresh had happened to land after
      the press and re-snapshot the screen (the kept check showed it on the dashboard). */
@@ -6511,7 +6512,13 @@ function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
    it), masks code boxes (hopeSecrets leaves a masked box alone) and recomputes two previews from the boxes'
    current values; it starts no timer, no read and no focus. Measured in Chromium on a register of 5,000
    notices: 2.5 ms, inside a repaint (paint(true)) of about 1.2 s that the keystroke was already paying for
-   (tools/browser-checks/portal-legal-week.mjs, points 3 and 10). */
+   (tools/browser-checks/portal-legal-week.mjs, points 3 and 10).
+   A KEYSTROKE IS NOT THE ONLY REPAINT. tipsStart() asks for the hints 2.5 s after sign-in and, when they arrive,
+   repaints the list on screen (paint(true)), so before this the same buttons died about three seconds after the
+   portal opened on the tab a person last used, nobody touching anything. Nine screens had head handlers to lose
+   (Legal, Teams & Staff, PMO deductions, Complaints, Restructuring, HR staff, Adjust, the Imprest request form and
+   Imprest approval): tools/browser-checks/portal-repaint-wiring.mjs compares every screen that loads, and
+   test/pages.test.mjs RUNS wireForms() to prove it starts nothing (Part 133). */
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
   if (window.bpWire_) bpWire_();   // the daily bonus preview's own boxes (its module); a no-op on every other screen
@@ -7081,6 +7088,10 @@ function openRestructure(r){
 function fldRow(id, label, type){ return '<div class="fld"><label>'+esc(label)+'</label><input id="'+id+'"'+(type?' type="'+type+'"':'')+'></div>'; }
 
 function wireForms(){
+  /* RUN AFTER EVERY PAINT of #view (paintNow_, paintHeadOnly): once per keystroke in a table search. Everything below is an
+     assignment to an element that is on the page now, or a write that reads the page; nothing may start a timer, a request, a
+     listener on the document or the window, or a focus at wiring time (inside a click handler is another matter). A new line
+     that must do one of those guards itself (as bpWire_ marks its root) or lives outside this function. Part 133. */
   /* Any code box drawn by a tab or a drawer gets masked here. brand.js does the pass at page
      load, which is too early for anything this file renders -- the Change-my-code form is built
      when Settings opens, and an unmasked box that is SUPPOSED to be masked is worse than one
@@ -7182,10 +7193,10 @@ function wireForms(){
   var nn = document.getElementById('newNotice');
   if (nn) nn.onclick = function(){ lgIssue(); };
   // The recovery cards open the customers and payments behind them -- the whole card,
-  // as the dashboard's recovery tiles do, not just the figure. TODAY's is wired here. The WEEK's card
-  // wires itself (lgWeekCard_: inline handlers and its own week arrows), so that a table repaint, which
-  // rebuilds the screen and drops what is attached here, cannot leave it dead -- and so that a tap opens
-  // the week the card is ON, not always this one.
+  // as the dashboard's recovery tiles do, not just the figure. TODAY's is wired here, again after every
+  // repaint of the screen (paintNow_ runs this function). The WEEK's card wires itself (lgWeekCard_: inline
+  // handlers and its own week arrows), because every arrow press replaces the card in place with no repaint
+  // after it -- and so that a tap opens the week the card is ON, not always this one.
   [['lgRecT', 'today']].forEach(function(p){
     var v = document.getElementById(p[0]), card = v && v.closest ? v.closest('.kpi') : null;
     if (!card) return;
@@ -7199,7 +7210,14 @@ function wireForms(){
   [['lgLogo','BRAND_LOGO'], ['lgStamp','BRAND_STAMP'], ['lgSign','BRAND_SIGN'],
    ['lgWho','LEGAL_SIGNATORY'], ['lgTitle','LEGAL_SIGNATORY_TITLE'], ['lgPhone','LEGAL_PHONE']].forEach(function(p){
     var el = document.getElementById(p[0]);
-    if (el) el.onclick = function(ev){ ev.preventDefault(); settingForm(p[1], el.getAttribute('data-val') || ''); };
+    /* settingForm lives in the admin module, which loads when Settings or Teams & Staff opens -- not when this tab does, so
+       in a session that opened the Legal tab first these links threw "settingForm is not defined" (found 23 Nov, Part 133).
+       Asked for here, then called; modLoad_ answers at once when the module is already in. */
+    if (el) el.onclick = function(ev){
+      ev.preventDefault();
+      var val = el.getAttribute('data-val') || '';
+      modLoad_('admin').then(function(){ settingForm(p[1], val); }, function(e){ toast(String((e && e.message) || e), true); });
+    };
   });
   /* Closing the system turns two hundred people away from a screen they were using a minute
      ago, so it asks first. Opening it does not -- letting people back in is not the move
