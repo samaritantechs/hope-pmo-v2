@@ -3631,6 +3631,11 @@ test('the Legal weekly card and the list behind it can be read for any week, bou
   assert.equal(c.on, true); assert.equal(c.mon, LAST); assert.equal(c.sun, '2026-07-19');
   assert.equal(c.recovered, 750, 'the card\'s figure is the list\'s total'); assert.equal(c.owed, 800); assert.equal(c.customers, 2); assert.equal(c.pct, 93.8);
   assert.equal(c.thisWeek, MON, 'the forward arrow\'s ceiling'); assert.equal(c.since, '2026-06-29', 'the backward arrow\'s floor: the Monday of the first notice (a Wednesday)');
+  // A scope with NO notice has nothing earlier to read: its floor is this week (the second reader of #775, Part 131).
+  const nobody = await portalApi(mk(), { ...GMO, teams: ['NOWHERE'] }, 'legalRecoveries', { period: 'week' }, NOW);
+  assert.equal(nobody.legal.customers, 0); assert.equal(nobody.legal.since, MON, 'no notice in scope: the backward arrow stops here');
+  const tabNobody = await portalApi(mk(), { ...GMO, teams: ['NOWHERE'] }, 'demandNotices', {}, NOW);
+  assert.equal(tabNobody.legal.since, MON, 'and the tab\'s own card says the same');
   assert.equal(c.today, TODAY, 'today stays today');
   // THE WEEK BEFORE: a payment under the first notice, still the customer's.
   const before = await ask(ADMIN, { period: 'week', weekOf: BEFORE });

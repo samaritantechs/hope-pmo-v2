@@ -134,6 +134,9 @@
   .lgwkb{border:1px solid var(--line);background:var(--card);color:var(--mut);border-radius:7px;width:27px;height:25px;font-size:10px;line-height:1;cursor:pointer;padding:0}
   .lgwkb:hover:not(:disabled),.lgwkb:focus-visible{border-color:var(--b500);color:var(--b500);outline:none}
   .lgwkb:disabled{opacity:.35;cursor:default}
+  .lgwkhome{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--b700);text-decoration:underline;cursor:pointer}
+  .lgwkhome:hover,.lgwkhome:focus-visible{color:var(--b600);outline:none}
+  body.dark .lgwkhome{color:var(--b300)}
   .good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
@@ -788,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-c';
+var BUILD = '2026-11-23-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -5889,14 +5892,24 @@ VIEWS.restructure = function(){
    much, on which days, with the Excel / JPG / CSV of that week -- is one tap away from this week's, and
    the card behind the drawer always says the week the drawer is on. One answer per week serves both:
    lgWeekAsk_ keeps it a couple of minutes, so stepping back and forth asks the server once. */
-var LGW_ = { c: {}, want: '', wantMon: '', busy: false };
+var LGW_ = { c: {}, want: '', wantMon: '', busy: false, listSeq: 0, lastList: null };
 function lgWeekAsk_(weekOf){
   var key = weekOf || '', hit = LGW_.c[key];
   if (hit && Date.now() - hit.at < 120000) return hit.p;
   var p = srv('legalRecoveries', { period: 'week', weekOf: key });
-  LGW_.c[key] = { at: Date.now(), p: p };
-  p.catch(function(){ if (LGW_.c[key] && LGW_.c[key].p === p) delete LGW_.c[key]; });   // a read that failed is not kept
+  var entry = { at: Date.now(), p: p, d: null };
+  LGW_.c[key] = entry;
+  p.then(function(d){ entry.d = d; }, function(){ if (LGW_.c[key] === entry) delete LGW_.c[key]; });   // a read that failed is not kept
   return p;
+}
+/* THE WEEK THE READER CHOSE SURVIVES A QUIET REFRESH. A remembered Legal screen is painted at once and the register is
+   read again behind it (render -> load_ quiet); the view's new HEAD then replaces the screen. S.args.lgWeek is the week
+   the arrows are on: it is snapshotted with the remembered screen and cleared by go() on a tab switch, so a quiet
+   refresh keeps the week and a fresh open of the tab starts on this week. Found by the second reader of #775 (Part 131). */
+function lgWeekKept_(){
+  var w = (S.args && S.args.lgWeek) || '';
+  var hit = w ? LGW_.c[w] : null;
+  return hit && hit.d && hit.d.legal && Date.now() - hit.at < 120000 ? hit.d.legal : null;
 }
 /* THE CARD, drawn from one reading (the server's `legal`: legalCard_). Used at first paint by the Legal tab
    and again, whole, by every arrow press, so the card on screen is always a function of ONE week's figures.
@@ -5910,7 +5923,10 @@ function lgWeekCard_(lg){
   var canBack = !off && !!mon && (!lg.since || mon > lg.since), canFwd = !off && !cur;
   var sub = off ? esc(lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
     : esc(mon) + ' → ' + esc(lg.sun || '') + ' · owed TZS ' + money(lg.owed || 0) + ' · bofya kuona orodha / tap for the list'
-      + (cur ? '' : ' · <a href="#" onclick="return lgWeekStep_(0, event)">Rudi wiki hii / Back to this week</a>');
+      /* A BUTTON, NOT A LINK: Enter or Space on it is a native click (so it goes home), its keydown never reaches the
+         card (which would open the list), and it takes its colour from the theme in both themes (a bare link was
+         1.67:1 on the lit card in the dark theme). Found by the second reader of #775, Part 131. */
+      + (cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>');
   var arrow = function(n, glyph, ok, tip){
     return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
       + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
@@ -5945,6 +5961,7 @@ function lgWeekPaint_(lg){
 function lgWeekGo_(target, mon){
   var want = target || '', card = document.getElementById('lgWkCard');
   LGW_.want = want; LGW_.wantMon = mon || ''; LGW_.busy = true;
+  if (S.args) S.args.lgWeek = want;                                  // the chosen week rides with the screen (lgWeekKept_)
   if (card) card.style.opacity = '.55';
   return lgWeekAsk_(want).then(function(d){
     if (LGW_.want !== want) return d;
@@ -5986,13 +6003,21 @@ function lgWeekBar_(d){
     + (cur ? '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>'
            : '<span class="chip warn" style="margin-left:8px">Wiki iliyopita / past week</span> <button class="btn sm ghost" type="button" data-lgwd="0">Rudi wiki hii / Back to this week</button>'));
 }
-function legalRecoveriesDrawer_(period, weekOf){
+function legalRecoveriesDrawer_(period, weekOf, focusArrow){
   var week = period === 'week';
   var title = week ? 'Imerejeshwa wiki / Recovered by the week' : 'Imerejeshwa leo / Recovered today';
-  drawer('<h3>' + title + '</h3><div class="sub">Inapakia... / Loading...</div>', { wide: true });
-  (week ? lgWeekAsk_(weekOf || '') : srv('legalRecoveries', { period: 'today' })).then(function(d){
+  /* THE LIST IS THE READER'S LATEST CHOICE OF WEEK, and only while it stays so. Its answer paints the card behind it
+     only if the reader has not moved the card elsewhere meanwhile, the list is still open and no later list was asked
+     for: a slow answer never re-opens a list that was closed, nor paints over an arrow pressed after it (the second
+     reader of #775, Part 131). */
+  var my = ++LGW_.listSeq, wantKey = weekOf || '';
+  if (week) { LGW_.want = wantKey; LGW_.wantMon = ''; LGW_.busy = false; if (S.args) S.args.lgWeek = wantKey; }
+  var stale = function(){ return my !== LGW_.listSeq || (week && LGW_.want !== wantKey) || $('#drawerBg').style.display === 'none'; };
+  drawer('<h3>' + title + '</h3>' + (week && LGW_.lastList ? lgWeekBar_(LGW_.lastList) : '') + '<div class="sub">Inapakia... / Loading...</div>', { wide: true });
+  (week ? lgWeekAsk_(wantKey) : srv('legalRecoveries', { period: 'today' })).then(function(d){
+    if (stale()) return;
     if (week) {
-      LGW_.want = d.weekOf || ''; LGW_.wantMon = ''; LGW_.busy = false;
+      LGW_.lastList = d;
       lgWeekPaint_(d.legal);                                           // the card behind says the week the list is on
       title = d.weekOf && d.legal && d.weekOf !== d.legal.thisWeek ? 'Imerejeshwa wiki iliyopita / Recovered, past week' : 'Imerejeshwa wiki hii / Recovered this week';
     }
@@ -6017,13 +6042,15 @@ function legalRecoveriesDrawer_(period, weekOf){
         : all.length
           ? '<div class="bar"><input id="lgRecQ" placeholder="Tafuta jina / ref / timu — search"></div><div id="lgRecBoard"></div>'
           : '<div class="note">Hakuna malipo kutoka kwa wateja wenye notisi katika kipindi hiki. / No payments from noticed customers in this period.</div>'), { wide: true });
-    // The week arrows at the top of the list: another week is the same drawer on that week.
+    // The week arrows at the top of the list: another week is the same drawer on that week. The arrow pressed keeps
+    // the focus across the redraw, so a keyboard reader can step again (the second reader of #775, Part 131).
     Array.prototype.forEach.call(document.querySelectorAll('#drawer [data-lgwd]'), function(el){
       el.onclick = function(){
         var n = Number(el.getAttribute('data-lgwd')) || 0;
-        legalRecoveriesDrawer_('week', n === 0 ? '' : addDays(d.weekOf, 7 * n));
+        legalRecoveriesDrawer_('week', n === 0 ? '' : addDays(d.weekOf, 7 * n), el.getAttribute('data-lgwd'));
       };
     });
+    if (focusArrow) { var fa = document.querySelector('#drawer [data-lgwd="' + focusArrow + '"]'); if (fa && !fa.disabled) fa.focus(); else { var dx = document.querySelector('#drawer .dx'); if (dx) dx.focus(); } }
     if (d.on === false || !all.length) return;
     var host = document.getElementById('lgRecBoard');
     function paint_(){
@@ -6048,7 +6075,19 @@ function legalRecoveriesDrawer_(period, weekOf){
     }
     $('#lgRecQ').oninput = paint_;
     paint_();
-  }).catch(function(e){ drawer('<h3>' + title + '</h3><div class="note bad">' + esc(String((e && e.message) || e)) + '</div>', { wide: true }); });
+  }).catch(function(e){
+    if (stale()) return;
+    /* A failed step inside the list keeps the week bar it was pressed on (the last good list's), so the reader can try
+       again or go home, with the failure said above it (the second reader of #775, Part 131). */
+    var bar_ = week && LGW_.lastList ? lgWeekBar_(LGW_.lastList) : '';
+    drawer('<h3>' + title + '</h3>' + bar_ + '<div class="note bad">' + esc(String((e && e.message) || e)) + '</div>', { wide: true });
+    if (bar_) Array.prototype.forEach.call(document.querySelectorAll('#drawer [data-lgwd]'), function(el){
+      el.onclick = function(){
+        var n = Number(el.getAttribute('data-lgwd')) || 0;
+        legalRecoveriesDrawer_('week', n === 0 ? '' : addDays(LGW_.lastList.weekOf, 7 * n), el.getAttribute('data-lgwd'));
+      };
+    });
+  });
 }
 /* Opened as a document rather than downloaded: the officer prints it or saves it as PDF from
    the browser's own print dialog, which is what produced the letter in v1 too. */

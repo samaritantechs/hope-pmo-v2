@@ -1801,12 +1801,12 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
   assert.ok(/kpi\('Imerejeshwa leo \/ Recovered today',[^;]*'lgRecT'\)/.test(view), 'today\'s card, with its id');
   // The week's card is drawn by lgWeekCard_ (23 Nov: it carries its own week arrows), between two markers
   // so the copy inside HEAD can be replaced when the reader moves to another week.
-  assert.ok(/'<!--lgw-->' \+ lgWeekCard_\(lg\) \+ '<!--\/lgw-->'/.test(view), 'the week\'s card, drawn by lgWeekCard_ between its markers');
+  assert.ok(/'<!--lgw-->' \+ lgWeekCard_\(\(typeof lgWeekKept_ === 'function' && lgWeekKept_\(\)\) \|\| lg\) \+ '<!--\/lgw-->'/.test(view), 'the week\'s card, drawn by lgWeekCard_ between its markers, on the week a quiet refresh kept else this week');
   assert.ok(/id="lgRecW"/.test(app) && /id="lgRecWS"/.test(app), 'with the ids it always had');
   assert.ok(/Imerejeshwa wiki hii \/ Recovered this week/.test(app), 'and the words it always had');
   assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by demandNotices\' legal reading');
   assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on today\'s card');
-  assert.ok(/function legalRecoveriesDrawer_\(period, weekOf\)/.test(app) && /srv\('legalRecoveries', \{ period: 'today' \}\)/.test(app), 'the drawer asks the server for the list');
+  assert.ok(/function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)/.test(app) && /srv\('legalRecoveries', \{ period: 'today' \}\)/.test(app), 'the drawer asks the server for the list');
   assert.ok(/srv\('legalRecoveries', \{ period: 'week', weekOf: key \}\)/.test(app), 'for any week, through the one place that keeps the answers');
   assert.ok(/sumRow\(rows, \['owed', 'paid', 'payments'\]\)/.test(app), 'with a grand total');
   // Today's card is wired by wireForms; the week's wires itself, inline, so a table repaint cannot leave it dead.
@@ -1840,19 +1840,20 @@ test('the weekly Legal card carries week arrows: inline, bounded, in step with H
   assert.ok(go && /LGW_\.want = want; LGW_\.wantMon = mon \|\| ''; LGW_\.busy = true/.test(go[0]) && /if \(LGW_\.want !== want\) return/.test(go[0]), 'an answer that comes back after the reader moved on is dropped');
   assert.ok(/var mon = \(LGW_\.busy && LGW_\.wantMon\) \? LGW_\.wantMon : \(card\.getAttribute\('data-mon'\) \|\| ''\);/.test(app), 'a press made while an answer is on its way steps from THAT week: two quick presses are two weeks');
   assert.ok(/toast\('Imeshindikana \/ Could not load: '/.test(go[0]), 'a failure is said');
-  assert.ok(/p\.catch\(function\(\)\{ if \(LGW_\.c\[key\] && LGW_\.c\[key\]\.p === p\) delete LGW_\.c\[key\]; \}\)/.test(app), 'a read that failed is not kept');
+  assert.ok(/p\.then\(function\(d\)\{ entry\.d = d; \}, function\(\)\{ if \(LGW_\.c\[key\] === entry\) delete LGW_\.c\[key\]; \}\)/.test(app), 'a read that failed is not kept; a good one is kept with its answer');
   assert.ok(/Date\.now\(\) - hit\.at < 120000/.test(app), 'answers are kept two minutes: stepping back and forth asks the server once');
   // The list: the same arrows, a way home, the week in the downloads' title, the card behind kept in step.
-  const dr = /function legalRecoveriesDrawer_\(period, weekOf\)\{[\s\S]*?\n\}\n/.exec(app);
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(dr, 'the drawer takes a week');
-  assert.ok(/\(week \? lgWeekAsk_\(weekOf \|\| ''\) : srv\('legalRecoveries', \{ period: 'today' \}\)\)/.test(dr[0]), 'this week\'s list and any other week\'s are one code path');
+  assert.ok(/\(week \? lgWeekAsk_\(wantKey\) : srv\('legalRecoveries', \{ period: 'today' \}\)\)/.test(dr[0]), 'this week\'s list and any other week\'s are one code path');
   assert.ok(/lgWeekPaint_\(d\.legal\)/.test(dr[0]), 'the card behind the list says the week the list is on');
-  assert.ok(/\(week \? lgWeekBar_\(d\) : ''\)/.test(dr[0]) && /data-lgwd/.test(dr[0]) && /legalRecoveriesDrawer_\('week', n === 0 \? '' : addDays\(d\.weekOf, 7 \* n\)\)/.test(dr[0]), 'arrows on the list');
+  assert.ok(/\(week \? lgWeekBar_\(d\) : ''\)/.test(dr[0]) && /data-lgwd/.test(dr[0]) && /legalRecoveriesDrawer_\('week', n === 0 \? '' : addDays\(d\.weekOf, 7 \* n\), el\.getAttribute\('data-lgwd'\)\)/.test(dr[0]), 'arrows on the list, each keeping the focus it was pressed with');
   assert.ok(/\(week \? ' · ' \+ d\.from \+ ' → ' \+ d\.to : ''\)/.test(dr[0]), 'the week is in the title of the Excel, JPG and CSV of the list');
   assert.ok(/function lgWeekOpen_\(\)\{[\s\S]*?legalRecoveriesDrawer_\('week', card \? card\.getAttribute\('data-mon'\) \|\| '' : ''\);/.test(app), 'a tap on the card opens the list of the week the card is ON, not always this one');
   // The module resets what the arrows remember each time the tab reads the register afresh.
   const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
-  assert.ok(/LGW_\.c = \{\}; LGW_\.want = '';/.test(view), 'a fresh read of the register forgets the answers of the screen before');
+  assert.ok(/if \(typeof LGW_ === 'object' && !\(S\.args && S\.args\.lgWeek\)\) \{ LGW_\.c = \{\}; LGW_\.want = '';/.test(view), 'a fresh open of the tab forgets the answers of the screen before; a quiet refresh (S.args.lgWeek kept) does not');
+  assert.ok(/lgWeekCard_\(\(typeof lgWeekKept_ === 'function' && lgWeekKept_\(\)\) \|\| lg\)/.test(view), 'and the card is drawn on the week the reader chose when the refresh is quiet');
   assert.ok(/--lgw-->/.test(view) && !/lgwk/.test(view), 'the module only places the card; its behaviour lives in the core');
   assert.ok(/\.kpi\.lgwk\{position:relative\}/.test(app) && /\.lgwkNav\{position:absolute/.test(app) && /\.lgwkb:disabled\{opacity:\.35/.test(app), 'the arrows sit in the card\'s corner and show when they are off');
 });
@@ -1897,17 +1898,19 @@ test('lgWeekStep_ steps by whole weeks inside the card\'s own bounds and a late 
   const toasts = [];
   const document = { getElementById: id => (id === 'lgWkCard' ? card : null), activeElement: null };
   const addDays = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
-  const mk = new Function('document', 'addDays', 'toast', 'lgWeekAsk_', 'lgWeekPaint_', 'LGW_',
+  const mk = new Function('document', 'addDays', 'toast', 'lgWeekAsk_', 'lgWeekPaint_', 'LGW_', 'S',
     grab('lgWeekGo_') + grab('lgWeekStep_') + '\nreturn { lgWeekGo_, lgWeekStep_ };');
   const LGW_ = { c: {}, want: '', wantMon: '', busy: false };
+  const S = { args: {} };
   const fns = mk(document, addDays, (m, bad) => toasts.push([m, !!bad]),
     w => { asked.push(w); return new Promise((res, rej) => { pending[w] = { res, rej }; }); },
-    lg => painted.push(lg.mon), LGW_);
+    lg => painted.push(lg.mon), LGW_, S);
   const ev = { stopPropagation() { this.stopped = true; }, preventDefault() { this.prevented = true; } };
   const settle = async w => { pending[w].res({ legal: { mon: w || '2026-07-20' } }); await new Promise(r => setTimeout(r, 5)); };
   // one week back from the 13th: the 6th; the event never reaches the card behind the arrow
   assert.equal(fns.lgWeekStep_(-1, ev), false); assert.ok(ev.stopped && ev.prevented, 'an arrow press is not a card tap');
   assert.deepEqual(asked, ['2026-07-06']); await settle('2026-07-06');
+  assert.equal(S.args.lgWeek, '2026-07-06', 'the chosen week rides with the screen, so a quiet refresh keeps it');
   // forward from the 13th: the 20th is THIS week, asked as '' (this week), never as a date the server would clamp
   fns.lgWeekStep_(1, ev); assert.equal(asked[1], '', 'forward onto this week asks for this week'); await settle('');
   // the way home asks for this week too
@@ -1980,13 +1983,33 @@ test('every paint wires the whole screen: wireForms runs from paintNow_ and pain
   assert.ok(/Calling it again is free: a box already masked is left alone/.test(wf[0]), 'hopeSecrets is the one call that is not an assignment, and it says it is safe to repeat');
 });
 
+/* THE SECOND READER OF #775 (Part 131): seven things it reproduced on the real page, each held here by its shape; what the
+   page DOES is run by tools/browser-checks/portal-legal-week.mjs (section 11). */
+test('the Legal week card and list after the second reader: a way home that works from the keyboard and reads in the dark, a floor for a scope with no notice, a list that never paints over a later choice, focus kept, a failed step that keeps its bar', () => {
+  const app = appSrc();
+  const card = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(card, /<button type="button" class="lgwkhome" onclick="return lgWeekStep_\(0, event\)" onkeydown="event\.stopPropagation\(\)">Rudi wiki hii \/ Back to this week<\/button>/, 'the way home is a button: Enter and Space go home, and never reach the card (which would open the list)');
+  assert.ok(!/<a href="#" onclick="return lgWeekStep_\(0, event\)"/.test(card), 'and no longer a bare link');
+  assert.match(app, /\.lgwkhome\{background:none;border:0;padding:0;margin:0;font:inherit;color:var\(--b700\)/, 'coloured by the theme');
+  assert.match(app, /body\.dark \.lgwkhome\{color:var\(--b300\)\}/, 'and readable on the lit card in the dark theme');
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(dr, /var my = \+\+LGW_\.listSeq, wantKey = weekOf \|\| '';/, 'every list asked for has a ticket');
+  assert.match(dr, /var stale = function\(\)\{ return my !== LGW_\.listSeq \|\| \(week && LGW_\.want !== wantKey\) \|\| \$\('#drawerBg'\)\.style\.display === 'none'; \};/, 'an answer is stale when a later list was asked for, the card was moved elsewhere, or the list was closed');
+  assert.ok(/\.then\(function\(d\)\{\n    if \(stale\(\)\) return;/.test(dr) && /\.catch\(function\(e\)\{\n    if \(stale\(\)\) return;/.test(dr), 'and a stale answer, good or bad, paints nothing: it never re-opens a closed list nor paints over a later choice');
+  assert.match(dr, /if \(focusArrow\) \{ var fa = document\.querySelector\('#drawer \[data-lgwd="' \+ focusArrow \+ '"\]'\); if \(fa && !fa\.disabled\) fa\.focus\(\);/, 'the arrow pressed in the list keeps the focus across the redraw');
+  assert.match(dr, /var bar_ = week && LGW_\.lastList \? lgWeekBar_\(LGW_\.lastList\) : '';/, 'a failed step keeps the last good list\'s week bar');
+  assert.match(app, /function lgWeekKept_\(\)\{/, 'a quiet refresh of a remembered screen keeps the week the reader chose');
+  const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8');
+  assert.match(core, /since: legalSince_\(notices\) \|\| thisWeek \};/, 'a scope with no notice has this week as its floor: the backward arrow is off, never endless');
+});
+
 /* "add 'Legal Officer' name between s/n and customer name in the legal weekly recovery customer list table" (the
    owner, 23 Nov 2026). The on-screen table draws S/N itself (tableSimple), so the lawyer is the first column of the
    list and the customer the second, in the Excel / JPG / CSV too (the board's cols are what they export), and the
    list's search box finds a lawyer's name. */
 test('the list behind the Legal recovery cards names the lawyer first, before the customer, and its search finds them', () => {
   const app = appSrc();
-  const dr = /function legalRecoveriesDrawer_\(period, weekOf\)\{[\s\S]*?\n\}\n/.exec(app);
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(dr, 'the drawer is where it was');
   assert.match(dr[0], /var cols = \[col\('officer', 'Afisa wa sheria \/ Legal officer'\), col\('full_name', 'Mteja \/ Customer'\), col\('ref', 'REF#'\)/, 'Legal officer, then Customer, then REF#');
   assert.match(dr[0], /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.contact, r\.notice_id\]\.some\(/, 'the search box reads the lawyer too');
