@@ -3174,6 +3174,7 @@ test('the Iliyonasia form says that an entry against either expected book moves 
   const tiles = mod.match(/kpi\('Expected — (?:Initial|Current)'[^\n]*/g) || [];
   assert.equal(tiles.length, 2, 'the two expected tiles');
   for (const t of tiles) assert.match(t, /inahesabika kwenye vitabu vyote viwili \/ counts in both expected books/);
+});
 
 /* ===================================================================================================================
    WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 133; tools/browser-checks/portal-repaint-wiring.mjs is the same
