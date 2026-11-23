@@ -254,7 +254,13 @@ function advDecideDrawer_(r, decidable, closedNote){
     var b = $('#advdOk'), n = $('#advdNo'); if (b) b.disabled = true; if (n) n.disabled = true;
     srv('advDecide', { updates: [{ id: r.id, approval: approval, comment: com }] })
       .then(function(x){
-        toast(approval === 'Approved' ? 'Imeidhinishwa / Approved' + (x.skipped && x.skipped.length ? ' · ' + x.skipped.join('; ') : '') : 'Imekataliwa / Disapproved');
+        /* WHAT THE SERVER SAID, NOT WHAT WAS PRESSED (Part 135). A refused save -- the month finalized by Finance, a request already
+           decided, one that is not this desk's -- comes back as updated 0 with its reason in `skipped`, and this toast used to say
+           "Approved" or "Disapproved" whatever the answer was: an approver was told a request was approved that the server had
+           refused. "when finance manager closes advance request window - even approvals should be disabled" (the owner, 23 Nov 2026). */
+        var saved = Number(x && x.updated) > 0, why = (x && x.skipped && x.skipped.length) ? x.skipped.join('; ') : '';
+        if (!saved) toast('Haikuhifadhiwa / NOT saved: ' + (why || 'hakuna ombi lililobadilishwa / nothing was changed'), true);
+        else toast((approval === 'Approved' ? 'Imeidhinishwa / Approved' : 'Imekataliwa / Disapproved') + (why ? ' · ' + why : ''));
         closeDrawer(); render({ force:true }); })
       .catch(function(e){ if (b) b.disabled = false; if (n) n.disabled = false; toast(String(e.message||e), true); });
   };
@@ -279,9 +285,9 @@ function advBulk_(approval){
   toast('Inahifadhi ' + ids.length + '… / Saving ' + ids.length + '…');
   srv('advDecide', { updates: ids.map(function(id){ return { id: id, approval: approval, comment: com }; }) })
     .then(function(r){
-      var sk = r.skipped || [];
-      toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
-        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length);
+      var sk = r.skipped || [], none = !((r.approved || 0) + (r.disapproved || 0));     // nothing saved says so (Part 135), never "Saved: 0 approved"
+      toast((none ? 'Haikuhifadhiwa / NOT saved: hakuna ombi lililobadilishwa / no request was changed' : 'Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved')
+        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length || none);
       pickClear_(); render({ force:true }); })
     .catch(function(e){
       toast(String(e.message||e) + ' — orodha imesomwa upya: yaliyobaki Pending hayakuhifadhiwa. / the list was read again: what is still Pending was not saved.', true);

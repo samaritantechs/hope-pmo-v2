@@ -3239,6 +3239,75 @@ test('the Legal card\'s chosen week rides in the screen\'s own args and its reme
   assert.equal(run(S, VC, doc, s => String(s), n => String(n), v => v + '%', { c: {} }, 'x').kept, null, 'a reading of another week is not served as the kept one');
 });
 
+/* WHAT THE SERVER SAID, NOT WHAT WAS PRESSED (23 Nov 2026, handbook Part 135): "From next time, when finance manager closes advance request
+   window - even approvals should be disabled so that people cant approve when he's already proceeding with already approved requests in
+   time" -- the owner. The server already refused a decision in a finalized month, but the advance desk's drawer, and the leave desk's,
+   told the approver "Approved" or "Disapproved" whatever the answer was: a refused save comes back as updated 0 with its reason in
+   `skipped`, and the toast ignored it. The real drawers and the real bulk saves are RUN here. */
+test('the advance and leave drawers and bulk saves say NOT saved when the server saved nothing -- a refusal is never "Approved" or "Disapproved" (Part 135)', async () => {
+  const flush = () => new Promise(r => setTimeout(r, 0));
+  for (const [file, drawerFn, bulkFn, ids] of [
+    ['advance.js', 'advDecideDrawer_', 'advBulk_', { ok: 'advdOk', no: 'advdNo', cmt: 'advdCmt', bulkCom: 'advBulkCom', many: ['advApproveMany', 'advRejectMany'] }],
+    ['leave.js', 'leaveDecideDrawer_', 'leaveBulk_', { ok: 'lvdOk', no: 'lvdNo', cmt: 'lvdCmt', bulkCom: 'lvBulkCom', many: ['lvApproveMany', 'lvRejectMany'] }]]) {
+    const mod = readFileSync(join(PUBLIC, 'mod', file), 'utf-8');
+    const drawerSrc = new RegExp('function ' + drawerFn + '\\(r, decidable, closedNote\\)\\{[\\s\\S]*?\\n\\}\\n').exec(mod)[0];
+    const bulkSrc = new RegExp('function ' + bulkFn + '\\(approval\\)\\{[\\s\\S]*?\\n\\}\\n').exec(mod)[0];
+    const refused = { updated: 0, approved: 0, disapproved: 0, skipped: ['BEN: closed -- this month is finalized'] };
+    // ONE REQUEST, in the drawer.
+    const one = async (answer, which) => {
+      const toasts = [], els = {}, calls = [], after = [];
+      const el = id => (els[id] = els[id] || { value: id === ids.cmt ? 'sawa' : '', disabled: false });
+      const f = new Function('esc', 'drawer', '$', 'srv', 'toast', 'closeDrawer', 'render', 'advExpired_', 'leaveExpired_', 'money', drawerSrc + '\nreturn ' + drawerFn + ';')(
+        s => String(s == null ? '' : s), () => {}, sel => el(String(sel).replace('#', '')),
+        (name, args) => { calls.push([name, args]); return Promise.resolve(answer); },
+        (msg, bad) => toasts.push([String(msg), !!bad]), () => after.push('closed'), () => after.push('rendered'), () => false, () => false, n => String(n));
+      f({ id: 'r1', staff_name: 'BEN', approval: 'Pending' }, true);
+      el(which === 'Approved' ? ids.ok : ids.no).onclick();
+      await flush();
+      return { toasts, calls, after };
+    };
+    for (const which of ['Approved', 'Disapproved']) {
+      const r = await one(refused, which);
+      assert.equal(r.calls.length, 1, file + ' ' + which + ': one call');
+      assert.deepEqual(r.toasts, [['Haikuhifadhiwa / NOT saved: BEN: closed -- this month is finalized', true]], file + ' ' + which + ': a refusal says NOT saved, why, and as an error');
+      assert.deepEqual(r.after, ['closed', 'rendered'], file + ': the drawer closes and the screen is read again, so the closed month shows');
+    }
+    assert.deepEqual((await one({ updated: 1, approved: 1, disapproved: 0, skipped: [] }, 'Approved')).toasts, [['Imeidhinishwa / Approved', false]]);
+    assert.deepEqual((await one({ updated: 1, approved: 0, disapproved: 1, skipped: [] }, 'Disapproved')).toasts, [['Imekataliwa / Disapproved', false]]);
+    assert.deepEqual((await one({ updated: 1, approved: 1, disapproved: 0, skipped: ['x'] }, 'Approved')).toasts, [['Imeidhinishwa / Approved · x', false]], 'a save with a side note keeps both');
+    assert.match((await one({}, 'Approved')).toasts[0][0], /^Haikuhifadhiwa \/ NOT saved: hakuna ombi lililobadilishwa \/ nothing was changed$/, 'an answer that says nothing saved is never taken for a save');
+    // MANY TICKS, one save.
+    const many = async answer => {
+      const toasts = [], els = {};
+      const el = id => (els[id] = els[id] || { value: '', disabled: false });
+      const f = new Function('pickList_', 'toast', '$', 'confirm', 'document', 'srv', 'pickClear_', 'render', bulkSrc + '\nreturn ' + bulkFn + ';')(
+        () => ['r1', 'r2'], (msg, bad) => toasts.push([String(msg), !!bad]), sel => el(String(sel).replace('#', '')), () => true,
+        { getElementById: id => el(id) }, () => Promise.resolve(answer), () => {}, () => {});
+      f('Approved'); await flush();
+      return toasts.filter(t => !/^Inahifadhi/.test(t[0]));
+    };
+    assert.deepEqual(await many(refused), [['Haikuhifadhiwa / NOT saved: hakuna ombi lililobadilishwa / no request was changed · BEN: closed -- this month is finalized.', true]], file + ': nothing saved says so');
+    assert.deepEqual(await many({ updated: 2, approved: 2, disapproved: 0, skipped: [] }), [['Imehifadhiwa / Saved: 2 approved, 0 disapproved.', false]], file + ': a save is as it was');
+  }
+});
+
+/* THE MONTH'S FINALIZED STATE IS READ FRESH BY EVERYTHING THAT DECIDES OR FILES OR WRITES IT (Part 135): a settings memo lives 20 seconds on every
+   server instance and a write drops only the writer's own, so a decision or a request that read the memo could be saved after the finance
+   manager had closed the month. The four functions below read settingFresh_ and none of them reads the key through the memo. */
+test('advance: decisions, new requests, Finalize and Reopen read the month state fresh (settingFresh_), never through the 20-second settings memo (Part 135)', () => {
+  const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
+  const strip = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');
+  const body = name => { const at = core.indexOf('async function ' + name + '('); assert.ok(at > 0, name + ' exists'); return strip(core.slice(at, core.indexOf('\n}\n', at))); };
+  for (const fn of ['advDecide', 'advRequest', 'advFinalize', 'advReopen']) {
+    const b = body(fn);
+    assert.ok(/settingFresh_\(db, ADV_MONTHS_KEY\)/.test(b), fn + ' reads the month state fresh');
+    assert.ok(!/settingGet\(db, ADV_MONTHS_KEY\)/.test(b) && !/cfg\.get\(ADV_MONTHS_KEY/.test(b), fn + ' does not read it through the memo');
+  }
+  const fresh = strip(core.slice(core.indexOf('async function settingFresh_('), core.indexOf('\n}\n', core.indexOf('async function settingFresh_('))));
+  assert.ok(/db\.from\('settings'\)\.select\('value'\)\.eq\('key', String\(key\)\)\.limit\(1\)/.test(fresh), 'one row by its key, straight from the database');
+  assert.ok(/settingsCachePut_\(db, key, v\)/.test(fresh) && /catch \(e\)\s*\{\s*return settingGet\(db, key\);/.test(fresh), 'the memo is told what was read, and a failed read falls back to it (never a refused decision)');
+});
+
 /* ===================================================================================================================
    WHAT wireForms() MAY DO NOW THAT EVERY PAINT RUNS IT (handbook Part 133; tools/browser-checks/portal-repaint-wiring.mjs is the same
    thing in a real browser, on every screen that loads).
