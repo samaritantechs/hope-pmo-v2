@@ -1799,13 +1799,160 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
   const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
   assert.ok(/kpi\('Imerejeshwa leo \/ Recovered today',[^;]*'lgRecT'\)/.test(view), 'today\'s card, with its id');
-  assert.ok(/kpi\('Imerejeshwa wiki hii \/ Recovered this week',[^;]*'lgRecW'\)/.test(view), 'the week\'s card, with its id');
+  // The week's card is drawn by lgWeekCard_ (23 Nov: it carries its own week arrows), between two markers
+  // so the copy inside HEAD can be replaced when the reader moves to another week.
+  assert.ok(/'<!--lgw-->' \+ lgWeekCard_\(lg\) \+ '<!--\/lgw-->'/.test(view), 'the week\'s card, drawn by lgWeekCard_ between its markers');
+  assert.ok(/id="lgRecW"/.test(app) && /id="lgRecWS"/.test(app), 'with the ids it always had');
+  assert.ok(/Imerejeshwa wiki hii \/ Recovered this week/.test(app), 'and the words it always had');
   assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by demandNotices\' legal reading');
-  assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on the cards');
-  assert.ok(/function legalRecoveriesDrawer_\(period\)/.test(app) && /srv\('legalRecoveries', \{ period: week \? 'week' : 'today' \}\)/.test(app), 'the drawer asks the server for the list');
+  assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on today\'s card');
+  assert.ok(/function legalRecoveriesDrawer_\(period, weekOf\)/.test(app) && /srv\('legalRecoveries', \{ period: 'today' \}\)/.test(app), 'the drawer asks the server for the list');
+  assert.ok(/srv\('legalRecoveries', \{ period: 'week', weekOf: key \}\)/.test(app), 'for any week, through the one place that keeps the answers');
   assert.ok(/sumRow\(rows, \['owed', 'paid', 'payments'\]\)/.test(app), 'with a grand total');
-  assert.ok(/\[\['lgRecT', 'today'\], \['lgRecW', 'week'\]\]\.forEach/.test(app) && /legalRecoveriesDrawer_\(p\[1\]\)/.test(app), 'the whole card is the button');
+  // Today's card is wired by wireForms; the week's wires itself, inline, so a table repaint cannot leave it dead.
+  assert.ok(/\[\['lgRecT', 'today'\]\]\.forEach/.test(app) && /legalRecoveriesDrawer_\(p\[1\]\)/.test(app), 'the whole of today\'s card is the button');
+  assert.ok(!/\['lgRecW', 'week'\]/.test(app), 'the week\'s card is NOT also wired there (it would open this week whatever the card shows)');
   assert.ok(/legalRecoveries:1/.test(app), 'cached like the other reads');
+});
+
+/* "Legal recovery weekly report at the top right card should have foward and backward arrows so that we get
+   last week(s) reports" (23 Nov 2026). The weekly card carries a week arrow either side and the list behind it
+   carries them too. What the page DOES is run in a real browser by tools/browser-checks/portal-legal-week.mjs
+   (by hand: it needs one); these pins hold the shapes that check and the server rely on, and the two tests
+   below run the card builder and the stepper themselves. */
+test('the weekly Legal card carries week arrows: inline, bounded, in step with HEAD, and the list behind it carries them too', () => {
+  const app = appSrc();
+  const card = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(card, 'lgWeekCard_ is where it was put');
+  const c = card[0];
+  assert.ok(/data-lgwk="' \+ n \+ '"/.test(c) && /onclick="return lgWeekStep_\(' \+ n \+ ', event\)"/.test(c), 'two buttons that step the card; inline, so a repaint from HEAD cannot strip them');
+  assert.ok(/onkeydown="event\.stopPropagation\(\)"/.test(c), 'a key on an arrow never opens the list');
+  assert.ok(/onclick="lgWeekOpen_\(\)" onkeydown="lgWeekKey_\(event\)"/.test(c) && /role="button" tabindex="0"/.test(c), 'the card itself is still the button that opens the list');
+  assert.ok(/canBack = !off && !!mon && \(!lg\.since \|\| mon > lg\.since\)/.test(c), 'the backward arrow stops at the week of the earliest notice');
+  assert.ok(/canFwd = !off && !cur/.test(c), 'the forward arrow stops at this week: nobody has paid in a week that has not begun');
+  assert.ok(/data-mon="' \+ esc\(mon\)/.test(c) && /data-this="/.test(c) && /data-since="/.test(c), 'the week, its ceiling and its floor are written on the card: the card is its own state');
+  assert.ok(/esc\(lg\.note/.test(c), 'a note from the server is text, never markup');
+  // Painting: the card on screen AND the copy in HEAD, or a repaint from HEAD (a table search) brings back this week.
+  const paint = /function lgWeekPaint_\(lg\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(paint && /HEAD = String\(HEAD \|\| ''\)\.replace\(\/<!--lgw-->\[\\s\\S\]\*\?<!--\\\/lgw-->\//.test(paint[0]) && /old\.outerHTML = html/.test(paint[0]), 'HEAD and the screen are both given the reading');
+  // A later press wins, a failed read is said and never kept.
+  const go = /function lgWeekGo_\(target, mon\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(go && /LGW_\.want = want; LGW_\.wantMon = mon \|\| ''; LGW_\.busy = true/.test(go[0]) && /if \(LGW_\.want !== want\) return/.test(go[0]), 'an answer that comes back after the reader moved on is dropped');
+  assert.ok(/var mon = \(LGW_\.busy && LGW_\.wantMon\) \? LGW_\.wantMon : \(card\.getAttribute\('data-mon'\) \|\| ''\);/.test(app), 'a press made while an answer is on its way steps from THAT week: two quick presses are two weeks');
+  assert.ok(/toast\('Imeshindikana \/ Could not load: '/.test(go[0]), 'a failure is said');
+  assert.ok(/p\.catch\(function\(\)\{ if \(LGW_\.c\[key\] && LGW_\.c\[key\]\.p === p\) delete LGW_\.c\[key\]; \}\)/.test(app), 'a read that failed is not kept');
+  assert.ok(/Date\.now\(\) - hit\.at < 120000/.test(app), 'answers are kept two minutes: stepping back and forth asks the server once');
+  // The list: the same arrows, a way home, the week in the downloads' title, the card behind kept in step.
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(dr, 'the drawer takes a week');
+  assert.ok(/\(week \? lgWeekAsk_\(weekOf \|\| ''\) : srv\('legalRecoveries', \{ period: 'today' \}\)\)/.test(dr[0]), 'this week\'s list and any other week\'s are one code path');
+  assert.ok(/lgWeekPaint_\(d\.legal\)/.test(dr[0]), 'the card behind the list says the week the list is on');
+  assert.ok(/\(week \? lgWeekBar_\(d\) : ''\)/.test(dr[0]) && /data-lgwd/.test(dr[0]) && /legalRecoveriesDrawer_\('week', n === 0 \? '' : addDays\(d\.weekOf, 7 \* n\)\)/.test(dr[0]), 'arrows on the list');
+  assert.ok(/\(week \? ' · ' \+ d\.from \+ ' → ' \+ d\.to : ''\)/.test(dr[0]), 'the week is in the title of the Excel, JPG and CSV of the list');
+  assert.ok(/function lgWeekOpen_\(\)\{[\s\S]*?legalRecoveriesDrawer_\('week', card \? card\.getAttribute\('data-mon'\) \|\| '' : ''\);/.test(app), 'a tap on the card opens the list of the week the card is ON, not always this one');
+  // The module resets what the arrows remember each time the tab reads the register afresh.
+  const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
+  assert.ok(/LGW_\.c = \{\}; LGW_\.want = '';/.test(view), 'a fresh read of the register forgets the answers of the screen before');
+  assert.ok(/--lgw-->/.test(view) && !/lgwk/.test(view), 'the module only places the card; its behaviour lives in the core');
+  assert.ok(/\.kpi\.lgwk\{position:relative\}/.test(app) && /\.lgwkNav\{position:absolute/.test(app) && /\.lgwkb:disabled\{opacity:\.35/.test(app), 'the arrows sit in the card\'s corner and show when they are off');
+});
+test('lgWeekCard_ draws the card of ONE week: arrows on or off by its bounds, lit and with a way home when it is not this week', () => {
+  const app = appSrc();
+  const src = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const money = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+  const pct = v => v == null ? '' : Math.round(v) + '%';
+  const card = new Function('esc', 'money', 'pct', src + '\nreturn lgWeekCard_;')(esc, money, pct);
+  const disabled = (html, n) => new RegExp('data-lgwk="' + n + '"[^>]*\\sdisabled').test(html);
+  const base = { on: true, customers: 3, owed: 800, recovered: 450, pct: 56.3, tRecovered: 50, today: '2026-07-24', thisWeek: '2026-07-20', since: '2026-06-29' };
+  // THIS week: the forward arrow is off (there is no later week to read), the backward one is on.
+  const now = card({ ...base, mon: '2026-07-20', sun: '2026-07-26' });
+  assert.ok(disabled(now, 1) && !disabled(now, -1), 'this week: forward off, backward on');
+  assert.ok(/Imerejeshwa wiki hii \/ Recovered this week/.test(now) && !/tap on|kpi tap lgwk on/.test(now) && !/Rudi wiki hii/.test(now), 'this week says so and has nowhere to go back to');
+  assert.ok(/2026-07-20 → 2026-07-26 · owed TZS 800/.test(now) && />56% · 450</.test(now), 'the figures of the week it is on');
+  // A past week: both arrows on, the card lit, a way home, and it does not say "this week".
+  const past = card({ ...base, mon: '2026-07-13', sun: '2026-07-19', recovered: 999, pct: 124.9 });
+  assert.ok(!disabled(past, 1) && !disabled(past, -1), 'a past week: both arrows on');
+  assert.ok(/kpi tap lgwk on/.test(past) && /Rudi wiki hii \/ Back to this week/.test(past) && !/Recovered this week/.test(past) && /Recovered, past week/.test(past), 'lit, a way home, and its own name');
+  assert.ok(/data-mon="2026-07-13"/.test(past) && /data-this="2026-07-20"/.test(past) && /data-since="2026-06-29"/.test(past), 'the card carries its own state');
+  // The earliest week with a notice: the backward arrow is off.
+  const first = card({ ...base, mon: '2026-06-29', sun: '2026-07-05' });
+  assert.ok(disabled(first, -1) && !disabled(first, 1), 'the first week there is anything to read: backward off');
+  // Without the ledger both arrows are off and the card says why (as text).
+  const off = card({ on: false, note: 'run <b>RUN-ME-041a</b>', mon: '2026-07-20', sun: '2026-07-26', thisWeek: '2026-07-20' });
+  assert.ok(disabled(off, -1) && disabled(off, 1), 'no ledger: nothing to step through');
+  assert.ok(/run &lt;b&gt;RUN-ME-041a&lt;\/b&gt;/.test(off) && !/<b>RUN-ME-041a/.test(off), 'the server\'s note is escaped, once');
+  // An answer from an older server (no bounds at all) still draws: this week, forward off, backward unbounded.
+  const old = card({ on: true, mon: '2026-07-20', sun: '2026-07-26', owed: 1, recovered: 0 });
+  assert.ok(disabled(old, 1) && !disabled(old, -1) && /Recovered this week/.test(old), 'no bounds: unbounded backward, this week');
+});
+test('lgWeekStep_ steps by whole weeks inside the card\'s own bounds and a late answer never paints over a later choice', async () => {
+  const app = appSrc();
+  const grab = n => new RegExp('function ' + n + '\\([^)]*\\)\\{[\\s\\S]*?\\n\\}\\n').exec(app)[0];
+  const attrs = { 'data-mon': '2026-07-13', 'data-this': '2026-07-20', 'data-since': '2026-06-29' };
+  const card = { getAttribute: k => attrs[k] || '', style: {}, contains: () => false };
+  const asked = [];                                                       // [weekOf] in the order lgWeekAsk_ was called
+  const pending = {};                                                     // weekOf -> resolve
+  const painted = [];
+  const toasts = [];
+  const document = { getElementById: id => (id === 'lgWkCard' ? card : null), activeElement: null };
+  const addDays = (k, n) => { const d = new Date(k + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const mk = new Function('document', 'addDays', 'toast', 'lgWeekAsk_', 'lgWeekPaint_', 'LGW_',
+    grab('lgWeekGo_') + grab('lgWeekStep_') + '\nreturn { lgWeekGo_, lgWeekStep_ };');
+  const LGW_ = { c: {}, want: '', wantMon: '', busy: false };
+  const fns = mk(document, addDays, (m, bad) => toasts.push([m, !!bad]),
+    w => { asked.push(w); return new Promise((res, rej) => { pending[w] = { res, rej }; }); },
+    lg => painted.push(lg.mon), LGW_);
+  const ev = { stopPropagation() { this.stopped = true; }, preventDefault() { this.prevented = true; } };
+  const settle = async w => { pending[w].res({ legal: { mon: w || '2026-07-20' } }); await new Promise(r => setTimeout(r, 5)); };
+  // one week back from the 13th: the 6th; the event never reaches the card behind the arrow
+  assert.equal(fns.lgWeekStep_(-1, ev), false); assert.ok(ev.stopped && ev.prevented, 'an arrow press is not a card tap');
+  assert.deepEqual(asked, ['2026-07-06']); await settle('2026-07-06');
+  // forward from the 13th: the 20th is THIS week, asked as '' (this week), never as a date the server would clamp
+  fns.lgWeekStep_(1, ev); assert.equal(asked[1], '', 'forward onto this week asks for this week'); await settle('');
+  // the way home asks for this week too
+  fns.lgWeekStep_(0, ev); assert.equal(asked[2], ''); await settle('');
+  // the floor: from 2026-06-29 (the first week with a notice) there is no week back
+  attrs['data-mon'] = '2026-06-29';
+  const before = asked.length; fns.lgWeekStep_(-1, ev); assert.equal(asked.length, before, 'nothing is asked of a week before the first notice');
+  // A LATER CHOICE WINS: ask for the 6th, then (before it answers) forward again: the 13th. The 6th's answer comes back
+  // after the reader has moved on and must not paint over their choice.
+  attrs['data-mon'] = '2026-07-13'; painted.length = 0;
+  fns.lgWeekStep_(-1, ev);                                               // want '2026-07-06'
+  fns.lgWeekStep_(1, ev);                                                // steps from the week on its way: want '2026-07-13'
+  assert.equal(asked[asked.length - 1], '2026-07-13');
+  pending['2026-07-06'].res({ legal: { mon: '2026-07-06' } });
+  pending['2026-07-13'].res({ legal: { mon: '2026-07-13' } });
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(!painted.includes('2026-07-06'), 'the late answer for the week the reader left is dropped');
+  assert.ok(painted.includes('2026-07-13'), 'the week they chose is painted');
+  // A failed read is said, and the card is let go of
+  fns.lgWeekStep_(-1, ev);
+  pending['2026-07-06'].rej(new Error('boom'));
+  await new Promise(r => setTimeout(r, 10));
+  assert.ok(toasts.some(t => /Could not load: boom/.test(t[0]) && t[1] === true), 'a failure is said, as an error');
+  assert.equal(card.style.opacity, '', 'and the card stops dimming');
+  // TWO QUICK PRESSES ARE TWO WEEKS: the second steps from the week still on its way, not from the one on the screen.
+  attrs['data-mon'] = '2026-07-20';
+  const n0 = asked.length; painted.length = 0;
+  fns.lgWeekStep_(-1, ev); fns.lgWeekStep_(-1, ev);
+  assert.deepEqual(asked.slice(n0), ['2026-07-13', '2026-07-06'], 'before any answer the second press goes one more week back');
+  pending['2026-07-13'].res({ legal: { mon: '2026-07-13' } });
+  pending['2026-07-06'].res({ legal: { mon: '2026-07-06' } });
+  await new Promise(r => setTimeout(r, 10));
+  assert.deepEqual(painted, ['2026-07-06'], 'only the week the reader ended on is painted');
+  // ... and once it is painted, the next press steps from what is on the screen again
+  attrs['data-mon'] = '2026-07-06';
+  const n1 = asked.length; fns.lgWeekStep_(-1, ev);
+  assert.equal(asked[n1], '2026-06-29', 'the floor week itself is a week there is');
+  pending['2026-06-29'].res({ legal: { mon: '2026-06-29' } });
+  await new Promise(r => setTimeout(r, 10));
+  attrs['data-mon'] = '2026-06-29';
+  const n2 = asked.length; fns.lgWeekStep_(-1, ev); assert.equal(asked.length, n2, 'and no week before it');
+  // forward from two weeks back, twice at once: the first lands on last week, the second on THIS week, asked as ''
+  attrs['data-mon'] = '2026-07-06';
+  const n3 = asked.length; fns.lgWeekStep_(1, ev); fns.lgWeekStep_(1, ev);
+  assert.deepEqual(asked.slice(n3), ['2026-07-13', ''], 'quick forward presses end on this week');
 });
 
 /* "i need expected defaulters report to have the weekly forward and backward buttons there

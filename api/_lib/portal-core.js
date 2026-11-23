@@ -3768,15 +3768,30 @@ async function addDemandNotice(db, user, p, nowMs) {
    the period (today, or Monday to Sunday), with the payments themselves, their latest notice
    and what it demanded, from the SAME fold the cards were summed from (legalFold_), so the
    list's total is the card's figure by construction. Three trips: the register, the fold and
-   the week's ledger, as the boards do. */
-async function legalRecoveries(db, user, { period } = {}, nowMs = Date.now()) {
+   the week's ledger, as the boards do.
+
+   ANY WEEK, NOT ONLY THIS ONE -- "Legal recovery weekly report at the top right card should have
+   foward and backward arrows so that we get last week(s) reports" (23 Nov 2026). `weekOf` is a date
+   inside the week wanted (the dashboard's own rule, asOfWeek: any day names its Monday); blank or
+   unreadable is this week; a week that has not begun is read as this one, since nobody has paid in
+   it. The answer carries `legal`, the card's own reading of THAT week (legalCard_, the one
+   definition the Legal tab's card is drawn from), so the card and the list cannot differ, and
+   `weekOf`, the Monday that was read. Another week asks the database for LESS than this one: no
+   fold -- the fold copies the live book's payments into the ledger and the tab folded when it
+   opened (and every dashboard read folds), so what is already filed for a week that has gone is
+   all there is to read; two trips instead of three. */
+async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.now()) {
   const week = String(period || '').toLowerCase() === 'week';
-  const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
+  const today = todayKey(nowMs), thisMon = weekMondayKey(nowMs);
+  const readable = /^\d{4}-\d{2}-\d{2}$/.test(String(weekOf || '')) && Number.isFinite(Date.parse(String(weekOf) + 'T09:00:00Z'));
+  const picked = week && readable ? asOfWeek(nowMs, weekOf) : null;
+  const mon = picked && !picked.future ? picked.weekOf : thisMon, sun = addDaysKey(mon, 6);
   const [notices, ledger] = await Promise.all([
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, full_name, contact, notice_id, notice_date, arrears_at_notice'), user.teams)),
-    legalLedgerWeek_(db, mon, sun),
+    legalLedgerWeek_(db, mon, sun, { fold: mon === thisMon }),
   ]);
-  const { latest, paid } = legalFold_(scoped(user, notices), ledger, today, mon, sun);
+  const mine = scoped(user, notices);
+  const { latest, paid } = legalFold_(mine, ledger, today, mon, sun);
   const from = week ? mon : today, to = week ? sun : today;
   const rows = [];
   for (const c of latest.values()) {
@@ -3792,9 +3807,10 @@ async function legalRecoveries(db, user, { period } = {}, nowMs = Date.now()) {
   }
   rows.sort((a, b) => b.paid - a.paid || String(a.full_name).localeCompare(String(b.full_name)));
   const on = Array.isArray(ledger);
-  return { period: week ? 'week' : 'today', from, to, today, on, note: on ? null : LEGAL_NOTE, rows,
+  return { period: week ? 'week' : 'today', from, to, today, weekOf: mon, on, note: on ? null : LEGAL_NOTE, rows,
     totals: { customers: rows.length, paid: rows.reduce((s, r) => s + r.paid, 0),
-      owed: rows.reduce((s, r) => s + r.owed, 0), noticed: latest.size } };
+      owed: rows.reduce((s, r) => s + r.owed, 0), noticed: latest.size },
+    legal: legalCard_(mine, ledger, today, mon, sun, thisMon) };
 }
 
 /* "TAP A ROW TO REPRINT" -- the SAME letter, off the register row's stored `letter`
@@ -4277,9 +4293,12 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
      inside notice_payments above), null when RUN-ME-041 is not there, and the cards say so. */
   const today = todayKey(nowMs), mon = weekMondayKey(nowMs), sun = addDaysKey(mon, 6);
   const ledgerWeek = paidBy ? await legalLedgerWeek_(db, mon, sun, { fold: false }) : null;
-  const legal = legalTotals_(r.rows, ledgerWeek, today, mon, sun);
+  // The card's reading with the bounds its week arrows need (legalCard_: thisWeek, and `since`, the
+  // week of the earliest notice, where the backward arrow stops) -- the same object legalRecoveries
+  // hands back for any other week, so the card is drawn from one shape.
+  const legal = legalCard_(r.rows, ledgerWeek, today, mon, sun, mon);
   return { ...r, rows,
-    legal: { ...legal, today, mon, sun },
+    legal,
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
     fines: rows.reduce((s, x) => s + num(x.fine), 0),
     atNotice: rows.reduce((s, x) => s + num(x.arrears_at_notice), 0),
@@ -14375,6 +14394,24 @@ function legalTotals_(notices, ledger, today, mon, sun) {
   for (const c of latest.values()) { const s = sums(c.ref); owed += c.owed; tRecovered += s.t; recovered += s.w; }
   return { on: Array.isArray(ledger), note: Array.isArray(ledger) ? null : LEGAL_NOTE, customers: latest.size, owed,
     tRecovered, tPct: pctOf(tRecovered, owed), recovered, pct: pctOf(recovered, owed) };
+}
+/** The Monday of the week of the earliest notice in scope: where the week arrows' backward step stops,
+    since a week before it holds no notice and so no recovery. Null with no notice; a date that is not
+    a real day is passed over, never trusted. */
+function legalSince_(notices) {
+  let min = '';
+  for (const n of notices || []) {
+    const d = String(n.notice_date || '').slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d + 'T09:00:00Z')) && (!min || d < min)) min = d;
+  }
+  return min ? weekMondayKey(Date.parse(min + 'T09:00:00Z')) : null;
+}
+/** THE LEGAL TAB'S WEEKLY CARD, as one object -- the figures of legalTotals_ for the week `mon`..`sun`, the
+    real `today` (the day card), the Monday of THIS week (`thisWeek`, the forward arrow's ceiling) and the
+    backward arrow's floor (`since`). demandNotices gives it for this week and legalRecoveries for any
+    week, so the card is drawn from the same shape whichever week it is on. */
+function legalCard_(notices, ledger, today, mon, sun, thisWeek) {
+  return { ...legalTotals_(notices, ledger, today, mon, sun), today, mon, sun, thisWeek, since: legalSince_(notices) };
 }
 /** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
