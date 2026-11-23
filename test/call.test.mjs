@@ -2824,68 +2824,44 @@ test('a blank status is not evidence of payment -- only isSettled(arrears) earns
   assert.deepEqual(mine.rows.map(r => r.ref), ['PART1', 'LOW1'], 'sorted by their real arrears, same as always -- nothing about the sort itself was ever broken');
 });
 
-/* THE ALL-TIME GHOST -- ref 4231948032's own real case. "Checked loan system -- customer not
-   there on thurrsday deck 12th nov 2026" ... "should reflect to alltime data past present and
-   future" ... "so status column of such customers automatic becomes cleared if no longer in
-   default list" -- the owner, 13 Nov 2026. GHOST1 has no row at all for NOW, today -- neither
-   initial nor current -- so neither #693's nor #696's own baseBy-presence check can reach
-   them; only db/RUN-ME-055's own all-time lookup (db.rpc('defaulter_ghost_rows')) finds them,
-   via their real last-known row from ten days earlier. */
-test('a customer missing from today\'s deck entirely still shows, status CLEARED, from their last known row', async () => {
+/* A CUSTOMER WHO LEFT THE FILES ON AN EARLIER DAY IS NOT ON TODAY'S PHONE LIST -- "How comes staff are seeing expected
+   defaultes with cleared like 62561111341 who are not even in the initial file of today" ... "not just dropping but
+   analyzing how that robust problem happens", the owner, 23 Nov 2026 (handbook Part 136). From 13 to 23 Nov the phone's
+   list carried an "all-time ghost" for every customer the team had ever had on a file whom the latest file did not name:
+   CLEARED, with the last arrears anybody knew still shown as owed, nothing recovered, counted in the strip. LEFT1 below is
+   that customer (its last row ten days old, on no file of today). It is not on the list and not in the strip, with or
+   without the database function the ghost used to ask (db/RUN-ME-055) -- and the phone no longer asks it: one read fewer
+   on /api/call for every list. */
+test('a customer who left the files on an earlier day is not on the phone\'s Exp.Def list or in its strip, and the phone does not ask the all-time lookup', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();
   const t = makeTables();
-  // BOTH role columns point at the one signed-in officer: GHOST1's role has to be able to
-  // read GMO (below) without moving GHOST1 off BIKE BEE's own worklist, which is the thing
-  // under test here, not team structure.
   t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE', gmo: 'BIKE BEE' };
-  // ASSIGN_CHRONIC's first bucket (GMO) is deliberately NOT ASSIGN_ACTIVE's (BIKE) -- found on
-  // review, before this shipped: with both strategies starting on BIKE, GHOST1's correct role
-  // (assignFor reading its real status, Chronic) and the role a regression would produce (if
-  // assignFor were ever fed the post-override CLEARED status instead, falling through to the
-  // ACTIVE branch) land on the identical value, so the test could not tell the two apart.
   t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' },
     { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
   t.defaulter_snapshots = t.defaulter_snapshots.filter(r => r.ref !== '555');
-  // A real, still-active defaulter for today -- the contrast GHOST1 has to sink below.
   t.defaulter_snapshots.push(
     { ref: 'ACT2', full_name: 'C ACT2', contact: '0714000902', team: 'KONGOWE', arrears: 300, status: 'Defaulter',
       days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'initial', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bi', created_at: '2026-07-24T04:00:00Z' },
     { ref: 'ACT2', full_name: 'C ACT2', contact: '0714000902', team: 'KONGOWE', arrears: 300, status: 'Defaulter',
       days_elapsed: 1, disb_date: '2026-07-24', snapshot_type: 'current', weekday: 'FRI', snapshot_date: '2026-07-24', upload_batch: 'bc', created_at: '2026-07-24T08:00:00Z' },
-    // GHOST1's last real sighting: ten days before NOW, Chronic, 15,500 still owed -- nothing
-    // since, of either type. The real ref's own numbers, for the same reason the rest of this
-    // handbook keeps using them.
-    { ref: 'GHOST1', full_name: 'C GHOST1', contact: '0714000903', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
+    // LEFT1's last real sighting: ten days before NOW, Chronic, 15,500 still owed -- nothing since, of either type.
+    { ref: 'LEFT1', full_name: 'C LEFT1', contact: '0714000903', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
       days_elapsed: 1, disb_date: '2026-07-14', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14', upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' });
-  const dbNoMigration = fakeDb(t);
-  const dbMigrated = fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
-
-  // WITHOUT db/RUN-ME-055 run: exactly today's behaviour, no ghost, no failed request.
-  await callApi(dbNoMigration, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
-  const before = await callApi(dbNoMigration, 'api_callList', ['dBEE', 'expdf'], NOW);
-  assert.equal(before.ok, true);
-  assert.deepEqual(before.rows.map(r => r.ref), ['ACT2'], 'no migration: GHOST1 is simply not found, same as before this feature existed');
-
-  // WITH it: GHOST1 is found, sunk below the real defaulter, status CLEARED, their own last
-  // known arrears shown (not invented as zero).
-  await callApi(dbMigrated, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
-  const after = await callApi(dbMigrated, 'api_callList', ['dBEE', 'expdf'], NOW);
-  assert.equal(after.ok, true);
-  assert.deepEqual(after.rows.map(r => r.ref), ['ACT2', 'GHOST1'], 'ACT2 still owing 300 comes first; GHOST1, last seen owing 15,500, sinks -- 300 beats 0, not 15,500');
-  const ghost = after.rows.find(r => r.ref === 'GHOST1');
-  assert.equal(ghost.custStatus, 'CLEARED');
-  assert.equal(ghost.amt, 15500, 'their real last-known arrears, not a fabricated zero');
-  assert.equal(ghost.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
-  assert.equal(ghost.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
-  // assignFor must read the ghost's own real status (Chronic), never the display override
-  // (CLEARED) buildRows_ computes afterwards -- found on review: with ASSIGN_CHRONIC's first
-  // bucket now distinct from ASSIGN_ACTIVE's, these two values can only agree if assignFor saw
-  // the real status.
-  assert.equal(ghost.fuStatus, 'C-W1', 'the rotation read the real status (Chronic), not the CLEARED display override');
-
-  const summary = await callApi(dbMigrated, 'api_callDailySummary', ['dBEE'], NOW);
-  assert.equal(summary.expdf.customers, 2, 'the daily-summary strip counts the ghost too');
+  let asked = 0;
+  const rpc = { ...DEFAULTER_GHOST_ROWS_RPC, defaulter_ghost_rows: (store, a) => { asked++; return DEFAULTER_GHOST_ROWS_RPC.defaulter_ghost_rows(store, a); } };
+  for (const [name, db] of [['a book without the function', fakeDb(t)], ['a book with it', fakeDb(t, { rpc })]]) {
+    _clearSummaryCache(); _clearWidgetCache();
+    await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
+    const list = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
+    assert.equal(list.ok, true);
+    assert.deepEqual(list.rows.map(r => r.ref), ['ACT2'], name + ': the customer of today\'s files, and nobody who left ten days ago');
+    assert.deepEqual([list.expdf.totals.customers, list.expdf.totals.initial, list.expdf.totals.arrears], [1, 300, 300], name + ': no 15,500 "owed" in the totals');
+    const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
+    assert.equal(summary.expdf.customers, 1, name + ': nor in the strip');
+    assert.equal(summary.expdf.den, 300);
+  }
+  assert.equal(asked, 0, 'the all-time lookup is not asked by the phone');
 });
 
 /* A CUSTOMER THE DAY'S CURRENT DECK NO LONGER NAMES STAYS ON THE PHONE'S LIST, AS RECOVERED --
@@ -2950,19 +2926,24 @@ test('a customer the day\'s current deck no longer names stays on the phone\'s E
   assert.equal(summary.expdf.den, 2300, '300 + 1,200 + 800 owed at the start of the day');
 });
 
-test('the phone does not mark anybody paid on a comparison that was never made: a current deck of another date closes nobody', async () => {
+test('before the day\'s later file is in, the phone lists THIS MORNING\'s file: its customers owing the morning\'s arrears, nobody marked paid, nobody from last week\'s file', async () => {
   const { _clearSummaryCache, _clearWidgetCache } = await import('../api/_lib/call-core.js');
   _clearSummaryCache(); _clearWidgetCache();
-  // This Friday's initial deck with LAST Friday's current deck: the day's current file has not been uploaded yet.
+  // This Friday's initial file with a current file dated LAST Friday: the day's later file has not been uploaded yet. The list used to
+  // be built from last Friday's file (found by weekday); it is this morning's file now (found by date). Handbook Part 136.
   const db = clearedPhoneDb_('2026-07-17');
   await callApi(db, 'api_callRegister', ['dBEE', 'BIKE BEE', '', '', '0712999811', 'KON123'], NOW);
   const mine = await callApi(db, 'api_callList', ['dBEE', 'expdf'], NOW);
-  assert.ok(!mine.rows.some(r => r.ref === 'NOCUR2'), 'a customer on no current deck is not invented as recovered');
-  assert.ok(mine.rows.some(r => r.ref === 'NEW2'), 'and nobody is left out on a comparison that was never made: the older current deck\'s defaulter stays on the list, as it always did');
-  assert.equal(mine.expdf.diag.enteredAfter, null);
-  assert.ok(!mine.rows.some(r => r.ref === 'GONE2'), 'and the one with an older chronic row reads as that older row made them (the GMO\'s, a ghost), not as paid today');
+  assert.deepEqual(mine.rows.map(r => [r.ref, r.custStatus, r.amt, r.initial, r.recovered]),
+    [['GONE2', 'DEFAULTER', 1200, 1200, 0], ['NOCUR2', 'DEFAULTER', 800, 800, 0], ['ACT3', 'DEFAULTER', 300, 300, 0]],
+    'the three customers of this morning\'s file, owing what it says; nobody is invented as recovered, and a customer new on it is ON the list');
+  assert.ok(!mine.rows.some(r => r.ref === 'NEW2'), 'a customer who is only on last Friday\'s file is not on today\'s list');
+  assert.equal(mine.expdf.diag.paired, false); assert.equal(mine.expdf.diag.enteredAfter, null);
+  assert.equal(mine.expdf.date, '2026-07-24', 'the list is dated today: the strip says Leo, not last week\'s date');
+  assert.equal(mine.expdf.hasBaseline, true);
   const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
-  assert.ok(summary.expdf.num < 800, 'the strip is not lifted by customers nobody compared: ' + summary.expdf.num);
+  assert.equal(summary.expdf.num, 0, 'nothing recovered yet: nothing has been compared');
+  assert.equal(summary.expdf.den, 2300, 'against the morning\'s 300 + 1,200 + 800');
 });
 
 test('closing the customers who left the current deck costs the phone\'s Exp.Def list no extra read', async () => {

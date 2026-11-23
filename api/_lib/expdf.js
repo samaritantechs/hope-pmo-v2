@@ -1,7 +1,7 @@
 import { fetchAll } from './supabase.js';
 import { teamAllowed } from './auth.js';
-import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey } from './time.js';
-import { latestSnapshot } from './snapshots.js';
+import { todayKey, currentWeekday, weekMondayKey, isoWeekday, addDaysKey, weekdayOfKey } from './time.js';
+import { latestSnapshot, latestSnapshotDate } from './snapshots.js';
 import { num } from './recovery.js';
 import { cachedAnswer } from './answer-cache.js';
 import { isSettled } from './settled.js';
@@ -102,29 +102,42 @@ async function monthFirstInitial_(db, user, from, to) {
    morning's arrears recovered -- "a team missing from it owes nothing on it, full stop"
    (defaulterBook; db/RUN-ME-032) and the dashboard card's own reading of the same customer
    (RUN-ME-058). Where the rotation places them is where it places them off the morning row,
-   so the leader the day's list credits is the leader who held them. A ghost (ghostRowsFor_)
-   for a customer who is on that morning deck is dropped for the morning row: the ghost is the
-   customer's LAST-KNOWN row from some earlier day, with its own older arrears and recovered 0,
-   while the day's own two files say what really happened on THIS day. A ghost for a customer
-   who is NOT on the day's initial deck stays exactly what it was (Part 71). No read is added
-   here: `morning` is the deck both callers already read.
+   so the leader the day's list credits is the leader who held them. No read is added here:
+   the baseline rows are the deck both callers already read.
 
    AND THE LIST IS THE MORNING DECK'S, NOT THE EVENING'S -- "Should the report and the phone also
    leave out customers who fall into default after the morning file, so the dashboard card, the
    report and the phone all count the same people?" -- "YES", the owner, 16 Nov 2026 (handbook
-   Part 88). When `morning` is handed in (the day's two decks are a pair), a customer on the
-   current deck whom the morning deck never named entered default AFTER it was filed: they are
-   nobody's expected defaulter of THIS day -- they join tomorrow's list, on tomorrow's initial
-   deck -- exactly as the dashboard card has read them since Part 74 ("the lists per day must come
-   from initial files"). They are counted in `left` (customers and arrears) so a screen can say
-   how many were left out, and are not rows. A reading with no pair (no initial deck, or a
-   current deck of another date) keeps every defaulter of the current deck, as it always did.
-   The all-time ghost is not that customer and is not touched: it was ordered on 13 Nov
-   ("should reflect to alltime data past present and future") and stays a row, CLEARED, with its
-   last-known arrears. Returns { rows, left }. */
-function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
+   Part 88). On a DAY (`only`), a customer on the later file whom the morning deck never named
+   entered default AFTER it was filed: they are nobody's expected defaulter of THIS day -- they
+   join tomorrow's list, on tomorrow's initial deck -- exactly as the dashboard card has read
+   them since Part 74 ("the lists per day must come from initial files"). They are counted in
+   `left` (customers and arrears) so a screen can say how many were left out, and are not rows.
+
+   NOBODY FROM OUTSIDE THE PERIOD'S OWN FILES IS A ROW -- "How comes staff are seeing expected
+   defaultes with cleared like 62561111341 who are not even in the initial file of today" ...
+   "not just dropping but analyzing how that robust problem happens", the owner, 23 Nov 2026
+   (handbook Part 136). From 13 Nov to 23 Nov an "all-time ghost" (Part 71) added, to every list,
+   every customer a team had EVER had on a file whom the latest file did not name: CLEARED, with
+   the last arrears anybody knew still shown as owed and nothing recovered, on their two cycle
+   days, for ever, and counted in every total. It read "should reflect to alltime data past
+   present and future" (13 Nov) as "a customer who left is on today's list for all time"; the
+   owner's own rule, said three more times since, is the one above -- a customer of a day's
+   initial file stays on THAT day's list -- and it holds for every day, past, present and future,
+   because every day is read off its own two files. The ghost is gone: this function is handed
+   only files of the period it is building, and that is all it reads.
+
+   THE ARGUMENTS:
+     book     the rows of the freshest file of the period: where things stand
+     baseBy   ref -> arrears on the period's baseline file ({} when there is none)
+     closing  the baseline file's rows, when `book` is a LATER file than it, so that a customer on
+              the baseline whom the book does not name has cleared; null when nothing has been
+              compared (the book IS the baseline file, or there is no baseline)
+     only     a DAY's list: the baseline file's customers and nobody else (Part 88)
+   Returns { rows, left }. */
+function buildRows_(user, book, baseBy, teamBy, strat, ms, closing, only) {
   const dayIdx = isoWeekday(ms);
-  const onMorning = morning && morning.length ? new Set(morning.map(d => K(d.ref))) : null;
+  const onBase = closing && closing.length ? new Set(closing.map(d => K(d.ref))) : null;
   const make = (d, over) => {
       const raw = d.disb_date ? isoWeekday(Date.parse(String(d.disb_date) + 'T00:00:00Z')) : 0;
       const primary = raw;
@@ -132,23 +145,20 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
       const a = assignFor(d, strat, ms);
       const team = teamBy[K(d.team)] || {};
       const arrears = num(d.arrears);
-      // A ghost row carries no baseline of its own today (ghostRowsFor_, above) -- initial
-      // equals its own last-known arrears, so recovered reads 0 rather than a figure invented
-      // against a baseline that was never theirs: nothing new happened today to recover.
+      // A customer the baseline file does not hold has no baseline: initial reads as their arrears now and recovered as 0 --
+      // a figure that is not known is never invented.
       const initial = Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)) ? baseBy[K(d.ref)] : arrears;
       const s = K(d.status);
       /* CLEARED is not "the status text didn't say Chronic/Expired/Defaulter" -- a blank or
          unrecognised status is NOT evidence of payment (settled.js's own rule, written after a
          real customer sat on an officer's phone as a defaulter owing one shilling while the
          expected book had her overpaid: a stale or missing status is unknown, never "paid").
-         isSettled(arrears) is the one gate for a row still on today's own deck; a GHOST row
-         (absent from today's deck entirely) is CLEARED unconditionally -- that absence IS the
-         signal here, not a guess about whatever status text its last known row happened to
-         carry. Anything else keeps its own status text (or DEFAULTER if it has none), the same
-         fallback statusWithPaid uses elsewhere, so it stays visible as still needing a call
-         rather than being told it is clear when the arrears column says otherwise. */
-      const status = d._ghost ? 'CLEARED' : (s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
-        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER')))));
+         isSettled(arrears) is the one gate for a row that is on the book. Anything else keeps
+         its own status text (or DEFAULTER if it has none), the same fallback statusWithPaid uses
+         elsewhere, so it stays visible as still needing a call rather than being told it is
+         clear when the arrears column says otherwise. */
+      const status = s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))));
       return { ref: d.ref, full_name: d.full_name, contact: d.contact,
         guarantor_name: d.guarantor_name, guarantor_contact: d.guarantor_contact,
         team: d.team, arrears, initial, recovered: Math.max(0, initial - arrears),
@@ -172,235 +182,135 @@ function buildRows_(user, curRows, baseBy, teamBy, strat, ms, morning) {
         leaderPhone: team[ROLE_COLS[a.role] + '_no'] || null,
         opm: (team[ROLE_COLS.OPM] || '(unassigned)'), ...(over || {}) };
   };
-  const seenRows = scoped(user, curRows);
-  const left = { customers: 0, arrears: 0 };      // in default on the current deck, never named by the morning deck: entered default after it
+  const seenRows = scoped(user, book);
+  const left = { customers: 0, arrears: 0 };      // in default on the later file, never named by the day's morning file: entered default after it
   const rows = seenRows
     .filter(d => {
-      if (d._ghost) return true;
       const s = K(d.status), inDefault = s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT');
-      if (onMorning) {
-        if (onMorning.has(K(d.ref))) return true;
+      if (only && onBase) {
+        if (onBase.has(K(d.ref))) return true;
         if (inDefault) { left.customers += 1; left.arrears += num(d.arrears); }
         return false;
       }
       return inDefault || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref));
     })
-    // The day's own two files say what happened to a customer on the morning deck; a ghost is only their last-known row from some earlier day.
-    .filter(d => !(d._ghost && onMorning && onMorning.has(K(d.ref))))
     .map(d => make(d));
-  if (onMorning) {
-    const live = new Set(seenRows.filter(d => !d._ghost).map(d => K(d.ref)));   // on the day's own current deck
+  if (onBase) {
+    const live = new Set(seenRows.map(d => K(d.ref)));   // on the later file
     const seen = new Set();
-    for (const r of scoped(user, morning)) {
+    for (const r of scoped(user, closing)) {
       const ref = K(r.ref);
       if (live.has(ref) || seen.has(ref)) continue;
       seen.add(ref);
       const initial = Object.prototype.hasOwnProperty.call(baseBy, ref) ? baseBy[ref] : num(r.arrears);
-      // The rotation reads the MORNING row (make's own assignFor, before `over`): where it places the customer is where it placed them.
+      // The rotation reads the BASELINE row (make's own assignFor, before `over`): where it places the customer is where it placed them.
       rows.push(make(r, { arrears: 0, initial, recovered: initial, status: 'CLEARED' }));
     }
   }
   return { rows, left };
 }
 
-/* THE ALL-TIME GHOST -- "Checked loan system -- customer not there on thurrsday deck 12th nov
-   2026" ... "should reflect to alltime data past present and future" ... "so status column of
-   such customers automatic becomes cleared if no longer in default list" -- the owner, 13 Nov
-   2026, on ref 4231948032: gone from BOTH that day's initial AND current deck entirely, which
-   neither #693 nor #696 can reach (buildRows_'s own baseBy-presence check only ever sees a
-   customer who is STILL on TODAY'S OWN initial deck). Today's own data has nothing pointing at
-   such a customer at all; the only way to find them is to ask the whole history: "who has this
-   team EVER had as a defaulter, whose newest row is not today's". db/RUN-ME-055 answers that
-   with one database-side function -- PostgREST's query builder cannot express the loose-index-
-   scan it needs cheaply (measured: 67-134ms for a plain SELECT DISTINCT on a 2.27-million-row
-   fixture even with an index, versus 1.6ms for the loose-index-scan idiom) -- called the way
-   this codebase already calls snapshot-totals.js's own SQL-side aggregates: db.rpc(...), ASKED
-   RARELY AND CACHED, the identical shape adjustments.js already uses for the Iliyonasia
-   register on this same call path. The one real cost (a team with NOTHING excluded -- not a
-   few customers, a whole team's upload missing, measured at 86-115ms on the same fixture) is
-   paid once per GHOST_TTL_MS per team, never per request: every caller in that window reads an
-   already-fetched list and only filters it in memory. A database without RUN-ME-055 run gets
-   no ghost rows at all -- the exact behaviour before this existed, never a failed request. */
-const GHOST_TTL_MS = 90000;
-const GHOST_MISSING_TTL_MS = 5 * 60 * 1000;
-export const GHOST_BUDGET_MS = 800;              // passed only by expdfMine -- see adjustments.js's own ADJ_BUDGET_MS
-/* 14 Nov 2026 incident: expectedDefaulters, expdfReport, expdfLeader and expdfWeekCore all
-   called ghostRowsFor_ with budgetMs 0 -- "a report can wait out the rare slow read" was read
-   as "no ceiling at all," not "a longer one than the phone's." The day db/RUN-ME-055 was first
-   actually run on the live book, Expected Defaulters hung past the client's own 45-second fetch
-   timeout and failed to load, "Imeshindikana." Same shape as DASH_PREV_BUDGET_MS/
-   DASH_FLOORS_BUDGET_MS in portal-core.js (6000/8000ms, "well inside the client's 45 seconds"),
-   sized a little tighter here because these screens stack this read alongside several others in
-   the same request. Overridable the same way those two are (DASH_MONTH_BUDGET_MS's own test is
-   the precedent), so a test can shrink it instead of genuinely waiting out several seconds. */
-export const GHOST_REPORT_BUDGET_MS = 5000;
-export const ghostReportBudgetMs_ = () => Number(process.env.GHOST_REPORT_BUDGET_MS) || GHOST_REPORT_BUDGET_MS;
-const ghostCache = new WeakMap();                // db -> teamSetKey -> { at, rows, pending, missingAt }
+/* THE DAY'S LIST IS THE DAY'S OWN MORNING FILE, FOUND BY ITS DATE (handbook Part 136).
 
-function withinMs_(p, ms, fallback) {
-  let t = null;
-  const late = new Promise(res => { t = setTimeout(() => res(fallback), ms); if (t.unref) t.unref(); });
-  return Promise.race([p.then(v => { clearTimeout(t); return v; }, () => { clearTimeout(t); return fallback; }), late]);
-}
+     "How comes staff are seeing expected defaultes with cleared like 62561111341 who are not even in
+      the initial file of today 23rd nov 2026" ... "i gave that sample customer of expected defaulter
+      so as to solve a big problem that people are complaining" ... "not just dropping but analyzing
+      how that robust problem happens" -- the owner, 23 Nov 2026.
 
-/* THE LAST GOOD ANSWER STANDS IN WHEN A FRESH ONE CANNOT BE HAD -- 20 Nov 2026, found reading how
-   this function is asked for while the Postgres logs showed statement timeouts about eight a
-   minute at midday. This used to do the opposite. A read that failed (a statement timeout is the
-   usual way) threw away what the last good read had found and answered nothing for the next five
-   minutes, so every customer who had left the book vanished from the Exp.Def lists and the
-   phone's list for five minutes at a time, for whoever that server instance and team set served:
-   the very thing the owner ordered against on 13, 15 and 16 Nov ("they should stay there", "i
-   expect that customer in initial never to get lost"). A read that was only LATE (the budget
-   ended before it did) did the same: the caller got nothing while the cache held the last good
-   list. Now the failure, the pause after it and the late read all hand out the last good list,
-   however old: it is never made up, only older, and ghostRowsFor_ still takes out every ref
-   today's own deck names. Where there has never been a good read (RUN-ME-055 not run, or the very
-   first read failing) the answer is nothing, as before. The pause itself is unchanged: a failed
-   read is not asked again for five minutes, which is what keeps a function that times out from
-   being run, and timing out, over and over. Nothing here reads anything from the database. */
-const ghostKey_ = teams => teams.slice().sort().join('\u0001');
-function lastGoodGhosts_(db, teams) {
-  const byKey = ghostCache.get(db);
-  const hit = byKey && byKey.get(ghostKey_(teams));
-  return (hit && hit.rows) || [];
-}
+   HOW IT HAPPENED. This function used to ask for "the latest CURRENT deck filed under today's
+   weekday" and "the latest INITIAL deck filed under today's weekday", and built the list from the
+   current one. Decks were once thought of as per-weekday files; every file has long been the
+   whole book ("one file, all weekdays together, every time"), so the only thing the weekday did
+   was this: UNTIL TODAY'S OWN CURRENT FILE WAS UPLOADED, THE LIST WAS BUILT FROM THE SAME WEEKDAY'S
+   FILE OF LAST WEEK. Replayed on the owner's own sample (ref 62561111341: on the files of 15 to
+   18 Nov, on the initial file of 19 Nov, on none since) for Sunday 22 Nov:
+     - before the day's later file was in, the phone listed that customer as a DEFAULTER owing
+       18,000 (last Sunday's figure) and another who had cleared on Tuesday as owing 25,000;
+     - a customer who entered default on Thursday was listed CLEARED (the all-time ghost took a
+       customer last Sunday's file did not name for one who had left), and one who was new on that
+       morning's file was not listed at all;
+     - once both files were in, the two who had cleared days before were still there, CLEARED,
+       "owing" 4,000 and 25,000 with nothing recovered, and the day's Rec % read 25.3 where the
+       customers actually on the morning file made it 37.9.
+   Parts 69 to 88 each put one case right for the hour when both of the day's files are in. The
+   root was never touched: the list was not built from the day's own initial file.
 
-/* ONE ROUND TRIP, HOWEVER MANY TEAMS -- caught by test/speed.test.mjs before this ever shipped:
-   an earlier draft called db.rpc once PER TEAM (cached per team), which costs nothing extra
-   for a single leader's own 1-2 teams but means an unrestricted admin -- every team in the
-   book, resolved above for exactly that viewer -- turned one screen's load into one round trip
-   PER TEAM: 47 trips against a budget of 7. The SQL function already loops its own teams
-   internally (db/RUN-ME-055); the fix is to ask it for the whole list in ONE call and cache
-   the answer keyed by that exact team set, not by walking the set ourselves.
+   NOW, BY DATE, AND ONLY OFF THE DAY'S OWN FILES:
+     both files of the day   the list is the MORNING file's customers; what each owes is the later
+     ('pair')                file's figure, and one the later file does not name has CLEARED with
+                             the whole morning's arrears recovered (Parts 87, 88).
+     the morning file only   the list is the morning file's customers, each owing the morning's
+     ('morning')             own arrears and nothing recovered yet: nothing has been compared.
+     a later file only       the day's later file with no morning file: its defaulters, nothing
+     ('current')             recovered (no baseline), as it always read.
+     neither yet             the freshest file of any earlier day stands in -- "only latest
+     ('earlier')             [current defaulter] file is legit for defaulters list no matter which
+                             day it is" -- its defaulters, nothing recovered; `date` says which
+                             day's file it is (the phone's strip then shows that date, not "Leo",
+                             and says the initial list is not in). Never last week's.
+   Nobody from outside those files is a row (buildRows_). A week (expdfWeekCompute_) was already
+   built this way, one day at a time; a MONTH keeps its first deck as the baseline and now reads
+   the same freshest file as where things stand, a customer on the month's first deck whom that
+   file does not name having cleared in the month.
 
-   `knownRefs` IS SENT TO THE RPC, NOT JUST USED TO FILTER THE ANSWER -- found on an adversarial
-   review before this shipped: the first version of this cache called the RPC with
-   `p_known_refs: []` always, applying the real known refs only afterwards, in JS. The SQL
-   function's own exclusion (`candidates as (... wk.ref <> all(p_known_refs))`, db/RUN-ME-055)
-   exists so the expensive half of the query -- sorting a team's entire history to find each
-   ref's latest row -- never runs on a ref that was going to be thrown away anyway. Sending `[]`
-   defeated that on every single call: measured, this forces the function's own documented
-   WORST case (a disk spill, ~7x slower) on every real cache refresh, not only on the one case
-   it was written for (a whole team's upload genuinely missing). The cache below stays keyed by
-   team set alone, not by `knownRefs` too -- re-keying on it would mean a fresh RPC call almost
-   every time (today's deck is never the same list twice), defeating the cache entirely for no
-   correctness gain: ghostRowsFor_'s own JS-side filter (below) already excludes a known ref from
-   the final answer regardless of which request's knownRefs happened to fill the cache, so the
-   SQL-side exclusion only ever needs to be a good-enough performance accelerant, never the
-   source of truth. */
-async function readGhosts_(db, teams, knownRefs, atMs) {
-  let byKey = ghostCache.get(db);
-  if (!byKey) { byKey = new Map(); ghostCache.set(db, byKey); }
-  const key = ghostKey_(teams);
-  const hit = byKey.get(key);
-  if (hit) {
-    // A read that failed lately is not asked again until its pause is over -- and the pause hands out the last good list, not nothing.
-    if (hit.missingAt && (atMs - hit.missingAt) < GHOST_MISSING_TTL_MS) return hit.rows || [];
-    if (hit.pending) return hit.pending;
-    if (hit.rows && (atMs - hit.at) < GHOST_TTL_MS) return hit.rows;
-  }
-  // What the last good read found (nothing, the first time). The entry goes in BEFORE the read starts: a read that fails at
-  // once is then remembered, where written after it the entry would overwrite that memory and be asked for ever.
-  const last = { at: (hit && hit.at) || 0, rows: hit && hit.rows };
-  let settle;
-  const pending = new Promise(res => { settle = res; });
-  byKey.set(key, { ...last, pending });
-  (async () => {
-    try {
-      const { data, error } = await db.rpc('defaulter_ghost_rows', { p_teams: teams, p_known_refs: knownRefs });
-      if (error) throw error;
-      const rows = data || [];
-      byKey.set(key, { at: Date.now(), rows });
-      settle(rows);
-    } catch (e) {
-      // db/RUN-ME-055 not run here, or the database refused or timed out. Remembered, so the next request does not ask again and
-      // get the same rejection logged against the database a second time (adjustments.js's own rule) -- and the last good list stays.
-      byKey.set(key, { ...last, missingAt: Date.now() });
-      settle(last.rows || []);
-    }
-  })();
-  return pending;
-}
-
-/** Ghost rows for every team in `teams`, in ONE call however many teams that is, minus
-    whatever refs the caller already resolved from today's own deck (`knownRefs`) -- status is
-    forced CLEARED for every one of these, unconditionally, by the caller (buildRows_): their
-    absence from today's own deck IS the signal here, not a guess about whatever status text
-    their last known row happened to carry. `budgetMs` is honoured by EVERY caller now, never
-    0 -- "a report can wait out the rare slow read, the phone cannot" used to mean the report
-    waited with no ceiling at all, and on 14 Nov, the first time db/RUN-ME-055 ever actually
-    ran a real query against the live book instead of erroring "function does not exist," that
-    turned into a real 45-second "Could not load" on Expected Defaulters (GHOST_REPORT_BUDGET_MS,
-    below -- "wait a while longer than the phone" was always the intent, "wait forever" never
-    was). Either way the read itself keeps running underneath and warms the cache for the next
-    caller, never cancelled -- a budget that is hit once is very unlikely to be hit twice in the
-    same 90-second GHOST_TTL_MS window. `teams` is the caller's own resolved list -- an
-    unrestricted admin (`user.teams` null) reaches here with every team in the book, not
-    nothing: that is the owner's own common sign-in, and ONE round trip for that whole list
-    (not one per team -- see readGhosts_'s own note) plus `budgetMs` on every path are what keep
-    it safe, so the one person who asked for this the loudest is not the one it is hidden from.
-    An empty or missing `teams` here specifically means there was truly nothing to resolve (no
-    team at all), not "this caller is unrestricted". */
-export async function ghostRowsFor_(db, teams, knownRefs, budgetMs = 0) {
-  if (!teams || !teams.length || typeof db.rpc !== 'function') return [];
-  const normalized = (knownRefs || []).map(K);
-  const known = new Set(normalized);
-  const atMs = Date.now();
-  // A read still out when the budget ends does not leave the caller with nothing: the last good list stands in for it
-  // (lastGoodGhosts_), and the read goes on underneath and warms the cache for the next caller.
-  const rows = budgetMs > 0 ? await withinMs_(readGhosts_(db, teams, normalized, atMs), budgetMs, lastGoodGhosts_(db, teams))
-                             : await readGhosts_(db, teams, normalized, atMs);
-  return rows.filter(r => !known.has(K(r.ref))).map(r => ({ ...r, _ghost: true }));
-}
-
-export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false, ghostBudgetMs = ghostReportBudgetMs_() } = {}) {
+   COST (CLAUDE.md section 1; the phone's list is this function). Two one-row reads say which
+   files the day has, then only the files needed are read: both of the day's (pair), one
+   (morning, current, earlier). The all-time lookup (db.rpc('defaulter_ghost_rows'), up to 800 ms
+   of budget on the phone and the statement that timed out most in the Postgres logs) is no longer
+   asked. Counted against the old code on the same book (test/speed.test.mjs, test/call.test.mjs):
+   one round trip fewer with both files in, two fewer with one. No read is added on any path. */
+const T_ = 'defaulter_snapshots';
+/** One file, by its date. The weekday is the date's own (the upload derives it the same way), which keeps the statement, and
+    the index it rides, exactly what this function has always sent. */
+const deckOn_ = (db, user, type, date, columns) => (date
+  ? latestSnapshot(db, T_, { snapshot_type: type, weekday: weekdayOfKey(date) }, { onDate: date, teams: user.teams, ...(columns ? { columns } : {}) })
+  : Promise.resolve(NONE_));
+export async function expdfCore(db, user, nowMs, { weekly = false, monthly = false } = {}) {
   const today = todayKey(nowMs), wd = currentWeekday(nowMs), mon = weekMondayKey(nowMs);
-  // Only the baseline the period needs is read: Monday's deck for a week, the month's first
-  // deck for a month, nothing extra for a day.
-  const [curSnap, dayIni, monIni, monthIni, teamRows, strat] = await Promise.all([
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'current', weekday: wd }, { notAfter: today, teams: user.teams }),
-    latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: wd }, { notAfter: today, teams: user.teams }),
-    weekly ? latestSnapshot(db, 'defaulter_snapshots', { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, teams: user.teams }) : Promise.resolve(NONE_),
-    monthly ? monthFirstInitial_(db, user, today.slice(0, 7) + '-01', today) : Promise.resolve(NONE_),
+  // Which files are there: the newest initial and the newest current, on or before the day read.
+  const [iniDate, curDate, teamRows, strat] = await Promise.all([
+    latestSnapshotDate(db, T_, { snapshot_type: 'initial' }, { notAfter: today }),
+    latestSnapshotDate(db, T_, { snapshot_type: 'current' }, { notAfter: today }),
     fetchAll(() => db.from('teams').select('*')),
     assignStrategy(db),
   ]);
+  const hasIni = iniDate === today, hasCur = curDate === today;
+  /* The file that says where things stand when the day has no file of its own yet: the freshest of any earlier day. A
+     current file of a date is later than that date's initial one, so a tie goes to the current. */
+  const earlier = (!hasIni && !hasCur) ? ((curDate && (!iniDate || curDate >= iniDate)) ? { type: 'current', date: curDate } : (iniDate ? { type: 'initial', date: iniDate } : null)) : null;
+  // Only the baseline the period needs is read: Monday's deck for a week, the month's first deck for a month, nothing extra for a day.
+  const [dayIni, dayCur, older, monIni, monthIni] = await Promise.all([
+    hasIni ? deckOn_(db, user, 'initial', today) : NONE_,
+    hasCur ? deckOn_(db, user, 'current', today) : NONE_,
+    earlier ? deckOn_(db, user, earlier.type, earlier.date) : NONE_,
+    weekly ? latestSnapshot(db, T_, { snapshot_type: 'initial', weekday: 'MON' }, { onDate: mon, teams: user.teams }) : NONE_,
+    monthly ? monthFirstInitial_(db, user, today.slice(0, 7) + '-01', today) : NONE_,
+  ]);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
+  const paired = dayIni.rows.length > 0 && dayCur.rows.length > 0;
+  const stage = paired ? 'pair' : dayIni.rows.length ? 'morning' : dayCur.rows.length ? 'current' : older.rows.length ? 'earlier' : 'none';
+  // WHERE THINGS STAND: the day's later file, else the day's morning file, else the freshest file of an earlier day.
+  const book = dayCur.rows.length ? dayCur : dayIni.rows.length ? dayIni : older;
   // A month compares against its first deck, a week against Monday's, a day against the same
   // day's own initial. Where the chosen baseline is missing the customer just shows 0 recovered
   // rather than a fabricated number computed off whatever deck happened to be lying around.
-  const base = monthly ? (monthIni.rows.length ? monthIni : dayIni) : weekly ? (monIni.rows.length ? monIni : dayIni) : dayIni;
+  const period = monthly ? monthIni : weekly ? monIni : null;
+  const base = period ? (period.rows.length ? period : dayIni) : dayIni;
   const baseBy = {};
   for (const d of base.rows) baseBy[K(d.ref)] = num(d.arrears);
-  const knownRefs = curSnap.rows.map(r => r.ref);
-  // An unrestricted viewer (user.teams null -- an admin) gets every team already fetched
-  // above, not nothing: the owner's own sign-in is the likeliest admin case, and skipping the
-  // whole feature for it would hide a ghost from the one person who asked for this the loudest.
-  // GHOST_BUDGET_MS (the call path's own bound, not a team-count one) is what keeps this safe.
-  // Deduplicated: found on review, access_codes.teams is a hand-typed array with no uniqueness
-  // constraint (unlike teams.team, a primary key) -- a repeated entry made defaulter_ghost_rows'
-  // own per-team loop return that team's ghosts twice, double-counting sumExpdf's plain-reduce
-  // arrears/initial/recovered totals (its customer count stays right, since that one is a Set).
-  const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
-  const ghosts = await ghostRowsFor_(db, ghostTeams, knownRefs, ghostBudgetMs);
-  const curRowsAll = ghosts.length ? curSnap.rows.concat(ghosts) : curSnap.rows;
-
   const dayIdx = isoWeekday(nowMs);
-  /* THE DAY'S OWN PAIR -- the only time "the current deck no longer names them" means "they
-     cleared". A day reading compares the day's initial deck with the day's current one; when the
-     current deck read is some OTHER date's (this weekday's latest current deck can be last
-     week's, on a morning before today's has been uploaded), a customer missing from it has not
-     cleared, they simply have not been compared yet, and nobody is marked paid on that. So the
-     morning rows go to buildRows_ only when both decks are here, are the same date, and the
-     baseline really is the day's own (not a week's or a month's first deck, whose customers'
-     placement would be a stale morning's). Zero reads: both decks were read above. */
-  const paired = base === dayIni && dayIni.rows.length > 0 && curSnap.rows.length > 0 && !!curSnap.date && curSnap.date === dayIni.date;
-  const built = buildRows_(user, curRowsAll, baseBy, teamBy, strat, nowMs, paired ? dayIni.rows : null);
-  const rows = built.rows;
-  return { rows, dayIdx, weekday: wd, date: curSnap.date, paired,
-    // How many customers the current deck has in default that the day's morning deck never named (Part 88): left out of the day, and said so. Null with no pair: nothing was left out.
-    enteredAfter: paired ? built.left : null, hasBaseline: base.rows.length > 0, baseDate: base.date,
+  /* WHO HAS CLEARED IS READ ONLY OFF A COMPARISON THAT WAS MADE: the baseline file against a LATER file. The day's morning
+     file against the day's later one (the pair); a month's (or the legacy week's) first deck against any file after it.
+     When the book IS the baseline file (the morning, before the later file; the first of a month) nothing has been
+     compared, and nobody is marked paid. */
+  const later = base.rows.length > 0 && book.rows.length > 0 && book !== base
+    && (String(book.date) > String(base.date) || (String(book.date) === String(base.date) && book === dayCur));
+  const day = !period;
+  const built = buildRows_(user, book.rows, baseBy, teamBy, strat, nowMs, later ? base.rows : null, day && paired);
+  return { rows: built.rows, dayIdx, weekday: wd, date: book.date, paired, stage,
+    // How many customers the day's later file has in default that its morning file never named (Part 88): left out of the day, and said so. Null with no pair: nothing was left out.
+    enteredAfter: day && paired ? built.left : null, hasBaseline: base.rows.length > 0, baseDate: base.date,
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day'),
     // The teams sheet, as already read above: expdfMine names the teams that give its caller a book their own code cannot see.
     teams: teamRows };
@@ -499,20 +409,10 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
      asks for it finds nothing rather than an error).
 
      This reads ONLY that one day's own two files -- nothing about today, nothing about any other
-     day -- so it can never contradict Part 71's own scope (an all-time ghost is judged by a fact
-     only true today and reaches the week only through its TODAY iteration, below), and it costs
-     no new read (ini.rows and cur.rows for day d are the two decks already fetched). */
-  /* THE GHOST IS TODAY'S OWN FACT, NOT THE WEEK'S -- found on review, before this shipped: the
-     week's per-day loop below never merged ghost rows at all, so a customer gone from the deck
-     entirely (ghostRowsFor_, above) was visible on the Exp.Def Report's day and month views but
-     silently absent on week, with no note. db/RUN-ME-055's own function answers "missing from
-     the TEAM'S LATEST data right now" -- it has no concept of a past day at all, so asking it
-     for a closed week (one that has already ended) would mean judging history by a fact that
-     is only true today, which this codebase's own rule never does ("a figure that is not known
-     is never invented"). So ghosts reach the week only through its own TODAY iteration, when
-     the week being viewed is the live one -- the same today-anchored reach expdfCore already
-     gives day and month. A closed past week asks for none. */
-  const ghostTeams = last === today ? [...new Set(user.teams || teamRows.map(t => t.team))] : null;
+     day -- and it costs no new read (ini.rows and cur.rows for day d are the two decks already
+     fetched). The all-time ghost that used to be added to the LIVE day of the live week (Part 71)
+     is gone with the rest of it (Part 136): a customer who left the files before a day began is
+     not on that day's list, today's included. */
   for (let d = mon; d <= last; d = addDaysKey(d, 1)) {
     const at = d === today ? nowMs : Date.parse(d + 'T09:00:00Z');
     const wd = WD_[isoWeekday(at)];
@@ -523,18 +423,8 @@ async function expdfWeekCompute_(db, user, nowMs, mon, last) {
     if (!ini.rows.length || !cur.rows.length) { days.push({ date: d, weekday: wd, measured: false, why: ini.rows.length ? 'no current deck' : 'no initial deck' }); continue; }
     const baseBy = {};
     for (const r of ini.rows) baseBy[K(r.ref)] = num(r.arrears);
-    let curRows = cur.rows;
-    if (d === today && ghostTeams) {
-      // GHOST_REPORT_BUDGET_MS, not 0: this is the portal's own report, never the sacred call
-      // path (call-core.js reads only expdfMine), so it can wait longer than the phone's
-      // GHOST_BUDGET_MS -- but "longer" is not "unbounded." The 14 Nov incident on
-      // expectedDefaulters (see GHOST_REPORT_BUDGET_MS's own comment) was this exact assumption,
-      // read as no ceiling at all, on the day db/RUN-ME-055 first actually ran for real.
-      const ghosts = await ghostRowsFor_(db, ghostTeams, cur.rows.map(r => r.ref), ghostReportBudgetMs_());
-      if (ghosts.length) curRows = cur.rows.concat(ghosts);
-    }
     // ini.rows IS the day's own initial deck and cur.rows the day's own current one (both read onDate d, both here): a whole pair.
-    const built = buildRows_(user, curRows, baseBy, teamBy, strat, at, ini.rows).rows;
+    const built = buildRows_(user, cur.rows, baseBy, teamBy, strat, at, ini.rows, true).rows;
     const list = periodRows_({ rows: built }, { daily: true, day: null, keepUndated: false });
     for (const r of list) {
       const k = r.role + '|' + K(r.leader) + '|' + K(r.ref), c = cells.get(k);
@@ -653,10 +543,9 @@ const sumExpdf = list => ({
     by the portal. Matching is on the NAME the teams table carries for that role, so moving a
     person between teams in Teams & Staff re-points their list with no other change. */
 export async function expdfMine(db, user, { all = false, weekly = false, scope = 'auto' } = {}, nowMs) {
-  // The sacred /api/call path: a slow ghost lookup is abandoned rather than held up for
-  // (GHOST_BUDGET_MS, above) -- the report's own two call sites below take no budget at all,
-  // since a report can wait out the rare slow read and the phone cannot.
-  const core = await expdfCore(db, user, nowMs, { weekly, ghostBudgetMs: GHOST_BUDGET_MS });
+  // The sacred /api/call path: the day's own files and nothing else (expdfCore). The all-time lookup this used to wait on,
+  // under a budget, is no longer asked (Part 136).
+  const core = await expdfCore(db, user, nowMs, { weekly });
   /* The person's own name is compared the way every register of names is (leaderKey: runs of
      blanks as one), so 'MARY  M' on a team and 'MARY M' on a code are one leader. */
   const me = LK(user.name);
@@ -700,11 +589,8 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
   const dated = mine.filter(r => r.primary > 0), undated = mine.filter(r => r.primary === 0);
   const noCycleDates = mine.length > 0 && dated.length === 0;
   const scopeRows = (all || noCycleDates) ? mine : mine.filter(r => r.onToday).concat(undated);
-  /* CLEARED sinks below every still-owing row first, arrears descending within each group.
-     "0 arrears sorts last" (#696) only holds for a customer confirmed paid in full -- a GHOST
-     row (api/_lib/expdf.js, ghostRowsFor_) carries its own last-KNOWN arrears, which can still
-     be large, and a plain arrears-descending sort would wrongly put a customer nobody has
-     tracked in months ahead of one still owing money today. */
+  /* CLEARED sinks below every still-owing row first, arrears descending within each group: a customer who has cleared is
+     kept for verification ("So even in call app if they clear they go down with status cleared"), under the ones still to call. */
   scopeRows.sort((a, b) => (a.status === 'CLEARED') - (b.status === 'CLEARED') || b.arrears - a.arrears);
   return { rows: scopeRows, weekday: core.weekday, date: core.date,
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,

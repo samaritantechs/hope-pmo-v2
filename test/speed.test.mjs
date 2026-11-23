@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, DEFAULTER_GHOST_ROWS_RPC, CALL_BOARD_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, CALL_BOARD_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -380,7 +380,13 @@ const BUDGETS = [
      what caught it: 47 trips, not 8). Not asked for at all without a migration run: a database
      without it answers the usual PGRST202 and this screen reads exactly as it did before,
      same row count. */
-  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  8,  1100,  8, 1100],
+  /* 8 -> 7 trips (2026-11-23, handbook Part 136): that round trip is gone again. "How comes staff are
+     seeing expected defaultes with cleared like 62561111341 who are not even in the initial file of
+     today" -- the all-time lookup put every customer who had ever left the files on today's lists, so
+     it is no longer asked by any screen. EVERY Exp.Def budget below drops by that one trip (the report
+     by day, week and month, the card behind a name), the phone's daily summary by one, and the phone's
+     own Exp.Def list gets the budget it never had. */
+  ['Expected defaulters',     'expectedDefaulters',  {}, ADMIN,  7,  1100,  7, 1100],
   /* 10 -> 14 trips and 1,500 -> 2,000 rows (2026-11-02): every board row now carries the week's
      calls, talk and comments ("Add columns of No of calls + duration ... and no of comments"),
      by the card's own rule, for the whole report in FOUR reads whatever its size: the HOPE
@@ -390,16 +396,16 @@ const BUDGETS = [
      calls to match), and the leaders' comments of the week. Never one read per leader. This
      fixture names no leader with a book, so none of the four is made here; the ceiling is the
      live shape. */
-  ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 14,  2000,  13, 1700],
+  ['Rotation report (expdf)', 'expdfReport',         {}, ADMIN, 13,  2000,  12, 1700],
   /* The same report for a week (Monday's deck is one more read) and for a month (the month's
      first deck: one date query and one deck read more). The day, the default, reads neither. */
-  ['Rotation report (expdf, week)',  'expdfReport', { period: 'week' },  ADMIN, 15, 2000, 14, 1700],
-  ['Rotation report (expdf, month)', 'expdfReport', { period: 'month' }, ADMIN, 16, 2000, 15, 1700],
+  ['Rotation report (expdf, week)',  'expdfReport', { period: 'week' },  ADMIN, 14, 2000, 13, 1700],
+  ['Rotation report (expdf, month)', 'expdfReport', { period: 'month' }, ADMIN, 15, 2000, 14, 1700],
   /* The card behind a leader's name on that report: the same five deck reads, then the week's
      work by the same four reads as the report (the roster read by that one name). Measured with
      a leader nobody has registered (the calls and replacement-number reads are then not made)
      and stated at the full shape. */
-  ['Rotation report: one leader', 'expdfLeader', { role: 'MANAGER', leader: 'MGR TEAM01' }, ADMIN, 11, 1500, 10, 1200],
+  ['Rotation report: one leader', 'expdfLeader', { role: 'MANAGER', leader: 'MGR TEAM01' }, ADMIN, 10, 1500, 9, 1200],
   ['Assignments',             'assignments',         {}, ADMIN,  8,  3000,  8, 3000],
   /* 5 -> 6 migrated, 5 -> 7 until then (2026-10-30): the all-time PAR's denominator -- every
      sale's total loan (P+I), per team -- is one grouped call (RUN-ME-047). Before that is
@@ -617,19 +623,16 @@ for (const B of BUDGETS) {
    weekday: ten deck reads, initial decks narrowed to two columns and current ones to fifteen,
    sequential. Portal only -- nothing on /api/upload or /api/call reads it. The month keeps its
    first-deck baseline: a month of decks is not a request's worth of reads. */
-test('speed: the Exp.Def week with all five days filed stays within 14 trips and 5,500 rows, and the next open in the minute is nearly free', async () => {
+test('speed: the Exp.Def week with all five days filed stays within 13 trips and 5,500 rows, and the next open in the minute is nearly free', async () => {
   const t = bigBook();
   const wd = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
   for (const r of t.defaulter_snapshots) { r.weekday = wd[new Date(r.snapshot_date + 'T12:00:00Z').getUTCDay()]; r.status = 'Defaulter'; r.days_elapsed = 3; r.disb_date = '2026-07-14'; }
   const c = counting(t, undefined);
   const d = await portalApi(c.db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
   assert.equal(d.days.filter(x => x.measured).length, 5, 'all five days were read');
-  const { trips, rows } = c.stat();            // measured 13 trips, 5,040 rows: ten deck reads of 500, the small tables, and
-    // one ghost-row lookup attempt on the live week's own TODAY iteration (expdfWeekCompute_,
-    // #697's own review fix) -- the same one round trip expdfCore's day/month views already
-    // pay, here on an unmigrated database where it fails fast and is remembered rather than
-    // asked again. Was 12 before that fix; still well inside the 14-trip budget.
-  assert.ok(trips <= 14, `the Exp.Def week took ${trips} round trips (budget 14).`);
+  const { trips, rows } = c.stat();            // measured 12 trips, 5,040 rows: ten deck reads of 500 and the small tables. It was 13
+    // from 13 to 23 Nov 2026, while the live week's own TODAY iteration asked the all-time lookup (Part 71); that is gone (Part 136).
+  assert.ok(trips <= 13, `the Exp.Def week took ${trips} round trips (budget 13).`);
   assert.ok(rows <= 5500, `the Exp.Def week read ${rows.toLocaleString()} rows (budget 5,500) in ${trips} trips.`);
   // The same week again inside the minute -- the card behind a leader's name, say -- reads no deck at all: the roster and the
   // week's calls and comments, the small ones.
@@ -747,7 +750,14 @@ const PHONE = [
      per-minute cache -- forty handsets on a scope ask once. Rule 1, counted and written down:
      it replaces the pairing arithmetic, and a missing function costs one round trip and
      falls back to that arithmetic with a note. */
-  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 32, 40000],
+  /* 32 -> 31 (2026-11-23, handbook Part 136): the strip's Exp.Def figure is the phone's own Exp.Def list, which no longer asks the
+     all-time lookup (db.rpc('defaulter_ghost_rows')): the one statement on this path that timed out, with up to 800 ms of budget. */
+  ['Calls: daily summary', 'api_callDailySummary', ['DEV1'], 31, 40000],
+  /* THE PHONE'S OWN EXP.DEF LIST, WHICH NEVER HAD A BUDGET (noted in #697, and left). Measured 11 trips and 107 rows on this book:
+     the device and its scope, the day's called numbers, then the list itself -- two one-row reads that say which files the day has,
+     the teams, the rotation's settings and the day's own two files (expdfCore). It was 12 with the all-time lookup. A ceiling. */
+  ['Calls: Exp.Def list', 'api_callList', ['DEV1', 'expdf'], 11, 200],
+  ['Calls: Exp.Def list (team)', 'api_callList', ['DEV1', 'expdf', 'team'], 11, 200],
   ['Calls: the bell',    'api_callNotifications', ['DEV1'], 6,    200],
   /* THE OFFICER'S POSITION (db/RUN-ME-2026-10-17-call-locations.sql): its OWN request, sent by the page
      at most every five minutes while the app is on screen -- never inside sync, boot or a list.
@@ -1647,8 +1657,8 @@ test('speed: a week uploaded twice is not read twice', async () => {
    card, the week and the Expected Defaulters tab as recovered, and on the phone's own list. The
    rule is arithmetic over the two decks every one of those screens already reads (the day's own
    initial rows, whole, and its current ones), so twenty-five more customers must not be one more
-   round trip on any of them. Measured with and without the twenty-five, in the migrated world
-   (the ghost function answers on both sides). The row budgets above are unchanged. */
+   round trip on any of them. Measured with and without the twenty-five, in the migrated world.
+   The row budgets above are unchanged. */
 test('speed: customers who left the day\'s current deck are not one more round trip on the Exp.Def screens', async () => {
   const book = withLeavers => {
     const t = bigBook();
@@ -1666,7 +1676,7 @@ test('speed: customers who left the day\'s current deck are not one more round t
       });
     return t;
   };
-  const world = { rpc: { ...SNAPSHOT_TOTALS_RPC, ...DEFAULTER_GHOST_ROWS_RPC } };
+  const world = { rpc: { ...SNAPSHOT_TOTALS_RPC } };
   const screens = [['the report, a day', 'expdfReport', {}], ['the report, a week', 'expdfReport', { period: 'week' }],
     ['the card behind a name, a day', 'expdfLeader', { role: 'BIKE', leader: 'BIKE 1' }],
     ['the card behind a name, a week', 'expdfLeader', { role: 'BIKE', leader: 'BIKE 1', period: 'week' }],
