@@ -1852,7 +1852,8 @@ test('the weekly Legal card carries week arrows: inline, bounded, in step with H
   assert.ok(/function lgWeekOpen_\(\)\{[\s\S]*?legalRecoveriesDrawer_\('week', card \? card\.getAttribute\('data-mon'\) \|\| '' : ''\);/.test(app), 'a tap on the card opens the list of the week the card is ON, not always this one');
   // The module resets what the arrows remember each time the tab reads the register afresh.
   const view = app.slice(app.indexOf('VIEWS.legal = function'), app.indexOf('VIEWS.legal = function') + 9000);
-  assert.ok(/if \(typeof LGW_ === 'object' && !\(S\.args && S\.args\.lgWeek\)\) \{ LGW_\.c = \{\}; LGW_\.want = '';/.test(view), 'a fresh open of the tab forgets the answers of the screen before; a quiet refresh (S.args.lgWeek kept) does not');
+  assert.ok(/lgWeekReset_\(\);/.test(view), 'a fresh open of the tab forgets the answers of the screen before; a quiet refresh (S.args.lgWeek kept) does not: one helper, in the core');
+  assert.ok(/function lgWeekReset_\(\)\{\n  if \(typeof LGW_ !== 'object' \|\| \(S\.args && S\.args\.lgWeek\)\) return;\n  LGW_\.c = \{\}; LGW_\.want = ''; LGW_\.wantMon = ''; LGW_\.busy = false; LGW_\.lastList = null;\n\}/.test(app), 'the helper keeps a chosen week and forgets everything else');
   assert.ok(/lgWeekCard_\(\(typeof lgWeekKept_ === 'function' && lgWeekKept_\(\)\) \|\| lg\)/.test(view), 'and the card is drawn on the week the reader chose when the refresh is quiet');
   assert.ok(/--lgw-->/.test(view) && !/lgwk/.test(view), 'the module only places the card; its behaviour lives in the core');
   assert.ok(/\.kpi\.lgwk\{position:relative\}/.test(app) && /\.lgwkNav\{position:absolute/.test(app) && /\.lgwkb:disabled\{opacity:\.35/.test(app), 'the arrows sit in the card\'s corner and show when they are off');
@@ -2153,12 +2154,16 @@ test('the Legal tab\'s Recovery card carries the Rec % in front of the arrears d
 test('the dashboard carries a legal recovery card on top and today/week boards by legal officer', () => {
   const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('DASH_LOAD_BOARDS_ = function'));
-  assert.ok(/kpi\('Legal recovery', money\(lg\.tRecovered \|\| 0\)/.test(view), 'the card, today\'s figure first');
-  // pct() rounds the figure as sent (36.2 -> "36%"); pct(lg.pct / 100) was printing "(0%)".
-  assert.ok(/pct\(lg\.pct\)/.test(view) && !/pct\(lg\.pct \/ 100\)/.test(view), 'the week\'s share is not divided by a hundred first');
-  assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by dashboardFull, not by the boards wave');
-  assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on the card');
-  assert.ok(view.indexOf("kpi('Abnormal payments'") < view.indexOf("kpi('Legal recovery'"), 'on the headline row, after the abnormal payments card');
+  assert.ok(/'<!--lgw-->' \+ lgWeekCard_\(\(typeof lgWeekKept_ === 'function' && lgWeekKept_\(\)\) \|\| d\.legal\) \+ '<!--\/lgw-->'/.test(view), 'the card is drawn by the Legal tab\'s own builder, inside the markers that keep HEAD in step (Part 134)');
+  assert.ok(/lgWeekReset_\(\);/.test(view), 'and the arrows start afresh with the screen');
+  assert.ok(!/kpi\('Legal recovery'/.test(view), 'the old one-figure card is gone');
+  // The card's words live in the one builder now (Part 134): pct() rounds the figure as sent (36.2 -> "36%"); pct(lg.pct / 100)
+  // was printing "(0%)"; a database without the ledger says so on the card; it is fed by dashboardFull, not by the boards wave.
+  const builder = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.ok(/pct\(lg\.pct\)/.test(builder) && !/pct\(lg\.pct \/ 100\)/.test(builder), 'the week\'s share is not divided by a hundred first');
+  assert.ok(/off \? esc\(lg\.note \|\| 'db\/RUN-ME-041 haijaendeshwa \/ not run yet'\)/.test(builder), 'a database without the ledger says so on the card');
+  assert.ok(/\|\| d\.legal\)/.test(view), 'fed by dashboardFull, not by the boards wave');
+  assert.ok(view.indexOf("kpi('Abnormal payments'") < view.indexOf("'<!--lgw-->'"), 'on the headline row, after the abnormal payments card');
   const boards = app.slice(app.indexOf('DASH_LOAD_BOARDS_ = function'), app.indexOf('creditRecoveryBoard(creditRec'));
   assert.ok(/board\('bLegalT','Legal recovery — today'/.test(boards) && /board\('bLegalW','Legal recovery — this week'/.test(boards), 'two boards, today and the week');
   assert.ok(boards.indexOf("board('bRecW'") < boards.indexOf("board('bLegalT'"), 'after the recovery boards');
@@ -3174,6 +3179,64 @@ test('the Iliyonasia form says that an entry against either expected book moves 
   const tiles = mod.match(/kpi\('Expected — (?:Initial|Current)'[^\n]*/g) || [];
   assert.equal(tiles.length, 2, 'the two expected tiles');
   for (const t of tiles) assert.match(t, /inahesabika kwenye vitabu vyote viwili \/ counts in both expected books/);
+});
+
+/* THE DASHBOARD'S LEGAL CARD OPENS AND STEPS LIKE THE LEGAL TAB'S (23 Nov 2026, handbook Part 134): "the legal recovery card at
+   dashboard should be able to openup too - with the backward and foward arrows as usual". One builder draws both cards; on the
+   dashboard it keeps the card's old name and, on this week, today's figure first; the week bar resets the card's own week. */
+test('the dashboard\'s Legal card is the Legal tab\'s card under its own name: today\'s figure first on this week, the week\'s on another, and the week bar resets it', () => {
+  const app = appSrc();
+  const src = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(src, /var dash = typeof S === 'object' && !!S && S\.view === 'dashboard';/, 'the flavour is the screen the card is on');
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const money = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+  const pct = v => v == null ? '' : Math.round(v) + '%';
+  const card = new Function('esc', 'money', 'pct', 'S', src + '\nreturn lgWeekCard_;');
+  const onDash = card(esc, money, pct, { view: 'dashboard' }), onLegal = card(esc, money, pct, { view: 'legal' });
+  const base = { on: true, customers: 3, owed: 800, recovered: 450, pct: 56.3, tRecovered: 50, today: '2026-07-24', thisWeek: '2026-07-20', since: '2026-06-29' };
+  const now = onDash({ ...base, mon: '2026-07-20', sun: '2026-07-26' });
+  assert.ok(/<div class="l">Legal recovery<\/div>/.test(now), 'its own name on the dashboard');
+  assert.ok(/id="lgRecW">50</.test(now), "this week: today's figure first, as the dashboard always read it");
+  assert.ok(/wiki \/ week TZS 450 \(56%\) · 3 wenye notisi \/ noticed · owed TZS 800 · bofya kuona orodha \/ tap for the list/.test(now), 'the week, the noticed customers and the owed beneath, and the tap');
+  assert.ok(/data-lgwk="-1"/.test(now) && /data-lgwk="1"[^>]*\sdisabled/.test(now) && /onclick="lgWeekOpen_\(\)"/.test(now), 'the arrows and the tap are the Legal tab\'s own');
+  const past = onDash({ ...base, mon: '2026-07-13', sun: '2026-07-19', recovered: 999, pct: 124.9 });
+  assert.ok(/Legal recovery — wiki iliyopita \/ past week/.test(past) && /id="lgRecW">125% · 999</.test(past), 'another week: the week\'s figure is the headline (today is no day of it)');
+  assert.ok(/2026-07-13 → 2026-07-19 · 3 wenye notisi \/ noticed · owed TZS 800/.test(past) && /Rudi wiki hii \/ Back to this week/.test(past), 'its range, the noticed customers, and a way home');
+  const legal = onLegal({ ...base, mon: '2026-07-20', sun: '2026-07-26' });
+  assert.ok(/Recovered this week/.test(legal) && /id="lgRecW">56% · 450</.test(legal) && !/wenye notisi/.test(legal), 'the Legal tab\'s card is as it was');
+  // The week bar moves the whole screen and resets the card's own week.
+  const bar = /function wireWeekBar\(\)\{[\s\S]*?data-week-set[\s\S]*?\n  \}\);/.exec(app)[0];
+  assert.equal((bar.match(/delete S\.args\.lgWeek;/g) || []).length, 3, 'the typed date, the two steps and the way home all reset the card');
+  // The dashboard view calls the one reset helper and draws the card on the kept week when the refresh is quiet.
+  const view = app.slice(app.indexOf('VIEWS.dashboard = function'), app.indexOf('VIEWS.dashboard = function') + 4000);
+  assert.ok(/lgWeekReset_\(\);/.test(view) && /lgWeekKept_\(\)\) \|\| d\.legal\)/.test(view));
+});
+
+/* THE REMEMBERED SCREEN LEARNS THE CARD'S WEEK (Part 134): the kept reading rides in S.args and the remembered snapshot is told at
+   once, so coming back to a tab inside the window finds the chosen week by design, not by the luck of a refresh in flight; and
+   the two screens' shared cache can start afresh without undoing each other's remembered week. */
+test('the Legal card\'s chosen week rides in the screen\'s own args and its remembered snapshot, not in the shared cache', () => {
+  const app = appSrc();
+  const kept = /function lgWeekKept_\(\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(kept, /var w = \(S\.args && S\.args\.lgWeek\) \|\| '', k = S\.args && S\.args\.lgLegal;/);
+  assert.match(kept, /return w && k && k\.mon === w && Date\.now\(\) - \(Number\(S\.args\.lgAt\) \|\| 0\) < 120000 \? k : null;/);
+  assert.ok(!/LGW_\.c/.test(kept), 'the kept week never reads the shared cache');
+  const paint = /function lgWeekPaint_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  assert.match(paint, /if \(S\.args\) \{ S\.args\.lgLegal = lg; S\.args\.lgAt = Date\.now\(\); \}/);
+  assert.match(paint, /var snap = \(typeof VC === 'object' && VC && VC\.store\) \? VC\.store\[VC\.key\] : null;\n  if \(snap\) \{ snap\.head = HEAD; snap\.args = JSON\.parse\(JSON\.stringify\(S\.args \|\| \{\}\)\); \}/);
+  // RUN: a paint tells the live args and the remembered snapshot; a kept week is served from the args alone.
+  const S = { args: { lgWeek: '2026-07-13' } }, VC = { key: 'dashboard|', store: { 'dashboard|': { head: 'old', args: {} } } };
+  const doc = { getElementById: () => null, activeElement: null, querySelector: () => null };
+  const run = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'LGW_', 'HEAD',
+    /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0] + kept + paint
+    + '\nlgWeekPaint_({ on: true, mon: "2026-07-13", sun: "2026-07-19", thisWeek: "2026-07-20", recovered: 7, owed: 10, pct: 70 });'
+    + '\nreturn { kept: lgWeekKept_(), snapHead: VC.store["dashboard|"].head, snapArgs: VC.store["dashboard|"].args };');
+  const out = run(S, VC, doc, s => String(s), n => String(n), v => v + '%', { c: {} }, '<!--lgw-->x<!--/lgw-->');
+  assert.equal(out.kept && out.kept.mon, '2026-07-13', 'the kept reading is the one just painted');
+  assert.equal(out.snapArgs.lgWeek, '2026-07-13'); assert.equal(out.snapArgs.lgLegal.recovered, 7, 'the snapshot carries the reading');
+  assert.ok(/data-mon="2026-07-13"/.test(out.snapHead), 'and the patched HEAD');
+  S.args.lgWeek = '2026-07-06';
+  assert.equal(run(S, VC, doc, s => String(s), n => String(n), v => v + '%', { c: {} }, 'x').kept, null, 'a reading of another week is not served as the kept one');
 });
 
 /* ===================================================================================================================

@@ -3696,6 +3696,14 @@ test('the Legal weekly card and the list behind it can be read for any week, bou
     const mine = (await ask(ADMIN, { period: 'week', weekOf })).legal;
     assert.deepEqual([dash.legal.customers, dash.legal.owed, dash.legal.recovered, dash.legal.pct],
       [mine.customers, mine.owed, mine.recovered, mine.pct], 'the dashboard and the Legal tab say one thing about the week of ' + weekOf);
+    /* AND THE DASHBOARD'S CARD CARRIES ITS WEEK BOUNDS (Part 133: "the legal recovery card at dashboard should be able to
+       openup too - with the backward and foward arrows as usual"): the same object the Legal tab's card is drawn from, so
+       the page draws both with one builder. The week, its Sunday, the ceiling (the REAL this week, whatever week the
+       dashboard's bar is on) and the floor are the list's own; `today` is the dashboard's clock (a finished week's Friday). */
+    assert.deepEqual([dash.legal.mon, dash.legal.sun, dash.legal.thisWeek, dash.legal.since, dash.legal.on],
+      [mine.mon, mine.sun, mine.thisWeek, mine.since, mine.on], 'the dashboard card knows its week and its bounds, as the list does, for ' + weekOf);
+    assert.equal(dash.legal.thisWeek, MON, 'the ceiling is the real this week even when the dashboard is slid back');
+    if (weekOf === MON) assert.equal(dash.legal.today, mine.today, 'this week: the same today');
   }
 
   // WITHOUT THE LEDGER (RUN-ME-041a) the list and the card say so, for any week, rather than show nothing as nought.

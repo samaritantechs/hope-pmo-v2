@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-f';
+var BUILD = '2026-11-23-g';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3627,11 +3627,13 @@ function weekBar(d, extra){
 /* Wired once, beside the other global handlers, so every screen that prints a week bar gets
    the same behaviour rather than three copies that drift apart. */
 function wireWeekBar(){
+  /* THE WEEK BAR MOVES THE WHOLE SCREEN, and with it the Legal card's own week (Part 134): a card stepped on its own
+     by its arrows follows the bar the moment the bar is moved, so the two never show different weeks for no reason. */
   Array.prototype.forEach.call(document.querySelectorAll('[data-week]'), function(el){
     el.onchange = function(){
       var m = mondayOf(el.value);
       if (m) el.value = m;                     // snap in front of them, before the redraw
-      S.args.weekOf = m;
+      S.args.weekOf = m; delete S.args.lgWeek;
       render();
     };
   });
@@ -3640,12 +3642,12 @@ function wireWeekBar(){
       var base = mondayOf(S.args.weekOf || '') || mondayOf(today());
       var d = new Date(base + 'T09:00:00Z');
       d.setUTCDate(d.getUTCDate() + 7 * Number(el.getAttribute('data-week-step')));
-      S.args.weekOf = d.toISOString().slice(0, 10);
+      S.args.weekOf = d.toISOString().slice(0, 10); delete S.args.lgWeek;
       render();
     };
   });
   Array.prototype.forEach.call(document.querySelectorAll('[data-week-set]'), function(el){
-    el.onclick = function(){ S.args.weekOf = el.getAttribute('data-week-set') || ''; render(); };
+    el.onclick = function(){ S.args.weekOf = el.getAttribute('data-week-set') || ''; delete S.args.lgWeek; render(); };
   });
   // The Abnormal Payments day strip: a day either side, a typed day, the latest day, or all.
   Array.prototype.forEach.call(document.querySelectorAll('[data-abn-step]'), function(el){
@@ -3796,6 +3798,7 @@ function teamPick_(d){
 VIEWS.dashboard = function(){
   return srv('dashboardFull', { weekOf: S.args.weekOf || '', teams: teamPickLoad_() }).then(function(d){
     var c = d.cards, rec = (d.totals && d.totals.recovery) || {};
+    lgWeekReset_();                                  // the Legal card's arrows start afresh with the screen (Part 134)
     /* The unlabeled dot beside the week bar opens the month report and CARRIES the chosen
        week -- and the team pick -- so a dashboard slid back to July opens July's report for
        the same teams. Deliberately nameless -- see the .syncdot note in the stylesheet. */
@@ -3819,14 +3822,12 @@ VIEWS.dashboard = function(){
          the week and the count of noticed customers under it, against what the letters
          demanded (Rec %). The payments recorded against notices by REF# or phone, once per
          customer -- the same reading as the legal slide and the boards below. */
-      + (function(){ var lg = d.legal || {};
-          return kpi('Legal recovery', money(lg.tRecovered || 0),
-            lg.on === false ? (lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
-              /* pct() takes the percentage as the server sends it (36.2 -> "36%"); dividing
-                 by a hundred first was showing "(0%)" beside every week's figure. */
-              : 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct) + ')' : '')
-                + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(lg.owed || 0),
-            lg.on === false ? '' : ((lg.tRecovered || 0) > 0 ? 'good' : '')); })()
+      /* DRAWN BY THE LEGAL TAB'S OWN CARD BUILDER since 23 Nov 2026 (Part 134): "the legal recovery card at
+         dashboard should be able to openup too - with the backward and foward arrows as usual". A tap opens
+         the list of the week the card is on; ◀ ▶ step the card by itself (the week bar still moves the whole
+         dashboard, and resets the card to its week); a quiet refresh keeps the week the reader chose
+         (lgWeekKept_, Part 131). The markers keep HEAD in step with every press (lgWeekPaint_). */
+      + '<!--lgw-->' + lgWeekCard_((typeof lgWeekKept_ === 'function' && lgWeekKept_()) || d.legal) + '<!--/lgw-->'
       + '</div>'
       /* THE PERFORMANCE STRIP -- "show average of sales%, col% and recovery% performance
          where in each one and the average have the rising constant or dropping arrow symbol
@@ -5907,9 +5908,18 @@ function lgWeekAsk_(weekOf){
    the arrows are on: it is snapshotted with the remembered screen and cleared by go() on a tab switch, so a quiet
    refresh keeps the week and a fresh open of the tab starts on this week. Found by the second reader of #775 (Part 131). */
 function lgWeekKept_(){
-  var w = (S.args && S.args.lgWeek) || '';
-  var hit = w ? LGW_.c[w] : null;
-  return hit && hit.d && hit.d.legal && Date.now() - hit.at < 120000 ? hit.d.legal : null;
+  /* The kept reading rides in S.args itself (lgWeekPaint_ puts it there, and the remembered screen's snapshot carries it),
+     not in the shared two-minute cache: the dashboard and the Legal tab share that cache and each starts afresh on a
+     fresh open (lgWeekReset_), which must not undo the other screen's remembered week (Part 134). */
+  var w = (S.args && S.args.lgWeek) || '', k = S.args && S.args.lgLegal;
+  return w && k && k.mon === w && Date.now() - (Number(S.args.lgAt) || 0) < 120000 ? k : null;
+}
+/* What the arrows remember (the answers per week, the press in flight, the last list) starts afresh each time a screen
+   that carries the card reads the register anew (the Legal tab, the dashboard), unless the screen is a remembered one
+   being refreshed quietly behind a chosen week (S.args.lgWeek, Part 131): then the choice stands. One helper for both. */
+function lgWeekReset_(){
+  if (typeof LGW_ !== 'object' || (S.args && S.args.lgWeek)) return;
+  LGW_.c = {}; LGW_.want = ''; LGW_.wantMon = ''; LGW_.busy = false; LGW_.lastList = null;
 }
 /* THE CARD, drawn from one reading (the server's `legal`: legalCard_). Used at first paint by the Legal tab
    and again, whole, by every arrow press, so the card on screen is always a function of ONE week's figures.
@@ -5922,12 +5932,28 @@ function lgWeekCard_(lg){
   lg = lg || {};
   var mon = lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek, off = lg.on === false;
   var canBack = !off && !!mon && (!lg.since || mon > lg.since), canFwd = !off && !cur;
+  /* THE DASHBOARD'S FLAVOUR (Part 134): the same card, the same arrows, the same list, under the name the dashboard
+     always gave it. On this week it reads as it always did there: today's figure first, the week and the noticed
+     customers beneath; on another week (its own arrows, or the dashboard's week bar) the week's figure is the headline,
+     since "today" is not a day of that week. The Legal tab's card is unchanged. */
+  var dash = typeof S === 'object' && !!S && S.view === 'dashboard';
+  /* A BUTTON, NOT A LINK: Enter or Space on it is a native click (so it goes home), its keydown never reaches the
+     card (which would open the list), and it takes its colour from the theme in both themes (a bare link was
+     1.67:1 on the lit card in the dark theme). Found by the second reader of #775, Part 131. */
+  var home = cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>';
+  var weekTxt = (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0);
   var sub = off ? esc(lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
-    : esc(mon) + ' → ' + esc(lg.sun || '') + ' · owed TZS ' + money(lg.owed || 0) + ' · bofya kuona orodha / tap for the list'
-      /* A BUTTON, NOT A LINK: Enter or Space on it is a native click (so it goes home), its keydown never reaches the
-         card (which would open the list), and it takes its colour from the theme in both themes (a bare link was
-         1.67:1 on the lit card in the dark theme). Found by the second reader of #775, Part 131. */
-      + (cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>');
+    : (dash && cur
+        /* pct() takes the percentage as the server sends it (36.2 -> "36%"); dividing by a hundred first was showing
+           "(0%)" beside every week's figure. */
+        ? 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct) + ')' : '')
+          + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(lg.owed || 0)
+        : esc(mon) + ' → ' + esc(lg.sun || '') + (dash ? ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed' : '') + ' · owed TZS ' + money(lg.owed || 0))
+      + ' · bofya kuona orodha / tap for the list' + home;
+  var title = dash ? (cur ? 'Legal recovery' : 'Legal recovery — wiki iliyopita / past week')
+    : (cur ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa wiki iliyopita / Recovered, past week');
+  var headline = dash && cur ? money(lg.tRecovered || 0) : weekTxt;
+  var good = dash && cur ? (lg.tRecovered || 0) > 0 : (lg.recovered || 0) > 0;
   var arrow = function(n, glyph, ok, tip){
     return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
       + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
@@ -5936,9 +5962,8 @@ function lgWeekCard_(lg){
     + ' data-this="' + esc(lg.thisWeek || mon) + '" data-since="' + esc(lg.since || '') + '"'
     + ' title="Bofya kuona orodha / Tap for the list" onclick="lgWeekOpen_()" onkeydown="lgWeekKey_(event)">'
     + '<span class="lgwkNav">' + arrow(-1, '◀', canBack, 'Wiki iliyopita / previous week') + arrow(1, '▶', canFwd, 'Wiki ijayo / next week') + '</span>'
-    + '<div class="l">' + (cur ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa wiki iliyopita / Recovered, past week') + '</div>'
-    + '<div class="v' + ((lg.recovered || 0) > 0 ? ' good' : '') + '" id="lgRecW">'
-    + (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0) + '</div>'
+    + '<div class="l">' + title + '</div>'
+    + '<div class="v' + (good ? ' good' : '') + '" id="lgRecW">' + headline + '</div>'
     + '<div class="s" id="lgRecWS">' + sub + '</div></div>';
 }
 /* Put a reading on the card: the card on screen AND the copy of it inside HEAD (between the markers
@@ -5947,6 +5972,13 @@ function lgWeekPaint_(lg){
   if (!lg || !lg.mon) return;
   var html = lgWeekCard_(lg), old = document.getElementById('lgWkCard');
   HEAD = String(HEAD || '').replace(/<!--lgw-->[\s\S]*?<!--\/lgw-->/, function(){ return '<!--lgw-->' + html + '<!--/lgw-->'; });
+  /* THE REMEMBERED SCREEN LEARNS THE WEEK TOO (Part 134). The reading rides in S.args (lgWeekKept_), and the snapshot a
+     return to this tab is drawn from takes the patched HEAD and these args now, not whenever a refresh next completes:
+     before this, coming back inside the window found the chosen week only if a quiet refresh had happened to land after
+     the press and re-snapshot the screen (the kept check showed it on the dashboard). */
+  if (S.args) { S.args.lgLegal = lg; S.args.lgAt = Date.now(); }
+  var snap = (typeof VC === 'object' && VC && VC.store) ? VC.store[VC.key] : null;
+  if (snap) { snap.head = HEAD; snap.args = JSON.parse(JSON.stringify(S.args || {})); }
   if (!old) return;
   var had = old.contains(document.activeElement) ? (document.activeElement.getAttribute('data-lgwk') || 'card') : '';
   old.outerHTML = html;

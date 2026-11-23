@@ -8,7 +8,7 @@ VIEWS.legal = function(){
   // A fresh open of the tab (go() cleared S.args): whatever the week arrows remembered belongs to the screen before
   // it, and the card below is drawn on this week. A QUIET REFRESH of a remembered screen keeps S.args.lgWeek, so it
   // keeps the answers and the card stays on the week the reader chose (lgWeekKept_; the second reader of #775).
-  if (typeof LGW_ === 'object' && !(S.args && S.args.lgWeek)) { LGW_.c = {}; LGW_.want = ''; LGW_.wantMon = ''; LGW_.busy = false; LGW_.lastList = null; }
+  lgWeekReset_();                                  // the arrows start afresh with the screen, unless a chosen week is being kept (Part 131, 133)
   return srv('demandNotices', { device: hcDevice_() }).then(function(d){
     var br = d.brand || {};
     var tick = function(ok){ return ok ? '✓' : '✗'; };
