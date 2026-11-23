@@ -55,7 +55,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport, expdfLeader, expdfPeriod, ghostRowsFor_, ghostReportBudgetMs_ } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
@@ -1010,34 +1010,41 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     defaulterBook(db, user, { type: 'initial', notAfter: todayKey(nowMs),
       columns: 'ref, team, arrears, disb_date, full_name, contact, status, days_elapsed, chronic_date, expire_date, ds, dc, balance' }),
   ]);
-  const baseBy = baselineByRef(iniSnap.rows);
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
-  /* "same for the rest defaulters lists if possible" -- the owner, 13 Nov 2026, extending the
-     Exp.Def Report's own fix (expdf.js, buildRows_) to this tab too: a customer still on
-     TODAY'S OWN INITIAL deck is kept even once their current status leaves
-     Chronic/Expired/Defaulter, status CLEARED, rather than silently dropped. "should reflect
-     to alltime data past present and future" extends it further still: a customer gone from
-     TODAY'S deck entirely (ref 4231948032's own case, handbook Part 71) is found through
-     ghostRowsFor_ -- the identical helper expdfCore uses. An unrestricted admin (user.teams
-     null) gets every team already fetched above, not nothing -- the owner's own sign-in is the
-     likeliest admin case here. Deduplicated: found on review, access_codes.teams is a
-     hand-typed array with no uniqueness constraint, and a repeated team name made the RPC
-     return that team's ghosts twice, double-counting this screen's own totals.
+  /* WHICH FILES THE DAY HAS, AND WHAT THE LIST IS BUILT FROM (handbook Part 136) -- "How comes staff are
+     seeing expected defaultes with cleared like 62561111341 who are not even in the initial file of
+     today" ... "not just dropping but analyzing how that robust problem happens", the owner, 23 Nov 2026.
 
-     GHOST_REPORT_BUDGET_MS, not 0 -- 14 Nov 2026, "Imeshindikana / Could not load, Seva
-     haijibu ndani ya sekunde 45." This screen used to pass 0 (no limit at all) on the theory
-     that "this is not the sacred call path, it can wait out the rare slow read." It had never
-     actually been asked to: db/RUN-ME-055 had sat unrun since #697, so every call here hit the
-     fast, documented "function does not exist" error, not a real query. The owner ran it today;
-     the first real `defaulter_ghost_rows()` call against the live book -- not the 2.27-million-
-     row test fixture it was measured against -- ran past the client's own 45-second fetch
-     timeout, and the whole screen failed to load. "Can wait longer than the phone" was always
-     the intent; "can wait forever" never was. */
-  const ghostTeams = [...new Set(user.teams || teamRows.map(t => t.team))];
-  const ghosts = await ghostRowsFor_(db, ghostTeams, def.rows.map(r => r.ref), ghostReportBudgetMs_());
-  /* ONE SHAPE FOR EVERY ROW OF THIS LIST: a row of the current deck, a ghost, and (below) a
-     customer who is only on today's initial deck. Whatever file the row came off, its two
+     This list was the latest CURRENT file's defaulters, plus two kinds of CLEARED row: every customer
+     a team had ever had on a file whom that file did not name (the all-time ghost, Part 71: for ever,
+     with the last arrears anybody knew still shown as owed), and every customer on the latest INITIAL
+     file who was on no current row -- whichever dates the two files carried. So, replayed on the
+     owner's sample: a customer who cleared on 19 Nov was on this list every day after it; and in the
+     hours between a day's morning file and its later one, a customer who was NEW on that morning's
+     file read CLEARED with the whole amount recovered, because the newest current file was the day
+     before's and had never named them.
+
+     Now the day is read off its own two files, by date, as expdfCore reads it for the phone and the
+     report (one rule):
+       both of today's files in   the book is the later file; a customer on the morning file whom it
+                                  does not name has CLEARED, the morning's arrears recovered.
+       the morning file only      the book is the morning file itself: each customer owes the
+                                  morning's arrears and nothing is recovered yet -- nothing has been
+                                  compared, so nobody is marked paid.
+       no morning file today      the book is the latest later file, nothing recovered, nobody CLEARED.
+     Recovery and CLEARED are TODAY'S facts, read only off today's own files; a customer who left the
+     files on an earlier day is on that day's list in the Exp.Def Report, not on today's. The all-time
+     lookup (db.rpc('defaulter_ghost_rows')) is no longer asked: one round trip fewer. */
+  const today = todayKey(nowMs);
+  const iniToday = iniSnap.rows.length > 0 && iniSnap.date === today;
+  const curToday = def.rows.length > 0 && def.date === today;
+  const paired = iniToday && curToday;
+  const morningOnly = iniToday && !curToday;
+  const baseBy = iniToday ? baselineByRef(iniSnap.rows) : {};
+  const book = morningOnly ? iniSnap.rows : def.rows;
+  /* ONE SHAPE FOR EVERY ROW OF THIS LIST: a row of the book and (below) a customer who is only on
+     today's initial deck. Whatever file the row came off, its two
      days are read off its disbursement date and its OWNER ROLE, RECYCLING LEADER and CYCLE off
      the rotation (assignFor) -- the one rule, read off the row's own fields, never a second
      way of placing somebody. `over` is what a caller knows better than the row does. */
@@ -1055,43 +1062,30 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     // overpaid). The same gate buildRows_ uses, read once, not two rules that could drift.
     return { ref: d.ref, full_name: d.full_name, contact: d.contact, team: d.team,
       arrears, initial, recovered, balance: num(d.balance), ds: d.ds, dc: d.dc,
-      // A ghost row (absent from today's deck entirely) is CLEARED unconditionally -- the
-      // same rule buildRows_ follows for the identical reason.
-      status: d._ghost ? 'CLEARED' : (s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
-        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER'))))),
+      status: s.includes('CHRON') ? 'CHRONIC' : (s.includes('EXPIR') ? 'EXPIRED' : (s.includes('DEFAULT') ? 'DEFAULTER'
+        : (isSettled(arrears) ? 'CLEARED' : (d.status || 'DEFAULTER')))),
       disb_date: d.disb_date,
       primary, secondary,
       primaryName: DAY_NAMES[primary] || '—', secondaryName: DAY_NAMES[secondary] || '—',
       phase: a.phase, role: a.role, cycle: a.label,
       leader: nameOrNull(team[ROLE_COLS[a.role]]) || '(unassigned)', ...(over || {}) };
   };
-  /* A GHOST FOR A CUSTOMER WHO IS ON TODAY'S INITIAL DECK IS THAT DECK'S OWN ROW, NOT THE GHOST --
-     "how comes tou said 'should disappear.' yet we are fighting allover to say cleared people
-     shouldnt dissapear for verifications", the owner, 16 Nov 2026 (handbook Part 87). A ghost is
-     the customer's LAST-KNOWN row from some earlier day (its own older arrears, recovered 0);
-     when the day's initial deck names them and the day's current deck does not, the day's own
-     two files say what happened on THIS day -- nothing owed, the morning's arrears recovered --
-     which is what the loop below reads for a customer with no current row at all, and what the
-     Exp.Def Report and the phone now read (buildRows_, expdf.js: the same rule, one definition).
-     Only when the two decks are a whole pair, the same date: a current deck of an earlier date
-     has not been compared with this morning yet, and the ghost stands as it did. */
-  const paired = def.rows.length > 0 && iniSnap.rows.length > 0 && !!def.date && def.date === iniSnap.date;
-  const onMorning = paired ? new Set(iniSnap.rows.map(r => K(r.ref))) : null;
-  const rows = scoped(user, ghosts.length ? def.rows.concat(ghosts) : def.rows)
-    .filter(d => { const s = K(d.status); return d._ghost || s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
+  /* THE BOOK'S OWN ROWS: every customer in default on it, and (with today's morning file in) every
+     customer of that morning file whatever their status reads now -- "same for the rest defaulters
+     lists if possible", the owner, 13 Nov 2026: one who has settled stays, CLEARED. */
+  const rows = scoped(user, book)
+    .filter(d => { const s = K(d.status); return s.includes('CHRON') || s.includes('EXPIR') || s.includes('DEFAULT')
       || Object.prototype.hasOwnProperty.call(baseBy, K(d.ref)); })
-    .filter(d => !(d._ghost && onMorning && onMorning.has(K(d.ref))))
     .map(d => rowOf(d));
   /* "a customer who drops off the current deck entirely shouldnt be invisible anywhere" --
      the owner, 14 Nov 2026 -- the same order buildRows_ (expdf.js) answers, read here too so
      the two stay the one rule they already are (#696's own note on this pair: "one rule, read
      twice", not a guarantee the two can never disagree, since this screen and the Exp.Def
-     Report already resolve "today" by two separate, pre-existing rules). ghostRowsFor_ above
-     rescues a ref missing from TODAY's current deck that has SOME current-type row anywhere in
-     this team's history; a ref whose very first appearance is today's own initial deck -- never
-     once on a current-type row, ever -- is the one case even that cannot reach, and it was
-     simply absent from `def.rows`+`ghosts` to begin with. Added additively, never replacing a
-     row the filter above already built.
+     Report used to resolve "today" by two separate rules; since Part 136 it is one: the day's own
+     files, by date). A customer on TODAY'S morning file whom TODAY'S later file does not name is
+     added here -- ONLY WHEN BOTH OF TODAY'S FILES ARE IN (`paired`): with the morning file alone the
+     book above IS the morning file and nothing has been compared, and with no morning file today
+     there is nobody to add. Added additively, never replacing a row the filter above already built.
 
      THE THREE COLUMNS ARE FILLED -- "Don't clean owner role, recycling leader & cycle for
      'cleared' customers at expected defaulters because the disb date still gives us where to
@@ -1121,7 +1115,7 @@ async function expectedDefaulters(db, user, _args, nowMs) {
      whose own initial row somehow carries no disb_date either (rare, but not impossible) still
      falls back to day 0 honestly, the same as an unreadable date already does everywhere else. */
   const seenRefs = new Set(rows.map(r => K(r.ref)));
-  for (const r of scoped(user, iniSnap.rows)) {
+  for (const r of (paired ? scoped(user, iniSnap.rows) : [])) {
     const ref = K(r.ref);
     if (seenRefs.has(ref)) continue;
     seenRefs.add(ref);

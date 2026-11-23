@@ -107,8 +107,7 @@ export function isBusyFailure(err) {
    wrong, only older; so for up to this long it stands in, and the heavy read is made only when
    there is no good answer at all, when the failure is not of that kind (a function that is not
    installed, one that is refused, one that answers a shape it does not make: those are faults, and
-   are answered by the old read as they always were), or when the failure has lasted this long.
-   expdf.js's ghost lookup has done the same since #755, with no time limit. */
+   are answered by the old read as they always were), or when the failure has lasted this long. */
 export const STALE_OK_MS = 10 * 60 * 1000;
 
 /** A failure's own words for a log line: its code and its message on one line, cut at 160 characters. A fall-back that swallows

@@ -19,7 +19,6 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const { portalApi, PORTAL_FUNCTIONS, assignFor } = await import('../api/_lib/portal-core.js');
 const { adjReceived_ } = await import('../api/_lib/adjustments.js');
-const { ghostRowsFor_, GHOST_BUDGET_MS, GHOST_REPORT_BUDGET_MS } = await import('../api/_lib/expdf.js');
 const { sameName } = await import('../api/_lib/expdf.js');
 // The announcement is READ without an access code -- it has to reach the sign-in screen -- so
 // it lives on the calls door beside the brand. Both sides are checked here, together, because
@@ -263,60 +262,36 @@ test('expected defaulters: a blank status is not evidence of payment -- only isS
   assert.equal(row.arrears, 700, 'the real arrears, not a figure invented by the mislabel');
 });
 
-/* THE ALL-TIME GHOST -- ref 4231948032's own real case. "Checked loan system -- customer not
-   there on thurrsday deck 12th nov 2026" ... "should reflect to alltime data past present and
-   future" ... "so status column of such customers automatic becomes cleared if no longer in
-   default list" -- the owner, 13 Nov 2026. 222 has no row at all for TODAY -- neither initial
-   nor current -- so the baseBy-presence check alone cannot reach them; only
-   db/RUN-ME-055's own all-time lookup (ghostRowsFor_, api/_lib/expdf.js) finds them, via their
-   real last-known row from ten days earlier. */
-test('expected defaulters: a customer missing from today\'s deck entirely still shows, status CLEARED, from their last known row', async () => {
+/* A CUSTOMER WHO LEFT THE FILES ON AN EARLIER DAY IS NOT ON TODAY'S LISTS -- "How comes staff are seeing expected
+   defaultes with cleared like 62561111341 who are not even in the initial file of today" ... "not just dropping but
+   analyzing how that robust problem happens", the owner, 23 Nov 2026 (handbook Part 136). From 13 to 23 Nov an
+   "all-time ghost" (Part 71) put every customer a team had ever had on a file, whom the latest file did not name, on
+   every list: CLEARED, the last arrears anybody knew still shown as owed, nothing recovered. 222 below is that
+   customer (its last row ten days old, on no file of today). It is on no list now, with or without the database
+   function the ghost used to ask (db/RUN-ME-055), and nothing asks that function any more. */
+const neverAsked_ = t => { const asked = []; return { asked, db: fakeDb(t, { rpc: { defaulter_ghost_rows: (store, a) => { asked.push(a); return DEFAULTER_GHOST_ROWS_RPC.defaulter_ghost_rows(store, a); } } }) }; };
+test('expected defaulters: a customer who left the files on an earlier day is not on the tab -- nobody from outside today\'s own files is listed, and the all-time lookup is not asked', async () => {
   const t = tables();
-  // ASSIGN_CHRONIC's first bucket (GMO) deliberately differs from ASSIGN_ACTIVE's default
-  // first (BIKE) -- found on review: both default to BIKE first, so this test could not have
-  // told "assignFor read 222's real status (Chronic)" apart from "assignFor was fed the
-  // CLEARED display override instead" -- expectedDefaulters keeps its own, separately-written
-  // copy of this same assignFor-then-override logic, so it needs the same guard call.test.mjs's
-  // parallel GHOST1 test does.
   t.settings.push({ key: 'ASSIGN_CHRONIC', value: 'GMO,MANAGER,BIKE' });
-  // 222's last real sighting: ten days before TODAY, Chronic, 15,500 still owed -- nothing
-  // since, of either type.
+  // 222's last real sighting: ten days before TODAY, Chronic, 15,500 still owed -- nothing since, of either type.
   t.defaulter_snapshots.push({ ...D('222', 'KONGOWE', 15500, 'current', 1, '2026-07-14', 'TUE'), status: 'Chronic' });
-
-  const before = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
-  assert.ok(!before.rows.some(r => r.ref === '222'), 'no migration: 222 is simply not found, same as before this feature existed');
-
-  const d = await portalApi(fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expectedDefaulters', {}, NOW);
-  const row = d.rows.find(r => r.ref === '222');
-  assert.ok(row, 'found through the all-time lookup, not silently absent');
-  assert.equal(row.status, 'CLEARED');
-  assert.equal(row.arrears, 15500, 'their real last-known arrears, not a fabricated zero');
-  assert.equal(row.initial, 15500, 'no baseline of its own today, so initial is the same last-known figure');
-  assert.equal(row.recovered, 0, 'nothing happened today to recover -- a ghost is not credited with a guess');
-  // Found on review, before this shipped: defaulter_ghost_rows' own RETURNS TABLE first left
-  // balance out entirely, so this read a fabricated 0 for every ghost row in production,
-  // silently, while the test's own looser RPC mock spread the whole fixture row and never
-  // caught it. Both are fixed; this is the regression test for the real RPC's column list.
-  assert.equal(row.balance, 500000, 'their real last-known balance, not a fabricated zero');
-  assert.equal(row.cycle, 'C-W1', 'assignFor read the real status (Chronic), not the CLEARED display override');
+  const plain = await portalApi(fakeDb(t), ADMIN, 'expectedDefaulters', {}, NOW);
+  const { db, asked } = neverAsked_(t);
+  const d = await portalApi(db, ADMIN, 'expectedDefaulters', {}, NOW);
+  for (const [name, x] of [['without the function', plain], ['with it', d]]) {
+    assert.ok(!x.rows.some(r => r.ref === '222'), name + ': 222 is not on today\'s files, so not on today\'s list');
+    assert.ok(x.rows.length > 0 && !x.rows.some(r => r.status === 'CLEARED' && r.arrears > 0), name + ': and nobody reads CLEARED while still shown as owing');
+  }
+  assert.deepEqual(d.rows.map(r => r.ref).sort(), plain.rows.map(r => r.ref).sort(), 'the same list either way');
+  assert.equal(asked.length, 0, 'the all-time lookup is not asked');
 });
 
-/* THE WEEK, NOT JUST THE DAY -- found on review, before this shipped: expdfWeekCompute_'s own
-   per-day loop never called ghostRowsFor_ at all, so a ghost (above) was visible on the Exp.Def
-   Report's day and month views but silently absent switching to week, with no note. A ghost is
-   a fact about TODAY only -- db/RUN-ME-055's own function answers "missing from the team's
-   latest data right now", nothing about a past day -- so it now reaches the week only through
-   the week's own TODAY iteration, and only when the week being asked about is the live one. A
-   closed week that has already ended never asks for it: today's gap is not a fact about a week
-   that ended before today existed. */
-test('the Exp.Def week carries the all-time ghost too, but only for the live week, never a closed one', async () => {
+test('the Exp.Def week carries nobody who left the files before a day began: not the live week, not a closed one', async () => {
   const t = tables();
   t.teams[0] = { ...t.teams[0], bike: 'BIKE BEE' };
   t.settings.push({ key: 'ASSIGN_ACTIVE', value: 'BIKE,MANAGER,GMO' }, { key: 'ASSIGN_BUCKET_DAYS', value: '2' });
-  // A1: a real, measured defaulter every day Mon-Fri (disb_date = that day's own date, so its
-  // cycle lands on every day of this five-day fixture -- the point is a measured week with a
-  // real customer in it, not A1's own cycle math) so each day has a genuine deck to compare
-  // the ghost against, not an empty week that would prove nothing either way.
+  // A1: a real, measured defaulter every day Mon-Fri (disb_date = that day's own date, so its cycle lands on every day of this
+  // five-day fixture), so each day has a genuine pair of files.
   const WK = [['MON', '2026-07-20'], ['TUE', '2026-07-21'], ['WED', '2026-07-22'], ['THU', '2026-07-23'], ['FRI', '2026-07-24']];
   t.defaulter_snapshots = WK.flatMap(([wd, date]) => [
     { ref: 'A1', full_name: 'C A1', team: 'KONGOWE', arrears: 1000, status: 'Defaulter', days_elapsed: 1, disb_date: date,
@@ -324,28 +299,21 @@ test('the Exp.Def week carries the all-time ghost too, but only for the live wee
     { ref: 'A1', full_name: 'C A1', team: 'KONGOWE', arrears: 1000, status: 'Defaulter', days_elapsed: 1, disb_date: date,
       snapshot_type: 'current', weekday: wd, snapshot_date: date, upload_batch: 'bc' + date, created_at: date + 'T18:00:00Z' },
   ]);
-  // GHOST1's last real sighting: ten days before TODAY (2026-07-24), nothing since.
-  t.defaulter_snapshots.push({ ref: 'GHOST1', full_name: 'C GHOST1', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
+  // GONE-BEFORE's last real sighting: ten days before TODAY (2026-07-24), nothing since.
+  t.defaulter_snapshots.push({ ref: 'GONE-BEFORE', full_name: 'C GONE', team: 'KONGOWE', arrears: 15500, status: 'Chronic',
     days_elapsed: 1, disb_date: '2026-07-14', snapshot_type: 'current', weekday: 'TUE', snapshot_date: '2026-07-14',
     upload_batch: 'bold', created_at: '2026-07-14T08:00:00Z' });
-  const db = fakeDb(t, { rpc: DEFAULTER_GHOST_ROWS_RPC });
-
-  // THE LIVE WEEK (the one containing NOW, 2026-07-24): the ghost reaches it through today.
+  const { db, asked } = neverAsked_(t);
   const live = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week' }, NOW);
-  const ghostLive = live.rows.find(r => r.ref === 'GHOST1');
-  assert.ok(ghostLive, 'the live week carries the ghost -- it has not silently vanished switching from day to week');
-  assert.equal(ghostLive.status, 'CLEARED');
-  assert.equal(ghostLive.arrears, 15500, 'their real last-known arrears, not a fabricated zero');
-  assert.equal(ghostLive.recovered, 0, 'nothing happened today to recover');
+  assert.ok(!live.rows.some(r => r.ref === 'GONE-BEFORE'), 'the live week lists the customers of its days\' own files, and nobody else');
+  assert.ok(live.rows.some(r => r.ref === 'A1'));
   const liveReport = await portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW);
-  assert.equal(liveReport.totals.customers, 2, 'A1 and the ghost, both counted in the week grand total');
-
-  // A CLOSED WEEK -- the very same week, asked about from a week later: today's gap is not a
-  // fact about a week that has already ended, so the ghost does not reach it.
+  assert.equal(liveReport.totals.customers, 1, 'A1 alone in the week\'s grand total');
+  assert.equal(liveReport.totals.initial, 5000, 'five days of A1\'s 1,000: nothing owed by somebody who is on no file of the week');
   const LATER = Date.parse('2026-07-31T09:00:00Z');
   const past = await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period: 'week', weekOf: '2026-07-20' }, LATER);
-  assert.ok(!past.rows.some(r => r.ref === 'GHOST1'), 'a closed week never asks for today\'s ghost state');
-  assert.ok(past.rows.some(r => r.ref === 'A1'), 'the real customer is still there -- only the ghost lookup is skipped, nothing else about the closed week');
+  assert.deepEqual(past.rows.map(r => r.ref), ['A1'], 'and the same week read a week later is the same week');
+  assert.equal(asked.length, 0, 'the all-time lookup is not asked');
 });
 
 /* A DAY-GHOST, THE WEEK'S OWN -- "i expect that customer in initial never to get lost even if
@@ -481,63 +449,112 @@ test('a customer the day\'s current deck no longer names stays on every list of 
   assert.deepEqual(s.mineBike.diag.enteredAfter, { customers: 1, arrears: 7000 });
   assert.deepEqual([tab.NEW1.status, tab.NEW1.arrears, tab.NEW1.initial, tab.NEW1.recovered], ['CHRONIC', 7000, 7000, 0],
     'the Expected Defaulters tab is the weekly-cycle book of every defaulter, not a day\'s list: they are on it, owing, as a defaulter is');
-  // The controls: paid-and-on-the-file is as it was; a customer who is NOT on the day's initial deck is the all-time ghost of Part 71, untouched.
+  // The controls: paid-and-on-the-file is as it was; a customer who is NOT on the day's initial deck (OLD1: on no file for ten days) is on no list of the day (Part 136).
   assert.deepEqual([bike.PAID1.status, bike.PAID1.initial, bike.PAID1.recovered], ['CLEARED', 800, 800]);
   assert.deepEqual([bike.OWE1.status, bike.OWE1.arrears, bike.OWE1.recovered], ['DEFAULTER', 600, 400]);
-  assert.deepEqual([mgr.OLD1.status, mgr.OLD1.arrears, mgr.OLD1.initial, mgr.OLD1.recovered, mgr.OLD1.cycle], ['CLEARED', 15500, 15500, 0, 'C-W8'],
-    'a ghost for a customer NOT on today\'s initial deck stays exactly what Part 71 made it: its last-known arrears, recovered 0');
+  assert.ok(!bike.OLD1 && !mgr.OLD1 && !gmo.OLD1 && !tab.OLD1 && !s.mineBoss.rows.some(r => r.ref === 'OLD1'),
+    'a customer who left the files ten days ago is not on today\'s initial file, so not on today\'s lists: "who are not even in the initial file of today"');
   assert.ok(!bike.OFFCYC1 && !mgr.OFFCYC1, 'a Wednesday customer is not on Friday\'s list: the whole initial deck is not dumped on the day');
 
   // THE REPORT: the leaders' books above, added.
   const sec = r => s.report.sections.find(x => x.role === r).totals;
   assert.deepEqual([sec('BIKE').customers, sec('BIKE').initial, sec('BIKE').recovered, sec('BIKE').arrears], [3, 4300, 3700, 600]);
-  assert.deepEqual([sec('MANAGER').customers, sec('MANAGER').initial, sec('MANAGER').recovered, sec('MANAGER').arrears], [2, 19500, 4000, 15500]);
+  assert.deepEqual([sec('MANAGER').customers, sec('MANAGER').initial, sec('MANAGER').recovered, sec('MANAGER').arrears], [1, 4000, 4000, 0],
+    'BOSS\'s book is the one customer of the morning file: no 15,500 "owed" by somebody who left ten days ago, so 100% and not 20.5%');
   assert.deepEqual([sec('GMO').customers, sec('GMO').initial, sec('GMO').recovered, sec('GMO').arrears], [1, 6000, 6000, 0]);
-  assert.deepEqual([s.report.totals.customers, s.report.totals.initial, s.report.totals.recovered], [6, 29800, 13700]);
+  assert.deepEqual([s.report.totals.customers, s.report.totals.initial, s.report.totals.recovered], [5, 14300, 13700]);
   assert.equal(s.report.unassignedCleared, null);
 
   // THE WORKLIST (the phone's own list and "my list"): the customer still owing first, the cleared sunk below, nobody missing.
   assert.deepEqual(s.mineBike.rows.map(r => r.ref), ['OWE1', 'PAID1', 'GONE1']);
   assert.equal(s.mineBike.totals.recovered, 3700); assert.equal(s.mineBike.totals.initial, 4300);
-  assert.deepEqual(s.mineBoss.rows.map(r => r.ref), ['OLD1', 'NOCUR1'], 'both cleared: the one last seen owing 15,500 sorts above the one recovered in full today, as the list always sorted a cleared row');
+  assert.deepEqual(s.mineBoss.rows.map(r => r.ref), ['NOCUR1'], 'the one customer of the morning file, recovered in full today');
   assert.equal(s.mineBoss.totals.recovered, 4000);
 
   // THE TAB reads the same customer the same way: status, figures, owner role, cycle and leader.
   for (const [ref, role, leader, from] of [['OWE1', 'BIKE', 'BIKE BEE', bike], ['PAID1', 'BIKE', 'BIKE BEE', bike], ['GONE1', 'BIKE', 'BIKE BEE', bike],
-    ['NOCUR1', 'MANAGER', 'BOSS', mgr], ['OLD1', 'MANAGER', 'BOSS', mgr], ['CHR1', 'GMO', 'GMO GEE', gmo]]) {
+    ['NOCUR1', 'MANAGER', 'BOSS', mgr], ['CHR1', 'GMO', 'GMO GEE', gmo]]) {
     const a = from[ref], b = tab[ref];
     assert.ok(b, ref + ' is on the tab');
     assert.deepEqual([b.status, b.arrears, b.initial, b.recovered, b.cycle, b.role, b.leader], [a.status, a.arrears, a.initial, a.recovered, a.cycle, role, leader],
       ref + ': the tab and the leader\'s card are one reading');
   }
   assert.equal(tab.OFFCYC1.status, 'CLEARED', 'the tab lists everybody on the morning deck, whatever their day');
-  assert.equal(s.tab.length, Object.keys(tab).length, 'one row each: nobody is listed twice (a ghost and its morning row)');
+  assert.equal(s.tab.length, Object.keys(tab).length, 'one row each: nobody is listed twice');
 
   // THE WEEK carries the same day: this week has the one filed day, today.
   const wk = await portalApi(fakeDb(clearedStayTables_(), { rpc: DEFAULTER_GHOST_ROWS_RPC }), ADMIN, 'expdfReport', { period: 'week' }, NOW);
-  assert.deepEqual([wk.totals.customers, wk.totals.initial, wk.totals.recovered], [6, 29800, 13700], 'the week is the days added: here the one filed day, read as the day reads it');
+  assert.deepEqual([wk.totals.customers, wk.totals.initial, wk.totals.recovered], [5, 14300, 13700], 'the week is the days added: here the one filed day, read as the day reads it');
   assert.deepEqual(wk.totals.byDay, { [TODAY]: 13700 });
   assert.equal(wk.unassignedCleared, null);
 });
 
-/* NOBODY IS MARKED PAID ON A COMPARISON THAT WAS NEVER MADE. A day reading compares the day's
-   initial deck with the day's current one. This weekday's latest current deck can be LAST
-   WEEK'S (on a morning before today's has been uploaded), and a customer missing from it has not
-   cleared -- they have not been compared yet. So the rule applies only when both decks are the
-   same date, on every screen; otherwise each reads exactly as it did before. */
-test('a customer is not marked cleared on a current deck of another date: nobody is told they paid on a comparison that was never made', async () => {
-  const s = await screens_(fakeDb(clearedStayTables_('2026-07-17'), { rpc: DEFAULTER_GHOST_ROWS_RPC }));
-  const mgr = Object.fromEntries(s.mgr.map(r => [r.ref, r])), tab = Object.fromEntries(s.tab.map(r => [r.ref, r]));
-  assert.equal(s.report.paired, false, 'and the answers say so: the day\'s current deck is another date\'s');
+/* BEFORE THE DAY'S LATER FILE IS IN, THE LIST IS THIS MORNING'S FILE -- AND NOBODY IS MARKED PAID ON A COMPARISON THAT WAS
+   NEVER MADE (handbook Part 136). The day's list used to be found by WEEKDAY: with this morning's initial file in and the
+   day's current file not yet, it was built from LAST WEEK'S current file of the same weekday -- last week's debts, last
+   week's people, and through the all-time ghost a real defaulter of this morning read CLEARED. Now the morning file itself
+   is the list: each of its customers owes the morning's arrears, nothing is recovered yet, nobody is CLEARED, and a
+   customer who is only on last week's file is not on it. The fixture: this Friday's initial file with a current file dated
+   LAST Friday. */
+test('before the day\'s later file is in, every list is this morning\'s file: its customers, owing the morning\'s arrears, nobody CLEARED and nobody from last week\'s file', async () => {
+  const { db, asked } = neverAsked_(clearedStayTables_('2026-07-17'));
+  const s = await screens_(db);
+  const by = rows => Object.fromEntries(rows.map(r => [r.ref, r]));
+  const bike = by(s.bike), mgr = by(s.mgr), gmo = by(s.gmo), tab = by(s.tab);
+  assert.equal(s.report.paired, false, 'the answers say the day has no pair yet');
   assert.equal(s.mineBike.diag.paired, false);
   assert.equal(s.report.enteredAfter, null, 'nobody is left out on a comparison that was never made');
-  assert.ok(s.gmo.some(r => r.ref === 'NEW1'), 'a defaulter of the older current deck stays on the list, as it always did (the chronic rotation: the GMO)');
-  assert.ok(!s.mineBoss.rows.some(r => r.ref === 'NOCUR1') && !mgr.NOCUR1, 'a customer on no current deck is not invented as recovered on a deck of last week');
-  assert.ok(!s.bike.some(r => r.ref === 'GONE1'), 'not credited to the morning row\'s leader either');
-  // GONE1 stays what the all-time ghost made it (Part 71): its last-known row, chronic, MANAGER, last-known arrears, nothing recovered.
-  assert.deepEqual([mgr.GONE1.status, mgr.GONE1.arrears, mgr.GONE1.recovered, mgr.GONE1.cycle], ['CLEARED', 2600, 0, 'C-W8']);
-  assert.deepEqual([tab.GONE1.status, tab.GONE1.arrears, tab.GONE1.recovered, tab.GONE1.leader], ['CLEARED', 2600, 0, 'BOSS'], 'and the tab reads it the same way');
+  assert.equal(s.report.date, TODAY, 'and the list is dated today: it is this morning\'s file, not last week\'s');
+  // This morning's customers, by their MORNING rows.
+  assert.deepEqual(s.mineBike.rows.map(r => [r.ref, r.status, r.arrears, r.initial, r.recovered]),
+    [['GONE1', 'DEFAULTER', 2500, 2500, 0], ['OWE1', 'DEFAULTER', 1000, 1000, 0], ['PAID1', 'DEFAULTER', 800, 800, 0]],
+    'BIKE BEE\'s three, owing what the morning file says: last week\'s 600 and last week\'s PAID are not today\'s facts');
+  assert.deepEqual([mgr.NOCUR1.status, mgr.NOCUR1.arrears, mgr.NOCUR1.initial, mgr.NOCUR1.recovered, mgr.NOCUR1.cycle], ['DEFAULTER', 4000, 4000, 0, 'D3'],
+    'a customer new on this morning\'s file is ON the list, owing -- not missing, and not invented as recovered');
+  assert.deepEqual([gmo.CHR1.status, gmo.CHR1.arrears, gmo.CHR1.recovered, gmo.CHR1.cycle], ['CHRONIC', 6000, 0, 'C-W4']);
+  assert.deepEqual([bike.GONE1.status, bike.GONE1.cycle], ['DEFAULTER', 'D1'], 'placed by the morning row, never by an older chronic row');
+  // Nobody CLEARED anywhere, and nobody from last week's file or from ten days ago.
+  for (const [name, rows] of [['bike', s.bike], ['manager', s.mgr], ['gmo', s.gmo], ['tab', s.tab], ['my list', s.mineBike.rows], ['boss\'s list', s.mineBoss.rows]]) {
+    assert.ok(!rows.some(r => r.status === 'CLEARED'), name + ': nobody is told they paid');
+    assert.ok(!rows.some(r => r.ref === 'NEW1' || r.ref === 'OLD1'), name + ': nobody who is not on this morning\'s file');
+    assert.ok(rows.every(r => r.recovered === 0), name + ': nothing recovered yet');
+  }
+  assert.deepEqual([s.report.totals.customers, s.report.totals.initial, s.report.totals.recovered, s.report.totals.arrears], [5, 14300, 0, 14300],
+    'the five of the morning file whose cycle day it is (the Wednesday customer is not Friday\'s)');
+  assert.deepEqual(s.tab.map(r => r.ref).sort(), ['CHR1', 'GONE1', 'NOCUR1', 'OFFCYC1', 'OWE1', 'PAID1'], 'the tab is the same morning file, every cycle day');
   assert.equal(s.report.unassignedCleared, null);
+  assert.equal(asked.length, 0, 'the all-time lookup is not asked');
+});
+
+/* AND BEFORE ANY FILE OF THE DAY IS IN, THE FRESHEST FILE STANDS IN -- never last week's (Part 136). "only latest [current
+   defaulter] file is legit for defaulters list no matter which day it is" -- the owner. The answers say which day's file it
+   is, nothing is recovered and nobody is CLEARED: recovery and CLEARED are the day's own facts. */
+test('before any file of the day is in, the lists are the freshest earlier file -- dated as such, nothing recovered, nobody CLEARED, and never the same weekday of last week', async () => {
+  const t = clearedStayTables_();
+  // Yesterday (Thursday 23 Jul): both files. A week ago (Friday 17 Jul): both files, with a customer who has since left. Today: nothing yet.
+  const Y = '2026-07-23', LW = '2026-07-17';
+  const R = (ref, arrears, type, date, wd, over = {}) => ({ ref, full_name: 'C ' + ref, contact: '0714000' + ref, team: 'KONGOWE', arrears,
+    status: 'Defaulter', ds: '2/6', dc: 2, days_elapsed: 1, disb_date: '2026-07-21', snapshot_type: type, weekday: wd, snapshot_date: date,
+    upload_batch: 'b' + type + date, created_at: date + (type === 'initial' ? 'T04:00:00Z' : 'T08:00:00Z'), ...over });
+  t.defaulter_snapshots = [
+    R('STAY1', 1000, 'initial', LW, 'FRI'), R('STAY1', 1000, 'current', LW, 'FRI'),
+    R('LEFT1', 5000, 'initial', LW, 'FRI'), R('LEFT1', 5000, 'current', LW, 'FRI'),          // on last Friday's files, on none since
+    R('STAY1', 900, 'initial', Y, 'THU'), R('STAY1', 700, 'current', Y, 'THU'),
+    R('NEWY1', 3000, 'initial', Y, 'THU'), R('NEWY1', 3000, 'current', Y, 'THU'),              // entered default this week
+    R('PAIDY1', 400, 'initial', Y, 'THU'),                                                     // cleared yesterday: on yesterday's initial file only
+  ];
+  const { db, asked } = neverAsked_(t);
+  const s = await screens_(db);
+  assert.equal(s.report.date, Y, 'the list says which day\'s file it is: yesterday\'s, the freshest there is');
+  assert.equal(s.report.paired, false); assert.equal(s.report.hasBaseline, false, 'no baseline of today: the phone then says the initial list is not in');
+  assert.deepEqual(s.mineBike.rows.map(r => [r.ref, r.status, r.arrears, r.recovered]), [['NEWY1', 'DEFAULTER', 3000, 0], ['STAY1', 'DEFAULTER', 700, 0]],
+    'who is in default as the freshest file has it, at its figures; nothing recovered');
+  for (const [name, rows] of [['bike', s.bike], ['tab', s.tab], ['my list', s.mineBike.rows]]) {
+    assert.ok(!rows.some(r => r.ref === 'LEFT1'), name + ': a customer of last Friday\'s file who has left is not listed (the list used to be last Friday\'s)');
+    assert.ok(!rows.some(r => r.ref === 'PAIDY1'), name + ': nor one who cleared yesterday');
+    assert.ok(!rows.some(r => r.status === 'CLEARED') && rows.every(r => r.recovered === 0), name + ': nobody CLEARED, nothing recovered');
+  }
+  assert.equal(asked.length, 0);
 });
 
 /* WHO MAY SEE THEM: the same team scoping as every other row, applied at the database to both decks. */
@@ -680,68 +697,21 @@ test('expected defaulters: a never-once-current customer whose own initial row A
   assert.deepEqual([r.role, r.cycle, r.leader], ['MANAGER', 'D45', 'BOSS']);
 });
 
-/* A HUNG OR SLOW GHOST LOOKUP DOES NOT HOLD UP THE SACRED CALL PATH -- found on review, before
-   this shipped: nothing in the suite exercised GHOST_BUDGET_MS/withinMs_'s own timeout-
-   abandonment at all (test/speed.test.mjs counts round trips and rows, never wall-clock), the
-   one property the whole budgeted-read design exists for. Modelled on the identical check
-   zone.test.mjs already has for ZONE_BUDGET_MS/zoneOfSignIn (a delayed and a never-resolving
-   RPC, both abandoned inside the budget; a fast one still answered for real). */
-test('a hung or slow ghost lookup is abandoned within its budget, never held for', async () => {
-  assert.ok(GHOST_BUDGET_MS > 0 && GHOST_BUDGET_MS <= 2000, 'the budget is a ceiling on the sacred call path, not a wait: ' + GHOST_BUDGET_MS);
-  const row = { ref: 'GHOST1', team: 'KONGOWE', arrears: 15500, status: 'Chronic' };
-  const after = (ms, rows) => ({ rpc: () => new Promise(r => setTimeout(() => r({ data: rows, error: null }), ms)) });
-  const never = { rpc: () => new Promise(() => {}) };
-
-  let t0 = Date.now();
-  assert.deepEqual(await ghostRowsFor_(after(400, [row]), ['KONGOWE'], [], 25), [], 'the read was still out when the budget ended');
-  assert.ok(Date.now() - t0 < 300, 'and the caller was not kept for it: ' + (Date.now() - t0) + ' ms');
-
-  t0 = Date.now();
-  assert.deepEqual(await ghostRowsFor_(never, ['KONGOWE'], [], 25), [], 'a read that never answers at all');
-  assert.ok(Date.now() - t0 < 300);
-
-  t0 = Date.now();
-  const real = await ghostRowsFor_(after(5, [row]), ['KONGOWE'], [], 500);
-  assert.equal(real.length, 1, 'inside the budget it is read for real');
-  assert.equal(real[0].ref, 'GHOST1'); assert.equal(real[0]._ghost, true);
-});
-
-/* THE FULL SCREEN DOES NOT HANG WHEN THE GHOST LOOKUP DOES -- the 14 Nov 2026 production
-   incident. The test above proves the primitive (ghostRowsFor_) honours whatever budget it is
-   given; it does not prove any real caller actually gives it one. expectedDefaulters,
-   expdfReport, expdfLeader (day/month, via expdfCore's own default) and the week view
-   (expdfWeekCore, via both report and leader) all passed 0 -- no ceiling at all -- on the
-   theory that a report "can wait out the rare slow read." That was never exercised against a
-   lookup that genuinely hangs, because until db/RUN-ME-055 was run, every call errored out
-   fast with "function does not exist" instead. The day it was run for real, Expected
-   Defaulters hung past the client's own 45-second fetch timeout: "Imeshindikana / Could not
-   load." Through the real portalApi dispatch. GHOST_REPORT_BUDGET_MS shrunk via its own env
-   override (ghostReportBudgetMs_, the identical idiom DASH_MONTH_BUDGET_MS's own test already
-   uses) so this answers in well under a second rather than genuinely waiting several out --
-   and a DELAYED mock, never a `new Promise(() => {})` that literally never settles: that shape
-   answers the application's own question just as well and was tried first here, but a promise
-   that truly never resolves, even one correctly abandoned by Promise.race, is left dangling
-   forever and trips node's own test-runner leak detection (`cancelledByParent`, "Promise
-   resolution is still pending"), taking every later test in the file down with it -- found
-   while writing this very test, not guessed. */
-test('expectedDefaulters, expdfReport (day and week) and expdfLeader (week) all return within their budget when the ghost lookup is slow, never held for it', async () => {
-  const slow = { defaulter_ghost_rows: () => new Promise(r => setTimeout(() => r([]), 250)) };
-  const db = fakeDb(tables(), { rpc: slow });
-  process.env.GHOST_REPORT_BUDGET_MS = '20';
-  try {
-    const withinBudget = async (label, p) => {
-      const t0 = Date.now();
-      await p;
-      const took = Date.now() - t0;
-      assert.ok(took < 220, label + ' held the caller for ' + took + ' ms against a 20ms budget');
-    };
-    await withinBudget('expectedDefaulters', portalApi(db, ADMIN, 'expectedDefaulters', {}, NOW));
-    await withinBudget('expdfLeader (day)', portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE' }, NOW));
-    // expdfWeekCore caches by (name, user, nowMs) -- expdfReport and expdfLeader share a cache
-    // entry for the identical week, so only the FIRST week call below exercises the hang fresh;
-    // that is still the real fix (expdfWeekCompute_'s own direct call), not a weaker proxy for it.
-    await withinBudget('expdfReport (week)', portalApi(db, ADMIN, 'expdfReport', { period: 'week' }, NOW));
-  } finally { delete process.env.GHOST_REPORT_BUDGET_MS; }
+/* NO EXP.DEF SCREEN WAITS ON THE ALL-TIME LOOKUP ANY MORE, BECAUSE NONE ASKS IT (Part 136). Two tests stood here for the
+   budgets that kept a slow db.rpc('defaulter_ghost_rows') from holding a screen (the 14 Nov "Could not load" incident, and
+   the 800 ms the phone would wait). The lookup itself is gone; what is pinned now is that nothing calls it. */
+test('no Exp.Def screen asks the all-time lookup: the tab, the report by day, week and month, the leader\'s card and the worklist', async () => {
+  const hung = { asked: 0 };
+  const db = fakeDb(tables(), { rpc: { defaulter_ghost_rows: () => { hung.asked++; return new Promise(r => setTimeout(() => r([]), 250)); } } });
+  const t0 = Date.now();
+  await portalApi(db, ADMIN, 'expectedDefaulters', {}, NOW);
+  for (const period of ['day', 'week', 'month']) {
+    await portalApi(db, ADMIN, 'expdfReport', { period }, NOW);
+    await portalApi(db, ADMIN, 'expdfLeader', { role: 'BIKE', leader: 'BIKE BEE', period }, NOW);
+  }
+  await portalApi(db, { code: 'X', name: 'BOSS', role: 'MANAGER', teams: null, tabs: USER_TABS.slice() }, 'expdfMine', {}, NOW);
+  assert.equal(hung.asked, 0, 'not once');
+  assert.ok(Date.now() - t0 < 240, 'and so nothing waited on it');
 });
 
 /* "Manager bike and gm should see their own list at expdef so as to work on their report too."
