@@ -126,6 +126,16 @@ check('the book is brought into line', cellOf('KONGOWE', 'gmo') === 'NEW GMO' &&
 check('the previous leader\'s number is not left beside the new one', cellOf('KONGOWE', 'gmo_no') === null && cellOf('KONGOWE', 'gmo_id') === null);
 check('the card says 3 leaders were brought into line', /3/.test(await text(page, '#leadersCard')) && /brought into line/.test(await text(page, '#leadersCard')));
 check('Undo is offered', await has(page, '#leadersUndo'));
+// "fix the handlers lost after table search" (the owner, 23 Nov 2026): a keystroke in the search box above the
+// table repaints the whole screen; what wireForms() wired in the head (+ New team here) must still answer.
+if (await has(page, '#tblQ')) {
+  await page.fill('#tblQ', 'KONGOWE'); await page.waitForTimeout(400);
+  await page.click('#newTeam'); await page.waitForTimeout(500);
+  const open = await page.evaluate(() => getComputedStyle(document.getElementById('drawerBg')).display !== 'none');
+  check('after a table search, + New team still opens the form', open);
+  await page.evaluate(() => closeDrawer());
+  await page.fill('#tblQ', ''); await page.waitForTimeout(400);
+} else fail.push('no search box on Teams & Staff to try the repaint with');
 
 // --- 2. Undo puts the cells back and they STAY back (on the same screen, straight after the sync it undoes)
 calls.length = 0;

@@ -1464,7 +1464,7 @@ test('the daily bonus plan tab is wired, admin-grantable, and makes no server ca
   assert.ok(/\{ id:'bonusplan',\s+div:'mgmt', label:'Bonasi ya Kila Siku \/ Daily Bonus Plan'/.test(app), 'the nav entry, in HOPE Management');
   assert.ok(/VIEWS\.bonusplan = function/.test(app), 'the screen exists');
   assert.ok(/VC_SKIP = \{[^}]*bonusplan:1/.test(app), 'its boxes are never replayed from the view cache');
-  assert.ok(/wireForms\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint, once its module is in');
+  assert.ok(/else paintHeadOnly\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);/.test(app), 'drawView_ wires the preview after every paint, once its module is in');
   /* THE PREVIEW still reads nothing and saves nothing. What sits above it on the same tab now
      is the Daily Checklist's task editor (mod/checklist.js, loaded on the spot), which does
      read its plan -- so the promise is pinned on the preview's own code, which ends where the
@@ -1953,6 +1953,31 @@ test('lgWeekStep_ steps by whole weeks inside the card\'s own bounds and a late 
   attrs['data-mon'] = '2026-07-06';
   const n3 = asked.length; fns.lgWeekStep_(1, ev); fns.lgWeekStep_(1, ev);
   assert.deepEqual(asked.slice(n3), ['2026-07-13', ''], 'quick forward presses end on this week');
+});
+
+/* "fix the handlers lost after table search" (the owner, 23 Nov 2026). paint() rebuilds #view whole and a search
+   keystroke, a sort or a filter calls paint(true) alone, so everything wireForms() had wired in the head was a fresh,
+   unwired element afterwards. wireForms() now runs with every paint (paintNow_ and paintHeadOnly), beside wireBar(),
+   and drawView_ no longer calls it a second time. What the page DOES is run in a real browser by
+   tools/browser-checks/portal-legal-week.mjs (point 3: today's card and + New demand notice after a search and a sort)
+   and portal-leaders-real.mjs (+ New team after a search). */
+test('every paint wires the whole screen: wireForms runs from paintNow_ and paintHeadOnly, once, not from drawView_', () => {
+  const app = appSrc();
+  const paintNow = /function paintNow_\(\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(paintNow, 'paintNow_ is where it was');
+  assert.match(paintNow[0], /wireTable\(rows, ONROW\);\s*\n\s*wireTableSearch\(\);\s*\n\s*wireBar\(\);\s*\n\s*wireOfficerFind\(\);\s*\n\s*wireForms\(\);/, 'the table repaint wires the head too, after the bar');
+  assert.match(app, /function paintHeadOnly\(\)\{ \$\('#view'\)\.innerHTML = HEAD; wireBar\(\); wireForms\(\); \}/, 'a screen with no table too');
+  const draw = /function drawView_\(\)\{[\s\S]*?\n\}\n/.exec(app);
+  assert.ok(draw && !/wireForms/.test(draw[0]), 'drawView_ does not wire a second time (paint already did)');
+  assert.match(draw[0], /if \(S\.cols && S\.cols\.length\) paint\(\); else paintHeadOnly\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);[^\n]*\n\s*imprestOpenDeepLink_\(\);/, 'and keeps the two once-only hooks after the paint');
+  // wireForms must stay safe to run on every keystroke: handlers are ASSIGNED (a second run replaces, never doubles),
+  // nothing is added with addEventListener, no timer is started and nothing is focused by the wiring itself.
+  const wf = /function wireForms\(\)\{[\s\S]*?\n\}\n\n\/\* -{10,}/.exec(app);
+  assert.ok(wf, 'wireForms is where it was');
+  assert.ok(!/addEventListener\(/.test(wf[0]), 'no addEventListener inside wireForms: a second run would double a listener');
+  assert.ok(!/setInterval\(|setTimeout\(/.test(wf[0]), 'no timer started by the wiring');
+  assert.ok(!/^\s*[a-zA-Z_$.()'"\[\]]+\.focus\(\);/m.test(wf[0].replace(/onclick = function\(\)\{[\s\S]*?\};/g, '')), 'nothing focused by the wiring itself (only inside a handler)');
+  assert.ok(/Calling it again is free: a box already masked is left alone/.test(wf[0]), 'hopeSecrets is the one call that is not an assignment, and it says it is safe to repeat');
 });
 
 /* "i need expected defaulters report to have the weekly forward and backward buttons there
