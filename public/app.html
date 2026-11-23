@@ -788,7 +788,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-23-a';
+var BUILD = '2026-11-23-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -3030,8 +3030,9 @@ function paintNow_(){
   wireTableSearch();
   wireBar();
   wireOfficerFind();
+  wireForms();
 }
-function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); }
+function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); wireForms(); }
 /* THE OFFICER SEARCH. Asks the database, not the browser's copy of everybody.
 
    Typed at, it waits a moment and then asks -- a request per keystroke on a laptop is a request
@@ -6427,9 +6428,19 @@ var LN = { money: money, esc: esc };   // nothing here needs more than these two
 /* MODULE: loan -- this screen lives in public/mod/loan.js and loads when its tab opens (modLoad_). */
 
 function busy_(on){ var b = $('#busy'); if (b) b.classList.toggle('on', !!on); }
+/* EVERY PAINT WIRES THE WHOLE SCREEN, NOT ONLY THE FIRST -- "fix the handlers lost after table search"
+   (the owner, 23 Nov 2026). paint() rebuilds #view whole, HEAD and table together, and a search keystroke,
+   a sort or a filter calls paint(true) and nothing else; wireForms() ran from here alone, so after one
+   keystroke every button and card it had wired (+ New demand notice, Recovered today, the letterhead links,
+   the Settings rows, the imprest form...) was a fresh element with no handler, until the tab was reopened.
+   wireForms() now runs inside paintNow_() and paintHeadOnly(), beside wireBar(), so a repaint wires what it
+   drew. It is safe to run again: it only ASSIGNS on-handlers (a second run replaces the first, never doubles
+   it), masks code boxes (hopeSecrets leaves a masked box alone) and recomputes two previews from the boxes'
+   current values; it starts no timer, no read and no focus. Measured in Chromium on a register of 5,000
+   notices: 2.5 ms, inside a repaint (paint(true)) of about 1.2 s that the keystroke was already paying for
+   (tools/browser-checks/portal-legal-week.mjs, points 3 and 10). */
 function drawView_(){
   if (S.cols && S.cols.length) paint(); else paintHeadOnly();
-  wireForms();
   if (window.bpWire_) bpWire_();   // the daily bonus preview's own boxes (its module); a no-op on every other screen
   imprestOpenDeepLink_();
 }

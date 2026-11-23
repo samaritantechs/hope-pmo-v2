@@ -66,8 +66,11 @@ const rpc = {
   notice_payments: (store, args) => args.p_refs.map((ref, i) => ({ ref, since: args.p_dates[i], paid: 0, n: 0, last_paid: null, n_phone: 0 })),
   fold_notice_payments: () => 0,
 };
-const makeBook = ({ noLedger = false } = {}) => {
-  const db = fakeDb({ demand_notices: NOTICES.map(n => ({ ...n })), notice_payment_ledger: LEDGER.map(l => ({ ...l })),
+const makeBook = ({ noLedger = false, big = 0 } = {}) => {
+  const more = [];
+  for (let i = 0; i < big; i++) more.push({ id: 'b' + i, ref: String(100000 + i), team: i % 2 ? 'KONGOWE' : 'MBAGALA', full_name: 'CUSTOMER ' + i, contact: '07' + String(10000000 + i),
+    notice_id: 'HMCL/B/' + i, notice_date: add(THIS, -((i % 60) + 7)), arrears_at_notice: 1000 + i, created_at: add(THIS, -((i % 60) + 7)) + 'T05:00:00Z' });
+  const db = fakeDb({ demand_notices: NOTICES.map(n => ({ ...n })).concat(more), notice_payment_ledger: LEDGER.map(l => ({ ...l })),
     teams: [{ team: 'KONGOWE', team_code: 'C-K', zone: null }, { team: 'MBAGALA', team_code: 'C-M', zone: null }],
     access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['legal'] }],
     settings: [], call_users: [], roles: [], audit_log: [], defaulter_snapshots: [] }, { rpc });
@@ -190,6 +193,20 @@ check('last week\'s figure is not this week\'s', (await text(page, '#lgRecW')) !
 const q = await has(page, '#tblQ');
 if (q) { await page.fill('#tblQ', 'ASHA'); await page.waitForTimeout(500); }
 check('a table search keeps the card on last week', q && (await cardWeek(page)) === LAST && (await text(page, '#lgRecW')) === await figure(page, LAST), 'search box: ' + q);
+// "fix the handlers lost after table search" (the owner, 23 Nov): what wireForms() wired must still answer after the
+// repaint, not only the weekly card with its inline handlers. Today's card and + New demand notice are the two the
+// owner would meet first on this tab.
+await page.click('#lgRecT'); await page.waitForTimeout(600);
+check('after a table search, today\'s card still opens its list', await drawerOpen(page) && /Recovered today/.test(await text(page, '#drawer')));
+await page.evaluate(() => closeDrawer());
+await page.click('#newNotice'); await page.waitForTimeout(600);
+check('after a table search, + New demand notice still opens the form', await drawerOpen(page) && /Notisi mpya|New demand notice|REF/.test(await text(page, '#drawer')));
+await page.evaluate(() => closeDrawer());
+// A sort repaints too.
+await page.click('#view table thead th:nth-child(2)').catch(() => {}); await page.waitForTimeout(400);
+await page.click('#lgRecT'); await page.waitForTimeout(600);
+check('after a sort, today\'s card still opens its list', await drawerOpen(page));
+await page.evaluate(() => closeDrawer());
 calls.length = 0;
 await page.click('#lgWkCard [data-lgwk="1"]');
 check('and the arrows still work after the repaint (forward lands on this week)', await waitFor(page, w => document.getElementById('lgWkCard').getAttribute('data-mon') === w, THIS) && (await off(page, 1)) === true);
@@ -272,6 +289,23 @@ db = makeBook({ noLedger: true });
 page = await open();
 check('without the ledger the card says so', /RUN-ME-041a/.test(await text(page, '#lgRecWS')), (await text(page, '#lgRecWS')).slice(0, 160));
 check('and both arrows are off', (await off(page, -1)) === true && (await off(page, 1)) === true);
+await page.close();
+
+// --- 10. THE COST OF WIRING ON EVERY REPAINT, measured: a register of 5,000 notices, the whole repaint a search
+// keystroke makes (paint(true)) against wireForms() alone, medians of 15 runs each. Said in the handbook; the
+// check only holds that wiring is a small share of the repaint it rides on.
+db = makeBook({ big: 5000 });
+page = await open();
+const rowsOnScreen = await page.evaluate(() => document.querySelectorAll('#view table tbody tr').length);
+const cost = await page.evaluate(() => {
+  const med = a => { const s = a.slice().sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+  const tp = [], tw = [];
+  for (let i = 0; i < 15; i++) { const t = performance.now(); paint(true); tp.push(performance.now() - t); }
+  for (let i = 0; i < 15; i++) { const t = performance.now(); wireForms(); tw.push(performance.now() - t); }
+  return { paint: med(tp), wire: med(tw) };
+});
+check('the big register is on the screen (5,000 rows and the fixture\'s own)', rowsOnScreen >= 5000, String(rowsOnScreen));
+check('wireForms() is a small share of the repaint it rides on: ' + cost.wire.toFixed(1) + ' ms of ' + cost.paint.toFixed(0) + ' ms', cost.wire < cost.paint * 0.2 && cost.wire < 25, JSON.stringify(cost));
 await page.close();
 } catch (e) { fail.push('the run stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 200)); }
 
