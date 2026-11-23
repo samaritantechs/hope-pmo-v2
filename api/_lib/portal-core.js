@@ -5951,12 +5951,10 @@ async function commissionCompute_(db, user, args = {}, nowMs) {
      person on that day; if it does, the register does not pay for them a second time. One
      narrow read of only the refs the register names, and no read at all in a week where
      nothing was registered against a ref. See adjCountableRefs_. */
-  const [colCount, pmoCount] = await Promise.all([
-    adjCountableRefs_(db, adj, { target: 'expected-initial', snapshotType: 'initial',
-      from: prevMon, to: sun }),
-    adjCountableRefs_(db, adj, { target: 'expected-current', snapshotType: 'today',
-      from: prevMon, to: sun }),
-  ]);
+  /* ONE READ FOR BOTH SCHEMES since 23 Nov 2026 (Part 132): the register keys every expected entry under
+     both books, so the two lists of named customers are one list, asked once of both sheets. */
+  const countable = await adjCountableRefs_(db, adj, { target: 'expected-initial', from: prevMon, to: sun });
+  const colCount = countable, pmoCount = countable;
   const colRows = d => withAdj_(onDate(myExpInit, d), adj, 'expected-initial', d, colCount);
   const onDate = (rows, d, type) => pickLatestBatchRows(rows.filter(r =>
     String(r.snapshot_date) === d && (!type || r.snapshot_type === type)));
@@ -9840,7 +9838,15 @@ async function adjustments(db, user, p = {}) {
       }
     } catch (e) { /* cannot check -- the rows say so below rather than claiming either way */ }
   }
-  const bookOf = t => (t === 'expected-initial' ? 'initial' : t === 'expected-current' ? 'today' : null);
+  /* ONE MIAMALA, BOTH EXPECTED BOOKS (23 Nov 2026, handbook Part 132):
+       "single input of Miamala should reflrct in both initial and current expected reports since miamala are
+        always already collected so early collection officers are lalamenting why it doesnt count for them"
+     An entry against EITHER expected book now counts in BOTH (adjReceived_ keys it under both), so the
+     commission question is asked of the EARLY scheme for every expected row, whichever book it was typed
+     against: the initial sheet is where a customer is money (Early Collection is paid per paid customer;
+     PMO Collection by band on a percentage, where the count is a display figure). The day sheet's own
+     reading is said beside it (`countBooks`), never decided on. */
+  const expectedRow = t => t === 'expected-initial' || t === 'expected-current';
   const totals = {};
   let net = 0, superseded = 0;
   const out = rows.map(r => {
@@ -9849,10 +9855,11 @@ async function adjustments(db, user, p = {}) {
     /* EVERY BOOK IS IN THE NET NOW, because every book is moving again -- see
        ADJ_ARREARS_TARGETS. The per-target totals beside it say which book each shilling is in. */
     net += a;
-    const book = bookOf(String(r.target));
+    const isExp = expectedRow(String(r.target));
     const ref = String(r.ref || '').trim();
-    let countState = 'amount-only', countNote = null;
-    if (!book || a <= 0) {
+    const paidOn = sheet => paidRefs.has(sheet + '|' + K(r.team) + '|' + String(r.adj_date || '').slice(0, 10) + '|' + K(ref));
+    let countState = 'amount-only', countNote = null, countBooks = null;
+    if (!isExp || a <= 0) {
       /* THE ARREARS BOOKS SAY WHICH WAY THEY MOVE RECOVERY, on the row, before anybody has to
          work it out. The amount is ADDED to the deck it names, and recovery is initial minus
          current, so the two targets pull in opposite directions and the one that pulls DOWN is
@@ -9878,16 +9885,25 @@ async function adjustments(db, user, p = {}) {
     } else if (!deckChecked) {
       countState = 'unchecked';
       countNote = 'Haikuweza kuhakiki deki. / The deck could not be checked for this customer.';
-    } else if (paidRefs.has(book + '|' + K(r.team) + '|' + String(r.adj_date || '').slice(0, 10) + '|' + K(ref))) {
-      countState = 'superseded';
-      superseded += 1;
-      countNote = 'IMEONDOLEWA KWENYE HESABU — deki sasa inaonyesha mteja huyu AMELIPA, hivyo '
-        + 'kamisheni inalipwa na deki. Kiasi bado kinahesabika. Unaweza kufuta safu hii. '
-        + '/ AUTO-REMOVED from the commission count: the deck now shows this customer PAID, so the '
-        + 'deck pays for them. The amount still applies. This row can be deleted.';
     } else {
-      countState = 'counted';
-      countNote = 'Inahesabika kama mteja mmoja kwenye kamisheni. / Counted as one customer for commission.';
+      /* EITHER SHEET PAID = THE DECK ALREADY CARRIES THE PAYMENT, so the register pays for nobody a second time
+         on either scheme (the same test adjCountableRefs_ makes for the commission board: one definition). */
+      const onInitial = paidOn('initial'), onDay = paidOn('today');
+      countBooks = { initial: onInitial ? 'paid' : 'not paid', today: onDay ? 'paid' : 'not paid' };
+      if (onInitial || onDay) {
+        countState = 'superseded';
+        superseded += 1;
+        const which = onInitial && onDay ? 'deki zote mbili zinaonyesha / both sheets show'
+          : onInitial ? 'deki ya early col inaonyesha / the early-collection sheet shows' : 'deki ya siku inaonyesha / the day sheet shows';
+        countNote = 'IMEONDOLEWA KWENYE HESABU — ' + which.split(' / ')[0] + ' mteja huyu AMELIPA, hivyo '
+          + 'kamisheni inalipwa na deki. Kiasi bado kinahesabika kwenye vitabu vyote viwili. Unaweza kufuta safu hii. '
+          + '/ AUTO-REMOVED from the commission count: ' + which.split(' / ')[1] + ' this customer PAID, so the '
+          + 'deck pays for them. The amount still applies, on both expected books. This row can be deleted.';
+      } else {
+        countState = 'counted';
+        countNote = 'Inahesabika kama mteja mmoja kwenye kamisheni, kwenye vitabu vyote viwili vya expected. '
+          + '/ Counted as one customer for commission, on both expected books.';
+      }
     }
     /* AN ARREARS ROW THAT WAS ALREADY IN THE LEDGER IS APPLYING AGAIN, and that is worth saying
        out loud on the row rather than letting a figure move for a reason nobody can see. The
@@ -9902,7 +9918,7 @@ async function adjustments(db, user, p = {}) {
        under-warning costs a figure nobody can account for. A row with no `created_at` at all
        predates that column and is old by definition. */
     const arrears = ADJ_ARREARS_TARGETS.includes(String(r.target));
-    return { ...r, countState, countNote,
+    return { ...r, countState, countNote, countBooks,
       ...(arrears && String(r.created_at || '').slice(0, 10) <= ADJ_ARREARS_REOPENED
         ? { reopened: true, reopenedNote:
             'Ilikuwa kwenye daftari lililosimamishwa; sasa linatumika tena. Hakiki kama deki '
