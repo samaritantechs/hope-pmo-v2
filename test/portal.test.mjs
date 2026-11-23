@@ -13951,6 +13951,79 @@ test('advance months: a decision is made once, past months are closed, Finalize 
   assert.equal((await portalApi(db, ADMIN, 'advReopen', {}, later)).hours, 24);
 });
 
+/* "From next time, when finance manager closes advance request window - even approvals should be disabled so that people cant approve when
+   he's already proceeding with already approved requests in time" -- the owner, 23 Nov 2026 (handbook Part 135).
+
+   Finalize closed decisions from the day it was built (advClosed_), but no test said so for a request that is still PENDING, and the state
+   was read from the 20-second settings memo: a write drops the memo of the server instance that made it and of no other, so any other
+   instance went on deciding -- and taking new requests -- from its own memo for up to 20 seconds. The state is read fresh now (settingFresh_). */
+test('advance: from the second Finalize is pressed, no decision and no new request is saved -- even by a server whose settings memo still says open (Part 135)', async () => {
+  const t = tables();
+  t.teams[0] = { ...t.teams[0], zone: 'DAR EAST', team_code: 'KON 123' };
+  t.roles.push({ role: 'FIELD OFFICER', tabs: ['advreq'], approver_role: 'GMO' }, { role: 'GMO', tabs: ['advreq', 'advappr'], approver_role: 'GMO' });
+  t.access_codes.push({ code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: [] });
+  t.staff_registry = [
+    { id: 'AAA/001/2026', name: 'ASHA', role: 'Field Officer', zone: 'DAR EAST', status: 'Active', account: '0152000111', bank: 'NMB' },
+    { id: 'BBB/002/2026', name: 'BEN', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+    { id: 'DDD/004/2026', name: 'DAN', role: 'Field Officer', zone: 'DAR EAST', status: 'Active' },
+  ];
+  const mk = (id, staffId, name, amount) => ({ id, submitted_at: '2026-07-10T08:00:00Z', staff_id: staffId, staff_name: name, staff_role: 'Field Officer', zone: 'DAR EAST', amount, approval: 'Pending', app_date: '2026-07-10', req_role: 'FIELD OFFICER', req_code: 'KON 123' });
+  t.advance_requests = [mk('r-ben', 'BBB/002/2026', 'BEN', 100000), mk('r-dan', 'DDD/004/2026', 'DAN', 80000)];
+  const db = fakeDb(t);
+  const gmo = { code: 'GD', name: 'GMO D', role: 'GMO', teams: ['KONGOWE'], tabs: ['advreq', 'advappr'] };
+  const finance = { code: 'FIN', name: 'THE FINANCE MANAGER', role: 'MANAGEMENT', teams: null, tabs: ['advrep', 'advfinal'] };
+  const FO = { code: 'KON 123', name: 'KONGOWE · F.O', role: 'FIELD OFFICER', teams: ['KONGOWE'], tabs: ['advreq'], teamCode: true };
+  const pending = id => db._dump('advance_requests').find(r => r.id === id).approval;
+  const finalizeRow = at => ({ key: 'ADV_FINALIZED', value: JSON.stringify({ '2026-07': { at: new Date(at).toISOString(), by: 'THE FINANCE MANAGER' } }) });
+
+  // THIS SERVER INSTANCE learns the month is open: its settings memo is filled (a desk reads the queue, a field officer the request page).
+  const q0 = await portalApi(db, gmo, 'advQueue', {}, NOW);
+  assert.deepEqual(q0.pending.map(r => r.staff_name).sort(), ['BEN', 'DAN']);
+  assert.equal((await portalApi(db, FO, 'advRequestPage', {}, NOW)).monthClosed, null, 'open: the memo now says so');
+
+  // ANOTHER INSTANCE finalizes: the row is in the database, and this instance's memo is NOT dropped (that is what noteSettingsWritten does,
+  // and only on the instance that wrote). Before Part 135 every call below read the memo and carried on as if the month were open.
+  db._dump('settings').push(finalizeRow(NOW));
+
+  // 1. A single decision, either way: refused, with the reason, and nothing saved.
+  for (const approval of ['Approved', 'Disapproved']) {
+    const one = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-ben', approval, comment: 'sawa' }] }, NOW);
+    assert.equal(one.updated, 0, approval + ': nothing saved'); assert.equal(one.approved + one.disapproved, 0);
+    assert.match(one.skipped[0], /BEN: closed -- this month is finalized/, approval + ': the reason is said');
+  }
+  assert.equal(pending('r-ben'), 'Pending', 'still undecided');
+  // 2. A bulk tick of both: refused, both named.
+  const bulk = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-ben', approval: 'Approved' }, { id: 'r-dan', approval: 'Approved' }] }, NOW);
+  assert.equal(bulk.updated, 0); assert.equal(bulk.skipped.length, 2); assert.ok(bulk.skipped.every(x => /closed -- this month is finalized/.test(x)));
+  assert.deepEqual([pending('r-ben'), pending('r-dan')], ['Pending', 'Pending']);
+  assert.ok(db._dump('advance_requests').every(r => r.decided_by === undefined), 'nobody is recorded as having decided');
+  // 3. A new request: refused with the month-closed words, nothing filed.
+  await assert.rejects(() => portalApi(db, FO, 'advRequest', { staffId: 'AAA/001/2026', amount: 50000 }, NOW), e => e.status === 400 && /finalized by the finance manager/.test(e.message));
+  assert.equal(db._dump('advance_requests').length, 2, 'nothing was filed');
+  // 4. The memo of THIS instance caught up with what was read (so its display readers agree from now on).
+  assert.ok((await portalApi(db, gmo, 'advQueue', {}, NOW)).pending.length === 0, 'the desk now lists nothing as decidable');
+
+  // THE REOPEN, written by another instance, is seen at once as well: a decision is possible again while it lasts, and not after.
+  const rows = db._dump('settings'), at = rows.findIndex(r => r.key === 'ADV_FINALIZED');
+  const reopened = JSON.parse(rows[at].value); reopened['2026-07'].reopenUntil = new Date(NOW + 3600 * 1000).toISOString(); reopened['2026-07'].reopenBy = 'THE FINANCE MANAGER';
+  rows[at] = { key: 'ADV_FINALIZED', value: JSON.stringify(reopened) };
+  assert.equal((await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-ben', approval: 'Approved' }] }, NOW)).approved, 1, 'reopened: decided');
+  rows[at] = finalizeRow(NOW + 7200 * 1000);                       // finalized again, by another instance, a moment later
+  const again = await portalApi(db, gmo, 'advDecide', { updates: [{ id: 'r-dan', approval: 'Approved' }] }, NOW + 7200 * 1000);
+  assert.equal(again.updated, 0); assert.equal(pending('r-dan'), 'Pending', 'closed again the second it was pressed');
+
+  // FINALIZE AND REOPEN write the whole JSON back, so they start from the fresh row, never from a stale memo: a month another instance
+  // finalized is not forgotten by a reopen made on an instance that had not heard.
+  const t2 = tables();
+  const db2 = fakeDb({ ...t2, settings: [...(t2.settings || []), finalizeRow(NOW)] });
+  await portalApi(db2, ADMIN, 'systemOpenGet', {}, NOW);           // fills this instance's memo (the settings table without the month's row is fine: the row is added next)
+  db2._dump('settings').splice(0, db2._dump('settings').length, ...(t2.settings || []), { key: 'ADV_FINALIZED', value: JSON.stringify({ '2026-06': { at: '2026-06-30T10:00:00Z', by: 'OLD' }, '2026-07': { at: new Date(NOW).toISOString(), by: 'THE FINANCE MANAGER' } }) });
+  const re = await portalApi(db2, ADMIN, 'advReopen', {}, NOW);
+  assert.equal(re.month, '2026-07');
+  const saved = JSON.parse(db2._dump('settings').find(r => r.key === 'ADV_FINALIZED').value);
+  assert.ok(saved['2026-06'] && saved['2026-06'].by === 'OLD', "June's finalize (written by another instance) survives a reopen made from this one");
+});
+
 /* EXPIRED -- "All salary advances that were not approved and past current month must be expired so that they no longer read pending and
    those users can request current month."
 

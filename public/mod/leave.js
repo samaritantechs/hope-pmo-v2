@@ -212,7 +212,10 @@ function leaveDecideDrawer_(r, decidable, closedNote){
     var b = $('#lvdOk'), n = $('#lvdNo'); if (b) b.disabled = true; if (n) n.disabled = true;
     srv('leaveDecide', { updates: [{ id: r.id, approval: approval, comment: com }] })
       .then(function(x){
-        toast(approval === 'Approved' ? 'Imeidhinishwa / Approved' + (x.skipped && x.skipped.length ? ' · ' + x.skipped.join('; ') : '') : 'Imekataliwa / Disapproved');
+        // What the server said, not what was pressed (the advance module's drawer, Part 135): a refused save says NOT saved and why.
+        var saved = Number(x && x.updated) > 0, why = (x && x.skipped && x.skipped.length) ? x.skipped.join('; ') : '';
+        if (!saved) toast('Haikuhifadhiwa / NOT saved: ' + (why || 'hakuna ombi lililobadilishwa / nothing was changed'), true);
+        else toast((approval === 'Approved' ? 'Imeidhinishwa / Approved' : 'Imekataliwa / Disapproved') + (why ? ' · ' + why : ''));
         closeDrawer(); render({ force:true }); })
       .catch(function(e){ if (b) b.disabled = false; if (n) n.disabled = false; toast(String(e.message||e), true); });
   };
@@ -231,9 +234,9 @@ function leaveBulk_(approval){
   toast('Inahifadhi ' + ids.length + '… / Saving ' + ids.length + '…');
   srv('leaveDecide', { updates: ids.map(function(id){ return { id: id, approval: approval, comment: com }; }) })
     .then(function(r){
-      var sk = r.skipped || [];
-      toast('Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved'
-        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length);
+      var sk = r.skipped || [], none = !((r.approved || 0) + (r.disapproved || 0));     // nothing saved says so (Part 135)
+      toast((none ? 'Haikuhifadhiwa / NOT saved: hakuna ombi lililobadilishwa / no request was changed' : 'Imehifadhiwa / Saved: ' + r.approved + ' approved, ' + r.disapproved + ' disapproved')
+        + (sk.length ? ' · ' + sk.slice(0, 6).join('; ') + (sk.length > 6 ? ' … +' + (sk.length - 6) : '') : '') + '.', !!sk.length || none);
       pickClear_(); render({ force:true }); })
     .catch(function(e){
       toast(String(e.message||e) + ' — orodha imesomwa upya: yaliyobaki Pending hayakuhifadhiwa. / the list was read again: what is still Pending was not saved.', true);

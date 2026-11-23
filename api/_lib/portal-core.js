@@ -2357,9 +2357,10 @@ async function advRequest(db, user, p, nowMs = Date.now()) {
   const staffName = String(p.staffName || '').trim();
   const cs = advCustomerService_(user);
   if (!staffId && !(cs && staffName)) throw badRequest('Chagua jina lako kwenye orodha. / Pick your name from the list.');
-  const [teamRows, cfg] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY])]);
+  const [teamRows, cfg, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), settingsMany(db, [ADV_AMOUNTS_KEY]), settingFresh_(db, ADV_MONTHS_KEY)]);
   // A FINALIZED MONTH TAKES NO NEW REQUEST until the finance manager reopens it -- "even requesting is closed for current month".
-  if (advMonthState_(cfg.get(ADV_MONTHS_KEY, ''), todayKey(nowMs).slice(0, 7), nowMs).closed) throw badRequest(ADV_MONTH_CLOSED);
+  // Read FRESH, not from the 20-second memo (settingFresh_, Part 135): closed means closed on every server the second it is pressed.
+  if (advMonthState_(monthsRaw, todayKey(nowMs).slice(0, 7), nowMs).closed) throw badRequest(ADV_MONTH_CLOSED);
   const { zones } = advZones_(user, teamRows);
   let s;
   if (cs && !staffId) {
@@ -2560,7 +2561,12 @@ async function advDecide(db, user, p, nowMs = Date.now()) {
     comment: textOrNull(u && u.comment) })).filter(u => u.id);
   if (!updates.length) throw badRequest('Chagua angalau ombi moja. / Select at least one request.');
   if (updates.some(u => !u.approval || u.approval === 'Pending')) throw badRequest('Kila ombi lichaguliwe Approved au Disapproved. / Each request needs Approved or Disapproved.');
-  const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db), settingGet(db, ADV_MONTHS_KEY)]);
+  /* THE MONTH'S STATE IS READ FRESH (settingFresh_, Part 135), never from the 20-second memo: "From next time, when finance manager
+     closes advance request window - even approvals should be disabled so that people cant approve when he's already proceeding with
+     already approved requests in time" -- the owner, 23 Nov 2026. Finalize already closed decisions (advClosed_, below), but only for a
+     server that had heard of it: another instance went on deciding from its own memo for up to 20 seconds. One row by its key, in the
+     same wave as the two reads it sits beside. */
+  const [teamRows, routing, monthsRaw] = await Promise.all([readTeamsAll(db, nowMs), advRouting_(db), settingFresh_(db, ADV_MONTHS_KEY)]);
   const { zones } = advZones_(user, teamRows);
   const ms = advMonthState_(monthsRaw, todayKey(nowMs).slice(0, 7), nowMs);
   const rows = await decideRead_(db, 'advance_requests', updates.map(u => u.id), advRead_);
@@ -2695,7 +2701,7 @@ function advRequireFinance_(user) {
 async function advFinalize(db, user, p, nowMs = Date.now()) {
   advRequireFinance_(user);
   const monthNow = todayKey(nowMs).slice(0, 7);
-  const all = advMonthsOf_(await settingGet(db, ADV_MONTHS_KEY));
+  const all = advMonthsOf_(await settingFresh_(db, ADV_MONTHS_KEY));    // fresh: the whole JSON is written back, and a stale memo would write another instance's older answer over a newer one
   all[monthNow] = { at: new Date(nowMs).toISOString(), by: user.name || user.code };    // a finalize clears any reopen
   await advWriteMonths_(db, all);
   // What it closed, said back: the decided requests of the month (and the ones still pending, which close undecided).
@@ -2709,7 +2715,7 @@ async function advFinalize(db, user, p, nowMs = Date.now()) {
 async function advReopen(db, user, p, nowMs = Date.now()) {
   advRequireFinance_(user);
   const monthNow = todayKey(nowMs).slice(0, 7);
-  const all = advMonthsOf_(await settingGet(db, ADV_MONTHS_KEY));
+  const all = advMonthsOf_(await settingFresh_(db, ADV_MONTHS_KEY));    // fresh, as in advFinalize
   if (!all[monthNow] || !all[monthNow].at) throw badRequest('Mwezi huu haujakamilishwa. / This month is not finalized, so there is nothing to reopen.');
   const hours = Math.min(168, Math.max(1, await settingNum(db, 'ADV_REOPEN_HOURS', 24)));
   all[monthNow] = { ...all[monthNow], reopenUntil: new Date(nowMs + hours * 3600 * 1000).toISOString(), reopenBy: user.name || user.code, reopenAt: new Date(nowMs).toISOString() };
@@ -11663,6 +11669,25 @@ async function settingsMany(db, keys) {
 async function settingGet(db, key) {
   const by = await readSettings(db);
   return String(by[key] == null ? '' : by[key]).trim();
+}
+
+/** One setting read STRAIGHT FROM THE DATABASE, never from the 20-second memo above (SETTINGS_TTL_MS): for the few answers that must be
+    true THE SECOND they are written, whichever server instance the reader reached. The advance month's finalized state is the one
+    (handbook Part 135): a write drops the memo of the instance that made it and of no other, so every other instance went on answering
+    from its own memo for up to 20 seconds, and an approval or a new request could still be saved after the finance manager had closed
+    the month. One row by its key (an indexed read, in the same wave as the reads it sits beside); the memo is told what was read, so this
+    instance's other readers catch up too. A read that fails falls back to the memo: a failed read is no reason to refuse a decision, and
+    the save that follows asks the same database. */
+async function settingFresh_(db, key) {
+  try {
+    const { data, error } = await db.from('settings').select('value').eq('key', String(key)).limit(1);
+    if (error) throw new Error(error.message);
+    const v = data && data[0] && data[0].value != null ? String(data[0].value) : '';
+    settingsCachePut_(db, key, v);
+    return v.trim();
+  } catch (e) {
+    return settingGet(db, key);
+  }
 }
 
 async function settingNum(db, key, dflt) {
