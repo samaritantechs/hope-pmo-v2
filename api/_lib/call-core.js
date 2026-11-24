@@ -1500,8 +1500,13 @@ async function summaryCompute(db, user, nowMs) {
   let expdf = { pct: null, num: 0, den: 0, customers: 0 };
   try {
     const x = await expdfMine(db, user, { scope: 'auto' }, nowMs);
-    expdf = { pct: rat(x.totals.recovered, x.totals.initial), num: x.totals.recovered,
-      den: x.totals.initial, customers: x.totals.customers, scope: x.scope };
+    /* NOT MEASURED YET IS A DASH, NOT A NOUGHT (handbook Part 140). With the day's morning file in and its later file not
+       (stage 'morning': the whole working day, the later file comes in at about 20:00) nothing has been compared, so the
+       day's Exp.Def % is not known: the bar prints a dash for null, as it does before any deck is in. A nought here read
+       as "nobody recovered anything" on every handset, all day. Arithmetic on what expdfMine already answered: no read. */
+    const stage = (x.diag && x.diag.stage) || null;
+    expdf = { pct: stage === 'morning' ? null : rat(x.totals.recovered, x.totals.initial), num: x.totals.recovered,
+      den: x.totals.initial, customers: x.totals.customers, scope: x.scope, stage };
   } catch (e) { /* no decks yet -- the bar shows a dash, never an error */ }
 
   const rec = d.totals.recovery;

@@ -55,7 +55,7 @@ import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
   FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts, callMinSecsOf, REACH_NOTE } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
-import { expdfMine, expdfReport, expdfLeader, expdfPeriod } from './expdf.js';
+import { expdfMine, expdfReport, expdfLeader, expdfPeriod, dayStage } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
 import { annualReport, annualBook } from './annual.js';
 import { HOLDER_FNS, syncHolders, tableMissing as holdersTableMissing } from './holders.js';
@@ -1172,7 +1172,10 @@ async function expectedDefaulters(db, user, _args, nowMs) {
     arrears: rows.reduce((s, r) => s + r.arrears, 0),
     initial: rows.reduce((s, r) => s + r.initial, 0),
     recovered: rows.reduce((s, r) => s + r.recovered, 0),
-    hasBaseline: iniSnap.rows.length > 0 };
+    hasBaseline: iniSnap.rows.length > 0,
+    /* Which of TODAY's two files are in, by the one naming the phone and the report use (dayStage, expdf.js). On 'morning'
+       this list is the morning file itself with nothing recovered and nobody CLEARED, and the page says so (Part 140). */
+    stage: dayStage(iniToday, curToday, def.rows.length > 0 || iniSnap.rows.length > 0) };
 }
 
 /* ------------------------------------------------------------------ followup + comments */

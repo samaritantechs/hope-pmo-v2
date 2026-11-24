@@ -668,8 +668,9 @@ function drawBikeStrip_(){
   var t = rows ? xdSum_(rows) : null;
   $('#bkCust').textContent = t ? String(t.customers) : '\u2014';
   $('#bkDeni').textContent = t ? mc_(t.arrears) : '\u2014';
-  $('#bkRec').textContent = t ? mc_(t.recovered) : '\u2014';
-  $('#bkPct').textContent = (t && t.pct != null) ? Math.round(t.pct) + '%' : '\u2014';
+  var morning = xdMorning_();                     // the day's later file is not in: recovery is not known yet, so a dash, never a nought (Part 140)
+  $('#bkRec').textContent = (t && !morning) ? mc_(t.recovered) : '\u2014';
+  $('#bkPct').textContent = (t && !morning && t.pct != null) ? Math.round(t.pct) + '%' : '\u2014';
   var at = S.cacheAt.expdf, deck = S.expdf && S.expdf.date ? String(S.expdf.date) : '';
   var old = !!(deck && deck !== todayKeyLocal_());
   $('#bkTag').textContent = old ? deck.slice(8, 10) + '/' + deck.slice(5, 7) : 'Leo' + (at ? ' ' + hhmm_(at) : '');
@@ -853,7 +854,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-23-a';
+var CALL_BUILD = '2026-11-24-a';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1744,6 +1745,12 @@ function xdGroup_(list, keyFn, label){
     return o;
   }).sort(function(a, b){ return b.arrears - a.arrears; });
 }
+/* THE DAY'S LATER FILE IS NOT IN YET (handbook Part 140). The owner's own look at the upload times (RUN-ME-087, 24 Nov 2026):
+   the morning file comes in at about 05:00 and the later file at about 20:00. Through the whole working day the list is the
+   morning file with nothing to compare it with, so NOTHING IS KNOWN ABOUT RECOVERY YET. A nought there read as "nobody has
+   recovered anything", on every handset, all day; a dash and one line of words say what is true. The server names the stage
+   (diag.stage, dayStage in api/_lib/expdf.js) in the answer the list already brings; the page asks for nothing more. */
+function xdMorning_(){ return !!(S.expdf && S.expdf.diag && S.expdf.diag.stage === 'morning'); }
 function drawExpdfStrip_(){
   var el = $('#expdfStrip');
   if (!el) return;
@@ -1762,8 +1769,9 @@ function drawExpdfStrip_(){
   var byLeader = rShown ? xdGroup_(rShown, function(r){
       return (r.leader || '(unassigned)') + ' · ' + (r.role || ''); }, 'leader')
     : (S.expdf.byLeader || []);
-  var m = mc_;
+  var m = mc_, morning = xdMorning_();
   var notes = (S.expdf.hasBaseline ? '' : '<div class="xnote">Orodha ya awali haijapakiwa \u2014 marejesho yanaonyesha 0.</div>')
+    + (morning ? '<div class="xnote" id="xdLater">Orodha ya jioni ya leo bado haijapakiwa \u2014 marejesho yataonekana ikishapakiwa.</div>' : '')
     + ((S.expdf.diag && S.expdf.diag.noCycleDates) ? '<div class="xnote">Deki haina DISB DATE \u2014 mzunguko wa siku 2 hauwezi kuhesabiwa, kwa hiyo orodha nzima inaonyeshwa.</div>' : '')
     /* "that manager in their code ain't seeing them, they getting just a little like two": Teams & Staff
        names this person on teams their own access code does not hold, so the customers the rotation hands
@@ -1795,8 +1803,8 @@ function drawExpdfStrip_(){
       + '</div>')
     + '<div class="xstat"><span>Wateja</span><b>' + (t.customers||0) + '</b></div>'
     + '<div class="xstat"><span>Deni</span><b>' + m(t.arrears) + '</b></div>'
-    + '<div class="xstat"><span>Marejesho</span><b class="ok">' + m(t.recovered) + '</b></div>'
-    + '<div class="xstat"><span>Rec %</span><b>' + (t.pct == null ? '\u2014' : Math.round(t.pct) + '%') + '</b></div>'
+    + '<div class="xstat"><span>Marejesho</span><b class="ok">' + (morning ? '\u2014' : m(t.recovered)) + '</b></div>'
+    + '<div class="xstat"><span>Rec %</span><b>' + ((morning || t.pct == null) ? '\u2014' : Math.round(t.pct) + '%') + '</b></div>'
     + notes
     + (byCycle.length
         ? '<div class="xcyc">' + byCycle.map(function(c){
@@ -1805,8 +1813,8 @@ function drawExpdfStrip_(){
     // Who is carrying what, so anyone on the list can see the split without leaving it.
     + ((S.expdf.scope==='team' && byLeader.length && !S.bike)
         ? '<div class="xcyc">' + byLeader.map(function(x){
-            return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers + ' \u00B7 ' + m(x.recovered)
-              + (x.pct==null?'':' \u00B7 '+Math.round(x.pct)+'%') + '</span>'; }).join('') + '</div>'
+            return '<span>' + esc(x.leader) + ' \u00B7 ' + x.customers
+              + (morning ? '' : ' \u00B7 ' + m(x.recovered) + (x.pct==null?'':' \u00B7 '+Math.round(x.pct)+'%')) + '</span>'; }).join('') + '</div>'
         : ''));
   $all('#expdfStrip [data-xtog]').forEach(function(b){
     b.onclick = function(){

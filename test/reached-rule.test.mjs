@@ -388,5 +388,7 @@ test('the handbook and CHAT.md record the reached rule, the file and what is not
   const h = read('docs/HANDOFF.md'), c = read('CHAT.md');
   assert.match(h, /Part 137/); assert.match(h, /RUN-ME-088/);
   assert.match(c, /RUN-ME-088/); assert.match(c, /Part 137/);
-  assert.match(CALL, /var CALL_BUILD = '2026-11-23-a';/);
+  // Each handset reloaded the call page for the rule: its build is that day's, or a later change's.
+  const callBuild = (CALL.match(/var CALL_BUILD = '([^']+)';/) || [])[1] || '';
+  assert.ok(callBuild >= '2026-11-23-a', 'CALL_BUILD ' + callBuild);
 });
