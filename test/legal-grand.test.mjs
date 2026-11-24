@@ -188,10 +188,9 @@ test('whom it shows: a viewer\'s own teams only, at the database and in the rows
 test('where it is NOT: today\'s list, the dashboard\'s own card, the annual deck\'s book of notices; and what it costs', async () => {
   const td = await portalApi(withFn(), ADMIN, 'legalRecoveries', { period: 'today' }, NOW);
   assert.equal(td.legal.grand, undefined); assert.equal(td.legal.phone, undefined);
-  // the dashboard's Legal card keeps its one card: nothing of the grand reading in its answer
+  // the dashboard's Legal card carries the grand TOTAL since Part 151 and no lawyers' rows (see the tests at the end of this file)
   const src = read('api/_lib/portal-core.js');
-  const dash = /async function dashboardFull\([\s\S]*?\n\}\n/.exec(src)[0];
-  assert.doesNotMatch(dash, /legalGrand_|legalWithPhone_/, 'the dashboard asks for neither');
+  assert.deepEqual((await quiet(() => portalApi(withFn(), ADMIN, 'dashboardFull', {}, NOW))).legal.grand.rows, [], 'never the per-lawyer rows: the dashboard draws the total');
   assert.match(read('api/_lib/annual.js'), /deps\.demandNotices\(db, user, \{\}, nowMs, \{ phone: false \}\)/);
   assert.match(src, /wantPhone \? readCodesAll\(db, nowMs\)\.catch\(\(\) => null\) : null/, 'the codes are read for the tab only, never fatal, never for the annual deck');
   // trips: the tab asks for the codes the wave already reads (branchByTeam lays them over the teams): one read of them in all, the memo shared while in flight;
@@ -203,4 +202,85 @@ test('where it is NOT: today\'s list, the dashboard\'s own card, the annual deck
   assert.equal((await trips('legalRecoveries', { period: 'week' })).codes, 1, 'the list reads the codes once, as it did before the card');
   assert.equal((await trips('annualBook', { year: 2026 })).codes <= 1, true);
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.doesNotMatch(read(f), /legalGrand_|legal\.grand|grand recovery/i, f + ' knows nothing of it');
+});
+
+/* THE DASHBOARD'S LEGAL CARD INCLUDES CALL RECOVERY (24 Nov 2026, handbook Part 151).
+     "in summary and in the data rows of Legal Recovery widget (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should
+      include call recovery" -- the owner.
+   The card is fed by dashboardFull. These tests hold what the SERVER sends it: the Legal tab's own grand total (one computation:
+   legalGrandTotals_ is legalGrand_ asked for the total row), today's figure beside the week's, the phone card, a side that cannot be
+   read a null, a phone read that is late or fails never costing the dashboard, the scope, the weeks, and what it costs. The page's
+   words are test/pages.test.mjs; the real page and its list are tools/browser-checks/portal-legal-phone.mjs section 12. */
+const dashOf = (db, user = ADMIN, args = {}) => quiet(() => portalApi(db, user, 'dashboardFull', args, NOW));
+
+test('the dashboard\'s Legal card carries the Legal tab\'s own grand TOTAL: notices + calls (a noticed customer once), today\'s and the week\'s, with the phone card beside it', async () => {
+  const d = (await dashOf(withFn())).legal;
+  const tab = (await portalApi(withFn(), ADMIN, 'demandNotices', {}, NOW)).legal;
+  assert.deepEqual(d.grand.total, tab.grand.total, 'the dashboard\'s total IS the tab\'s total row, field for field: one computation');
+  assert.deepEqual(fig(d.grand.total), [40000, 40, 15000, 6, 55000, 15.7], 'the week: 40,000 of notices, 15,000 of calls, 55,000 together');
+  assert.equal(d.grand.total.tRecovered, 45000, 'today: the notices card\'s 40,000 and the 5,000 customer 500 recovered the day she was phoned; the 40,000 customer 100 paid after her notice is NOT counted twice');
+  assert.deepEqual(d.grand.overlap, { customers: 1, recovered: 40000 }, 'and the amount left out of calls is said');
+  assert.deepEqual([d.grand.on, d.grand.nOn, d.grand.pOn, d.grand.nNote, d.grand.pNote], [true, true, true, null, null]);
+  assert.deepEqual(d.grand.rows, [], 'the total only: the dashboard draws no lawyers\' rows'); assert.equal(d.grand.shared, false);
+  assert.deepEqual(d.phone, tab.phone, 'the phone card is the tab\'s'); assert.equal(d.since, tab.since, 'and so is the arrows\' floor (the earlier of the first notice\'s week and the first phone week)');
+  // the notices side of the card is what it always was
+  assert.deepEqual([d.tRecovered, d.recovered, d.customers, d.owed, d.pct, d.mon, d.sun, d.thisWeek], [tab.tRecovered, tab.recovered, tab.customers, tab.owed, tab.pct, tab.mon, tab.sun, tab.thisWeek]);
+  assert.equal(d.tRecovered, 40000); assert.equal(d.recovered, 40000);
+});
+
+test('the dashboard\'s Legal card: a side that cannot be read is a null with its reason, never a nought; a phone read that fails or is late costs the card its calls and the dashboard nothing', async () => {
+  // the phone function not run: the notices side is read, the calls and the grand figures are null, the file is named
+  const off = (await dashOf(withoutFn())).legal;
+  assert.deepEqual([off.grand.on, off.grand.nOn, off.grand.pOn], [false, true, false]);
+  assert.equal(off.grand.total.nRec, 40000); assert.equal(off.grand.total.cRec, null); assert.equal(off.grand.total.recovered, null); assert.equal(off.grand.total.pct, null); assert.equal(off.grand.total.tRecovered, null);
+  assert.match(off.grand.pNote, /RUN-ME-089/); assert.equal(off.phone.on, false);
+  assert.equal(off.recovered, 40000, 'the notices card is untouched');
+  // the ledger not there (the table itself: the dashboard reads it directly, as it always did): the calls are read, the notices are not
+  const nl = (await dashOf(fakeDb(tables(), { missingTables: ['notice_payment_ledger'], rpc: { ...NP, ...LEGAL_PHONE_RPC } }))).legal;
+  assert.deepEqual([nl.grand.on, nl.grand.nOn, nl.grand.pOn], [false, false, true]);
+  assert.equal(nl.grand.total.nRec, null); assert.equal(nl.grand.total.recovered, null); assert.equal(nl.grand.total.tRecovered, null);
+  assert.match(nl.grand.nNote, /RUN-ME-041a/);
+  // a read that FAILS: on: null and the words, remembered for nothing
+  const bad = (await dashOf(withFn(tables(), { legal_phone_week: () => { throw new Error('canceling statement due to statement timeout'); } }))).legal;
+  assert.equal(bad.phone.on, null); assert.equal(bad.grand.pOn, false); assert.match(bad.grand.pNote, /could not be read just now/); assert.equal(bad.grand.total.recovered, null);
+  assert.equal(bad.recovered, 40000, 'the dashboard still answers, with the notices');
+  // a read that is LATE: past DASH_PHONE_BUDGET_MS the card is drawn from the notices alone and says so, and the dashboard does not wait
+  const saved = process.env.DASH_PHONE_BUDGET_MS; process.env.DASH_PHONE_BUDGET_MS = '40';
+  try {
+    const slow = withFn(tables(), { legal_phone_week: async (store, a) => { await new Promise(r => setTimeout(r, 1500)); return LEGAL_PHONE_RPC.legal_phone_week(store, a); } });
+    const t0 = Date.now(); const late = (await dashOf(slow)).legal; const took = Date.now() - t0;
+    assert.ok(took < 1200, 'the dashboard did not wait for it (' + took + ' ms)');
+    assert.equal(late.phone.on, null); assert.match(late.phone.note, /not read in time/); assert.equal(late.grand.pOn, false); assert.equal(late.grand.total.recovered, null);
+    assert.equal(late.recovered, 40000);
+  } finally { if (saved === undefined) delete process.env.DASH_PHONE_BUDGET_MS; else process.env.DASH_PHONE_BUDGET_MS = saved; }
+});
+
+test('the dashboard\'s Legal card: a viewer sees their own teams\' total, any week the week bar names is the Legal tab\'s for that week, and a viewer with no team asks for nothing', async () => {
+  const mine = (await dashOf(withFn(), MBAGALA_GMO)).legal, theirs = (await portalApi(withFn(), MBAGALA_GMO, 'demandNotices', {}, NOW)).legal;
+  assert.deepEqual(mine.grand.total, theirs.grand.total, 'the viewer\'s own teams: the same total as their Legal tab');
+  assert.deepEqual(fig(mine.grand.total), [0, null, 0, 0, 0, 0]);
+  const last = (await dashOf(withFn(), ADMIN, { weekOf: LAST })).legal, list = (await portalApi(withFn(), ADMIN, 'legalRecoveries', { period: 'week', weekOf: LAST }, NOW)).legal;
+  assert.deepEqual([last.mon, last.sun], [LAST, '2026-07-19']);
+  const { tRecovered: lt, ...lastTotal } = last.grand.total, { tRecovered: pt, ...listTotal } = list.grand.total;
+  assert.deepEqual(lastTotal, listTotal, 'a past week through the dashboard\'s week bar: the Legal tab\'s total for that week (today\'s figure differs by design: the dashboard pins "today" to that week\'s Friday)');
+  assert.deepEqual(fig(last.grand.total), [0, 0, 7000, 5.8, 7000, 3.2], 'last week: customer 100\'s one call, 7,000 of 120,000, and her notice (served after that week) still counts in owed, 100,000: the rule of every past week, Part 128');
+  const calls = []; const db = withFn(); const rpc = db.rpc.bind(db); db.rpc = (name, a) => { calls.push(name + ' ' + JSON.stringify(a.p_teams)); return rpc(name, a); };
+  await dashOf(db, { ...MBAGALA_GMO, teams: [] });
+  assert.ok(!calls.some(c => c.startsWith('legal_phone_week')), 'a viewer who holds no team makes no phone read');
+});
+
+test('the dashboard\'s Legal card is the Legal tab\'s sum, not a second one, and costs ONE function call in the wave it already makes; nothing on an upload or a call (Part 151)', async () => {
+  const src = read('api/_lib/portal-core.js');
+  const totals = /function legalGrandTotals_\([\s\S]*?\n\}\n/.exec(src)[0];
+  assert.match(totals, /const g = legalGrand_\(\{ on: !!card && card\.on !== false, rows: \[\] \}, card, lines, phoneCard, mon, sun\);/, 'legalGrandTotals_ IS legalGrand_, asked for the total row');
+  const compute = /async function dashboardFullCompute_\([\s\S]*?\n\}\n/.exec(src)[0];
+  assert.match(compute, /within_\(legalPhoneRead_\(db, user, mon, sun\), dashPhoneBudget_\(\), \{ on: null, note: DASH_PHONE_LATE_NOTE \}\),\n  \]\);/, 'the phone read rides in the dashboard\'s own wave, under its budget');
+  assert.match(compute, /legalWithPhone_\(legalNoticesCard, legalPhoneCard, legalGrandTotals_\(legalNoticesCard, legalPhoneLines, legalPhoneCard, mon, sun\)\)/);
+  assert.doesNotMatch(compute.replace(/\/\*[\s\S]*?\*\//g, ''), /\.noticed\b/, 'the dashboard decides nothing about which customer counts in calls: that is legalGrand_\'s one rule');
+  // trips: ONE call of the phone function per load; where the function is missing, one cheap failed call, remembered for five minutes
+  const log = []; const db = withFn(); const rpc = db.rpc.bind(db); db.rpc = (name, a) => { log.push(name); return rpc(name, a); };
+  await dashOf(db); assert.equal(log.filter(n => n === 'legal_phone_week').length, 1);
+  const log2 = []; const db2 = withoutFn(); const rpc2 = db2.rpc.bind(db2); db2.rpc = (name, a) => { log2.push(name); return rpc2(name, a); };
+  await dashOf(db2); await dashOf(db2); assert.equal(log2.filter(n => n === 'legal_phone_week').length, 1, 'asked once, then remembered: no failed call on every load');
+  for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.doesNotMatch(read(f), /legalGrandTotals_|DASH_PHONE_BUDGET_MS|legal_phone_week/, f + ' knows nothing of it');
 });

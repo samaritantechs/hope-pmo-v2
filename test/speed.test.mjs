@@ -295,9 +295,18 @@ const BUDGETS = [
      UNCHANGED BY db/RUN-ME-057 (2026-11-15): the card now reads each day's own cycle-day
      list instead of the whole book -- the same two calls, the same team-day rows back, one
      function for another. AND BY db/RUN-ME-058 (2026-11-16, expdf_team_day_recovery_totals):
-     the same two calls again; this week's now waits at most DASH_EDR_BUDGET_MS. */
-  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  40,  5500],
-  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  39,   900],
+     the same two calls again; this week's now waits at most DASH_EDR_BUDGET_MS.
+
+     40 -> 41 and 39 -> 40 (2026-11-24, handbook Part 151): THE LEGAL CARD'S CALLS HALF -- "in summary and in the data rows of Legal
+     Recovery widget ... at dashboard tab, should include call recovery". ONE more call, legal_phone_week (the week's stamped phone rows,
+     the function the Legal tab asks for the same week), in the wave this screen already makes, so it adds no wall time unless it is the
+     slowest read in it, and under DASH_PHONE_BUDGET_MS (2 s): past that the card is drawn from the notices alone and says so. Could the
+     database do it instead? It IS the database: the calls are stamped by pg_cron (db/RUN-ME-089), the portal only adds them up by the
+     definitions it already has (legalGrandTotals_ = legalGrand_ for the total row, so the dashboard and the Legal tab cannot differ).
+     Rows unchanged: the stamped rows of one week for the scope, a few hundred at most. Where the file is not run the function is
+     answered "missing" once and remembered five minutes (a cheap failed call, no row). Not on an upload or a call. */
+  ['Dashboard (all teams)',   'dashboardFull', {}, ADMIN,   83,  90000,  41,  5500],
+  ['Dashboard (one team)',    'dashboardFull', {}, OFFICER, 63,  40000,  40,   900],
   /* THE COMPANY'S LINE FOR A SCOPED ORODHA (2026-10-16): "the red conditional format from the whole company is what they
      see ... not their own pivot ... They can't see company wide data". A second call the screen makes after it has
      painted, so the dashboard's own budget above is untouched. COLD it is the whole-book dashboard (the line is its grand
@@ -305,7 +314,7 @@ const BUDGETS = [
      deployment and the whole-book viewers' own dashboards refresh it -- so three hundred team codes in one morning cost
      one such read, not three hundred. Could the database do it instead? It does: these are the same aggregate reads the
      all-teams dashboard already makes. */
-  ['Company line (one team, cold)', 'orodhaJudge', { rows: [{ team: 'KONGOWE', tColPct: 50 }] }, OFFICER, 83, 90000, 40, 5500],
+  ['Company line (one team, cold)', 'orodhaJudge', { rows: [{ team: 'KONGOWE', tColPct: 50 }] }, OFFICER, 83, 90000, 41, 5500],   // 40 -> 41 with the dashboard it reads (Part 151)
   /* +3 TRIPS (2026-10-12): the legal recovery slide -- "add legal recovery slide at presentation,
      todays and weekly recovery columns as pmo recovery does". The notice register scoped like
      every other read here, the ledger fold, and the week's ledger rows. Could the database do

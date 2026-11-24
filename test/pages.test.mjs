@@ -2167,7 +2167,7 @@ test('the dashboard carries a legal recovery card on top and today/week boards b
   // The card's words live in the one builder now (Part 134): pct() rounds the figure as sent (36.2 -> "36%"); pct(lg.pct / 100)
   // was printing "(0%)"; a database without the ledger says so on the card; it is fed by dashboardFull, not by the boards wave.
   const builder = /function lgWeekCard_\(lg\)\{[\s\S]*?\n\}\n/.exec(app)[0];
-  assert.ok(/pct\(lg\.pct\)/.test(builder) && !/pct\(lg\.pct \/ 100\)/.test(builder), 'the week\'s share is not divided by a hundred first');
+  assert.ok(/wkPct = gt \? gt\.pct : lg\.pct/.test(builder) && /pct\(wkPct\)/.test(builder) && !/pct\(wkPct \/ 100\)/.test(builder) && !/pct\(lg\.pct \/ 100\)/.test(builder), 'the week\'s share is not divided by a hundred first');
   assert.ok(/off \? esc\(lg\.note \|\| 'db\/RUN-ME-041 haijaendeshwa \/ not run yet'\)/.test(builder), 'a database without the ledger says so on the card');
   assert.ok(/\|\| d\.legal\)/.test(view), 'fed by dashboardFull, not by the boards wave');
   assert.ok(view.indexOf("kpi('Abnormal payments'") < view.indexOf("'<!--lgw-->'"), 'on the headline row, after the abnormal payments card');
@@ -3554,7 +3554,7 @@ test('the list behind the phone card: the same drawer on a second kind, the same
   const bar = lgFn_(app, 'lgWeekBar_', 'd, ph');
   assert.match(bar, /var off = ph \? !\(lg\.phone && lg\.phone\.on === true\) : d\.on === false;/, 'the phone list\'s arrows work whenever the phone card does');
   // RUN the list.
-  const src = lgFn_(app, 'lgPhoneList_', 'd, title, when, focusArrow');
+  const src = lgFn_(app, 'lgPhoneList_', 'd, title, when, focusArrow') + lgFn_(app, 'lgPhoneRows_', 'd') + lgFn_(app, 'lgPhoneCols_', '') + lgFn_(app, 'lgPhoneSub_', 'd, rows, all') + lgFn_(app, 'lgPhoneBoardTitle_', 'd') + lgFn_(app, 'lgPhoneHit_', 'r, q');
   const draw = d => {
     const out = { html: '', boards: [], opened: [], inputs: {} };
     const node = () => ({ innerHTML: '', querySelectorAll: () => [], set oninput(f) { out.oninput = f; } });
@@ -3593,7 +3593,8 @@ test('the list behind the phone card: the same drawer on a second kind, the same
   assert.ok(/<div class="note">⚠ run db\/RUN-ME-089 &lt;now&gt;<\/div>/.test(off.html) && !off.boards.length && !/lgPhQ/.test(off.html), 'not run: the file\'s name, as text, and no table');
   const bad = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, phone: { on: null, note: 'could not be read just now' } } });
   assert.match(bad.html, /<div class="note bad">⚠ could not be read just now<\/div>/);
-  assert.match(src, /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.phone, r\.who, r\.othersTxt, r\.day\]\.some\(/, 'the search reads the lawyer, the customer, the number and the day');
+  assert.match(src, /return !q \|\| \[r\.officer, r\.full_name, r\.ref, r\.team, r\.phone, r\.who, r\.othersTxt, r\.day\]\.some\(/, 'the search reads the lawyer, the customer, the number and the day');
+  assert.match(src, /all\.filter\(function\(r\)\{ return lgPhoneHit_\(r, q\); \}\)/, 'and the phone list asks the one search (the dashboard\'s list asks it too)');
 });
 
 test('recovery by phone beside each lawyer on the dashboard\'s boards and on the Presentation\'s legal calls slide, with one line that says the week or names the file (Parts 139 and 141)', () => {
@@ -3878,4 +3879,79 @@ test('the grand card\'s two buttons: Excel writes the board the card registered,
   assert.deepEqual(calls, [['xls', 'lgGrandX', 'xls'], ['jpg', 'lgGrand']]);
   assert.deepEqual([e1.stopped, e1.prevented, e2.stopped, e2.prevented], [1, 1, 1, 1]);
   assert.doesNotThrow(() => fn('xls'), 'and it works with no event (a call from code)');
+});
+
+/* THE DASHBOARD'S LEGAL WIDGET INCLUDES CALL RECOVERY (24 Nov 2026, handbook Part 151).
+     "in summary and in the data rows of Legal Recovery widget (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should
+      include call recovery" -- the owner.
+   The card's words (the summary) and the list behind it (its summary and its data rows) are RUN with the page's own helpers; the server's
+   figures are test/legal-grand.test.mjs. The Legal TAB's own cards and lists are not changed: a test below holds that too. */
+const LG_DASH_GRAND = { on: true, nOn: true, pOn: true, nNote: null, pNote: null, shared: false, overlap: { customers: 1, recovered: 40 }, rows: [],
+  total: { nOwed: 800, nRec: 450, nPct: 56.3, cOwed: 500, cRec: 150, cPct: 30, owed: 1300, recovered: 600, pct: 46.2, tRecovered: 80 } };
+const lgDashCard_ = (app, view, lg) => new Function('esc', 'money', 'pct', 'S', 'BOARDS', 'col', lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg') + lgGrandFns_(app) + '\nreturn lgWeekCard_;')(
+  lgEsc_, lgMoney_, lgPct_, { view }, {}, lgCol_)(lg);
+const lgCardFacts_ = html => ({ title: (/<div class="l">([^<]*)<\/div>/.exec(html) || [])[1], headline: (/id="lgRecW">([^<]*)<\/div>/.exec(html) || [])[1], sub: (/id="lgRecWS">([\s\S]*?)<\/div>/.exec(html) || [])[1] });
+
+test('the dashboard\'s Legal card includes call recovery: today\'s and the week\'s figure are notices + calls, the week says its two parts, and a side not read is said, never hidden (Part 151)', () => {
+  const app = appSrc();
+  const base = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: LG_PHONE, grand: LG_DASH_GRAND };
+  // this week, both sides read: the headline is today's notices + calls, the week beneath with its parts
+  const a = lgCardFacts_(lgDashCard_(app, 'dashboard', base));
+  assert.equal(a.title, 'Legal recovery · notisi + simu / notices + calls');
+  assert.equal(a.headline, '80', 'today: the grand total\'s tRecovered (the server\'s sum), not the notices\' 50');
+  assert.equal(a.sub, 'wiki / week TZS 600 (46%) · notisi / notices 450 + simu / calls 150 · 3 wenye notisi / noticed · owed TZS 1,300 · bofya kuona orodha / tap for the list');
+  assert.ok(/class="v good"/.test(lgDashCard_(app, 'dashboard', base)), 'green when something was recovered');
+  // the calls are not read (the file not run, a read that failed or was late): the notices alone, as before, and it SAYS so
+  const off = lgCardFacts_(lgDashCard_(app, 'dashboard', { ...base, grand: { ...LG_DASH_GRAND, on: false, pOn: false, pNote: 'x', total: { ...LG_DASH_GRAND.total, cRec: null, recovered: null, pct: null, tRecovered: null } } }));
+  assert.equal(off.title, 'Legal recovery'); assert.equal(off.headline, '50');
+  assert.equal(off.sub, 'wiki / week TZS 450 (56%) · 3 wenye notisi / noticed · owed TZS 800 · ⚠ simu hazijajumuishwa / calls not included · bofya kuona orodha / tap for the list');
+  // the notices not read: the card says what it always said
+  assert.match(lgCardFacts_(lgDashCard_(app, 'dashboard', { ...base, on: false, note: 'run 041a', grand: { ...LG_DASH_GRAND, on: false, nOn: false } })).sub, /^run 041a/);
+  // a past week (its own arrows or the dashboard's week bar): the week's figure is the headline, with its parts
+  const past = lgCardFacts_(lgDashCard_(app, 'dashboard', { ...base, mon: '2026-07-13', sun: '2026-07-19' }));
+  assert.equal(past.title, 'Legal recovery — wiki iliyopita / past week · notisi + simu / notices + calls');
+  assert.equal(past.headline, '46% · 600');
+  assert.match(past.sub, /^2026-07-13 → 2026-07-19 · notisi \/ notices 450 \+ simu \/ calls 150 · 3 wenye notisi \/ noticed · owed TZS 1,300 · bofya kuona orodha \/ tap for the list · <button/);
+  // an answer with no grand part (an older one): exactly the card it was
+  const old = lgCardFacts_(lgDashCard_(app, 'dashboard', { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26' }));
+  assert.deepEqual([old.title, old.headline, old.sub], ['Legal recovery', '50', 'wiki / week TZS 450 (56%) · 3 wenye notisi / noticed · owed TZS 800 · bofya kuona orodha / tap for the list']);
+  // a zero total with both sides read is a real nought, not a dash
+  const zero = lgCardFacts_(lgDashCard_(app, 'dashboard', { ...base, grand: { ...LG_DASH_GRAND, total: { ...LG_DASH_GRAND.total, tRecovered: 0 } } }));
+  assert.equal(zero.headline, '0');
+  // THE LEGAL TAB'S CARD IS NOT CHANGED: it ignores the grand part, as it did
+  const tab = lgCardFacts_(lgDashCard_(app, 'legal', base));
+  assert.equal(tab.title, 'Imerejeshwa wiki hii / Recovered this week'); assert.equal(tab.headline, '56% · 450');
+  assert.ok(!/notices \+ calls|notisi \/ notices/.test(lgDashCard_(app, 'legal', base).split('id="lgPhCard"')[0]), 'no mix on the tab\'s notices card');
+});
+
+test('the list behind the dashboard\'s Legal card: a summary of notices, calls and the two together, the sentences that say how, and the data rows of recovery by phone under the payments (Part 151)', () => {
+  const app = appSrc();
+  const fns = lgFn_(app, 'lgDashList_', 'd') + lgGrandFns_(app).replace(lgFn_(app, 'lgGrandCard_', 'lg'), '') + lgFn_(app, 'lgPhoneRows_', 'd') + lgFn_(app, 'lgPhoneCols_', '');
+  const kpi = (l, v, s, cls) => '<K ' + l + '|' + v + '|' + s + '|' + (cls || '') + '>';
+  const list = new Function('esc', 'money', 'pct', 'kpi', 'BOARDS', 'col', fns + '\nreturn lgDashList_;')(lgEsc_, lgMoney_, lgPct_, kpi, {}, lgCol_);
+  const rows = [{ day: '2026-07-24', ref: '500', team: 'TANDIKA', full_name: 'C 500', dc: 2, ds: '9-12', initial: 20000, current: 15000, recovered: 5000, paired: true, calls: 1, secs: 33, noticed: false, officer: 'WAKILI ALL', phone: '0712000500', who: 'Mteja / Customer', others: [] }];
+  const d = { legal: { grand: LG_DASH_GRAND, phone: { on: true } }, phoneRows: rows };
+  const l = list(d);
+  assert.deepEqual([...l.sum.matchAll(/<K ([^|]*)\|([^|]*)\|([^|]*)\|([^>]*)>/g)].map(m => m.slice(1)), [['Notisi / Notices', '450', '56% ya / of 800', ''], ['Simu / Calls', '150', '30% ya / of 500', ''], ['Jumla / Grand', '600', '46% ya / of 1,300', 'good']],
+    'three figures, each with its percentage of what it was owed');
+  assert.match(l.sum, /^<div class="kpis">/);
+  assert.match(l.sum, /<div class="note">Simu = wateja wa DC 2\+ waliozungumzwa ambao hawakuwa na notisi bado;[^<]*\(TZS 40 haikuhesabiwa mara ya pili\) \/ Calls = customers at DC 2\+ spoken to who had no notice yet;[^<]*\(TZS 40 left out, 1 customer-days\)\.<\/div>/, 'the sentences of the grand card, so the two lists say the same thing');
+  assert.ok(!/Timu inayoshikiliwa/.test(list({ ...d, legal: { grand: { ...LG_DASH_GRAND, shared: true }, phone: { on: true } } }).sum), 'the shared-team sentence is about rows this list does not draw');
+  assert.equal(l.phone.all.length, 1); assert.equal(l.phone.all[0].noticeTxt, ''); assert.deepEqual(l.phone.cols.map(c => c.key).slice(0, 3), ['day', 'officer', 'full_name'], 'the phone list\'s own rows and columns');
+  // no phone rows, or the phone not read: the summary only, and the notes say why
+  assert.equal(list({ ...d, phoneRows: [] }).phone, null);
+  assert.equal(list({ ...d, legal: { grand: LG_DASH_GRAND, phone: { on: false } } }).phone, null, 'lines with the phone not read are not drawn (the server sends none then; the page does not rely on it)');
+  const off = list({ legal: { grand: { ...LG_DASH_GRAND, on: false, pOn: false, pNote: 'run db/RUN-ME-089', total: { ...LG_DASH_GRAND.total, cRec: null, cPct: null, cOwed: null, recovered: null, pct: null, owed: null } }, phone: { on: false } }, phoneRows: [] });
+  assert.equal(off.phone, null); assert.ok(/<K Simu \/ Calls\|—\|\|>/.test(off.sum) && /<K Jumla \/ Grand\|—\|\|>/.test(off.sum), 'dashes, never noughts');
+  assert.ok(/<div class="note">⚠ run db\/RUN-ME-089<\/div>/.test(off.sum));
+  assert.equal(list({ legal: {} }), null, 'an answer with no grand part (older) draws the list as it was');
+  // the drawer: only the DASHBOARD's list uses it, and the boards are the ones the Legal tab has
+  const dr = lgFn_(app, 'legalRecoveriesDrawer_', 'period, weekOf, focusArrow, kind');
+  assert.match(dr, /var dl = week && S\.view === 'dashboard' \? lgDashList_\(d\) : null;/, 'only on the dashboard');
+  assert.match(dr, /var hasBoard = all\.length \|\| !!\(dl && dl\.phone\);/);
+  assert.match(dr, /\(week \? lgWeekBar_\(d\) : ''\) \+ \(dl \? dl\.sum : ''\)/, 'the summary under the week bar');
+  assert.match(dr, /if \(d\.on === false \|\| !hasBoard\) return;/);
+  assert.match(dr, /phHtml = board\('lgPh', lgPhoneBoardTitle_\(d\), lgPhoneSub_\(d, prow, dl\.phone\.all\), prow, dl\.phone\.cols, sumRow\(prow, \['calls', 'secs', 'initial', 'recovered'\]\)\);/, 'the phone board is the Legal tab\'s own, one search for both');
+  assert.match(dr, /var prow = dl\.phone\.all\.filter\(function\(r\)\{ return lgPhoneHit_\(r, q\); \}\);/, 'the one search reaches the phone board too');
+  assert.match(dr, /host\.innerHTML = \(all\.length\s*\? board\('lgRec'/, 'the payments board is first');
 });

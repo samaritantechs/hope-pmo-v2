@@ -12775,6 +12775,12 @@ const dashPrevBudget_ = () => Number(process.env.DASH_PREV_BUDGET_MS) || DASH_PR
    slow and the rest of the dashboard is drawn. Overridable for the test that proves it. */
 const DASH_EDR_BUDGET_MS = 4000;
 const dashEdrBudget_ = () => Number(process.env.DASH_EDR_BUDGET_MS) || DASH_EDR_BUDGET_MS;
+/* How long the dashboard will wait on the week's recovery by phone (the Legal card's calls half, Part 151): one function call that rides in
+   the wave the screen already makes, so it adds no wall time unless it is the slowest read in it. Past this the card is drawn from the
+   notices alone and says the calls were not read in time. Overridable for the test that proves it. */
+const DASH_PHONE_BUDGET_MS = 2000;
+const dashPhoneBudget_ = () => Number(process.env.DASH_PHONE_BUDGET_MS) || DASH_PHONE_BUDGET_MS;
+const DASH_PHONE_LATE_NOTE = 'Urejeshaji kwa simu haukusomwa kwa wakati; fungua orodha au jaribu tena. / Recovery by phone was not read in time; open the list or try again.';
 const DASH_MONTH_BUDGET_MS = 3000;
 // Overridable so a test can prove the race below with a stalled fake in milliseconds.
 const dashMonthBudget_ = () => Number(process.env.DASH_MONTH_BUDGET_MS) || DASH_MONTH_BUDGET_MS;
@@ -12855,7 +12861,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   // Why this week's Expected Defaulters card has no answer, when it has none: filled by the
   // read itself ('missing' or 'failed' with the database's words), left empty when it answers.
   const edrSt = {};
-  const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, edrWeek, edrPrev, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger] = await Promise.all([
+  const [expWeek, defWeek, expPrev, defPrev, ecolWeek, ecolPrev, edrWeek, edrPrev, loansAll, abn, teamRows, abnPaid, codeRows, pmoCfg, adj, notices, legalLedger, legalPhone] = await Promise.all([
     expectedTotalsInRange(db, { type: 'today', from: mon, to: sun, teams: user.teams }),
     defaulterTotalsInRange(db, { from: mon, to: sun, teams: user.teams }),
     /* LAST WEEK IS FOR THE ARROWS, AND THE ARROWS ARE NOT WORTH THE SCREEN.
@@ -12978,7 +12984,21 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        payments against it, never the two-week payments book. */
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, notice_date, arrears_at_notice'), user.teams)),
     legalLedgerWeek_(db, mon, sun),
+    /* AND ITS CALLS HALF (Part 151: "include call recovery"): the week's stamped phone rows, ONE function call, in this wave, under a
+       budget -- legalPhoneRead_ never throws (not run and failed are answers), and past the budget the card is drawn from the notices
+       alone. Not on an upload or a call; the Legal tab asks the same function for the same week. */
+    within_(legalPhoneRead_(db, user, mon, sun), dashPhoneBudget_(), { on: null, note: DASH_PHONE_LATE_NOTE }),
   ]);
+  /* THE LEGAL CARD'S READING, built from the same pieces the Legal tab's cards are (Part 151): the notices card (legalCard_), the phone
+     card (legalPhoneCard_ over the stamped lines, the lawyers' role named by the LEGAL_ROLE setting, a memoised read this screen makes
+     anyway) and the grand total (legalGrandTotals_ = legalGrand_ asked for the total row), joined by legalWithPhone_ so the arrows'
+     floor is the Legal tab's. The week is the dashboard's (a past week through the week bar). */
+  const legalMine = scoped(user, notices);
+  const legalRoleName = (await settingsMany(db, [LEGAL_ROLE_KEY])).get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT);
+  const legalPhoneLines = legalPhone && legalPhone.on === true ? legalPhoneLines_(legalPhone.rows, legalRoleName, legalNoticeDays_(legalMine)) : [];
+  const legalNoticesCard = legalCard_(legalMine, legalLedger, today, mon, sun, realMon);
+  const legalPhoneCard = legalPhoneCard_(legalPhone, legalPhoneLines, today, mon, sun);
+  const legalDash_ = legalWithPhone_(legalNoticesCard, legalPhoneCard, legalGrandTotals_(legalNoticesCard, legalPhoneLines, legalPhoneCard, mon, sun));
   const weeklyTarget = await settingNum(db, 'SALES_TARGET_WEEKLY', await settingNum(db, 'SALES_TARGET', 100000000));
   /* The month ledger, for the Orodha's M. columns -- AFTER the wave above, never inside it,
      and under a budget a third of the month report's: on a cold month the ledger fills
@@ -13881,7 +13901,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        ("the legal recovery card at dashboard should be able to openup too - with the backward and
        foward arrows as usual", 23 Nov 2026, Part 134). `today` is the dashboard's own clock (a
        finished week's Friday); the arrows' ceiling is the REAL this week. */
-    legal: legalCard_(scoped(user, notices), legalLedger, today, mon, sun, realMon),
+    legal: legalDash_,
     appsTrend, salesTrend, colTrend, recTrend, recTrendTotal, ecolTrend, edrTrend, edrTrendTotal, edrNote, ...recoveryRuleOf_(stand, db),
     teamPerf: teams,
     paired: pairedToday,
@@ -14725,12 +14745,13 @@ function legalGrand_(board, card, lines, phoneCard, mon, sun) {
   const by = new Map();
   const at = name => { const k = K(name); let r = by.get(k); if (!r) by.set(k, r = { officer: String(name == null ? '' : name), nOwed: 0, nRec: 0, cOwed: 0, cRec: 0 }); return r; };
   if (nOn) for (const b of (board.rows || [])) { const r = at(b.officer); r.nOwed += num(b.owed); r.nRec += num(b.recovered); }
-  let cOwed = 0, cRec = 0;
+  let cOwed = 0, cRec = 0, cRecToday = 0;
   const overlap = { customers: 0, recovered: 0 };
   if (pOn) for (const l of lines || []) {
     if (l.day < mon || l.day > sun) continue;
     if (l.noticed) { overlap.customers++; overlap.recovered += l.recovered; continue; }
     const r = at(l.officer); r.cOwed += l.initial; r.cRec += l.recovered; cOwed += l.initial; cRec += l.recovered;
+    if (card && l.day === card.today) cRecToday += l.recovered;
   }
   const shape = r => {
     const both = nOn && pOn;
@@ -14741,12 +14762,25 @@ function legalGrand_(board, card, lines, phoneCard, mon, sun) {
   const rows = [...by.values()]
     .sort((a, b) => (a.officer === '(unassigned)') - (b.officer === '(unassigned)') || ((b.nRec + b.cRec) - (a.nRec + a.cRec)) || a.officer.localeCompare(b.officer))
     .map(r => ({ officer: r.officer, ...shape(r) }));
-  const total = shape({ nOwed: nOn ? num(card && card.owed) : 0, nRec: nOn ? num(card && card.recovered) : 0, cOwed, cRec });
+  /* `tRecovered`: TODAY's notices recovery (the card's own) and today's calls recovery (the lines of the card's `today`, the same
+     lines, the same left-out rule), added: the headline of the dashboard's Legal card (Part 151). Null with a side missing. */
+  const total = { ...shape({ nOwed: nOn ? num(card && card.owed) : 0, nRec: nOn ? num(card && card.recovered) : 0, cOwed, cRec }),
+    tRecovered: nOn && pOn ? num(card && card.tRecovered) + cRecToday : null };
   const sum = k => rows.reduce((s, r) => s + (r[k] || 0), 0);
   return { on: nOn && pOn, nOn, pOn,
     nNote: nOn ? null : ((card && card.note) || LEGAL_NOTE), pNote: pOn ? null : ((phoneCard && phoneCard.note) || LEGAL_PHONE_NOTE),
     rows, total, overlap,
     shared: nOn && (Math.round(sum('nOwed')) !== Math.round(num(card && card.owed)) || Math.round(sum('nRec')) !== Math.round(num(card && card.recovered))) };
+}
+/** THE GRAND RECOVERY FOR A SCREEN THAT DRAWS NO LAWYERS' ROWS (handbook Part 151): the dashboard's Legal card -- "in summary and in the
+    data rows of Legal Recovery widget (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should include call recovery"
+    (the owner, 24 Nov 2026). It is legalGrand_ ITSELF, asked for the total row only (a board with no rows of its own), so the sum the
+    dashboard's card prints and the one the Legal tab's grand card ends on are ONE computation: a customer who was served a notice and
+    phoned counts once, under notices, with the amount left out said (`overlap`); a side that cannot be read is null and the grand figure
+    with it. The rows are dropped (this screen does not draw them) and `shared` is not asked. Arithmetic over what the caller holds. */
+function legalGrandTotals_(card, lines, phoneCard, mon, sun) {
+  const g = legalGrand_({ on: !!card && card.on !== false, rows: [] }, card, lines, phoneCard, mon, sun);
+  return { on: g.on, nOn: g.nOn, pOn: g.pOn, nNote: g.nNote, pNote: g.pNote, rows: [], total: g.total, overlap: g.overlap, shared: false };
 }
 /** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
