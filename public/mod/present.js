@@ -513,7 +513,7 @@ function presRender(){
 
     HEAD = weekBar(d) + boardsNote + '<div class="kpis">'
       + kpi('Slides', money(S.slides.length), (S.presOff.length? money(S.presOff.length)+' hidden' : 'live figures, not a screenshot'), '', 'presCount')
-      + kpi('Seconds per slide', String(S.presSecs || 15), 'change below')
+      + kpi('Seconds per slide', String(S.presSecs || PRES_SECS_DEFAULT), 'change below')
       + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
       + '<div class="card"><div class="card-h">Sehemu za kuonyesha / Segments to include</div>'
       + '<div class="cleanbox"><div class="checks">'
@@ -533,7 +533,7 @@ function presRender(){
       + 'screen for prayers. The deck stays where it is and the clock stops; tap anywhere to come back.</i></div>'
       + bar('<button class="btn" id="presStart">▶ Anza / Play on the TV</button>'
         + '<label style="font-size:12px;color:var(--mut)">Sekunde / Seconds</label>'
-        + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||15)+'" style="width:80px">'
+        + '<input type="number" id="presSecs" min="5" max="300" value="'+(S.presSecs||PRES_SECS_DEFAULT)+'" style="width:80px">'
         + '<span style="font-size:12px;color:var(--mut)">Esc kutoka · ← → kubadili slaidi / Esc exits, arrows change slide</span>');
     S.rows = S.slides.map(function(sl,i){ return { n:i+1, slide:sl.title, kind:sl.kind,
       rows: sl.rows ? sl.rows.length : sl.items.length }; });
@@ -550,7 +550,7 @@ function presStart(from){
   presDraw();
   clearInterval(S.presTimer);
   S.presTimer = setInterval(function(){ S.presI = (S.presI + 1) % S.slides.length; presDraw(); },
-    Math.max(5, Math.min(300, Number(S.presSecs) || 15)) * 1000);
+    Math.max(5, Math.min(300, Number(S.presSecs) || PRES_SECS_DEFAULT)) * 1000);
   clearInterval(S.presRefresh);
   S.presRefresh = setInterval(presRefetch, PRES_REFRESH_MS);
   // Real full screen: on the office TV the browser chrome should not be part of the picture.
@@ -750,7 +750,7 @@ function presBlank(on){
   } else if (S.presWasRunning){
     clearInterval(S.presTimer);
     S.presTimer = setInterval(function(){ S.presI = (S.presI + 1) % S.slides.length; presDraw(); },
-      Math.max(5, Math.min(300, Number(S.presSecs) || 15)) * 1000);
+      Math.max(5, Math.min(300, Number(S.presSecs) || PRES_SECS_DEFAULT)) * 1000);
   }
   presDraw();
 }
@@ -765,6 +765,6 @@ function presGo(step){
   if (S.presTimer){
     clearInterval(S.presTimer);
     S.presTimer = setInterval(function(){ S.presI = (S.presI + 1) % S.slides.length; presDraw(); },
-      Math.max(5, Math.min(300, Number(S.presSecs) || 15)) * 1000);
+      Math.max(5, Math.min(300, Number(S.presSecs) || PRES_SECS_DEFAULT)) * 1000);
   }
 }

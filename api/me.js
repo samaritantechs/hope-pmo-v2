@@ -116,22 +116,28 @@ function appBuild() {
   return buildStamp;
 }
 
+/* SECONDS PER SLIDE WHEN SETTINGS HOLDS NO PRESENT_SECONDS: 45.
+   "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026 (handbook Part 146). A row PRESENT_SECONDS in
+   Settings still wins over it, and the box on the Presentation tab over both. The page carries the same number for the moment
+   before this answer is in (PRES_SECS_DEFAULT in public/app.html): test/present-seconds.test.mjs holds the two together. */
+export const PRESENT_SECONDS_DEFAULT = 45;
 export const clampNum = (raw, dflt, lo, hi) => {
   const n = parseInt(String(raw == null ? '' : raw).replace(/[^0-9]/g, ''), 10);
   return (!n || isNaN(n)) ? dflt : Math.max(lo, Math.min(hi, n));
 };
-async function uiCadences() {
+export async function uiCadences(db = supabase) {
   const keys = ['PRESENT_SECONDS', 'REFRESH_SECONDS', 'HINT_INTERVAL', 'HINT_LIFETIME'];
   let rows = [];
   // A settings table that will not answer must not stop anybody signing in. The defaults are
-  // the numbers that were hard-coded before, so a failure here reads exactly like today.
+  // the numbers that were hard-coded before (the slide seconds are 45 since 24 Nov, Part 146), so a
+  // failure here reads exactly like a book with no such settings.
   try {
-    const { data } = await supabase.from('settings').select('key, value').in('key', keys);
+    const { data } = await db.from('settings').select('key, value').in('key', keys);
     rows = data || [];
   } catch (e) { /* fall through to defaults */ }
   const get = k => { const r = rows.find(x => x.key === k); return r && r.value; };
   return {
-    presentSeconds: clampNum(get('PRESENT_SECONDS'), 15, 5, 300),
+    presentSeconds: clampNum(get('PRESENT_SECONDS'), PRESENT_SECONDS_DEFAULT, 5, 300),
     refreshSeconds: clampNum(get('REFRESH_SECONDS'), 90, 10, 900),
     hintIntervalSeconds: clampNum(get('HINT_INTERVAL'), 240, 30, 3600),
     hintLifetimeSeconds: clampNum(get('HINT_LIFETIME'), 7, 3, 60),
