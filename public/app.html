@@ -780,7 +780,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
   legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1, fraudFind:1,
-  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, staffRoster:1, leadersCheck:1, settings:1, storageUsage:1,
+  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -800,7 +800,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-f';
+var BUILD = '2026-11-24-g';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -2089,7 +2089,7 @@ function cellHtml(r, c){
      gives the values it carries, or null for a row that has nothing to open (an unassigned
      leader). The text exports as text, like any other cell.
      THE VALUES RIDE AS data-tap-<key>, NEVER AS BARE data-<key>: wireForms() wires every
-     element carrying data-role, data-agent or data-staff to the Teams & Staff editors after
+     element carrying data-role or data-agent to the Teams & Staff editors after
      each paint, and a leader's name that carried data-role="MANAGER" had its tap silently
      replaced by the role editor's -- blue, and dead. A prefix of its own keeps it out of
      every other wiring's selector. */
@@ -3401,7 +3401,7 @@ function wireBar(){
   };
   wireStampWeek();                               // the Weekly report's own button: core
   // Settings' cards and Teams & Staff's downloads: the admin module, once one of its tabs has opened
-  if (window.wireClean) { wireClean(); wireTeamsDownload(); wireStaffExcel(); wireApprovalsReset_(); if (window.wireLeadersSync_) wireLeadersSync_(); }
+  if (window.wireClean) { wireClean(); wireTeamsDownload(); wireApprovalsReset_(); if (window.wireLeadersSync_) wireLeadersSync_(); }
   if (window.wireDevices) wireDevices();        // the devices module, once one of its tabs has opened
   if (window.wireAdvDesk) wireAdvDesk();        // the advance module's approval desk, once its tab has opened
   if (window.wireLeaveDesk) wireLeaveDesk();    // the leave module's desk, once its tab has opened
@@ -7317,16 +7317,6 @@ function wireForms(){
       e.stopPropagation();
       var id = el.getAttribute('data-agent');
       agentForm(((S.csAgents&&S.csAgents.agents)||[]).filter(function(a){ return a.user_id===id; })[0] || null);
-    };
-  });
-  var nstaff = document.getElementById('newStaff');
-  if (nstaff) nstaff.onclick = function(){ staffForm(null); };
-  Array.prototype.forEach.call(document.querySelectorAll('[data-staff]'), function(el){
-    el.onclick = function(e){
-      e.stopPropagation();
-      var key = el.getAttribute('data-staff');
-      var x = (((S.staff||{}).staff)||[]).filter(function(p){ return (p.role+'\u0001'+p.name) === key; })[0];
-      if (x) staffForm(x);
     };
   });
   var nrole = document.getElementById('newRole');

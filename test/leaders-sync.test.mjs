@@ -359,7 +359,7 @@ test('leadersSync brings every cell the codes name into line, right away, for al
   assert.ok(r.kept.some(k => k.team === 'KONGOWE' && k.sheet === 'MARY SAMPLE'));
 });
 
-test('Teams & Staff shows it at once: the list of team leaders and the staff by person', async () => {
+test('Teams & Staff shows it at once: the list of team leaders, and the roster the server keeps (the by-person card was taken off the screen on 24 Nov 2026)', async () => {
   const db = fakeDb(book());
   await portalApi(db, ADMIN, 'leadersSync', {}, NOW);
   const list = await portalApi(db, ADMIN, 'teams', {}, NOW);

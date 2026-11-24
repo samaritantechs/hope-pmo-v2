@@ -1540,8 +1540,8 @@ test('the exp.def report: a leader\'s name opens their card of calls, comments a
   // The tappable cell kind exports as text and never carries data for a null row.
   const cell = app.slice(app.indexOf('function cellHtml('), app.indexOf('function isNum('));
   assert.ok(/c\.kind==='tap'/.test(cell) && /if \(!dt\) return esc\(txt\);/.test(cell));
-  /* ITS VALUES RIDE UNDER A PREFIX OF THEIR OWN. wireForms() wires every [data-role], [data-agent]
-     and [data-staff] element to the Teams & Staff editors after each paint; a leader's name
+  /* ITS VALUES RIDE UNDER A PREFIX OF THEIR OWN. wireForms() wires every [data-role] and [data-agent]
+     element to the Teams & Staff editors after each paint (and, until 24 Nov 2026, every [data-staff] one); a leader's name
      that carried data-role="MANAGER" had its tap replaced by the role editor's -- blue and
      dead on the live report. The prefix keeps the tap out of every other wiring's selector. */
   assert.ok(/' data-tap-'\+k\+'="'/.test(cell), 'tap values are data-tap-<key>, never bare data-<key>');
@@ -2619,8 +2619,8 @@ test('the upload page defers its spreadsheet library and waits for it; the brand
   assert.ok(/if \(window\.HOPE_NO_BRAND_FETCH\) return;/.test(brand), 'the call app still opts out entirely');
   const core = appCore();
   assert.ok(/wireStampWeek\(\);\s*\/\/ the Weekly report's own button: core/.test(core), 'the Weekly report\'s stamp button is wired from the core');
-  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireStaffExcel\(\); wireApprovalsReset_\(\); if \(window\.wireLeadersSync_\) wireLeadersSync_\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module (the leaders card\'s two buttons too)');
-  for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireStaffExcel(', 'function wireLeadersSync_(']) {
+  assert.ok(/if \(window\.wireClean\) \{ wireClean\(\); wireTeamsDownload\(\); wireApprovalsReset_\(\); if \(window\.wireLeadersSync_\) wireLeadersSync_\(\); \}/.test(core), 'Settings and Teams & Staff wiring waits for the admin module (the leaders card\'s two buttons too)');
+  for (const n of ['function wireClean(', 'var SETTINGS_GROUPS', 'function settingsGroupCard_(', 'function wireTeamsDownload(', 'function wireLeadersSync_(']) {
     assert.ok(!core.includes(n), n + ' is still in the core');
     assert.ok(page('admin').includes(n), n + ' is not in the admin module');
   }
@@ -3385,16 +3385,17 @@ function wireFormsStandIn_() {
 
 test('RUN: wireForms() attaches every head button and box, attaches them again the same on a rebuilt page, and starts nothing (Part 133)', () => {
   const w = wireFormsStandIn_();
-  const clickable = ['newAgent', 'newStaff', 'newRole', 'newTeam', 'resetRoles', 'undoRoles', 'newComplaint', 'newDeduction', 'dedReport', 'advSubmit', 'newAdvStaff', 'newRestructure',
+  const clickable = ['newAgent', 'newRole', 'newTeam', 'resetRoles', 'undoRoles', 'newComplaint', 'newDeduction', 'dedReport', 'advSubmit', 'newAdvStaff', 'newRestructure',
     'newNotice', 'lgLogo', 'lgStamp', 'lgSign', 'lgWho', 'lgTitle', 'lgPhone', 'sgOfficerLoc', 'soToggle', 'hlToggle', 'newSetting', 'newCode', 'adjSave', 'newOfficer', 'imqSend', 'imqSetRateBtn', 'rlAdd', 'ppSave'];
   for (const id of clickable) assert.ok(w.ids.includes(id), id + ' is still looked up by wireForms()');
-  assert.ok(w.sels.length >= 9, 'and so are its attribute selectors (the staff, agent, role, code, officer and setting rows; the imprest chips and rates)');
+  assert.ok(w.sels.length >= 9, 'and so are its attribute selectors (the agent, role, code, officer and setting rows; the imprest chips and rates)');
   const page1 = w.makePage();
   const started1 = w.run(page1);
   assert.deepEqual(started1.filter(x => x !== 'hopeSecrets'), [], 'wiring a screen starts nothing -- no timer, request, redraw, drawer, confirm box or focus: it is run once per keystroke in a table search');
   assert.ok(started1.includes('hopeSecrets'), 'an access-code box drawn by the screen is masked');
   for (const id of clickable) assert.equal(typeof page1.byId[id].onclick, 'function', id + ' answers a click');
-  assert.ok(page1.bySel['[data-staff]'].every(e => typeof e.onclick === 'function') && page1.bySel['[data-impq]'].every(e => typeof e.onclick === 'function'), 'every row and chip the selectors reach answers a click');
+  assert.ok(page1.bySel['[data-agent]'].every(e => typeof e.onclick === 'function') && page1.bySel['[data-impq]'].every(e => typeof e.onclick === 'function'), 'every row and chip the selectors reach answers a click');
+  assert.ok(!('[data-staff]' in page1.bySel) && !w.ids.includes('newStaff'), 'the staff-by-person card is gone: nothing looks up its button or its rows (the owner, 24 Nov 2026)');
   const card = page1.byId.lgRecT.card;
   assert.ok(card.attrs.role === 'button' && card.attrs.tabindex === '0' && card.style.cursor === 'pointer' && /Tap for the list/.test(card.title) && typeof card.onclick === 'function' && typeof card.onkeydown === 'function',
     'today\'s recovery card is dressed (a button, a tab stop, the pointer, its title) and answers a click and a key');
@@ -3622,4 +3623,31 @@ test('recovery by phone beside each lawyer on the dashboard\'s boards and on the
   const calls = pres.slice(pres.indexOf('var lcRows ='), pres.indexOf("slides.push({ id:'legalcalls'") + 1400);
   assert.match(calls, /lgPhoneNote_\(\{ \.\.\.lcPh, others: \[\] \}, true\)/, 'the line is in the legal calls slide\'s caption');
   assert.match(calls, /col\('phToday','By phone today','money'\), col\('phWeek','By phone week','money'\)\] \}\);/, 'and the two columns are its last two');
+});
+
+/* THE STAFF-BY-PERSON CARD IS GONE FROM TEAMS & STAFF (handbook Part 148).
+
+     "remove the wafanyakazi / staff by person at teams and staff" -- the owner, 24 Nov 2026
+
+   The card (Wafanyakazi / Staff -- by person), its "+ Mpya / New" form (staffForm), its "Excel -- namba zote / all numbers" (wireStaffExcel)
+   and the read behind it (staffRoster, asked on every open of the screen) are taken off the PAGE. The three server functions stay: the API
+   answers them and test/portal.test.mjs holds them. That wireForms() looks nothing of it up is held by the RUN test above ("RUN: wireForms()
+   attaches every head button ..."); the real page in a real browser, by tools/browser-checks/portal-repaint-wiring.mjs and
+   portal-leaders-real.mjs (no card, no button, no row, and no staffRoster request). */
+test('Teams & Staff no longer draws the staff-by-person card, its form, its Excel or the roster read behind it; the server keeps its three functions (Part 148)', () => {
+  const strip = src => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');          // a comment may name what was taken out
+  const core = strip(appCore()), admin = strip(page('admin'));
+  const gone = ['staffForm', 'wireStaffExcel', 'staffCard', 'staffXl', 'newStaff', 'data-staff', 'sfName', 'sfRole', 'sfTeam', 'sfSave', 'staffRoster', 'saveStaffTeams', 'staffExport', 'S.staff', 'by person'];
+  for (const [name, src] of [['public/app.html', core], ['public/mod/admin.js', admin]]) for (const w of gone) assert.ok(!src.includes(w), name + ' still carries ' + w);
+  // the screen asks for the teams and the call agents and nothing more
+  const at = admin.indexOf('function teamsView_(){');
+  assert.ok(at > 0 && /^function teamsView_\(\)\{\s*return Promise\.all\(\[srvTeams_\(\), srv\('callAgents'\)\.catch\(function\(\)\{ return null; \}\)\]\)\.then\(function\(rr\)\{\s*var d = rr\[0\]; S\.csAgents = rr\[1\];/.test(admin.slice(at, at + 400)),
+    'Teams & Staff reads the teams and the call agents: no roster');
+  // what is NOT taken away: the other cards and buttons of the screen
+  for (const kept of ['id="newTeam"', 'id="newAgent"', 'id="leadersCard"', 'function wireTeamsDownload(']) assert.ok(admin.includes(kept), kept + ' is still on the screen');
+  assert.ok(core.includes('wireTeamsDownload();') && core.includes('wireLeadersSync_();'), 'and still wired from the core');
+  // the server keeps its three functions and still answers them
+  const server = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
+  for (const fn of ['staffRoster', 'saveStaffTeams', 'staffExport']) assert.ok(new RegExp('\\bfunction ' + fn + '\\(').test(server), 'the server still has ' + fn);
+  assert.ok(/\n\s+staffRoster, saveStaffTeams,/.test(server) && /\bteamsExport, staffExport\b/.test(server), 'and still answers them');
 });

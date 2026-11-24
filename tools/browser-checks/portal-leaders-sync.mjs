@@ -62,7 +62,6 @@ function answer(fn) {
   if (fn === 'teams') return { ok: true, count: 3, roles: [], allTabs: [],
     // until the sync has been answered the list is the stale one: a screen that did not WAIT for it shows OLD GMO
     rows: [{ team: 'KONGOWE', gmo: synced ? 'NEW GMO' : 'OLD GMO', team_code: 'K1' }, { team: 'MBAGALA', gmo: 'NEW GMO', team_code: 'M1' }, { team: 'TEMEKE', manager: 'X', team_code: 'T1' }] };
-  if (fn === 'staffRoster') return { ok: true, staff: [], allTeams: ['KONGOWE', 'MBAGALA', 'TEMEKE'], roles: [] };
   if (fn === 'callAgents') return { ok: true, agents: [], unnamed: [] };
   if (fn === 'notifications') return { ok: true, unseen: 0, seenAt: '', items: [] };
   if (fn === 'settings') return { ok: true, rows: [] };

@@ -81,9 +81,8 @@ VIEWS.teams = function(){
   return sync.then(function(sr){ S.leadersSync = sr; return teamsView_(); });
 };
 function teamsView_(){
-  return Promise.all([srvTeams_(), srv('callAgents').catch(function(){ return null; }),
-                      srv('staffRoster').catch(function(){ return null; })]).then(function(rr){
-    var d = rr[0]; S.csAgents = rr[1]; S.staff = rr[2];
+  return Promise.all([srvTeams_(), srv('callAgents').catch(function(){ return null; })]).then(function(rr){
+    var d = rr[0]; S.csAgents = rr[1];
     // Every team name, for the merge picker in the drawer -- so the destination is CHOSEN from
     // what exists rather than typed, which is how the wrong spelling got created in the first
     // place. Kept on S because the drawer is opened from a row, not re-fetched.
@@ -100,36 +99,11 @@ function teamsView_(){
       + '<div class="note">Msimbo wa timu ndio maafisa wanaingia nao. Ukibadilisha, simu zote za timu hiyo zinakatwa mara moja.'
       + ' / The team code is what field officers sign in with. Changing it cuts every handset on that team immediately —'
       + ' that is how you lock out someone who has left. To cut <b>one</b> person only, switch their account off in Settings.</div>'
-      /* WAFANYAKAZI / STAFF -- the same people, listed BY PERSON instead of by team.
-         Moving somebody off ten teams and onto ten others was twenty edits down in the table
-         below, each one a chance to miss a row. Here it is one row, one save.
-         It also shows the COLLECTION OFFICERS, whose teams live on their access code rather
-         than on the teams table -- so they were not on this screen at all. */
-      + (S.me.can.admin && S.staff
-          ? fold_('staff', 'Wafanyakazi / Staff — by person',
-              ((S.staff.staff||[]).length) + ' watu / people',
-            '<div class="card" id="staffCard"><div class="card-h">Wafanyakazi / Staff &mdash; by person'
-            + '<span class="sub"><button class="btn sm ghost" id="staffXl">\u2b07 Excel &mdash; namba zote / all numbers</button>'
-            + ' <button class="btn sm" id="newStaff">+ Mpya / New</button></span></div>'
-            + '<div class="note" style="margin:10px 14px">Bofya mtu kubadili timu zake zote kwa mara moja.'
-            + ' / Tap a person to set <b>all</b> their teams at once. Timu usiyoichagua inaondolewa kwake.'
-            + ' / A team you leave unticked is taken off them.'
-            + ' Namba zenye \ud83d\udcf1 zinatoka kwenye app ya simu &mdash; ndipo watu wanajisajili wenyewe.'
-            + ' / Numbers marked \ud83d\udcf1 come from the call app registration, the freshest source.</div>'
-            + '<div class="scroll"><table><thead><tr><th class="sn">S/N</th><th>Jina / Name</th><th>Wadhifa / Role</th>'
-            + '<th>Namba / Phone</th><th class="r">Timu</th><th>Teams</th><th></th></tr></thead><tbody>'
-            + (S.staff.staff||[]).map(function(x, i){
-                var key = x.role + '\u0001' + x.name;
-                return '<tr class="clickrow" data-staff="'+esc(key)+'"><td class="sn">'+(i+1)+'</td>'
-                  + '<td><b>'+esc(x.name)+'</b></td><td>'+esc(x.roleLabel)+'</td>'
-                  + '<td>'+(x.phone ? esc(x.phone)+(x.phoneFrom==='app'?' \ud83d\udcf1':'') : '\u2014')+'</td>'
-                  + '<td class="r">'+money((x.teams||[]).length)+'</td>'
-                  + '<td style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-                  + esc((x.teams||[]).join(', ') || '—')+'</td>'
-                  + '<td class="r"><button class="btn sm ghost" data-staff="'+esc(key)+'">Badili / Edit</button></td></tr>';
-              }).join('')
-            + '</tbody></table></div></div>')
-          : '')
+      /* THE "WAFANYAKAZI / STAFF -- BY PERSON" CARD WAS REMOVED HERE (the owner, 24 Nov 2026: "remove the wafanyakazi / staff by
+         person at teams and staff"), with its form (staffForm), its Excel of all numbers (wireStaffExcel) and the read behind it
+         (staffRoster) that this screen made on every open. A person's teams are changed in the table below (a team's row) and,
+         for collection and legal officers, on their access code under Settings. The server functions staffRoster, saveStaffTeams
+         and staffExport remain for the API (and their tests): putting the card back is a change to this page only. */
       /* The roles table used to sit here. It moved to SETTINGS, immediately above the access
          codes it governs -- "I need a new role assign table before access codes" -- because
          that is the screen where somebody decides who may see what, and a role's tabs are
@@ -287,80 +261,6 @@ function agentForm(x){
     if (!confirm('Ondoa "'+x.user_id+'"? / Remove this agent from the roster?')) return;
     srv('saveCallAgent', { userId: x.user_id, remove: true })
       .then(function(){ toast('Imeondolewa. / Removed.'); closeDrawer(); render(); })
-      .catch(function(e){ toast(String(e.message||e), true); });
-  };
-}
-
-/* ONE PERSON, ALL THEIR TEAMS, ONE SAVE.
- *
- *  The list of ticks IS the answer -- a team left unticked is taken off them. That is the half
- *  that made this worth building: a reassignment done ten rows at a time and abandoned half way
- *  leaves a team pointing at somebody who has left, and nothing on any screen says so.
- *
- *  The role decides where the save goes. The seven supervisory roles live as a column on the
- *  teams table; a COLLECTION or LEGAL officer's teams are a list on their access code instead.
- *  Nobody using this screen has to know that -- the server writes to whichever place the role
- *  actually lives in. */
-function staffForm(x){
-  var meta = S.staff || { roles: [], allTeams: [] };
-  var isNew = !x;
-  var have = (x && x.teams) || [];
-  var roles = meta.roles || [];
-  drawer('<h3>'+(isNew ? 'Mfanyakazi mpya / New staff member' : esc(x.name))+'</h3>'
-    + '<div class="sub">Timu ulizochagua ndio anazokuwa nazo. Usiyoichagua inaondolewa.'
-    + ' / The teams you tick are the ones they hold. Anything unticked is taken off them.</div>'
-    + '<div class="fld"><label>Jina / Name</label><input id="sfName" value="'+esc(x?x.name:'')+'"></div>'
-    + '<div class="fld"><label>Wadhifa / Role</label><select id="sfRole">'
-    + roles.map(function(r){
-        return '<option value="'+esc(r.key)+'"'+((x && x.role===r.key)?' selected':'')+'>'+esc(r.label)+'</option>';
-      }).join('') + '</select></div>'
-    /* A PORTFOLIO ROLE (collection, legal) IS an access code with that role -- their teams live
-       there, not on this table. Saying so here means the refusal from the server is never the
-       first time anybody hears it. Which roles those are, and what to call them, come from the
-       server's own roles list (source:'access_code'), never hardcoded here -- a second portfolio
-       role added later needs no matching edit on this screen. */
-    + '<div class="note" id="sfNote" style="display:none"></div>'
-    + '<div class="fld"><label>Timu / Teams <span id="sfCount" class="sub"></span></label>'
-    + '<div style="margin:4px 0 8px"><button class="btn sm ghost" type="button" id="sfAll">Chagua zote / All</button> '
-    + '<button class="btn sm ghost" type="button" id="sfNone">Ondoa zote / None</button></div>'
-    + '<div class="checks" style="max-height:46vh;overflow:auto">'
-    + (meta.allTeams||[]).map(function(t){
-        return '<label><input type="checkbox" class="sfTeam" value="'+esc(t)+'"'
-          + (have.indexOf(t)>=0?' checked':'')+'> '+esc(t)+'</label>'; }).join('')
-    + '</div></div>'
-    + '<button class="btn w" id="sfSave">Hifadhi / Save</button>');
-
-  var boxes = function(){ return document.querySelectorAll('.sfTeam'); };
-  var recount = function(){
-    var n = 0;
-    Array.prototype.forEach.call(boxes(), function(c){ if (c.checked) n++; });
-    $('#sfCount').textContent = '(' + n + ')';
-    var cur = roles.filter(function(r){ return r.key === $('#sfRole').value; })[0];
-    var portfolio = !!(cur && cur.source === 'access_code');
-    $('#sfNote').style.display = portfolio ? '' : 'none';
-    if (portfolio) $('#sfNote').innerHTML = 'Afisa wa aina hii lazima awe na msimbo wa kuingia wenye wadhifa "'
-      + esc(cur.label) + '". / A ' + esc(cur.label) + ' officer must already have an access code with'
-      + ' that role — create it under Settings first, then set their teams here.';
-  };
-  Array.prototype.forEach.call(boxes(), function(c){ c.onchange = recount; });
-  $('#sfRole').onchange = recount;
-  $('#sfAll').onclick = function(){ Array.prototype.forEach.call(boxes(), function(c){ c.checked = true; }); recount(); };
-  $('#sfNone').onclick = function(){ Array.prototype.forEach.call(boxes(), function(c){ c.checked = false; }); recount(); };
-  recount();
-
-  $('#sfSave').onclick = function(){
-    var teams = Array.prototype.filter.call(boxes(), function(c){ return c.checked; })
-      .map(function(c){ return c.value; });
-    var name = $('#sfName').value.trim();
-    if (!name) { toast('Jina linahitajika. / A name is required.', true); return; }
-    srv('saveStaffTeams', { role: $('#sfRole').value, name: name, code: (x && x.code) || '', teams: teams })
-      .then(function(r){
-        /* SAY WHAT ACTUALLY HAPPENED. "Saved" after a save that changed nothing, or that quietly
-           took somebody off four teams, is the same word for two very different events. */
-        toast('Imehifadhiwa / Saved — ' + teams.length + ' timu'
-          + (r && r.cleared ? ', ' + r.cleared + ' imeondolewa / removed' : ''));
-        closeDrawer(); render();
-      })
       .catch(function(e){ toast(String(e.message||e), true); });
   };
 }
@@ -1547,39 +1447,6 @@ function wireTeamsDownload(){
       toast(money(d.count) + ' timu zimepakuliwa. / ' + d.count + ' teams downloaded.');
       b.disabled = false;
     }).catch(function(e){ b.disabled = false; toast(String(e.message || e), true); });
-  };
-}
-
-/* THE PHONE LIST: role, team, name, number -- one press, a real Excel file. Same
-   SpreadsheetML trick as exportXls (no library, works inside the WebView), but fed by the
-   server's staffExport rather than the on-screen table, because the on-screen staff list is
-   BY PERSON and the file wanted is BY ROLE AND TEAM, with the app's fresh numbers. */
-function wireStaffExcel(){
-  var b = document.getElementById('staffXl');
-  if (!b) return;
-  b.onclick = function(e){
-    e.stopPropagation();
-    b.disabled = true;
-    srv('staffExport').then(function(d){
-      var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
-        + '<xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet>'
-        + '<x:Name>Namba</x:Name><x:WorksheetOptions><x:FreezePanes/><x:SplitHorizontal>1</x:SplitHorizontal>'
-        + '<x:TopRowBottomPane>1</x:TopRowBottomPane></x:WorksheetOptions></x:ExcelWorksheet>'
-        + '</x:ExcelWorksheets></x:ExcelWorkbook></xml>'
-        + '<style>th{background:#0B2A6B;color:#fff;font-weight:700}td,th{border:1px solid #ccc;padding:4px 6px}</style>'
-        + '</head><body><table><thead><tr><th>S/N</th>'
-        + d.headers.map(function(h){ return '<th>'+esc(h)+'</th>'; }).join('')
-        + '</tr></thead><tbody>'
-        + (d.rows||[]).map(function(r, i){
-            // Numbers stay TEXT on purpose: Excel eats a leading zero off a phone number.
-            return '<tr><td x:num>'+(i+1)+'</td>'+r.map(function(v){ return '<td x:str>'+esc(v==null?'':v)+'</td>'; }).join('')+'</tr>';
-          }).join('')
-        + '</tbody></table></body></html>';
-      download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}),
-        'namba-viongozi-maafisa-' + today() + '.xls');
-      toast(money(d.count) + ' namba zimepakuliwa. / ' + d.count + ' numbers downloaded.');
-      b.disabled = false;
-    }).catch(function(err){ b.disabled = false; toast(String(err.message||err), true); });
   };
 }
 
