@@ -8980,6 +8980,26 @@ The settings read: `work_mem` 5 MB, `maintenance_work_mem` 128 MB, `temp_file_li
 
 **Not done, said plainly.** `RUN-ME-085` is not run and not decided. The saving in seconds on the live book is NOT known (the shape is measured, the live disk is not). `repayment_snapshots` (the Expected sheet, also written by an upload) has the same random uuid key and the same remedy: unmeasured, so not offered. `call_logs` takes the app's own hashed id and is not touched. No index was dropped or proposed to be dropped; `idx_def_snap_ref` (81% of an initial chunk's remaining reads) and the two new indexes wait for the owner's `RUN-ME-084` (how often anything reads each). The 385 quick failures are still not named.
 
+## Part 127, addendum 5 — the owner's answers of Monday 23 Nov (about 15:35 East Africa time): `RUN-ME-085` ran, `RUN-ME-084` printed every index of the write path, and the recorder's first full weekday read against Saturday's (docs only)
+
+> The owner pasted five answers with no words: `db/RUN-ME-085`, `084`, `082`, `083` and `086`. They were recorded in `CHAT.md` the same hour; this is their reading, for the handbook.
+
+**`db/RUN-ME-085` ran.** Its answer is `hope_uuid_time_ordered()`: new rows of `defaulter_snapshots` take a time-ordered id from that minute. No row was rewritten; the undo is one line (`alter table public.defaulter_snapshots alter column id set default gen_random_uuid();`). What it does to the upload's insert on the live disk is NOT known yet: it is read from the recorder (083 below saw the insert four times past three seconds between 21 and 23 Nov, the longest 4.5 s) and from `RUN-ME-080` run again a day or two later (the baselines of 21 Nov are in `CHAT.md` section 8).
+
+**`db/RUN-ME-084`: the write path's tables and indexes.** `defaulter_snapshots` is 1,105 MB of table with about 3.86 million live rows, 1.6% dead, 93.3% of its table reads served from memory, and **eleven** indexes (addendum 3 guessed "about nine"), none unused: `idx_def_snap_fullname_trgm` 190 MB (193 scans, 83.5% from memory), the primary key 150 MB (493,389 scans, 85.9%), `idx_def_snap_current_last` 131 MB (3,007,694 scans: RUN-ME-076's, the ghost lookup's), `idx_def_snap_initial_covering` 107 MB (1,027,299), `idx_def_snap_ref_trgm` 90 MB (15,558), `idx_def_snap_lookup` 57 MB (1,239,196), `idx_def_snap_date` 43 MB (551,931), `idx_defaulter_snapshots_lookup` 41 MB (275,401), `idx_def_snap_date_type` 41 MB (676,021), `idx_def_snap_batch` 32 MB (612,694), `idx_def_snap_team_ref` 28 MB (15,930,138: the ghost lookup's walk). `repayment_snapshots` is 350 MB with five indexes (its primary-key index, 56 MB, has never been read: 0 scans; it has the same random key as the deck table had and the same remedy, not offered yet). `call_logs` is 113 MB with about 389,000 live rows and 3,886,441 deleted over its life: **call logs ARE pruned, to about two weeks** (which is why Part 139 stamps legal recovery by phone into a table of its own); its primary key has been read 511 million times (the phones' duplicate check on every sync). `followup_status` is 5 MB (`idx_fu_status_deck_date` has never been read).
+
+**What 084 changes in the picture.** (1) Two of the eleven indexes are the all-time ghost lookup's (`idx_def_snap_current_last`, 131 MB; `idx_def_snap_team_ref`, 28 MB, also used by RUN-ME-071), and Part 136 took that lookup out of the code the same day: the first is written for every current row an upload inserts and nothing asks it any more. Dropping it is offered in `CHAT.md` section 8, the owner's word first, and only after 084 run again shows its scan count has stopped moving. (2) The two trigram indexes are 280 MB between them for 15,751 scans: the Legal search's; they stay unless the owner says the search is not worth it. (3) Nothing in 084 says why the insert ran three times its own average on Saturday (addendum 3): the buffers hold 512 MB against 1.9 GB of table and indexes, so a chunk's index pages are often not in memory; the time-ordered id (085) was the cure measured in addendum 4, and it is now in.
+
+**`db/RUN-ME-082`, the first full weekday (Monday 23 Nov, 07:00 to 15:00).** 28,000 to 59,000 transactions committed an hour, 4 to 30 rolled back (0.009% to 0.063%), 1.1 to 1.7 GB of temp files an hour. Saturday 21 Nov, the same hours: 0.076% to 0.147% rolled back and 2.3 to 2.9 GB an hour. **Monday failed about half as often and spilled about half as much as Saturday**, on a busier day; nights are as before (0.83 to 1.0 GB an hour, the one 12 MB file a minute that addendum 3 could not name). One weekday is one weekday: the comparison is a sign, not a proof.
+
+**`db/RUN-ME-083`, the statements seen running longer than three seconds since 21 Nov.** Five shapes, none past 5.4 seconds, none near the role's eight: `call_board_rollup` 22 times (the last on 22 Nov), a read of `call_logs` by user 4 times (waiting for the disk), the upload's insert 4 times (the longest 4.5 s), a read of `defaulter_snapshots` twice and `recovery_standing` twice (on the 23rd). As addendum 3 said, a five-second sampler cannot prove that nothing was ever cancelled at eight seconds; it does show that slow statements are now rare (32 sightings in two days against thousands of timeouts on Friday 20 Nov at midday).
+
+**`db/RUN-ME-086`: `COUNT | 0 | entries listed`.** No Iliyonasia entry was filed twice against the two expected books, so nothing counts twice since `BUILD 2026-11-23-e` (Part 132). Nothing to delete.
+
+**Still asked of the owner.** Supabase, Logs, Postgres, Severity Error, last 24 hours: the first 15 lines. They name the failures that are not timeouts (385 of them on Saturday; nobody has read one yet).
+
+**Not done, said plainly.** Nothing was changed because of these answers. The effect of 085 on the live insert is not measured. No index is dropped. The night's small temp file is still not named.
+
 ## Part 128 — The Legal tab's weekly recovery card gets week arrows: last week(s) report is one press away (23 Nov)
 
 > "Legal recovery weekly report at the top right card should have foward and backward arrows so that we get last week(s) reports" — the owner, 23 Nov 2026.
@@ -9240,6 +9260,34 @@ The rule of CHAT.md section 7: merge first, then one reader, nothing owed. One r
 
 **Not done, said plainly.** Nothing seen on the live book or a live phone: the sizes above are the replay's, and how many cleared customers of earlier dates the live lists carried is not known until RUN-ME-087 is run. The other two samples (6218958441, 62181009971) were not looked at one by one: if either still shows after the deploy, its rows say why. The call app page was not changed: in the morning stage it shows the list with nothing recovered and no note that the later file is not in yet. The dashboard's two Exp.Def boards and the commission board were not touched. `db/RUN-ME-055`, `075` and `076` are not undone.
 
+## Part 136, addendum — the owner's answer of `db/RUN-ME-087` (run Monday 23 Nov after 18:06 East Africa time, pasted 24 Nov): the size of it, and a correction: it was the whole working day, not the morning (docs only)
+
+> The owner pasted the table with no words, beside the answers of `db/RUN-ME-088` and `db/RUN-ME-089`.
+
+**The LISTS row (Monday 23 Nov).** The newest later file names **10,465** customers. Beside them the lists were carrying **5,786** customers who were once on a later file of their team and have since left: **35.6%** of the names, more than one in three. 474 of them left in the seven days before, 778 between 8 and 30 days before, and **4,534 more than a month before**. This is the all-time ghost of Part 71 measured on the live book. The count is of (team, loan number) pairs, the way the lookup asked, so a loan that moved teams is one of them in its old team. How many of them one person saw depended on their teams, on the lookup's 800 ms on the phone and on its 1,000-row cap (Part 114).
+
+**The FILES rows (nine days, East Africa time).**
+
+| Day | Morning file in | Later file first in | Later file last in | Hours the morning file stood alone |
+|---|---|---|---|---|
+| Sun 15 Nov | 22:45 | 22:47 | 22:48 | 0.0 |
+| Mon 16 Nov | 04:51 | 20:25 | 22:52 | 15.6 |
+| Tue 17 Nov | 05:14 | 20:03 | 22:52 | 14.8 |
+| Wed 18 Nov | 04:38 | 20:23 | 23:02 | 15.8 |
+| Thu 19 Nov | 05:27 | 21:15 | 23:16 | 15.8 |
+| Fri 20 Nov | 05:30 | 20:07 | 23:37 | 14.6 |
+| Sat 21 Nov | 05:54 | 20:05 | 23:21 | 14.2 |
+| Sun 22 Nov | 11:00 | 13:03 | 23:10 | 2.1 |
+| Mon 23 Nov | 05:01 | 15:59 | 18:06 | 11.0 |
+
+From Monday to Saturday the morning file comes in at about 05:00 and the later file at about 20:00 (it is uploaded again until about 23:00).
+
+**A correction of mine.** Part 136, its entry in `CHAT.md` and its title in `git log` say the phone listed last week's file "in the morning". The table says a working day had its morning file alone for **14 to 16 hours**, from about 05:00 to about 20:00: the whole working day. So until 23 Nov the phone's Exp.Def list and the Exp.Def Report of TODAY were, for as long as officers were at work, built from the same weekday's evening file of the week before (fault 2 of Part 136). It was not a gap of the morning; it was how the list read all day. That fault and the 5,786 are what the staff were reporting.
+
+**What follows from it for the cure.** Since Part 136 the day's list is that morning's own file from about 05:00. But the stage Part 136 calls `morning` (nothing recovered, nobody CLEARED, because nothing has been compared yet) now lasts until about 20:00: through the working day the phone's strip reads *Marejesho* 0 and the Exp.Def Report's day reads recovered 0, with no words. Part 136 listed "no note that the later file is not in yet" under Not done, as a matter of the morning. The dashboard's card already says "not uploaded yet" for such a day (Part 79). CLAUDE.md section 2 ("Say what was not done ... on the screen that expected it. Silence reads as success") makes the note a duty: the next change (Part 140) adds it; this one is words only.
+
+**Not known.** Whether the later file can be had earlier in the day is the company's to say: the system reads what is uploaded.
+
 ## Part 137 — Reached means spoken to: a call longer than the minimum seconds, on the Presentation's calls slide, Ripoti, the Calls tab and the phone (23 Nov)
 
 > "At calls slide in presentation "REACHED %" Should be percentage of connected calls against calls not just dialled b/se some ring but dont get connected" — the owner, 23 Nov 2026.
@@ -9271,6 +9319,10 @@ The phone's own day (`today` in the boot's answer) is counted by the rule too; t
 **Found, not changed.** (a) RUN-ME-042's function keeps a team that is NULL and a team that is an empty string as two groups, and `callRollupRows` joins them (RUN-ME-078 was written to join them). A call is stamped with the officer's registered team, so no real row has an empty-string team; the check's books avoid the pair. (b) The report's function matches the team list in any case and its row road matches it exactly. (c) The call boards still ignore the category (Part 116). None of the three is this change's matter.
 
 **Not done, said plainly.** The phone's page (`call.html`) was not opened in a browser for this change: its three changed expressions are pinned by the tests and both of its scripts parse. Nothing seen on the live book or a live phone: what Reached % reads on the live book is not known until RUN-ME-088 is run, and the file's own answer prints it (the numbers rung in the last seven days, how many were reached, and how many dials only rang). No tip was added to the `hints` table (the screens say the rule themselves). The Android app was not rebuilt (the page is served; `versionCode` stays 19). Nothing scores on Reached today (it is shown, not paid on), so no commission or performance figure moves.
+
+## Part 137, addendum — `db/RUN-ME-088` ran (24 Nov): Reached is 58.4% on the live book (docs only)
+
+The owner's seven lines: the minimum is **5** seconds; in the last 7 days **121,941** numbers were rung (a number counts once a day for each officer and category that rang it) and **71,196** of them were REACHED, spoken to for longer than the minimum: **58.4%**; **136,243** dials were a conversation (CONNECTED) and **166,977** only rang or ended inside the minimum (NO ANSWER), so about 45 dials in 100 become a conversation; the calls slide's function answers with its minimum (**5**), so both functions are the new ones. By the rule as it was, nearly all of the 121,941 would have read as reached. The screens show the figure within five minutes of the run (the pause after an answer with no mark). Nothing more to run. **Not seen from here:** the screens themselves.
 
 ## Part 138 — The demand notices issued before the system began: read off the legal team's sheet, imported by SQL, cleared by default where the system never held the customer (built 23 Nov; its two locks, and the paste, 24 Nov)
 
@@ -9346,3 +9398,76 @@ The phone's own day (`today` in the boot's answer) is counted by the rule too; t
 
 *This document describes the system as built. If a future change makes any statement here
 untrue, the change should update this file in the same breath.*
+
+## Part 139, addendum — `db/RUN-ME-089` ran (24 Nov, about 08:30 East Africa time): the first days stamped, and two read-only looks (docs only)
+
+**The answer.** `the table that keeps each day | legal_phone_recovery`, `phones whose role reads legal | 7`, `stamped by itself every ten minutes | yes (pg_cron)`.
+
+**The first look** (pasted in the chat after it was run on a copy of the tables; its text is below), run by the owner at about 08:40:
+
+| Day | Last looked at | Legal phones that spoke | Customers spoken to | Of them D.C 2 and above | Of them paid that day | Recovered, D.C 2 and above (TZS) | Later file in |
+|---|---|---|---|---|---|---|---|
+| Sat 21 Nov | 24 Nov 08:39 | 2 | 7 | 7 | 3 | 120,000 | yes |
+| Sun 22 Nov | 24 Nov 08:36 | 0 | 0 | 0 | 0 | 0 | - |
+| Mon 23 Nov | 24 Nov 08:33 | 2 | 9 | 9 | 0 | 0 | yes |
+| Tue 24 Nov | 24 Nov 08:33 | 0 | 0 | 0 | 0 | 0 | - |
+
+**Read.** The stamp works on the live book: a day is looked at, the customers spoken to are tied to the day's initial file, and the day's recovery is read off its two files. The three stamps three minutes apart are the read's own tick (a Legal screen was opened), each taking one more day, as built; the days back to Monday 16 Nov follow, one a tick. Every customer spoken to was at D.C 2 and above, so the D.C rule left nobody out on those days.
+
+**Two things the table raises, neither settled.** (1) Only 2 of the 7 legal phones appear, and 7 to 9 customers a day is small. The second look (below) says which it is: the other phones do not ring through the app at all, or their dials do not become conversations, or the app does not tie their conversations to a customer. Its answer decides whether anything is to be built. (2) On Monday nine were spoken to and none paid on Monday. By the rule as given a payment counts on the day of the call (that day's initial file less its later file), so a customer spoken to on Monday who pays on Tuesday is not counted unless spoken to again. The owner was asked whether a payment in the days after a call should count, and how many days: a new rule, so the owner's word first.
+
+**Also learnt (Part 136's addendum).** The day's later file comes in at about 20:00, so today's customers read "waiting for the later file" through the working day and the card moves in the evening.
+
+**The two looks** (read-only; kept here because a chat's scratch folder does not outlive the chat). What RUN-ME-089 has kept, one row a day:
+
+```sql
+-- WHAT RUN-ME-089 HAS KEPT SO FAR (read-only: it changes nothing). One row for each day it has looked at.
+-- No customer name or number is printed. It counts every phone whose role reads legal; the card on the Legal tab
+-- applies the exact legal-role test too, so the card can read a little lower, never higher.
+with c as (
+select day, ref, max(dc) as dc, max(recovered) as recovered, bool_or(paired) as paired
+from public.legal_phone_recovery
+group by day, ref
+)
+select to_char(d.day, 'Dy DD Mon') as day,
+to_char(d.stamped_at at time zone 'Africa/Dar_es_Salaam', 'DD Mon HH24:MI') as last_looked_at,
+(select count(distinct r.user_id) from public.legal_phone_recovery r where r.day = d.day) as legal_phones_that_spoke,
+count(c.ref) as customers_spoken_to,
+count(c.ref) filter (where c.dc >= 2) as of_them_dc_2_and_above,
+count(c.ref) filter (where c.dc >= 2 and c.recovered > 0) as of_them_paid_that_day,
+coalesce(sum(c.recovered) filter (where c.dc >= 2), 0) as recovered_dc_2_and_above,
+case when count(c.ref) = 0 then '-' when bool_or(c.paired) then 'yes' else 'not yet' end as later_file_in
+from public.legal_phone_days d
+left join c on c.day = d.day
+group by d.day, d.stamped_at
+order by d.day;
+-- END OF THE LOOK
+```
+
+The legal phones one by one, last nine days:
+
+```sql
+-- THE LEGAL PHONES, ONE ROW EACH, LAST 9 DAYS (read-only: it changes nothing). It answers: does each legal phone ring
+-- through the app at all, how many of its dials were a conversation, and how many of those the app tied to a customer.
+-- It prints your legal officers' names as their phones are registered, and no customer.
+set local statement_timeout = '20s';
+with p as materialized (select * from public.legal_phones()),
+m as materialized (select public.call_min_secs() as min, (now() at time zone 'Africa/Dar_es_Salaam')::date as today),
+c as (
+select c.user_id, c.call_date,
+(coalesce(c.duration, 0) > m.min and upper(btrim(coalesce(c.outcome, ''))) not in ('MISSED', 'REJECTED', 'BLOCKED')) as talk,
+coalesce(c.ref, '') <> '' as tied
+from public.call_logs c cross join m
+where c.user_id in (select user_id from p) and c.call_date >= m.today - 8
+)
+select p.name as phone_registered_as, p.role as role_read_as,
+count(c.user_id) as dials_in_9_days,
+count(*) filter (where c.talk) as conversations,
+count(*) filter (where c.talk and c.tied) as of_them_tied_to_a_customer,
+count(distinct c.call_date) filter (where c.talk and c.tied) as days_with_one,
+coalesce(to_char(max(c.call_date), 'Dy DD Mon'), 'never') as last_dial
+from p left join c on c.user_id = p.user_id
+group by p.user_id, p.name, p.role
+order by 3 desc, 1;
+-- END OF THE PHONES LOOK
+```
