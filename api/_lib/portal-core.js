@@ -13090,9 +13090,22 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        arrow already uses and for the same reason: the backlog count above (u+a) would compare
        this Friday's still-fresh pile against a week-old Friday's already-worked one. */
     const pd = addDaysKey(prevMon, i);
-    const dApps = appsArrivedInRange_(myLoans, d, d).length - appsArrivedInRange_(myLoans, pd, pd).length;
+    /* WHAT THE ARROW COMPARED, SENT WITH IT (handbook Part 142) -- "infront of the ▲ put the low opacity last week % e.g ▲ 34%
+       so that i notice if its higher low or the same what exactly was of last week ... those ▲ at dashboard" (the owner, 24 Nov
+       2026). Every difference on this screen (d...) now travels with the figure of last week it was taken against (lw...), null
+       exactly when the difference is null, so the page prints the two from one calculation and never works one out from the
+       other. This arrow compares ARRIVALS, which the tile itself does not show (it shows the pile still unworked), so both
+       sides ride here: `arrived` this day, `lwApps` the same weekday last week. */
+    const arrived = appsArrivedInRange_(myLoans, d, d).length, lwWas = appsArrivedInRange_(myLoans, pd, pd).length;
+    /* A DAY THAT HAS NOT COME YET IS NOT A FALL. Thursday, read on a Tuesday, has no applications because it has not happened,
+       and "120 last Thursday, 0 this Thursday" printed beside a falling arrow would be a figure about nothing. The collection
+       and recovery tiles already carry no arrow for a day with no sheet ("an undisclosed day cannot be MOVING"); the two cards
+       whose days wait on no upload, this one and sales, now say the same of a day after the real today. Today itself keeps its
+       arrow: the day so far against the whole of last week's, which is what was asked for ("comparison of this Friday to
+       that of last week"). A finished week has no such day. */
+    const dApps = d > realToday ? null : arrived - lwWas;
     return { weekday: wd, date: d, unassigned: u, assigned: a, apps: u + a,
-      amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0), dApps };
+      amount: on.reduce((s, l) => s + (num(l.requested_amt) || num(l.principal_amt)), 0), dApps, arrived, lwApps: dApps != null ? lwWas : null };
   });
 
   /* ---- sales trend Mon-Sat: approved principal per day against the daily target ----
@@ -13119,8 +13132,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        so the arrow and the figure beside it are reading the same question. */
     const prevAmt = salesOnDay_(addDaysKey(prevMon, i));
     const prevPct = dailyTarget > 0 ? Math.round((prevAmt / dailyTarget) * 1000) / 10 : null;
-    return { weekday: wd, date: d, amount: amt, loans: on.length, pct,
-      dSales: (pct != null && prevPct != null) ? Math.round((pct - prevPct) * 10) / 10 : null };
+    // Not for a day that has not come yet: see the note on the applications' own arrow, above.
+    const dSales = (d <= realToday && pct != null && prevPct != null) ? Math.round((pct - prevPct) * 10) / 10 : null;
+    return { weekday: wd, date: d, amount: amt, loans: on.length, pct, dSales, lwSales: dSales != null ? prevPct : null };
   });
 
   /* ---- collection trend Mon-Fri: collected + uncollected per weekday ---- */
@@ -13143,14 +13157,14 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const prows = colDay_(myExpPrev, addDaysKey(prevMon, i));
     const pexp = tExpected(prows);
     const ppct = pexp > 0 ? Math.round((tCollected(prows) / pexp) * 1000) / 10 : null;
+    const dCol = (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null;
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
       /* THE NUMBER, NOT A NOTE. "put no extra note, include the amount" -- an Iliyonasia moves
          Uncol by exactly this much (clamped at zero, same as the figure beside it), and the
          tile says so as a figure rather than a sentence, the same way `adjusted_amt` already
          rides beside every other corrected total in this system. */
       adjusted: tAdjusted(rows),
-      uploaded, pct,
-      dCol: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+      uploaded, pct, dCol, lwCol: dCol != null ? ppct : null };
   });
 
   /* ---- recovery trend Mon-Sun: each day's own initial - current, over that day's uncollected.
@@ -13216,7 +13230,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
        recoveryByTeam call, against last week's rows. Monday-Friday only, the same Rec% the
        tile itself shows -- the weekend tiles carry no percentage at all (see the note above),
        so they carry no arrow either, rather than inventing a third kind of delta for them. */
-    let dRec = null;
+    let dRec = null, lwRec = null;
     if (!weekend) {
       const pd = addDaysKey(prevMon, i);
       let prec = 0;
@@ -13230,6 +13244,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
       const ppct = pOwn > 0 ? Math.round((prec / pOwn) * 1000) / 10 : null;
       const pct0 = unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null;
       dRec = (uploaded && pUploaded && pct0 != null && ppct != null) ? Math.round((pct0 - ppct) * 10) / 10 : null;
+      if (dRec != null) lwRec = ppct;
     }
     return { weekday: wd, date: d, from, to, recovered: rec, uncollected: unc,
       basis: basis.kind, basisDates: basis.dates, dayUncollected: own,
@@ -13266,7 +13281,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
          a deck uploaded today", independent of whether the standing RPC is installed. */
       uploaded,
       pct: unc > 0 ? Math.round((rec / unc) * 1000) / 10 : null,
-      full: i >= 5 && rec > 0, dRec };
+      full: i >= 5 && rec > 0, dRec, lwRec };
   });
   /* THE WEEK'S OWN TOTAL, worked out beside the tiles it sums. Recovered is every tile's;
      uncollected is Monday to Friday's OWN sheets, once each -- the weekend branch of the same
@@ -13297,9 +13312,9 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const prows = ecolDay_(myEcolPrev, addDaysKey(prevMon, i));
     const pexp = tExpected(prows);
     const ppct = pexp > 0 ? Math.round((tCollected(prows) / pexp) * 1000) / 10 : null;
+    const dEcol = (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null;
     return { weekday: wd, date: d, expected: exp, collected: col, uncollected: tUncollected(rows),
-      adjusted: tAdjusted(rows), uploaded, pct,
-      dEcol: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+      adjusted: tAdjusted(rows), uploaded, pct, dEcol, lwEcol: dEcol != null ? ppct : null };
   });
 
   /* The PMO collection officers, by the teams on their codes -- the code wins over the
@@ -13388,6 +13403,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   const wkNow = weekPcts_(myExpWeek, myDefWeek, mon, sun);
   const wkPrev = weekPcts_(myExpPrev, myDefPrev, prevMon, prevSun);
   const move_ = (a, b) => (a == null || b == null || !wkPrev.hasData) ? null : Math.round((a - b) * 10) / 10;
+  const last_ = (a, b) => move_(a, b) == null ? null : b;      // what the difference was taken against, when there is one
   const perf = {
     salesPct: wkNow.salesPct, colPct: wkNow.colPct, recPct: wkNow.recPct, avgPct: wkNow.avgPct,
     avgOn: wkNow.avgOn,
@@ -13395,6 +13411,12 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     dCol: move_(wkNow.colPct, wkPrev.colPct),
     dRec: move_(wkNow.recPct, wkPrev.recPct),
     dAvg: move_(wkNow.avgPct, wkPrev.avgPct),
+    /* Last week's own figure beside each difference (Part 142): null exactly when the difference is. The week's applications
+       already travel as appsCount and appsPrevCount, just below. */
+    lwSales: last_(wkNow.salesPct, wkPrev.salesPct),
+    lwCol: last_(wkNow.colPct, wkPrev.colPct),
+    lwRec: last_(wkNow.recPct, wkPrev.recPct),
+    lwAvg: last_(wkNow.avgPct, wkPrev.avgPct),
     /* Whether last week actually arrived. An arrow that is missing because the comparison
        could not be read is a different thing from an arrow that is missing because last week
        was flat, and the screen should not present them as the same. */
@@ -13523,6 +13545,7 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
   perf.ecolPct = ecolPctNow;
   perf.dEcol = (ecolPctNow != null && ecolPctPrev != null && myEcolPrev.length > 0)
     ? Math.round((ecolPctNow - ecolPctPrev) * 10) / 10 : null;
+  perf.lwEcol = perf.dEcol != null ? ecolPctPrev : null;
 
   /* ---- "EXPECTED DEFAULTERS RECOVERY" trend Mon-Sun: the Loan pipeline widget's replacement.
      "Remove the Loan pipeline widget at dashboard replace with expected defaulters recovery
@@ -13565,16 +13588,16 @@ async function dashboardFullCompute_(db, user, args, nowMs) {
     const prows = edrDay_(myEdrPrev, addDaysKey(prevMon, i));
     const pSum = edrSum_(prows);
     const ppct = pSum.initial > 0 ? Math.round((pSum.recovered / pSum.initial) * 1000) / 10 : null;
-    return { weekday: wd, date: d, initial, current, recovered, customers, undated, uploaded, pct,
-      dEdr: (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+    const dEdr = (uploaded && prows.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null;
+    return { weekday: wd, date: d, initial, current, recovered, customers, undated, uploaded, pct, dEdr, lwEdr: dEdr != null ? ppct : null };
   });
   const edrTrendTotal = (() => {
     const { initial, current, recovered } = edrSum_(edrTrend);
     const pct = initial > 0 ? Math.round((recovered / initial) * 1000) / 10 : null;
     const pSum = edrSum_(myEdrPrev);
     const ppct = pSum.initial > 0 ? Math.round((pSum.recovered / pSum.initial) * 1000) / 10 : null;
-    return { initial, current, recovered, pct,
-      dEdr: (edrTrend.some(x => x.uploaded) && myEdrPrev.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null };
+    const dEdr = (edrTrend.some(x => x.uploaded) && myEdrPrev.length > 0 && pct != null && ppct != null) ? Math.round((pct - ppct) * 10) / 10 : null;
+    return { initial, current, recovered, pct, dEdr, lwEdr: dEdr != null ? ppct : null };
   })();
   /* NO ANSWER IS SAID, NOT LEFT AS SEVEN EMPTY TILES -- AND IT SAYS WHICH KIND. `edrWeek` is
      null only when THIS week's read gave nothing, and the three reasons have three different
