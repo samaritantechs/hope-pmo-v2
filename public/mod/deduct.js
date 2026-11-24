@@ -22,8 +22,7 @@ var DED_SHOW_ = {
   deducted:  { label: 'Imekatwa (HR) / Deducted',           keep: function(r){ return (+r.deducted || 0) > 0; } },
   remaining: { label: 'Salio / Remaining',                  keep: function(r){ return (+r.remaining || 0) > 0; } },
   nohr:      { label: 'HR hajaandika / Awaiting HR',        keep: function(r){ return !r.hr_at && !((+r.deducted || 0) > 0); } },
-  prev:      { label: 'Salio la kabla / Outstanding before' },
-  reporters: { label: 'Walioripoti / Reporters' }
+  prev:      { label: 'Salio la kabla / Outstanding before' }
 };
 /* A card that is also a pill: kpi() with the bar's own data-arg/data-val on it, lit when it is the one chosen. */
 function dedCard_(key, on, label, value, sub, cls){
@@ -43,7 +42,6 @@ VIEWS.deduct = function(){
     var rows = d.rows || [], prev = d.prevBalances || [], reps = d.reporters || [];
     var cnt = function(k){ return rows.filter(DED_SHOW_[k].keep).length; };
     var prevSum = prev.reduce(function(s, p){ return s + (+p.remaining || 0); }, 0);
-    var earn = reps.reduce(function(s, p){ return s + (+p.earnings || 0); }, 0);
     var card = function(key, value, sub, cls){ return dedCard_(key, key === show, DED_SHOW_[key].label, value, sub, cls); };
     HEAD = '<div class="kpis">'
       + card('all', money(d.cases), d.from+' → '+d.to+' · '+money(d.entries)+' staff entries')
@@ -54,7 +52,6 @@ VIEWS.deduct = function(){
       + card('remaining', money(d.remaining), 'cha kulipiwa − imekatwa / to pay − deducted · ' + money(cnt('remaining')) + ' lines', d.remaining ? 'warnc' : 'good')
       + card('nohr', money(cnt('nohr')), 'staff lines bila makato ya HR bado / lines with no HR entry yet', cnt('nohr') ? 'warnc' : 'good')
       + card('prev', money(prevSum), 'kabla ya ' + d.from + ' / before ' + d.from + ' · ' + money(prev.length) + ' staff', prevSum ? 'warnc' : 'good')
-      + card('reporters', money(reps.length), 'malipo TZS ' + money(earn) + ' · TZS ' + money(d.rate) + ' kwa kesi / per unique case')
       + '</div>'
       + '<div class="note">👆 Bofya kadi kuona orodha yake hapa chini; <b>Kesi</b> hurudisha zote. Orodha inafuata tarehe ulizochagua, mpya juu — bila kubofya Ripoti.'
         + ' / Tap a card for its list below; <b>Cases</b> brings everything back. The list follows the dates you pick, newest first — no need for the Report button.</div>'
@@ -71,6 +68,11 @@ VIEWS.deduct = function(){
                    : '<span class="chip mut">Makato huandikwa na HR / HR records deductions</span>'));
     // Newest first, said by the arrow on the Date column -- "latest to oldest". Only on the tab's first paint (go() leaves
     // S.sort null); a column the person sorted by afterwards stays theirs.
+    /* UNDER THE MAKATO TABLE: THE EARNERS' TABLE, AND THE ADMIN'S COMMISSION SETTINGS (Part 152) -- "the bluedot at Makato ya PMO /
+       PMO Deduction opens commisions, it just kills the meaning - remove it there but under the makato table add the earner's table and
+       as admin could have copmmission settings alone, i need to set earners amount there". The Walioripoti card that swapped the
+       cases list for the earnings list is gone; the earners are always here, under the list, whichever card is lit. */
+    S.tail = dedEarnBoard_(d, reps) + (d.canRates ? dedRatesPanel_(d) : '');
     if (S.sort == null){ S.sort = 'submitted_at'; S.asc = false; }
     if (show === 'prev') {
       S.rows = prev;
@@ -78,11 +80,6 @@ VIEWS.deduct = function(){
       ONROW = null;
       S.foot = 'Salio la kabla ya ' + d.from + ' / Outstanding before ' + d.from + ': ' + money(prev.length) + ' staff · TZS ' + money(prevSum)
         + ' · rudisha tarehe ya kuanzia nyuma kuona kesi zao / move the from-date back to see their cases';
-    } else if (show === 'reporters') {
-      S.rows = reps;
-      S.cols = [col('reporter','Aliyeripoti / Reporter'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')];
-      ONROW = null;
-      S.foot = 'Walioripoti / Reporters: ' + money(reps.length) + ' · TZS ' + money(d.rate) + ' kwa kesi / per unique case (DEDUCTION_REPORTER_TZS) · jumla TZS ' + money(earn);
     } else {
       S.rows = rows.filter(DED_SHOW_[show].keep);
       S.cols = [col('submitted_at','Tarehe / Date','dt'), col('reporter','Aliyeripoti / Reporter'), col('dept','Dept'),
@@ -102,6 +99,61 @@ VIEWS.deduct = function(){
     }
   });
 };
+
+/* THE AMOUNTS THE EARNERS WERE PAID AT, IN WORDS: one amount for the whole window, or each amount with the day it began. The report's
+   section 2 says it the same way. */
+function dedRateNote_(d){
+  var st = d.rateSteps || [];
+  if (!st.length) return 'TZS ' + money(d.rate) + ' kwa kila kesi / per unique case';
+  if (st.length === 1) return 'TZS ' + money(st[0].tzs) + ' kwa kila kesi / per unique case';
+  return st.map(function(x){ return 'TZS ' + money(x.tzs) + ' kuanzia / from ' + x.from; }).join(' · ') + ' kwa kila kesi / per unique case';
+}
+/* THE EARNERS' TABLE: who reported the cases of the window, how many unique cases, and what that earned at the amount in force on the day
+   each case was reported. The same rows as the report's section 2, with their own Excel, JPG and CSV. */
+function dedEarnBoard_(d, reps){
+  if (d.on === false) return '';
+  if (!reps.length) return '<div class="note">Hakuna kesi katika kipindi hiki, kwa hiyo hakuna malipo ya walioripoti. / No cases in this window, so no reporter earnings.</div>';
+  return board('dedEarn', 'Wapataji wa malipo / Earners — malipo ya walioripoti / reporter earnings · ' + d.from + ' → ' + d.to, dedRateNote_(d), reps,
+    [col('reporter','Aliyeripoti / Reporter'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')],
+    sumRow(reps, ['cases','earnings']));
+}
+/* THE COMMISSION SETTINGS, FOR THE ADMIN ALONE: the earners' amount per case, from a date. A case earns the amount in force on the day it
+   was reported, so raising it to boost follow-up never rewrites what earlier cases earned; a PAST date does, and the form says so. The base
+   (before the first dated amount) is the Settings row DEDUCTION_REPORTER_TZS, as it always was. */
+function dedRatesPanel_(d){
+  var rates = d.rates || [];
+  var rows = rates.map(function(r){
+    return '<tr><td>' + esc(r.from) + '</td><td class="r">' + money(r.tzs) + '</td>'
+      + '<td><button class="btn sm ghost" type="button" data-dedrate-del="' + esc(r.from) + '">Ondoa / Remove</button></td></tr>';
+  }).join('');
+  return '<div class="card" id="dedRates"><div class="card-h">Kamisheni / Commission settings<span class="sub">admin pekee / admin only</span></div>'
+    + '<div style="padding:12px 14px">'
+    + '<div class="sub">Kiasi cha sasa kwa kila kesi ya kipekee / Amount per unique case now: <b>TZS ' + money(d.rate) + '</b>'
+      + ' · msingi / base TZS ' + money(d.rateBase) + ' (Settings: DEDUCTION_REPORTER_TZS)</div>'
+    + '<div class="facts" style="margin-top:8px;max-width:520px">'
+      + '<div class="fld"><label>Kiasi kipya kwa kila kesi (TZS) / New amount per case</label><input id="dedRateTzs" type="number" min="0" step="1" inputmode="numeric" placeholder="' + esc(String(d.rate || 0)) + '"></div>'
+      + '<div class="fld"><label>Kuanzia tarehe / From date</label><input id="dedRateFrom" type="date" value="' + esc(today()) + '"></div>'
+    + '</div>'
+    + '<button class="btn" type="button" id="dedRateSave">Hifadhi kiasi / Save amount</button>'
+    + '<div class="note" style="margin-top:8px">Kesi zilizoripotiwa tarehe hiyo na baada yake zinalipwa kiasi kipya; za kabla zinabaki na kiasi walichopata. Tarehe ya zamani hubadilisha malipo ya kesi zilizoripotiwa tangu tarehe hiyo.'
+      + ' / Cases reported on that date and after earn the new amount; earlier cases keep what they earned. A PAST date changes what cases reported since then earn.</div>'
+    + (rows
+      ? '<div class="scroll"><table><thead><tr><th>Kuanzia / From</th><th class="r">TZS kwa kesi / per case</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+      : '<div class="sub">Hakuna mabadiliko yenye tarehe bado: kiasi cha msingi kinatumika kwa kesi zote. / No dated changes yet: the base amount applies to every case.</div>')
+    + '</div></div>';
+}
+function dedRateSave_(){
+  var tzs = ($('#dedRateTzs') || {}).value, from = ($('#dedRateFrom') || {}).value;
+  if (String(tzs == null ? '' : tzs).trim() === '' || isNaN(Number(tzs)) || Number(tzs) < 0){ toast('Weka kiasi cha kila kesi. / Enter the amount per case.', true); return; }
+  srv('dedRateSet', { tzs: tzs, from: from || today() })
+    .then(function(r){ toast('Imehifadhiwa: TZS ' + money(r.saved.tzs) + ' kuanzia ' + r.saved.from + '. / Saved: TZS ' + money(r.saved.tzs) + ' from ' + r.saved.from + '.'); render({ force:true }); })
+    .catch(function(e){ toast('Haikuhifadhiwa / NOT saved: ' + String((e && e.message) || e), true); });
+}
+function dedRateDel_(from){
+  srv('dedRateDelete', { from: from })
+    .then(function(r){ toast(r.removed ? 'Imeondolewa. / Removed.' : 'Hakuna kiasi cha tarehe hiyo. / No amount on that date.'); render({ force:true }); })
+    .catch(function(e){ toast('Haikuondolewa / NOT removed: ' + String((e && e.message) || e), true); });
+}
 
 /* THE FORM: one case, as many accused staff as it takes ("Ongeza wote waliohusika"). The
    reporter is the signed-in person; every amount is recomputed on the server. */
@@ -204,7 +256,7 @@ function dedReport(){
      col('amountTaken','Alichokula / Taken','money'), col('deduction','Makato / Proposed','money'),
      col('toPay','To pay','money'), col('deducted','Deducted','money'), col('remaining','Remaining','money')],
     sumRow(d.summary || [], ['cases','entries','amountTaken','deduction','toPay','deducted','remaining']));
-  $('#dedRep2').innerHTML = board('dedRep', '2. Malipo ya walioripoti / Reporter earnings', 'TZS ' + money(d.rate) + ' kwa kila kesi / per unique case (DEDUCTION_REPORTER_TZS)', d.reporters || [],
+  $('#dedRep2').innerHTML = board('dedRep', '2. Malipo ya walioripoti / Reporter earnings', dedRateNote_(d), d.reporters || [],
     [col('reporter','Aliyeripoti / Reporter'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')],
     sumRow(d.reporters || [], ['cases','earnings']));
   $('#dedRep3').innerHTML = (d.prevBalances && d.prevBalances.length)

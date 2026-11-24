@@ -1208,7 +1208,7 @@ const OFFICER_ROW_CEILING = 4000;
 /* Functions that CHANGE something. A speed sweep must not fire them, and their cost is not a
    read cost anyway. Everything not named here is swept. */
 const WRITERS = new Set(['addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint',
-  'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'addDeduction', 'hrDeduction',
+  'deleteComplaint', 'addRestructure', 'decideRestructure', 'addDemandNotice', 'addDeduction', 'hrDeduction', 'dedRateSet', 'dedRateDelete',
   'advStaffSave', 'advStaffStatus', 'advRequest', 'advDecide', 'saveTeam',
   'deleteTeam', 'saveRole', 'deleteRole', 'resetApprovals', 'saveCallAgent', 'settingSet', 'settingDelete',
   'systemOpenSet', 'saveAccessCode', 'deleteAccessCode', 'commissionSave', 'saveStaffTeams',

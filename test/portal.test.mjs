@@ -3500,6 +3500,155 @@ test('a PMO deduction case is one submission with a row per accused staff, scope
   assert.equal(off.on, false); assert.match(off.note, /RUN-ME-043/); assert.deepEqual(off.rows, []);
 });
 
+/* THE EARNERS' AMOUNT PER CASE IS A DATED SCHEDULE (handbook Part 152) -- "the bluedot at Makato ya PMO / PMO Deduction opens commisions,
+   it just kills the meaning - remove it there but under the makato table add the earner's table and as admin could have copmmission
+   settings alone, i need to set earners amount there - b/se like now its 10,000 per case sometimes the amount changes to boost followup"
+   (the owner, 24 Nov 2026). A case earns the amount in force on the day it was reported, so raising the amount from a day never rewrites
+   what earlier cases earned; only the admin sets it. */
+const dedBook = (extra = []) => {
+  const t = tables();
+  t.settings.push({ key: 'DEDUCTION_REPORTER_TZS', value: '10000' }, ...extra);
+  const C = (id, day, reporter, team, staff) => staff.map((s, i) => ({ id: id + '-' + i, case_id: id, submitted_at: day + 'T08:00:00Z', dept: 'RECOVERY',
+    reporter, team, customer: 'C ' + id, ref: id, staff: s, amount_taken: 1000, deduction: 1000, to_pay: 1000 }));
+  t.pmo_deductions = [...C('c1', '2026-07-02', 'R ONE', 'KONGOWE', ['S1']), ...C('c2', '2026-07-10', 'R ONE', 'KONGOWE', ['S1']),
+    ...C('c3', '2026-07-17', 'R TWO', 'KONGOWE', ['S1']), ...C('c4', '2026-07-24', 'R ONE', 'KONGOWE', ['S1', 'S2']),
+    ...C('c5', '2026-07-24', 'R MB', 'MBAGALA', ['S9'])];
+  t.audit_log = [];
+  return t;
+};
+const dedEarn = r => Object.fromEntries(r.reporters.map(x => [x.reporter, x.earnings]));
+const DED_ADM = { ...ADMIN, tabs: ADMIN.tabs.concat(['deduct']) };
+const DED_GMO = { ...GMO, tabs: GMO.tabs.concat(['deduct']) };
+
+test('the earners\' table: each case earns the amount in force on the day it was reported, set by the admin from a date', async () => {
+  const db = fakeDb(dedBook());
+  const read = (u = DED_ADM, a = {}) => portalApi(db, u, 'deductions', a, NOW);
+  // 1. No dated amount: the base (the setting that was always there) for every case; unique cases, never staff lines.
+  let a = await read();
+  assert.deepEqual(dedEarn(a), { 'R ONE': 30000, 'R TWO': 10000, 'R MB': 10000 }, 'R ONE has three cases (c4 has two staff lines and is still one case)');
+  assert.equal(a.rate, 10000); assert.deepEqual(a.rateSteps, [{ from: '2026-07-01', tzs: 10000 }]);
+  assert.equal(a.canRates, true); assert.deepEqual(a.rates, []); assert.equal(a.rateBase, 10000);
+  // 2. 15,000 from the 17th, a past day inside the window: the 17th and after earn it, earlier cases keep 10,000.
+  let s = await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 15000, from: '2026-07-17' }, NOW);
+  assert.deepEqual(s.saved, { from: '2026-07-17', tzs: 15000 }); assert.equal(s.rate, 15000);
+  a = await read();
+  assert.deepEqual(dedEarn(a), { 'R ONE': 10000 + 10000 + 15000, 'R TWO': 15000, 'R MB': 15000 });
+  assert.deepEqual(a.rateSteps, [{ from: '2026-07-01', tzs: 10000 }, { from: '2026-07-17', tzs: 15000 }]);
+  // A window that ends before the change reads the base alone, and says one amount.
+  const early = await read(DED_ADM, { from: '2026-07-01', to: '2026-07-10' });
+  assert.deepEqual(dedEarn(early), { 'R ONE': 20000 }); assert.deepEqual(early.rateSteps, [{ from: '2026-07-01', tzs: 10000 }]);
+  // A window that starts after the change reads the new amount alone.
+  const late = await read(DED_ADM, { from: '2026-07-20', to: TODAY });
+  assert.deepEqual(dedEarn(late), { 'R ONE': 15000, 'R MB': 15000 }); assert.deepEqual(late.rateSteps, [{ from: '2026-07-20', tzs: 15000 }]);
+  // 3. A second entry, from today.
+  await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 12000, from: TODAY }, NOW);
+  a = await read();
+  assert.deepEqual(dedEarn(a), { 'R ONE': 10000 + 10000 + 12000, 'R TWO': 15000, 'R MB': 12000 });
+  assert.equal(a.rate, 12000, 'the amount in force today');
+  // 4. No date means today; an entry for a date that has one replaces it, never adds a second; a numeric string is read.
+  s = await portalApi(db, DED_ADM, 'dedRateSet', { tzs: '13000' }, NOW);
+  assert.deepEqual(s.saved, { from: TODAY, tzs: 13000 }); assert.equal(s.rates.length, 2, 'replaced, not added');
+  // 5. A future day is stored and changes nothing yet; the window ends today, so its step is not in the subtitle's list.
+  await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 20000, from: '2026-08-01' }, NOW);
+  a = await read();
+  assert.equal(a.rate, 13000); assert.deepEqual(a.rates.map(r => r.from), ['2026-07-17', '2026-07-24', '2026-08-01']);
+  assert.deepEqual(a.rateSteps.map(r => r.from), ['2026-07-01', '2026-07-17', '2026-07-24']);
+  // 6. One setting row holds the list, ascending; the base setting is never touched by any of it.
+  const rows = () => db._dump('settings');
+  assert.deepEqual(JSON.parse(rows().find(r => r.key === 'DEDUCTION_REPORTER_RATES').value),
+    [{ from: '2026-07-17', tzs: 15000 }, { from: '2026-07-24', tzs: 13000 }, { from: '2026-08-01', tzs: 20000 }]);
+  assert.equal(rows().find(r => r.key === 'DEDUCTION_REPORTER_TZS').value, '10000');
+  // 7. Taking one out puts the cases it covered back on the amount before it; a date with no entry changes nothing.
+  let d = await portalApi(db, DED_ADM, 'dedRateDelete', { from: '2026-07-17' }, NOW);
+  assert.equal(d.removed, true);
+  a = await read();
+  assert.deepEqual(dedEarn(a), { 'R ONE': 10000 + 10000 + 13000, 'R TWO': 10000, 'R MB': 13000 });
+  d = await portalApi(db, DED_ADM, 'dedRateDelete', { from: '2026-07-18' }, NOW);
+  assert.equal(d.removed, false); assert.equal(d.rates.length, 2);
+  await portalApi(db, DED_ADM, 'dedRateDelete', { from: '2026-07-24' }, NOW);
+  await portalApi(db, DED_ADM, 'dedRateDelete', { from: '2026-08-01' }, NOW);
+  a = await read();
+  assert.deepEqual(dedEarn(a), { 'R ONE': 30000, 'R TWO': 10000, 'R MB': 10000 }, 'every entry taken out: the base again');
+  assert.equal(a.rate, 10000); assert.deepEqual(a.rates, []);
+  // 8. Every change leaves a line in the audit log under the admin's name, and never the amount (the log keeps no amounts).
+  const log = db._dump('audit_log').filter(r => /^dedRate/.test(r.action));
+  assert.equal(log.length, 8, 'four sets and four deletes');
+  assert.ok(log.every(r => r.actor_name === 'THE ADMIN' && r.ok === true));
+  assert.ok(!/15000|13000|20000/.test(JSON.stringify(log)), 'no amount in the log');
+});
+
+test('the earners\' amount is the admin\'s alone: another role reads what is in force, never sets it, and is not sent the dated list', async () => {
+  const db = fakeDb(dedBook([{ key: 'DEDUCTION_REPORTER_RATES', value: JSON.stringify([{ from: '2026-07-17', tzs: 15000 }]) }]));
+  const g = await portalApi(db, DED_GMO, 'deductions', {}, NOW);
+  assert.equal(g.canRates, false); assert.equal(g.rates, undefined); assert.equal(g.rateBase, undefined);
+  assert.equal(g.rate, 15000, 'what is in force is read by whoever sees the tab (it was always on the card)');
+  assert.deepEqual(dedEarn(g), { 'R ONE': 10000 + 10000 + 15000, 'R TWO': 15000 }, 'their own team only, by the same schedule');
+  for (const [fn, args] of [['dedRateSet', { tzs: 99999, from: '2026-07-01' }], ['dedRateDelete', { from: '2026-07-17' }]]) {
+    await assert.rejects(() => portalApi(db, DED_GMO, fn, args, NOW), e => e.status === 403, fn + ' by a GMO');
+    // A view-only admin sees the card and may not write: the one door refuses, loudly.
+    await assert.rejects(() => portalApi(db, { ...DED_ADM, readOnly: true }, fn, args, NOW), e => e.status === 403 && /view-only/.test(e.message), fn + ' by a view-only admin');
+  }
+  assert.deepEqual(JSON.parse(db._dump('settings').find(r => r.key === 'DEDUCTION_REPORTER_RATES').value), [{ from: '2026-07-17', tzs: 15000 }], 'nothing changed');
+  // The tab map: a code that holds `settings` but not the PMO Deduction tab is refused too (the admin role passes every tab, a code does not).
+  const noTab = { code: 'M', name: 'A MANAGER', role: 'MANAGER', teams: null, tabs: ['settings'] };
+  for (const [fn, args] of [['dedRateSet', { tzs: 1 }], ['dedRateDelete', { from: '2026-07-17' }]])
+    await assert.rejects(() => portalApi(db, noTab, fn, args, NOW), e => e.status === 403, fn + ' without the tab');
+});
+
+test('the earners\' amount: a refusal says why and stores nothing, and a hand-damaged setting never stops the tab opening', async () => {
+  const db = fakeDb(dedBook());
+  for (const bad of ['', '  ', 'abc', -5, null, undefined, [], [5], {}, NaN, Infinity, '1e999', true])
+    await assert.rejects(() => portalApi(db, DED_ADM, 'dedRateSet', { tzs: bad, from: '2026-07-01' }, NOW), e => e.status === 400, 'amount ' + JSON.stringify(bad));
+  for (const bad of ['2026-13-45', '2026-02-31', '24/11/2026', 'yesterday', '2026-7-1', 20260701])
+    await assert.rejects(() => portalApi(db, DED_ADM, 'dedRateSet', { tzs: 1000, from: bad }, NOW), e => e.status === 400, 'date ' + bad);
+  for (const bad of [undefined, '', 'nope', '2026-02-31'])
+    await assert.rejects(() => portalApi(db, DED_ADM, 'dedRateDelete', { from: bad }, NOW), e => e.status === 400, 'delete ' + bad);
+  assert.equal(db._dump('settings').some(r => r.key === 'DEDUCTION_REPORTER_RATES'), false, 'nothing was stored by any refusal');
+  // Zero is an amount (a pause); a decimal is rounded to whole shillings.
+  const z = await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 0, from: TODAY }, NOW);
+  assert.equal(z.rate, 0); assert.equal(dedEarn(await portalApi(db, DED_ADM, 'deductions', {}, NOW))['R MB'], 0);
+  assert.equal((await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 1234.6, from: '2026-07-20' }, NOW)).saved.tzs, 1235);
+  // A damaged setting is read as no schedule: the base, the tab open, the dated list empty for the admin.
+  for (const bad of ['{oops', '', 'null', '"text"', '{"from":"2026-07-10","tzs":5}',
+    '[{"from":"nope","tzs":5},{"from":"2026-07-01","tzs":-3},{"tzs":7},null,"x",{"from":"2026-02-31","tzs":9},{"from":"2026-07-10","tzs":[]},{"from":"2026-07-10","tzs":""}]']) {
+    const a = await portalApi(fakeDb(dedBook([{ key: 'DEDUCTION_REPORTER_RATES', value: bad }])), DED_ADM, 'deductions', {}, NOW);
+    assert.deepEqual(dedEarn(a), { 'R ONE': 30000, 'R TWO': 10000, 'R MB': 10000 }, 'damaged: ' + bad.slice(0, 24));
+    assert.deepEqual(a.rates, []); assert.equal(a.rate, 10000);
+  }
+  // Good and bad side by side: the good ones count, a numeric string is read, the last of one date wins, a decimal is rounded.
+  const mix = [{ from: '2026-07-17', tzs: '14000' }, { from: 'x', tzs: 1 }, { from: '2026-07-10', tzs: 11000.4 }, { from: '2026-07-17', tzs: 16000 }, { from: '2026-07-20', tzs: 16000 }];
+  const m = await portalApi(fakeDb(dedBook([{ key: 'DEDUCTION_REPORTER_RATES', value: JSON.stringify(mix) }])), DED_ADM, 'deductions', {}, NOW);
+  assert.deepEqual(m.rates, [{ from: '2026-07-10', tzs: 11000 }, { from: '2026-07-17', tzs: 16000 }, { from: '2026-07-20', tzs: 16000 }]);
+  assert.deepEqual(dedEarn(m), { 'R ONE': 10000 + 11000 + 16000, 'R TWO': 16000, 'R MB': 16000 });
+  assert.deepEqual(m.rateSteps, [{ from: '2026-07-01', tzs: 10000 }, { from: '2026-07-10', tzs: 11000 }, { from: '2026-07-17', tzs: 16000 }],
+    'a step to the amount already in force is not a step: the subtitle names an amount once');
+});
+
+test('the earners\' amount costs the upload and the call app nothing: neither file knows it (CLAUDE.md section 1), and the tab reads no more than it did', async () => {
+  for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) {
+    assert.doesNotMatch(await readFile(new URL('../' + f, import.meta.url), 'utf8'), /dedRate|DEDUCTION_REPORTER|dedEarn/, f + ' knows nothing of it');
+  }
+  // The tab's reads are the tab's reads: the dated amounts ride in the settings read it already made (one memoised read of the table), so
+  // opening the tab as the admin makes no query the GMO's does not.
+  const count = async user => { let n = 0; const db = fakeDb(dedBook()); const f = db.from.bind(db); db.from = t => { n++; return f(t); }; await portalApi(db, user, 'deductions', {}, NOW); return n; };
+  assert.equal(await count(DED_ADM), await count(DED_GMO), 'the admin\'s settings card costs the tab no extra read');
+});
+
+test('the earners\' amount is written from a FRESH read: another instance\'s change is kept, not written over from a stale memo', async () => {
+  const db = fakeDb(dedBook());
+  // THIS instance reads the tab: its settings memo now says "no dated amount".
+  assert.deepEqual((await portalApi(db, DED_ADM, 'deductions', {}, NOW)).rates, []);
+  // ANOTHER instance writes one (the row is in the database; this instance's memo is not dropped: only the writer's is).
+  db._dump('settings').push({ key: 'DEDUCTION_REPORTER_RATES', value: JSON.stringify([{ from: '2026-07-10', tzs: 11000 }]) });
+  const s = await portalApi(db, DED_ADM, 'dedRateSet', { tzs: 15000, from: '2026-07-17' }, NOW);
+  assert.deepEqual(s.rates, [{ from: '2026-07-10', tzs: 11000 }, { from: '2026-07-17', tzs: 15000 }], 'the other instance\'s entry survives');
+  assert.deepEqual(JSON.parse(db._dump('settings').find(r => r.key === 'DEDUCTION_REPORTER_RATES').value), s.rates);
+  // And a delete starts from the fresh row too.
+  db._dump('settings').find(r => r.key === 'DEDUCTION_REPORTER_RATES').value = JSON.stringify([...s.rates, { from: '2026-07-22', tzs: 17000 }]);
+  const d = await portalApi(db, DED_ADM, 'dedRateDelete', { from: '2026-07-10' }, NOW);
+  assert.deepEqual(d.rates, [{ from: '2026-07-17', tzs: 15000 }, { from: '2026-07-22', tzs: 17000 }]);
+});
+
 /* "add recovered leo and recovered weekly cards at demand notice pannel, clickable to show list
    of the recoveries as the dashboard recovries are clickable to show list". The Legal tab
    carries the dashboard legal card's own reading, and the list behind either card is the same
@@ -12435,6 +12584,8 @@ test('every write is refused at the one door, loudly', async () => {
     ['rebuildFollowup', {}],
     ['leadersSync', {}],                  // writes the leaders of every team from the access codes
     ['leadersSyncUndo', {}],
+    ['dedRateSet', { tzs: 12000 }],       // the earners' amount per case: an admin screen, so resolveTabs may hand a view-only code the tab
+    ['dedRateDelete', { from: '2026-07-01' }],
   ]) {
     await assert.rejects(() => portalApi(fakeDb(tables()), AUDITOR, fn, args, NOW),
       e => e.status === 403 && /view-only/.test(e.message), fn + ' was not refused');

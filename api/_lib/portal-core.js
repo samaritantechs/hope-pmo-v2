@@ -1638,6 +1638,12 @@ const addComplaint = saveComplaint;
    Scoped at the database like every register here; the HR write is open to admins and to the
    roles named in DEDUCTION_HR_ROLES (Settings), HR by default. */
 const DED_REPORTER_TZS_KEY = 'DEDUCTION_REPORTER_TZS', DED_REPORTER_TZS_DEFAULT = 5000;
+/* THE EARNERS' AMOUNT PER CASE CHANGES OVER TIME (handbook Part 152) -- "i need to set earners amount there - b/se like now its 10,000
+   per case sometimes the amount changes to boost followup" (the owner, 24 Nov 2026). The setting above is the BASE: what every case earned
+   until there was a dated entry, and still what a case earns before the first one. DEDUCTION_REPORTER_RATES holds the dated entries
+   ([{ "from": "2026-12-01", "tzs": 12000 }, ...], written by dedRateSet on the Makato ya PMO tab, admin only): a case earns the amount
+   in force on the day it was reported, so raising the amount to boost follow-up never rewrites what earlier cases earned. */
+const DED_RATES_KEY = 'DEDUCTION_REPORTER_RATES';
 const DED_HR_ROLES_KEY = 'DEDUCTION_HR_ROLES', DED_HR_ROLES_DEFAULT = 'HR, HUMAN RESOURCE, HUMAN RESOURCES';
 const DED_NOTE = 'Jedwali la makato halipo bado: endesha db/RUN-ME-043-pmo-deductions.sql kwenye SQL editor. '
   + '/ The deductions table is not there yet: run db/RUN-ME-043-pmo-deductions.sql in the SQL editor.';
@@ -1650,6 +1656,37 @@ function dedCanHr_(user, cfg) {
     .some(w => r === w || (' ' + r + ' ').includes(' ' + w + ' '));
 }
 const dedDate_ = v => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+/** The dated amounts, ascending: [{ from, tzs }]. A hand-edited row that is not valid JSON, an entry with no real date or no amount is left
+    out, never thrown: the tab must open whatever is in Settings. Two entries for one date: the last one wins. */
+function dedRatesOf_(text) {
+  let raw = [];
+  try { raw = JSON.parse(String(text || '[]')); } catch (e) { raw = []; }
+  const by = new Map();
+  for (const r of Array.isArray(raw) ? raw : []) {
+    const from = dedRateDay_(r && r.from), tzs = dedAmount_(r && r.tzs);
+    if (from && tzs != null) by.set(from, tzs);
+  }
+  return [...by.entries()].map(([from, tzs]) => ({ from, tzs })).sort((a, b) => a.from.localeCompare(b.from));
+}
+/** ONE AMOUNT PER CASE, read one way by the form's write and by the stored list: a number or a numeric string, zero or more, in whole TZS.
+    Anything else (blank, words, a list, a negative, NaN) is null, never a nought. */
+function dedAmount_(v) {
+  const n = typeof v === 'number' ? v : (typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+/** A day that exists, written YYYY-MM-DD (2026-02-31 is not one), or null: the date of a dated amount. */
+function dedRateDay_(v) {
+  const d = dedDate_(v), t = d ? Date.parse(d + 'T00:00:00Z') : NaN;
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === d ? d : null;
+}
+const dedRates_ = cfg => dedRatesOf_(cfg.get(DED_RATES_KEY, '[]'));
+/** ONE DEFINITION OF WHICH AMOUNT A CASE EARNS: the dated amount in force on the day the case was reported (the last entry whose date has
+    come), else the base. The tab's earners' table, the report's section 2 and the amount in force today are all read through it. */
+function dedRateOn_(rates, base, day) {
+  let tzs = base;
+  for (const r of rates) { if (r.from <= day) tzs = r.tzs; else break; }
+  return tzs;
+}
 const dedMoney_ = v => (v == null || v === '' ? null : Math.max(0, Math.round(num(v) * 100) / 100));
 /** The table read, null when RUN-ME-043 has not been run -- the tab says so, nothing fails. */
 async function dedRead_(q) {
@@ -1671,18 +1708,19 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
     dedRead_(() => onTeams(db.from('pmo_deductions').select('staff, team, remaining, submitted_at')
       .lt('submitted_at', fromKey).gt('remaining', 0), user.teams)),
     readTeamsAll(db, nowMs),
-    settingsMany(db, [DED_REPORTER_TZS_KEY, DED_HR_ROLES_KEY]),
+    settingsMany(db, [DED_REPORTER_TZS_KEY, DED_RATES_KEY, DED_HR_ROLES_KEY]),
   ]);
   const on = Array.isArray(rows0);
   const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
   const rows = scoped(user, rows0 || []).filter(r => { const d = dayOf(r.submitted_at); return d >= fromKey && d <= toKey; })
     .map(r => ({ ...r, branch: teamBranch.get(K(r.team)) || null }));
-  const rate = cfg.num(DED_REPORTER_TZS_KEY, DED_REPORTER_TZS_DEFAULT);
-  // The cases: to_pay once per case; everything else is per staff line.
+  const base = cfg.num(DED_REPORTER_TZS_KEY, DED_REPORTER_TZS_DEFAULT), rates = dedRates_(cfg);
+  const rate = dedRateOn_(rates, base, today);                 // the amount in force TODAY (the form's "now")
+  // The cases: to_pay once per case; everything else is per staff line. A case's day is the day it was reported.
   const cases = new Map();
   for (const r of rows) {
     const k = r.case_id || r.id;
-    if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay) });
+    if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay), day: dayOf(r.submitted_at) });
   }
   const byTeam = new Map();
   for (const r of rows) {
@@ -1698,10 +1736,10 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   const byReporter = new Map();
   for (const [k, c] of cases) {
     const name = c.reporter || '—';
-    const s = byReporter.get(name) || { reporter: name, cases: new Set() };
-    s.cases.add(k); byReporter.set(name, s);
+    const s = byReporter.get(name) || { reporter: name, cases: new Set(), earnings: 0 };
+    s.cases.add(k); s.earnings += dedRateOn_(rates, base, c.day); byReporter.set(name, s);
   }
-  const reporters = [...byReporter.values()].map(s => ({ reporter: s.reporter, cases: s.cases.size, earnings: s.cases.size * rate }))
+  const reporters = [...byReporter.values()].map(s => ({ reporter: s.reporter, cases: s.cases.size, earnings: s.earnings }))
     .sort((a, b) => b.cases - a.cases || a.reporter.localeCompare(b.reporter));
   const byStaff = new Map();
   for (const r of scoped(user, prev0 || [])) {
@@ -1716,9 +1754,50 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
     toPay: [...cases.values()].reduce((s, c) => s + c.toPay, 0),
     amountTaken: sum('amount_taken'), deduction: sum('deduction'), deducted: sum('deducted'), remaining: sum('remaining'),
     summary, reporters, prevBalances, rate,
+    /* The amounts in force across the window, for the earners' table's subtitle: [{ from, tzs }], the first from the window's first day. */
+    rateSteps: (() => {
+      const st = [{ from: fromKey, tzs: dedRateOn_(rates, base, fromKey) }];
+      for (const r of rates) if (r.from > fromKey && r.from <= toKey && r.tzs !== st[st.length - 1].tzs) st.push({ from: r.from, tzs: r.tzs });
+      return st;
+    })(),
+    /* THE COMMISSION SETTINGS ARE THE ADMIN'S ALONE: the dated amounts and the base ride only in an admin's answer. */
+    canRates: isAdminUser(user), ...(isAdminUser(user) ? { rates, rateBase: base } : {}),
     canHr: dedCanHr_(user, cfg), hrRoles: cfg.get(DED_HR_ROLES_KEY, DED_HR_ROLES_DEFAULT),
     staffList: [...new Set(rows.map(r => r.staff).filter(Boolean))].sort(),
     teams: teamRows.map(t => t.team).filter(t => teamAllowed(user, t)).sort() };
+}
+/** SETTING THE EARNERS' AMOUNT PER CASE (handbook Part 152): admin only, on the Makato ya PMO tab. An amount (whole TZS, zero or more) from a
+    date (today when none is given; a past date is allowed and rewrites what cases reported from then earn, which the tab says): a case earns the
+    amount in force on the day it was reported. An entry for a date that already has one replaces it. The entries are one setting row
+    (DEDUCTION_REPORTER_RATES), read FRESH from the database before it is written back so two administrators cannot overwrite each other's
+    change from a stale memo (the lesson of Part 135). */
+async function dedRateSet(db, user, p, nowMs = Date.now()) {
+  if (!isAdminUser(user)) throw forbidden('Kubadilisha kiasi cha malipo ni kwa admin. / Changing the earners\' amount is for admin.');
+  const tzs = dedAmount_(p && p.tzs);
+  if (tzs == null) throw badRequest('Weka kiasi cha kila kesi, sifuri au zaidi. / Enter the amount per case, zero or more.');
+  const from = p && p.from ? dedRateDay_(p.from) : todayKey(nowMs);
+  if (!from) throw badRequest('Tarehe si sahihi. / The date is not valid.');
+  const rates = dedRatesOf_(await settingFresh_(db, DED_RATES_KEY)).filter(r => r.from !== from).concat([{ from, tzs }])
+    .sort((a, b) => a.from.localeCompare(b.from));
+  await dedRatesWrite_(db, rates);
+  return { rates, rate: dedRateOn_(rates, await dedBase_(db), todayKey(nowMs)), saved: { from, tzs } };
+}
+/** Taking one dated amount out (a wrong one, or a boost that was never started): admin only; the cases it covered go back to the amount that was in
+    force before it. Naming a date that has no entry changes nothing. */
+async function dedRateDelete(db, user, p, nowMs = Date.now()) {
+  if (!isAdminUser(user)) throw forbidden('Kubadilisha kiasi cha malipo ni kwa admin. / Changing the earners\' amount is for admin.');
+  const from = dedRateDay_(p && p.from);
+  if (!from) throw badRequest('Tarehe si sahihi. / The date is not valid.');
+  const was = dedRatesOf_(await settingFresh_(db, DED_RATES_KEY));
+  const rates = was.filter(r => r.from !== from);
+  if (rates.length !== was.length) await dedRatesWrite_(db, rates);
+  return { rates, rate: dedRateOn_(rates, await dedBase_(db), todayKey(nowMs)), removed: rates.length !== was.length };
+}
+const dedBase_ = async db => (await settingsMany(db, [DED_REPORTER_TZS_KEY])).num(DED_REPORTER_TZS_KEY, DED_REPORTER_TZS_DEFAULT);
+async function dedRatesWrite_(db, rates) {
+  const { error } = await db.from('settings').upsert({ key: DED_RATES_KEY, value: JSON.stringify(rates) }, { onConflict: 'key' });
+  if (error) throw new Error(error.message);
+  noteSettingsWritten(db);
 }
 /** The form: one case, many staff. The reporter is the signed-in person -- the sheet asked
     for a name typed by hand, and a typed name is a name that can be anybody's. */
@@ -10926,7 +11005,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
-  deductions, addDeduction, hrDeduction,
+  deductions, addDeduction, hrDeduction, dedRateSet, dedRateDelete,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
   leaveRequestPage, leaveRequest, leaveQueue, leaveDecide, leaveReport, leaveSetAnnualDays,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
@@ -11326,7 +11405,7 @@ const FN_TAB = {
   abnormal: ['abnormal'], received: ['abnormal'],
   // PMO Deduction: the form, the register and HR's column, one tab. Who may record a
   // deduction is narrowed further inside hrDeduction (DEDUCTION_HR_ROLES).
-  deductions: ['deduct'], addDeduction: ['deduct'], hrDeduction: ['deduct'],
+  deductions: ['deduct'], addDeduction: ['deduct'], hrDeduction: ['deduct'], dedRateSet: ['deduct'], dedRateDelete: ['deduct'],
   // Salary advance: four panes, four authorities.
   advStaff: ['advstaff'], advStaffSave: ['advstaff'], advStaffStatus: ['advstaff'],
   advRequestPage: ['advreq'], advRequest: ['advreq'],
