@@ -3680,10 +3680,15 @@ test('the Legal tab\'s first card holds the three figures in one: a line each, i
   assert.ok(legal.indexOf('function lgIssuedCard_(d)') > 0 && legal.indexOf('function lgIssuedCard_(d)') < legal.indexOf('VIEWS.legal = function(){'), 'it is defined in the module, before the view that draws it');
 });
 
+/* The grand card is RUN with the page's own helpers: its builder, the sentences it and the download share, and the board it registers
+   for the one board exporter (Part 150). `col` is the page's own one-liner (pinned below), `BOARDS` the registry the card writes to. */
+const lgCol_ = (key, label, kind) => ({ key: key, label: label, kind: kind || 'text' });
+const lgGrandFns_ = app => lgFn_(app, 'lgGrandCard_', 'lg') + lgFn_(app, 'lgGrandNotes_', 'g') + lgFn_(app, 'lgGrandBoard_', 'lg');
+const lgCardOf_ = app => { const BOARDS = {}; return { BOARDS, card: new Function('esc', 'money', 'pct', 'BOARDS', 'col', lgGrandFns_(app) + '\nreturn lgGrandCard_;')(lgEsc_, lgMoney_, lgPct_, BOARDS, lgCol_) }; };
+
 test('the grand recovery card: a row for each lawyer (notices, calls, the two together, each with its percentage), a total row, the same arrows, and the words a missing side needs (Part 149)', () => {
   const app = appSrc();
-  const src = lgFn_(app, 'lgGrandCard_', 'lg');
-  const card = new Function('esc', 'money', 'pct', src + '\nreturn lgGrandCard_;')(lgEsc_, lgMoney_, lgPct_);
+  const { card } = lgCardOf_(app);
   const base = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', grand: LG_GRAND };
   assert.equal(card({ ...base, grand: null }), '', 'a reading with no grand part (an older answer, the dashboard\'s) draws nothing');
   const html = card(base);
@@ -3722,8 +3727,8 @@ test('the grand recovery card: a row for each lawyer (notices, calls, the two to
 
 test('the grand card rides with the other two: last on the Legal tab, never on the dashboard, replaced with them on an arrow press, with the focus kept (Part 149)', () => {
   const app = appSrc();
-  const src = lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg') + lgFn_(app, 'lgGrandCard_', 'lg');
-  const mk = view => new Function('esc', 'money', 'pct', 'S', src + '\nreturn lgWeekCard_;')(lgEsc_, lgMoney_, lgPct_, { view });
+  const src = lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg') + lgGrandFns_(app);
+  const mk = view => new Function('esc', 'money', 'pct', 'S', 'BOARDS', 'col', src + '\nreturn lgWeekCard_;')(lgEsc_, lgMoney_, lgPct_, { view }, {}, lgCol_);
   const lg = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: LG_PHONE, grand: LG_GRAND };
   const legal = mk('legal')(lg);
   const at = id => legal.indexOf('id="' + id + '"');
@@ -3741,8 +3746,8 @@ test('the grand card rides with the other two: last on the Legal tab, never on t
     const document = { activeElement: focusIn ? { owner: focusIn, getAttribute: () => focusOn } : null,
       getElementById: id => (page.html === null ? (id === 'lgWkCard' || (withOld && (id === 'lgPhCard' || id === 'lgGrand')) ? el(id) : null) : (page.html.includes('id="' + id + '"') ? el(id) : null)) };
     const S = { view: 'legal', args: {} };
-    const head = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'HEAD', src + paint + '\nlgWeekPaint_(' + JSON.stringify({ ...lg, mon: '2026-07-13', sun: '2026-07-19', since: '2026-06-29' }) + ');\nreturn HEAD;')(
-      S, null, document, lgEsc_, lgMoney_, lgPct_, '<div class="kpis">a<!--lgw-->OLD TRIO<!--/lgw--></div>');
+    const head = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'HEAD', 'BOARDS', 'col', src + paint + '\nlgWeekPaint_(' + JSON.stringify({ ...lg, mon: '2026-07-13', sun: '2026-07-19', since: '2026-06-29' }) + ');\nreturn HEAD;')(
+      S, null, document, lgEsc_, lgMoney_, lgPct_, '<div class="kpis">a<!--lgw-->OLD TRIO<!--/lgw--></div>', {}, lgCol_);
     return { page, head, S };
   };
   const a = run('lgGrand', '-1');
@@ -3758,4 +3763,119 @@ test('the grand card rides with the other two: last on the Legal tab, never on t
   // A page that had no grand card yet gains it without removing anything.
   const c = run(null, null, false);
   assert.deepEqual(c.page.removed, []); assert.equal((c.page.html.match(/id="lgGrand"/g) || []).length, 1);
+});
+
+/* THE GRAND CARD'S DOWNLOADS (24 Nov 2026, handbook Part 150).
+     "add excel and jpg button at weekly grand recovery of legal teams so that we could always download it" -- the owner.
+   The card, the board it registers and the page's ONE board exporter (exportBoard) are RUN with the page's own helpers; an ordinary
+   board's file is pinned byte for byte, so the extension cannot change any other board's Excel. */
+const lgCellText_ = (r, c) => { const v = c.get ? c.get(r) : r[c.key]; if (v == null || v === '') return ''; if (c.kind === 'money') return lgMoney_(v); if (c.kind === 'pct') return lgPct_(v); return String(v); };
+const lgIsNum_ = c => ['money', 'num', 'pct', 'dur'].includes(c.kind);
+const lgPctRound_ = (c, v) => Math.round(Number(v) || 0);
+// exportBoard on one board; the file it hands to download() is read back (its first three bytes are the byte-order mark Excel needs)
+const lgExport_ = async (app, board, kind) => {
+  const got = {};
+  const fn = new Function('BOARDS', 'toast', 't', 'today', 'esc', 'cellText', 'isNum', 'pctRound_', 'download', 'Blob', lgFn_(app, 'exportBoard', 'id, kind') + '\nreturn exportBoard;')(
+    { b: board }, m => { got.toast = m; }, k => k, () => '2026-11-24', lgEsc_, lgCellText_, lgIsNum_, lgPctRound_, (blob, name) => { got.blob = blob; got.name = name; }, Blob);
+  fn('b', kind || 'xls');
+  if (got.blob) { const buf = Buffer.from(await got.blob.arrayBuffer()); got.bom = buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF; got.text = buf.subarray(3).toString('utf8'); got.type = got.blob.type; }
+  return got;
+};
+const lgCells_ = (text) => [...text.matchAll(/<tr><td>([^<]*)<\/td>((?:<td[^>]*>[^<]*<\/td>)+)<\/tr>/g)]
+  .map(m => [m[1], [...m[2].matchAll(/<td( x:num)?>([^<]*)<\/td>/g)].map(c => (c[1] ? '#' : '') + c[2])]);
+
+test('the grand card has an Excel button and a JPG button, inline like its arrows, with the way home beside them on a past week; the board Excel writes is the card now drawn (Part 150)', () => {
+  const app = appSrc();
+  const { card, BOARDS } = lgCardOf_(app);
+  const base = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', grand: LG_GRAND };
+  const html = card(base);
+  const row = /<div class="lgGact">([\s\S]*?)<\/span><\/div>/.exec(html);
+  assert.ok(row, 'the card has its row of buttons');
+  const btns = [...row[1].matchAll(/<button type="button" class="btn sm ghost" title="([^"]*)" onclick="return lgGrandSave_\('(xls|jpg)', event\)" onkeydown="event\.stopPropagation\(\)">([^<]*)<\/button>/g)].map(m => [m[2], m[3], m[1]]);
+  assert.deepEqual(btns, [['xls', 'Excel', 'Pakua Excel / Download Excel'], ['jpg', 'JPG', 'Pakua picha / Download the picture']],
+    'Excel then JPG, inline handlers (the card is replaced whole on every press and repainted from HEAD by a search: nothing wired once would last)');
+  assert.ok(!/lgwkhome/.test(html), 'this week: no way home');
+  // The picture drops every button (saveJpg), so the row must hold nothing but buttons for it to be empty there.
+  assert.equal(html.replace(/<button[\s\S]*?<\/button>/g, '').match(/<div class="lgGact">[\s\S]*?<\/div>/)[0], '<div class="lgGact"><span class="lgGdl"></span></div>', 'with the buttons taken out of it, as the picture does, the row is empty');
+  assert.match(app, /clone\.querySelectorAll\('button, \.tblsearch'\)/, 'and saveJpg does take every button out of the picture');
+  // The board registered by the draw.
+  const b = BOARDS.lgGrandX;
+  assert.equal(b.title, 'Legal grand recovery — week of 2026-07-20 to 2026-07-26');
+  assert.deepEqual(b.cols.map(c => [c.key, c.label, c.kind]), [['officer', 'Wakili / Legal officer', 'text'], ['nRec', 'Notisi TZS / Notices TZS', 'money'], ['nPct', 'Notisi % / Notices %', 'pct'],
+    ['cRec', 'Simu TZS / Calls TZS', 'money'], ['cPct', 'Simu % / Calls %', 'pct'], ['recovered', 'Jumla TZS / Grand TZS', 'money'], ['pct', 'Jumla % / Grand %', 'pct']],
+    'the card\'s seven columns, each header carrying its group, the amounts as money and the percentages as percentages');
+  assert.strictEqual(b.rows, LG_GRAND.rows, 'the lawyers\' rows are the card\'s own, not a copy that could drift');
+  assert.strictEqual(b.xls.total, LG_GRAND.total); assert.equal(b.xls.blank, true);
+  const said = [...html.matchAll(/<div class="s">([^<]*)<\/div>/g)].map(m => m[1]).slice(1);
+  assert.ok(said.length >= 1 && JSON.stringify(said) === JSON.stringify(b.xls.foot.map(lgEsc_)), 'the sentences under the table and under the sheet are ONE list: ' + JSON.stringify(said).slice(0, 120));
+  // A past week: the way home leads the row and the week line ends on words (nothing for the picture to leave hanging); the board follows the card.
+  const past = card({ ...base, mon: '2026-07-13', sun: '2026-07-19', since: '2026-07-13' });
+  assert.ok(/<div class="lgGact"><button type="button" class="lgwkhome" onclick="return lgWeekStep_\(0, event\)"[^>]*>Rudi wiki hii \/ Back to this week<\/button><span class="lgGdl">/.test(past), 'the way home leads the row');
+  assert.match(past, /<div class="s">2026-07-13 → 2026-07-19 · wiki iliyopita \/ past week<\/div><div class="lgGact">/);
+  assert.equal(BOARDS.lgGrandX.title, 'Legal grand recovery — week of 2026-07-13 to 2026-07-19', 'the board is re-registered by each draw: Excel always writes the week on the screen');
+  // The two lines that wire it.
+  assert.match(app, /\.lgGact\{display:flex;flex-wrap:wrap;/); assert.match(app, /\.lgGdl\{margin-left:auto;display:flex;/);
+  assert.ok(/function col\(key, label, kind\)\{ return \{ key:key, label:label, kind:kind\|\|'text' \}; \}/.test(app), 'the stand-in col() is the page\'s own');
+  // A reading with no grand part draws nothing and registers nothing.
+  const none = lgCardOf_(app);
+  assert.equal(none.card({ ...base, grand: null }), ''); assert.deepEqual(none.BOARDS, {});
+});
+
+test('the grand card\'s Excel: the card as drawn with its total row and its sentences, a figure not known an empty cell, and every other board written byte for byte as before (Part 150)', async () => {
+  const app = appSrc();
+  const { card, BOARDS } = lgCardOf_(app);
+  const base = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', grand: LG_GRAND };
+  card(base);
+  const x = await lgExport_(app, BOARDS.lgGrandX);
+  assert.equal(x.name, 'Legal-grand-recovery-week-of-2026-07-20-to-2026-07-26-2026-11-24.xls', 'the file names the week');
+  assert.ok(x.bom && /^application\/vnd\.ms-excel/.test(x.type));
+  assert.match(x.text, /<h3>Legal grand recovery — week of 2026-07-20 to 2026-07-26<\/h3>/);
+  assert.match(x.text, /<tr><th>S\/N<\/th><th>Wakili \/ Legal officer<\/th><th>Notisi TZS \/ Notices TZS<\/th><th>Notisi % \/ Notices %<\/th><th>Simu TZS \/ Calls TZS<\/th><th>Simu % \/ Calls %<\/th><th>Jumla TZS \/ Grand TZS<\/th><th>Jumla % \/ Grand %<\/th><\/tr>/);
+  assert.deepEqual(lgCells_(x.text), [
+    ['1', ['WAKILI &lt;ONE&gt;', '#40000', '#40', '#10000', '#9', '#50000', '#24']],
+    ['2', ['WAKILI TWO', '#0', '', '#0', '#0', '#0', '#0']],
+    ['', ['JUMLA / TOTAL', '#40000', '#40', '#10000', '#4', '#50000', '#15']]],
+    'a lawyer a row, then the total; amounts as numbers, percentages whole as the card shows them; the one lawyer with nothing owed on notices has an EMPTY cell there, not a nought');
+  const foot = [...x.text.matchAll(/<p>([^<]*)<\/p>/g)].map(m => m[1]);
+  assert.deepEqual(foot, BOARDS.lgGrandX.xls.foot.map(lgEsc_), 'the card\'s sentences are under the sheet');
+  assert.ok(foot.some(l => /Calls = customers at DC 2\+ spoken to who had no notice yet/.test(l)), 'including what Calls counts');
+  // A side that cannot be read: empty cells, never noughts, and the warning in the foot.
+  const off = { ...LG_GRAND, on: false, pOn: false, pNote: 'run db/RUN-ME-089',
+    rows: LG_GRAND.rows.map(r => ({ ...r, cOwed: null, cRec: null, cPct: null, owed: null, recovered: null, pct: null })), total: { ...LG_GRAND.total, cOwed: null, cRec: null, cPct: null, owed: null, recovered: null, pct: null } };
+  card({ ...base, grand: off });
+  const y = await lgExport_(app, BOARDS.lgGrandX);
+  assert.deepEqual(lgCells_(y.text).map(r => r[1]), [['WAKILI &lt;ONE&gt;', '#40000', '#40', '', '', '', ''], ['WAKILI TWO', '#0', '', '', '', '', ''], ['JUMLA / TOTAL', '#40000', '#40', '', '', '', '']],
+    'the calls and grand cells are empty where the file is not run');
+  assert.ok([...y.text.matchAll(/<p>([^<]*)<\/p>/g)].some(m => m[1] === '⚠ run db/RUN-ME-089'), 'and the sheet says why');
+  // The CSV path carries the total too, for any board that asks (no CSV button is offered on this card).
+  const csv = await lgExport_(app, BOARDS.lgGrandX, 'csv');
+  assert.match(csv.text.split('\r\n').pop(), /^"","JUMLA \/ TOTAL","40,000","40%",""/);
+  // Nothing to write says so and writes nothing.
+  const e = await lgExport_(app, { title: 'x', rows: [], cols: [], xls: { total: LG_GRAND.total } });
+  assert.equal(e.toast, 'nothing'); assert.equal(e.blob, undefined);
+  // EVERY OTHER BOARD IS WRITTEN EXACTLY AS BEFORE: a plain board's files, byte for byte (a not-known figure is still a nought there: see Part 150).
+  const plain = { title: 'T & U', rows: [{ n: 'A<B', amt: 1234, p: 33.4, miss: null }, { n: 'C', amt: null, p: 0, miss: 7 }],
+    cols: [{ key: 'n', label: 'Name', kind: 'text' }, { key: 'amt', label: 'Amt', kind: 'money' }, { key: 'p', label: 'Pct', kind: 'pct' }, { key: 'miss', label: 'M<1', kind: 'num' }] };
+  const px = await lgExport_(app, plain), pc = await lgExport_(app, plain, 'csv');
+  assert.equal(px.name, 'T-U-2026-11-24.xls');
+  assert.equal(px.text, '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8"><style>th{background:#0B2A6B;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body><h3>T &amp; U</h3><table><thead><tr><th>S/N</th><th>Name</th><th>Amt</th><th>Pct</th><th>M&lt;1</th></tr></thead><tbody><tr><td>1</td><td>A&lt;B</td><td x:num>1234</td><td x:num>33</td><td x:num>0</td></tr><tr><td>2</td><td>C</td><td x:num>0</td><td x:num>0</td><td x:num>7</td></tr></tbody></table></body></html>');
+  assert.equal(pc.text, '"S/N","Name","Amt","Pct","M<1"\r\n"1","A<B","1,234","33%",""\r\n"2","C","","0%","7"');
+  // asking for only one of the three changes only that one
+  const only = await lgExport_(app, { ...plain, xls: { blank: true } });
+  assert.ok(/<td><\/td><\/tr>/.test(only.text) && !/JUMLA/.test(only.text) && !/<p>/.test(only.text), 'blank alone: empty cells, no total, no foot');
+  const tot = await lgExport_(app, { ...plain, xls: { total: { n: 'z', amt: 5, p: 50, miss: 1 } } });
+  assert.ok(/<tr><td><\/td><td>JUMLA \/ TOTAL<\/td><td x:num>5<\/td><td x:num>50<\/td><td x:num>1<\/td><\/tr><\/tbody>/.test(tot.text) && /<td x:num>0<\/td><\/tr><tr><td>2/.test(tot.text), 'total alone: the row, and the nought for a missing figure stays a nought without `blank`');
+});
+
+test('the grand card\'s two buttons: Excel writes the board the card registered, JPG takes the card itself, and neither lets the press through (Part 150)', () => {
+  const app = appSrc();
+  const calls = [];
+  const fn = new Function('saveJpg', 'exportBoard', 'document', lgFn_(app, 'lgGrandSave_', 'kind, ev') + '\nreturn lgGrandSave_;')(
+    el => calls.push(['jpg', el && el.id]), (id, kind) => calls.push(['xls', id, kind]), { getElementById: id => ({ id }) });
+  const ev = () => { const e = { stopped: 0, prevented: 0, stopPropagation() { e.stopped++; }, preventDefault() { e.prevented++; } }; return e; };
+  const e1 = ev(), e2 = ev();
+  assert.equal(fn('xls', e1), false); assert.equal(fn('jpg', e2), false);
+  assert.deepEqual(calls, [['xls', 'lgGrandX', 'xls'], ['jpg', 'lgGrand']]);
+  assert.deepEqual([e1.stopped, e1.prevented, e2.stopped, e2.prevented], [1, 1, 1, 1]);
+  assert.doesNotThrow(() => fn('xls'), 'and it works with no event (a call from code)');
 });
