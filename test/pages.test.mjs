@@ -1806,7 +1806,7 @@ test('the Legal tab carries tappable recovered-today and recovered-this-week car
   assert.ok(/Imerejeshwa wiki hii \/ Recovered this week/.test(app), 'and the words it always had');
   assert.ok(/var lg = d\.legal \|\| \{\}/.test(view), 'fed by demandNotices\' legal reading');
   assert.ok(/lg\.on === false \? \(lg\.note/.test(view), 'a database without the ledger says so on today\'s card');
-  assert.ok(/function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)/.test(app) && /srv\('legalRecoveries', \{ period: 'today' \}\)/.test(app), 'the drawer asks the server for the list');
+  assert.ok(/function legalRecoveriesDrawer_\(period, weekOf, focusArrow, kind\)/.test(app) && /srv\('legalRecoveries', \{ period: 'today' \}\)/.test(app), 'the drawer asks the server for the list');
   assert.ok(/srv\('legalRecoveries', \{ period: 'week', weekOf: key \}\)/.test(app), 'for any week, through the one place that keeps the answers');
   assert.ok(/sumRow\(rows, \['owed', 'paid', 'payments'\]\)/.test(app), 'with a grand total');
   // Today's card is wired by wireForms; the week's wires itself, inline, so a table repaint cannot leave it dead.
@@ -1843,7 +1843,7 @@ test('the weekly Legal card carries week arrows: inline, bounded, in step with H
   assert.ok(/p\.then\(function\(d\)\{ entry\.d = d; \}, function\(\)\{ if \(LGW_\.c\[key\] === entry\) delete LGW_\.c\[key\]; \}\)/.test(app), 'a read that failed is not kept; a good one is kept with its answer');
   assert.ok(/Date\.now\(\) - hit\.at < 120000/.test(app), 'answers are kept two minutes: stepping back and forth asks the server once');
   // The list: the same arrows, a way home, the week in the downloads' title, the card behind kept in step.
-  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app);
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow, kind\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(dr, 'the drawer takes a week');
   assert.ok(/\(week \? lgWeekAsk_\(wantKey\) : srv\('legalRecoveries', \{ period: 'today' \}\)\)/.test(dr[0]), 'this week\'s list and any other week\'s are one code path');
   assert.ok(/lgWeekPaint_\(d\.legal\)/.test(dr[0]), 'the card behind the list says the week the list is on');
@@ -1993,12 +1993,12 @@ test('the Legal week card and list after the second reader: a way home that work
   assert.ok(!/<a href="#" onclick="return lgWeekStep_\(0, event\)"/.test(card), 'and no longer a bare link');
   assert.match(app, /\.lgwkhome\{background:none;border:0;padding:0;margin:0;font:inherit;color:var\(--b700\)/, 'coloured by the theme');
   assert.match(app, /body\.dark \.lgwkhome\{color:var\(--b300\)\}/, 'and readable on the lit card in the dark theme');
-  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app)[0];
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow, kind\)\{[\s\S]*?\n\}\n/.exec(app)[0];
   assert.match(dr, /var my = \+\+LGW_\.listSeq, wantKey = weekOf \|\| '';/, 'every list asked for has a ticket');
   assert.match(dr, /var stale = function\(\)\{ return my !== LGW_\.listSeq \|\| \(week && LGW_\.want !== wantKey\) \|\| \$\('#drawerBg'\)\.style\.display === 'none'; \};/, 'an answer is stale when a later list was asked for, the card was moved elsewhere, or the list was closed');
   assert.ok(/\.then\(function\(d\)\{\n    if \(stale\(\)\) return;/.test(dr) && /\.catch\(function\(e\)\{\n    if \(stale\(\)\) return;/.test(dr), 'and a stale answer, good or bad, paints nothing: it never re-opens a closed list nor paints over a later choice');
   assert.match(dr, /if \(focusArrow\) \{ var fa = document\.querySelector\('#drawer \[data-lgwd="' \+ focusArrow \+ '"\]'\); if \(fa && !fa\.disabled\) fa\.focus\(\);/, 'the arrow pressed in the list keeps the focus across the redraw');
-  assert.match(dr, /var bar_ = week && LGW_\.lastList \? lgWeekBar_\(LGW_\.lastList\) : '';/, 'a failed step keeps the last good list\'s week bar');
+  assert.match(dr, /var bar_ = week && LGW_\.lastList \? lgWeekBar_\(LGW_\.lastList, ph\) : '';/, 'a failed step keeps the last good list\'s week bar');
   assert.match(app, /function lgWeekKept_\(\)\{/, 'a quiet refresh of a remembered screen keeps the week the reader chose');
   const core = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8');
   assert.match(core, /since: legalSince_\(notices\) \|\| thisWeek \};/, 'a scope with no notice has this week as its floor: the backward arrow is off, never endless');
@@ -2010,7 +2010,7 @@ test('the Legal week card and list after the second reader: a way home that work
    list's search box finds a lawyer's name. */
 test('the list behind the Legal recovery cards names the lawyer first, before the customer, and its search finds them', () => {
   const app = appSrc();
-  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow\)\{[\s\S]*?\n\}\n/.exec(app);
+  const dr = /function legalRecoveriesDrawer_\(period, weekOf, focusArrow, kind\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(dr, 'the drawer is where it was');
   assert.match(dr[0], /var cols = \[col\('officer', 'Afisa wa sheria \/ Legal officer'\), col\('full_name', 'Mteja \/ Customer'\), col\('ref', 'REF#'\)/, 'Legal officer, then Customer, then REF#');
   assert.match(dr[0], /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.contact, r\.notice_id\]\.some\(/, 'the search box reads the lawyer too');
@@ -3441,4 +3441,174 @@ test('a letterhead link on the Legal tab loads the admin module its form lives i
   const block = stripComments_(app.slice(at, app.indexOf('/* Closing the system turns', at)));
   assert.ok(/modLoad_\('admin'\)\.then\(function\(\)\{ settingForm\(p\[1\], val\); \}/.test(block) && !/ev\.preventDefault\(\); settingForm\(/.test(block), 'the handler loads the admin module before it calls settingForm');
   assert.ok(!/var BUILD = '2026-11-23-e'/.test(app), 'BUILD moved');
+});
+
+/* LEGAL RECOVERY BY PHONE, ON THE PAGE (24 Nov 2026, handbook Part 139; the server side is test/legal-phone.test.mjs).
+     "Legal officers should be added another card of legal recovery by phone" ... "that card will be able to go forward and backward as
+      usual, so that we always get legal recovery of both demand notices and call recovery -- and find a way to include recovery by phone
+      of legal recovery in the sdame legal recovery slide at presentation" -- the owner, 23 Nov 2026.
+   The second card is the notices card's twin: one reading, one week, the same arrows; a tap opens its own list. The builders are RUN. */
+const lgEsc_ = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const lgMoney_ = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const lgPct_ = v => v == null ? '' : Math.round(v) + '%';
+const lgFn_ = (app, name, args) => { const m = new RegExp('function ' + name + '\\(' + args + '\\)\\{[\\s\\S]*?\\n\\}\\n').exec(app); assert.ok(m, name + ' is on the page'); return m[0]; };
+const LG_PHONE = { on: true, note: null, recovered: 55000, owed: 350000, pct: 15.7, tRecovered: 45000, tOwed: 170000, tPct: 26.5, spoken: 5, customers: 4, paid: 3,
+  tSpoken: 3, tPaid: 2, waiting: 1, noticed: 1, noticedRecovered: 40000, stampedAt: '2026-07-24T08:55:00Z', first: '2026-07-15' };
+const LG_BASE = { on: true, customers: 3, owed: 800, recovered: 450, pct: 56.3, tRecovered: 50, today: '2026-07-24', thisWeek: '2026-07-20', since: '2026-07-13' };
+
+test('the Legal tab carries a second card, recovery by phone: drawn with the notices card from one reading, the same week arrows, its own tap, and no figure until db/RUN-ME-089 is run (Part 139)', () => {
+  const app = appSrc();
+  const src = lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg');
+  const mk = view => new Function('esc', 'money', 'pct', 'S', src + '\nreturn lgWeekCard_;')(lgEsc_, lgMoney_, lgPct_, { view });
+  const onLegal = mk('legal'), onDash = mk('dashboard');
+  const two = html => html.split(/(?=<div class="kpi tap lgwk)/);
+  const disabled = (html, n) => new RegExp('data-lgwk="' + n + '"[^>]*\\sdisabled').test(html);
+  // THIS WEEK: two cards, one of each, the notices card first and as it was.
+  const now = onLegal({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: LG_PHONE });
+  const [wk, ph] = two(now);
+  assert.equal(two(now).length, 2); assert.ok(/id="lgWkCard"/.test(wk) && !/lgPhCard/.test(wk) && /id="lgPhCard"/.test(ph) && !/lgWkCard/.test(ph), 'the notices card, then the phone card');
+  assert.equal(wk, mk('legal')({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26' }), 'the notices card is drawn exactly as it is without the phone reading');
+  assert.match(ph, /<div class="l">Kwa simu wiki hii \/ Recovered by phone this week<\/div>/);
+  assert.match(ph, /<div class="v good" id="lgPhV">16% · 55,000<\/div>/, 'the week\'s share and figure');
+  assert.match(ph, /2026-07-20 → 2026-07-26 · 4 wateja wa DC 2\+ waliozungumzwa \/ customers at DC 2\+ spoken to · 3 walilipa \/ paid · walidaiwa \/ owed TZS 350,000 · leo \/ today TZS 45,000 · 1 wanasubiri faili la jioni \/ waiting for the later file · bofya kuona orodha \/ tap for the list/);
+  assert.ok(/onclick="lgPhoneOpen_\(\)"/.test(ph) && /onkeydown="lgPhoneKey_\(event\)"/.test(ph) && /role="button" tabindex="0"/.test(ph), 'a tap, Enter or Space opens ITS list');
+  assert.ok(/onclick="return lgWeekStep_\(-1, event\)"/.test(ph) && /onclick="return lgWeekStep_\(1, event\)"/.test(ph), 'its arrows are the notices card\'s own stepper: one week for both');
+  assert.ok(!disabled(ph, -1) && disabled(ph, 1), 'this week: back on (the phone table reaches last week), forward off');
+  assert.ok(!/kpi tap lgwk on/.test(ph) && !/Rudi wiki hii/.test(ph));
+  // A PAST WEEK: lit, a way home, no "today"; the floor stops the backward arrow.
+  const [, past] = two(onLegal({ ...LG_BASE, mon: '2026-07-13', sun: '2026-07-19', phone: { ...LG_PHONE, recovered: 7000, owed: 120000, pct: 5.8, customers: 1, paid: 1, waiting: 0, tRecovered: 0 } }));
+  assert.ok(/kpi tap lgwk on" id="lgPhCard"/.test(past) && /Kwa simu wiki iliyopita \/ Recovered by phone, past week/.test(past) && /id="lgPhV">6% · 7,000</.test(past));
+  assert.ok(/class="lgwkhome" onclick="return lgWeekStep_\(0, event\)"/.test(past) && !/leo \/ today/.test(past) && !/wanasubiri/.test(past), 'a way home, and no "today" on a week today is not in');
+  assert.ok(disabled(past, -1) && !disabled(past, 1), 'the first week there is anything to read: backward off, forward on');
+  // A week BEFORE the table's first day, and a table that holds nothing yet: said, never a row of noughts read as "nobody paid".
+  const [, before] = two(onLegal({ ...LG_BASE, since: '2026-06-29', mon: '2026-07-06', sun: '2026-07-12', phone: { ...LG_PHONE, recovered: 0, owed: 0, pct: null, customers: 0, paid: 0, waiting: 0 } }));
+  assert.match(before, /2026-07-06 → 2026-07-12 · hakuna rekodi kabla ya \/ nothing recorded before 2026-07-15 · bofya/); assert.match(before, /id="lgPhV">0</);
+  const [, empty] = two(onLegal({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: { on: true, recovered: 0, owed: 0, pct: null, customers: 0, paid: 0, first: null } }));
+  assert.match(empty, /bado hakuna rekodi \/ nothing recorded yet/);
+  // NOT RUN YET: the server's words (as text), no figure, no arrows on this card; the notices card keeps its own.
+  const offHtml = onLegal({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: { on: false, note: 'run <b>db/RUN-ME-089</b> in the SQL editor' } });
+  const [wkOff, off] = two(offHtml);
+  assert.match(off, /id="lgPhS">run &lt;b&gt;db\/RUN-ME-089&lt;\/b&gt; in the SQL editor<\/div>/, 'the note is drawn as text');
+  assert.match(off, /<div class="v" id="lgPhV">—<\/div>/, 'a dash: never a nought');
+  assert.ok(disabled(off, -1) && disabled(off, 1) && !disabled(wkOff, -1), 'nothing to step through here; the notices card still steps');
+  const [, failed] = two(onLegal({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: { on: null, note: 'could not be read just now; try again' } }));
+  assert.ok(/could not be read just now/.test(failed) && /id="lgPhV">—</.test(failed) && disabled(failed, -1));
+  // The dashboard keeps ONE card, and a reading with no phone part (an older answer) draws one card.
+  assert.ok(!/lgPhCard/.test(onDash({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: LG_PHONE })), 'the dashboard\'s flavour stays one card');
+  assert.ok(!/lgPhCard/.test(onLegal({ ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26' })));
+  // The tap opens the phone list of the week the cards are on.
+  assert.match(app, /function lgPhoneOpen_\(\)\{\n  var card = document\.getElementById\('lgWkCard'\);\n  legalRecoveriesDrawer_\('week', card \? card\.getAttribute\('data-mon'\) \|\| '' : '', null, 'phone'\);\n\}/);
+});
+
+test('an arrow press replaces BOTH Legal cards together, in the page and in HEAD, leaves no second copy, and gives the focus back to the same arrow of the same card (Part 139)', () => {
+  const app = appSrc();
+  const src = lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg') + lgFn_(app, 'lgWeekPaint_', 'lg');
+  const run = (focusIn, focusOn, lg, withTwin = true) => {
+    const page = { html: null, removed: [], focused: null };
+    const el = id => ({ id, contains: x => !!x && x.owner === id, parentNode: { removeChild: e => page.removed.push(e.id) },
+      set outerHTML(v) { page.html = v; }, focus() { page.focused = id; },
+      querySelector: sel => { const n = /data-lgwk="(-?\d)"/.exec(sel)[1]; const part = page.html.split(/(?=<div class="kpi tap lgwk)/).find(h => h.includes('id="' + id + '"')) || '';
+        return { disabled: new RegExp('data-lgwk="' + n + '"[^>]*\\sdisabled').test(part), focus() { page.focused = id + ':' + n; } }; } });
+    const document = { activeElement: focusIn ? { owner: focusIn, getAttribute: () => focusOn } : null,
+      getElementById: id => (page.html === null ? (id === 'lgWkCard' || (id === 'lgPhCard' && withTwin) ? el(id) : null) : (page.html.includes('id="' + id + '"') ? el(id) : null)) };
+    const S = { view: 'legal', args: {} };
+    const out = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'HEAD', src + '\nlgWeekPaint_(LG);\nreturn HEAD;'.replace('LG', JSON.stringify(lg)))(S, null, document, lgEsc_, lgMoney_, lgPct_, '<div class="kpis">a<!--lgw-->OLD PAIR<!--/lgw--></div>');
+    return { page, head: out, S };
+  };
+  const lg = { ...LG_BASE, mon: '2026-07-13', sun: '2026-07-19', phone: { ...LG_PHONE, recovered: 7000 } };
+  // The reader pressed the PHONE card's backward arrow: the old twin goes, the pair comes back, the focus returns to that arrow.
+  const a = run('lgPhCard', '-1', { ...lg, since: '2026-06-29' });
+  assert.deepEqual(a.page.removed, ['lgPhCard'], 'the old phone card is taken out before the pair is put back: never two of them');
+  assert.equal((a.page.html.match(/id="lgWkCard"/g) || []).length, 1); assert.equal((a.page.html.match(/id="lgPhCard"/g) || []).length, 1);
+  assert.equal(a.page.focused, 'lgPhCard:-1', 'the focus is back on the phone card\'s backward arrow');
+  assert.ok(/<!--lgw-->[\s\S]*id="lgWkCard"[\s\S]*id="lgPhCard"[\s\S]*<!--\/lgw-->/.test(a.head) && !/OLD PAIR/.test(a.head), 'HEAD holds both cards between the markers, so a table repaint brings the same week back');
+  assert.equal(a.S.args.lgLegal.phone.recovered, 7000, 'and the reading the remembered screen keeps has the phone part');
+  // The arrow that was pressed is now off (the floor): the focus goes to its card, not to nowhere.
+  assert.equal(run('lgPhCard', '-1', lg).page.focused, 'lgPhCard');
+  // The notices card's arrow keeps its own focus, as before.
+  assert.equal(run('lgWkCard', '1', lg).page.focused, 'lgWkCard:1');
+  // A page that had no phone card yet (the first paint after the file was run) gains it without removing anything.
+  const c = run('lgWkCard', 'card', lg, false);
+  assert.deepEqual(c.page.removed, []); assert.equal((c.page.html.match(/id="lgPhCard"/g) || []).length, 1); assert.equal(c.page.focused, 'lgWkCard');
+  // Both cards dim while an answer is on its way.
+  const go = lgFn_(app, 'lgWeekGo_', 'target, mon');
+  assert.match(go, /var dim = function\(v\)\{ \['lgWkCard', 'lgPhCard'\]\.forEach\(function\(id\)\{ var c = document\.getElementById\(id\); if \(c\) c\.style\.opacity = v; \}\); \};/);
+  assert.equal((go.match(/dim\(''\);/g) || []).length, 2, 'and both come back, on an answer and on a failure');
+});
+
+test('the list behind the phone card: the same drawer on a second kind, the same week bar, who spoke on whose number, and the file\'s name until it is run (Part 139)', () => {
+  const app = appSrc();
+  const dr = lgFn_(app, 'legalRecoveriesDrawer_', 'period, weekOf, focusArrow, kind');
+  assert.match(dr, /var week = period === 'week', ph = week && kind === 'phone';/);
+  assert.match(dr, /if \(ph\) return lgPhoneList_\(d, title, when, focusArrow\);/, 'the phone list is drawn from the SAME answer and after the same checks (a stale answer paints nothing, the cards are painted first)');
+  assert.ok(dr.indexOf('lgWeekPaint_(d.legal);') < dr.indexOf('if (ph) return lgPhoneList_') && dr.indexOf('if (stale()) return;') < dr.indexOf('if (ph) return lgPhoneList_'));
+  assert.match(dr, /legalRecoveriesDrawer_\('week', n === 0 \? '' : addDays\(LGW_\.lastList\.weekOf, 7 \* n\), el\.getAttribute\('data-lgwd'\), kind\);/, 'a failed step of the phone list steps the phone list again');
+  const bar = lgFn_(app, 'lgWeekBar_', 'd, ph');
+  assert.match(bar, /var off = ph \? !\(lg\.phone && lg\.phone\.on === true\) : d\.on === false;/, 'the phone list\'s arrows work whenever the phone card does');
+  // RUN the list.
+  const src = lgFn_(app, 'lgPhoneList_', 'd, title, when, focusArrow');
+  const draw = d => {
+    const out = { html: '', boards: [], opened: [], inputs: {} };
+    const node = () => ({ innerHTML: '', querySelectorAll: () => [], set oninput(f) { out.oninput = f; } });
+    const arrows = [-1, 0, 1].map(n => ({ getAttribute: () => String(n), disabled: false, focus() { out.focused = n; }, set onclick(f) { out['press' + n] = f; } }));
+    const document = { querySelectorAll: sel => (/data-lgwd/.test(sel) ? arrows : []), querySelector: sel => arrows.find(a => sel.includes('"' + a.getAttribute() + '"')) || null, getElementById: () => node() };
+    new Function('drawer', 'document', '$', 'board', 'sumRow', 'lgWeekBar_', 'col', 'money', 'esc', 'addDays', 'legalRecoveriesDrawer_', 'saveJpg', 'exportBoard', src + '\nlgPhoneList_(D, "T", "2026-07-20 → 2026-07-26", "-1");'.replace('D', JSON.stringify(d)))(
+      html => { out.html = html; }, document, () => ({ value: '', set oninput(f) { out.oninput = f; } }),
+      (id, title, sub, rows, cols, totals) => { out.boards.push({ id, title, sub, rows, cols, totals }); return ''; },
+      (rows, fields) => ({ fields, n: rows.length }), (dd, ph) => '<bar ph=' + ph + '>', (key, label, kind) => ({ key, label, kind: kind || 'text' }), lgMoney_, lgEsc_,
+      (k, n) => new Date(Date.parse(k + 'T12:00:00Z') + n * 86400000).toISOString().slice(0, 10), (...a) => out.opened.push(a), () => {}, () => {});
+    return out;
+  };
+  const rows = [
+    { day: '2026-07-24', ref: '100', team: 'KONGOWE', full_name: 'C <b>100</b>', dc: 3, ds: '8-12', initial: 100000, current: 60000, recovered: 40000, paired: true, calls: 3, secs: 430, noticed: true, officer: 'WAKILI TWO', phone: '255755000100', who: 'Mdhamini / Guarantor', others: ['WAKILI ONE'] },
+    { day: '2026-07-23', ref: '600', team: 'MBAGALA', full_name: 'C 600', dc: 5, ds: '6-12', initial: 70000, current: null, recovered: 0, paired: false, calls: 2, secs: 80, noticed: false, officer: 'WAKILI TWO', phone: '0712000600', who: 'Mteja / Customer', others: [] }];
+  const on = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, mon: '2026-07-20', phone: LG_PHONE }, phoneRows: rows });
+  assert.match(on.html, /^<h3>T · 2026-07-20 → 2026-07-26<\/h3><bar ph=true>/, 'the title, the week, the same bar');
+  assert.ok(/DC 2 and above/.test(on.html) && /never added together/.test(on.html) && /id="lgPhQ"/.test(on.html) && /id="lgPhBoard"/.test(on.html), 'the rule in words, a search box, the board');
+  assert.equal(on.boards.length, 1);
+  const b = on.boards[0];
+  assert.equal(b.id, 'lgPh'); assert.match(b.title, /Recovery by phone, customers at DC 2 and above · 2026-07-20 → 2026-07-26/, 'the week is in the title a download carries');
+  assert.deepEqual(b.cols.map(c => c.key), ['day', 'officer', 'full_name', 'ref', 'team', 'dc', 'ds', 'who', 'phone', 'calls', 'secs', 'initial', 'currentTxt', 'recovered', 'pct', 'noticeTxt', 'othersTxt']);
+  assert.equal(b.cols.find(c => c.key === 'officer').label, 'Afisa wa sheria / Legal officer'); assert.equal(b.cols.find(c => c.key === 'secs').kind, 'dur');
+  assert.deepEqual(b.cols.find(c => c.key === 'pct').from, ['recovered', 'initial'], 'the total\'s share is the totals\' ratio');
+  assert.deepEqual(b.totals, { fields: ['calls', 'secs', 'initial', 'recovered'], n: 2 });
+  assert.deepEqual(b.rows.map(r => [r.pct, r.noticeTxt, r.othersTxt, r.currentTxt]), [[40, 'Ana notisi / Noticed', 'WAKILI ONE', '60,000'], [0, '', '', 'faili la jioni bado / later file not in']],
+    'the share, the notice, the other lawyer, and a day whose later file is not in says so instead of a figure');
+  assert.match(b.sub, /5 mazungumzo \/ conversations · 4 wateja \/ customers · 3 walilipa \/ paid/, 'the card\'s own counts');
+  assert.equal(on.focused, -1, 'the arrow pressed keeps the focus');
+  on['press-1'](); on.press1(); on.press0();
+  assert.deepEqual(on.opened, [['week', '2026-07-13', '-1', 'phone'], ['week', '2026-07-27', '1', 'phone'], ['week', '', '0', 'phone']], 'its arrows open the PHONE list of the other week, and the way home goes to this week');
+  // No customer that week; not run; a failed read.
+  const none = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, phone: { ...LG_PHONE, spoken: 0, customers: 0, paid: 0 } }, phoneRows: [] });
+  assert.ok(/No customer at DC 2 and above was spoken to from a lawyer's phone in this week\. Rekodi zinaanzia \/ Records begin 2026-07-15\./.test(none.html) && !none.boards.length);
+  const off = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, phone: { on: false, note: 'run db/RUN-ME-089 <now>' } }, phoneRows: [] });
+  assert.ok(/<div class="note">⚠ run db\/RUN-ME-089 &lt;now&gt;<\/div>/.test(off.html) && !off.boards.length && !/lgPhQ/.test(off.html), 'not run: the file\'s name, as text, and no table');
+  const bad = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, phone: { on: null, note: 'could not be read just now' } } });
+  assert.match(bad.html, /<div class="note bad">⚠ could not be read just now<\/div>/);
+  assert.match(src, /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.phone, r\.who, r\.othersTxt, r\.day\]\.some\(/, 'the search reads the lawyer, the customer, the number and the day');
+});
+
+test('recovery by phone beside each lawyer on the dashboard\'s boards and on the Presentation\'s Legal slide, with one line that says the week or names the file (Part 139)', () => {
+  const app = appSrc();
+  const note = new Function('esc', 'money', lgFn_(app, 'lgPhoneNote_', 'p, plain') + '\nreturn lgPhoneNote_;')(lgEsc_, lgMoney_);
+  assert.equal(note(null), ''); assert.equal(note(undefined, true), '', 'an answer from before the change says nothing');
+  assert.equal(note({ on: false, note: 'run db/RUN-ME-089 <now>' }), '<div class="note">⚠ run db/RUN-ME-089 &lt;now&gt;</div>');
+  assert.equal(note({ on: null, note: 'try again' }, true), '<div>⚠ try again</div>', 'plain for a slide\'s caption');
+  const on = note({ ...LG_PHONE, others: [{ officer: 'WAKILI <ALL>', tRecovered: 5000, recovered: 5000, spoken: 1 }, { officer: 'NOBODY', tRecovered: 0, recovered: 0, spoken: 0 }] });
+  assert.match(on, /^<div class="note">Kwa simu \/ By phone: /);
+  assert.match(on, /wiki \/ week TZS 55,000 \(4 wateja \/ customers\) · leo \/ today TZS 45,000 · wasio na mstari \/ with no row here: WAKILI &lt;ALL&gt; TZS 5,000 · haijumlishwi na ya notisi \/ never added to the notices figure<\/div>$/);
+  assert.ok(!/NOBODY/.test(on), 'a lawyer with nothing is not listed');
+  assert.ok(!/with no row here/.test(note({ ...LG_PHONE, others: [] })));
+  // The dashboard's two boards: the line above them, and a column on each with its total.
+  const dash = app.slice(app.indexOf("board('bLegalT'") - 1200, app.indexOf("board('bLegalW'") + 1400);
+  assert.match(dash, /\+ lgPhoneNote_\(b\.legalPhone\)\n\s+\+ board\('bLegalT'/, 'the line sits above the two boards');
+  assert.match(dash, /\{key:'phToday', label:'Kwa simu \/ By phone', kind:'money', cls:function\(r\)\{ return r\.phToday>0\?'good':''; \}\}\], sumRow\(b\.legal \|\| \[\], \['teams','customers','owed','tRecovered','phToday'\]\)\)/);
+  assert.match(dash, /\{key:'phWeek', label:'Kwa simu \/ By phone', kind:'money', cls:function\(r\)\{ return r\.phWeek>0\?'good':''; \}\}\], sumRow\(b\.legal \|\| \[\], \['teams','customers','owed','recovered','phWeek'\]\),/);
+  assert.ok(dash.indexOf("{key:'tPct', label:'Rec %', kind:'pct', target:'rec', from:['tRecovered','owed']}") > 0 && dash.indexOf("{key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','owed']}") > 0, 'the Rec % stay the notices\' own ratio');
+  // The Presentation's Legal slide: two columns and the same line in its caption.
+  const pres = readFileSync(join(PUBLIC, 'mod', 'present.js'), 'utf-8');
+  const slide = pres.slice(pres.indexOf('var lgCap ='), pres.indexOf("slides.push({ id:'legal'") + 900);
+  assert.match(slide, /\+ lgPhoneNote_\(b\.legalPhone, true\);\n\s+slides\.push\(\{ id:'legal', kind:'table'/);
+  assert.match(slide, /\{key:'pct', label:'Rec % \(week\)', kind:'pct', target:'rec', from:\['recovered','owed'\]\},\n\s+col\('phToday','By phone today','money'\), col\('phWeek','By phone \(week\)','money'\)\] \}\);/);
+  assert.match(slide, /title:'Legal recovery — notisi za madai \/ demand notices · kwa simu \/ by phone · leo \/ today, then the week'/);
 });
