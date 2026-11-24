@@ -3835,8 +3835,11 @@ async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.n
   return { period: week ? 'week' : 'today', from, to, today, weekOf: mon, on, note: on ? null : LEGAL_NOTE, rows,
     totals: { customers: rows.length, paid: rows.reduce((s, r) => s + r.paid, 0),
       owed: rows.reduce((s, r) => s + r.owed, 0), noticed: L.customers },
-    legal: week ? legalWithPhone_(legalCard_(mine, ledger, today, mon, sun, thisMon), legalPhoneCard_(phone, phoneLines, today, mon, sun))
-      : legalCard_(mine, ledger, today, mon, sun, thisMon),
+    legal: week ? (() => {
+      const card = legalCard_(mine, ledger, today, mon, sun, thisMon), phoneCard = legalPhoneCard_(phone, phoneLines, today, mon, sun);
+      // THE GRAND CARD (Part 149): the boards' own notices row (from the lines built above) beside the phone card's lines.
+      return legalWithPhone_(card, phoneCard, legalGrand_(legalBoard_(codeRows, mine, ledger, user, today, mon, sun, legalRoleName, L), card, phoneLines, phoneCard, mon, sun));
+    })() : legalCard_(mine, ledger, today, mon, sun, thisMon),
     // The list behind the phone card: one line a customer a day, the most recovered first.
     ...(week ? { phoneRows: phoneLines } : {}) };
 }
@@ -4243,7 +4246,7 @@ function noticeTiles_(rows) {
 
 async function demandNotices(db, user, args, nowMs = Date.now(), { phone: wantPhone = true } = {}) {
   const weekMon0 = weekMondayKey(nowMs);
-  const [r, cur, teamBranch, brand, mine, phoneWeek] = await Promise.all([
+  const [r, cur, teamBranch, brand, mine, phoneWeek, codeRows] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
     branchByTeam(db, nowMs),
@@ -4255,6 +4258,11 @@ async function demandNotices(db, user, args, nowMs = Date.now(), { phone: wantPh
        never fatal (legalPhoneRead_). Which role is the lawyers' comes with the letterhead's read above. A caller with no
        phone card to draw (the annual deck's book of notices) does not ask: `phone: false`, an option the page cannot send. */
     wantPhone ? legalPhoneRead_(db, user, weekMon0, addDaysKey(weekMon0, 6)) : null,
+    /* THE ACCESS CODES, for the grand recovery card (Part 149): who the lawyers are and which teams they hold. The memoised read
+       the boards make (fifteen seconds an instance), which this wave ALREADY makes through branchByTeam (it lays the codes over
+       the teams): a call made while that one is in flight shares it, so NO trip is added (nine before and after, counted).
+       Never fatal: without it the card is simply not drawn and the tab opens as it did. The annual deck passes `phone: false`. */
+    wantPhone ? readCodesAll(db, nowMs).catch(() => null) : null,
   ]);
   const nowBy = {}, dsBy = {};
   for (const d of cur.rows) { nowBy[K(d.ref)] = num(d.arrears); dsBy[K(d.ref)] = dsOf(d); }
@@ -4330,8 +4338,10 @@ async function demandNotices(db, user, args, nowMs = Date.now(), { phone: wantPh
   // week of the earliest notice, where the backward arrow stops) -- the same object legalRecoveries
   // hands back for any other week, so the card is drawn from one shape.
   const legal0 = legalCard_(r.rows, ledgerWeek, today, mon, sun, mon);
-  const legal = !wantPhone ? legal0 : legalWithPhone_(legal0, legalPhoneCard_(phoneWeek, phoneWeek && phoneWeek.on === true
-    ? legalPhoneLines_(phoneWeek.rows, brand.legalRole, legalNoticeDays_(r.rows)) : [], today, mon, sun));
+  const phoneLines = wantPhone && phoneWeek && phoneWeek.on === true ? legalPhoneLines_(phoneWeek.rows, brand.legalRole, legalNoticeDays_(r.rows)) : [];
+  const phoneCard = wantPhone ? legalPhoneCard_(phoneWeek, phoneLines, today, mon, sun) : null;
+  const legal = !wantPhone ? legal0 : legalWithPhone_(legal0, phoneCard, codeRows
+    ? legalGrand_(legalBoard_(codeRows, r.rows, ledgerWeek, user, today, mon, sun, brand.legalRole), legal0, phoneLines, phoneCard, mon, sun) : null);
   return { ...r, rows,
     legal,
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
@@ -14690,9 +14700,53 @@ function legalPhoneCard_(src, lines, today, mon, sun) {
 /** One `legal` object for both cards: the notices card's reading (legalCard_) with the phone card's beside it (`phone`). The two
     share the week arrows, so the backward arrow's floor (`since`) is the EARLIER of the first notice's week and the first week the
     phone table holds a row for: a lawyer whose teams were never served a notice can still step back to last week's calls. */
-function legalWithPhone_(legal, phoneCard) {
+function legalWithPhone_(legal, phoneCard, grand) {
   const first = phoneCard && phoneCard.on === true && /^\d{4}-\d{2}-\d{2}$/.test(String(phoneCard.first || '')) ? weekMondayKey(Date.parse(phoneCard.first + 'T09:00:00Z')) : null;
-  return { ...legal, since: first && (!legal.since || first < legal.since) ? first : legal.since, phone: phoneCard };
+  return { ...legal, since: first && (!legal.since || first < legal.since) ? first : legal.since, phone: phoneCard, ...(grand ? { grand } : {}) };
+}
+/** THE LEGAL TAB'S GRAND RECOVERY CARD, per lawyer (handbook Part 149) -- "Then add a total recovery card at the end that shows each
+    leagl's grand recovery (Notice+Calls by amount and %)" -- the owner, 24 Nov 2026. It follows the week the two cards above it are on
+    and is built from THEIR figures, nothing re-read and nothing re-decided:
+      NOTICES  = the dashboard board's own row for the lawyer (legalBoard_: what customers under the notices their teams hold paid in
+                 the week, over what those notices said they owed; the same row the dashboard and the Presentation show);
+      CALLS    = the phone card's own lines (legalPhoneLines_: customers at D.C 2 and above a lawyer SPOKE TO, what they recovered on
+                 the day, over what they owed that morning), credited to the lawyer who spoke longest, ... EXCEPT a customer who had
+                 already been served a demand notice by that day (`noticed`): their money is in the notices column (the ledger
+                 records what they paid after the letter), so counting the day's fall in their arrears again would be the same
+                 shilling twice. Said on the card, with the amount left out (`overlap`).
+      GRAND    = notices + calls, per lawyer, with the percentage of what the two together were owed.
+    The total row takes the NOTICES figures from the card (each noticed customer once) so it equals the card above it; two lawyers
+    holding one team each count the customer in their own row, as on the boards, and `shared` says when the rows then add up to more.
+    A side that cannot be read (the ledger not there, db/RUN-ME-089 not run, a phone read that failed) shows null, not nought, and
+    the grand figure with it: a grand total that silently left a side out would read as a result. Arithmetic over what the tab
+    already holds: no read. */
+function legalGrand_(board, card, lines, phoneCard, mon, sun) {
+  const nOn = !!(board && board.on), pOn = !!phoneCard && phoneCard.on === true;
+  const by = new Map();
+  const at = name => { const k = K(name); let r = by.get(k); if (!r) by.set(k, r = { officer: String(name == null ? '' : name), nOwed: 0, nRec: 0, cOwed: 0, cRec: 0 }); return r; };
+  if (nOn) for (const b of (board.rows || [])) { const r = at(b.officer); r.nOwed += num(b.owed); r.nRec += num(b.recovered); }
+  let cOwed = 0, cRec = 0;
+  const overlap = { customers: 0, recovered: 0 };
+  if (pOn) for (const l of lines || []) {
+    if (l.day < mon || l.day > sun) continue;
+    if (l.noticed) { overlap.customers++; overlap.recovered += l.recovered; continue; }
+    const r = at(l.officer); r.cOwed += l.initial; r.cRec += l.recovered; cOwed += l.initial; cRec += l.recovered;
+  }
+  const shape = r => {
+    const both = nOn && pOn;
+    return { nOwed: nOn ? r.nOwed : null, nRec: nOn ? r.nRec : null, nPct: nOn ? pctOf(r.nRec, r.nOwed) : null,
+      cOwed: pOn ? r.cOwed : null, cRec: pOn ? r.cRec : null, cPct: pOn ? pctOf(r.cRec, r.cOwed) : null,
+      owed: both ? r.nOwed + r.cOwed : null, recovered: both ? r.nRec + r.cRec : null, pct: both ? pctOf(r.nRec + r.cRec, r.nOwed + r.cOwed) : null };
+  };
+  const rows = [...by.values()]
+    .sort((a, b) => (a.officer === '(unassigned)') - (b.officer === '(unassigned)') || ((b.nRec + b.cRec) - (a.nRec + a.cRec)) || a.officer.localeCompare(b.officer))
+    .map(r => ({ officer: r.officer, ...shape(r) }));
+  const total = shape({ nOwed: nOn ? num(card && card.owed) : 0, nRec: nOn ? num(card && card.recovered) : 0, cOwed, cRec });
+  const sum = k => rows.reduce((s, r) => s + (r[k] || 0), 0);
+  return { on: nOn && pOn, nOn, pOn,
+    nNote: nOn ? null : ((card && card.note) || LEGAL_NOTE), pNote: pOn ? null : ((phoneCard && phoneCard.note) || LEGAL_PHONE_NOTE),
+    rows, total, overlap,
+    shared: nOn && (Math.round(sum('nOwed')) !== Math.round(num(card && card.owed)) || Math.round(sum('nRec')) !== Math.round(num(card && card.recovered))) };
 }
 /** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
@@ -14731,9 +14785,10 @@ function legalLines_(codeRows, notices, ledger, user, today, mon, sun, legalRole
   return { roster, allTeams, lines, customers: latest.size, unheldCount: unheld.length,
     unheldTeams: [...new Set(unheld.map(c => c.team || '').filter(Boolean))].sort() };
 }
-function legalBoard_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName) {
+function legalBoard_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName, lines0) {
   const on = Array.isArray(ledger);
-  const L = legalLines_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName);
+  // `lines0`: the lines legalLines_ already made for this very call (legalRecoveries builds them for its list), never another reading.
+  const L = lines0 || legalLines_(codeRows, notices, ledger, user, today, mon, sun, legalRoleName);
   const sumOf = (slot, officer, teams) => {
     let customers = 0, owed = 0, tRecovered = 0, recovered = 0;
     for (const l of L.lines) {

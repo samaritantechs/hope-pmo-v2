@@ -3540,7 +3540,7 @@ test('an arrow press replaces BOTH Legal cards together, in the page and in HEAD
   assert.deepEqual(c.page.removed, []); assert.equal((c.page.html.match(/id="lgPhCard"/g) || []).length, 1); assert.equal(c.page.focused, 'lgWkCard');
   // Both cards dim while an answer is on its way.
   const go = lgFn_(app, 'lgWeekGo_', 'target, mon');
-  assert.match(go, /var dim = function\(v\)\{ \['lgWkCard', 'lgPhCard'\]\.forEach\(function\(id\)\{ var c = document\.getElementById\(id\); if \(c\) c\.style\.opacity = v; \}\); \};/);
+  assert.match(go, /var dim = function\(v\)\{ \['lgWkCard', 'lgPhCard', 'lgGrand'\]\.forEach\(function\(id\)\{ var c = document\.getElementById\(id\); if \(c\) c\.style\.opacity = v; \}\); \};/, 'all the week\'s cards dim together (the third, the grand card, since Part 149)');
   assert.equal((go.match(/dim\(''\);/g) || []).length, 2, 'and both come back, on an answer and on a failure');
 });
 
@@ -3572,7 +3572,7 @@ test('the list behind the phone card: the same drawer on a second kind, the same
     { day: '2026-07-23', ref: '600', team: 'MBAGALA', full_name: 'C 600', dc: 5, ds: '6-12', initial: 70000, current: null, recovered: 0, paired: false, calls: 2, secs: 80, noticed: false, officer: 'WAKILI TWO', phone: '0712000600', who: 'Mteja / Customer', others: [] }];
   const on = draw({ weekOf: '2026-07-20', from: '2026-07-20', to: '2026-07-26', legal: { ...LG_BASE, mon: '2026-07-20', phone: LG_PHONE }, phoneRows: rows });
   assert.match(on.html, /^<h3>T · 2026-07-20 → 2026-07-26<\/h3><bar ph=true>/, 'the title, the week, the same bar');
-  assert.ok(/DC 2 and above/.test(on.html) && /never added together/.test(on.html) && /id="lgPhQ"/.test(on.html) && /id="lgPhBoard"/.test(on.html), 'the rule in words, a search box, the board');
+  assert.ok(/DC 2 and above/.test(on.html) && /counts them once, under notices/.test(on.html) && /id="lgPhQ"/.test(on.html) && /id="lgPhBoard"/.test(on.html), 'the rule in words, a search box, the board');
   assert.equal(on.boards.length, 1);
   const b = on.boards[0];
   assert.equal(b.id, 'lgPh'); assert.match(b.title, /Recovery by phone, customers at DC 2 and above · 2026-07-20 → 2026-07-26/, 'the week is in the title a download carries');
@@ -3650,4 +3650,112 @@ test('Teams & Staff no longer draws the staff-by-person card, its form, its Exce
   const server = readFileSync(new URL('../api/_lib/portal-core.js', import.meta.url).pathname, 'utf8');
   for (const fn of ['staffRoster', 'saveStaffTeams', 'staffExport']) assert.ok(new RegExp('\\bfunction ' + fn + '\\(').test(server), 'the server still has ' + fn);
   assert.ok(/\n\s+staffRoster, saveStaffTeams,/.test(server) && /\bteamsExport, staffExport\b/.test(server), 'and still answers them');
+});
+
+/* THE LEGAL TAB'S FIRST CARD AND ITS LAST (24 Nov 2026, handbook Part 149; the server side is test/legal-grand.test.mjs).
+     "At legal: Combine these into single card (NOTICES ISSUED 1,485 TOTAL DEMANDED 1,298,367,000 FINES CHARGED 103,548,000
+      late-payment penalties )" ... "Then add a total recovery card at the end that shows each leagl's grand recovery (Notice+Calls
+      by amount and %)" -- the owner, 24 Nov 2026.
+   The two builders are RUN with the page's own helpers. */
+const LG_GRAND = { on: true, nOn: true, pOn: true, nNote: null, pNote: null, shared: false, overlap: { customers: 1, recovered: 40000 },
+  rows: [{ officer: 'WAKILI <ONE>', nOwed: 100000, nRec: 40000, nPct: 40, cOwed: 110000, cRec: 10000, cPct: 9.1, owed: 210000, recovered: 50000, pct: 23.8 },
+    { officer: 'WAKILI TWO', nOwed: 0, nRec: 0, nPct: null, cOwed: 120000, cRec: 0, cPct: 0, owed: 120000, recovered: 0, pct: 0 }],
+  total: { nOwed: 100000, nRec: 40000, nPct: 40, cOwed: 230000, cRec: 10000, cPct: 4.3, owed: 330000, recovered: 50000, pct: 15.2 } };
+
+test('the Legal tab\'s first card holds the three figures in one: a line each, in the owner\'s order, the fines with their note (Part 149)', () => {
+  const app = appSrc();
+  const card = new Function('esc', 'money', lgFn_(app, 'lgIssuedCard_', 'd') + '\nreturn lgIssuedCard_;')(lgEsc_, lgMoney_);
+  const html = card({ count: 1485, demanded: 1298367000, fines: 103548000 });
+  assert.equal((html.match(/<div class="kpi /g) || []).length, 1, 'ONE card');
+  const lines = [...html.matchAll(/<span class="ml">([^<]*)<\/span><span class="mv([^"]*)">([^<]*)<\/span>(?:<span class="ms">([^<]*)<\/span>)?/g)].map(m => m.slice(1));
+  assert.deepEqual(lines, [['Notices issued', '', '1,485', undefined], ['Total demanded', ' bad', '1,298,367,000', undefined], ['Fines charged', ' warnc', '103,548,000', 'late-payment penalties']],
+    'notices, what they demanded, the fines in them: the three figures of the tiles it replaces, with the colours they had');
+  assert.match(html, /^<div class="kpi multi" id="lgIssued">/);
+  assert.deepEqual([...card({ count: 0, demanded: null, fines: undefined }).matchAll(/<span class="mv([^"]*)">([^<]*)</g)].map(m => [m[1], m[2]]), [['', '0'], [' bad', '0'], [' warnc', '0']], 'a register with nothing in it reads nought on each line');
+  // The tab's head starts with it, and the three tiles are gone.
+  const legal = page('legal');
+  const head = legal.slice(legal.indexOf("HEAD = '<div class=\"kpis\">'"), legal.indexOf("kpi('Urejeshaji / Recovery'"));
+  assert.ok(/^HEAD = '<div class="kpis">' \+ lgIssuedCard_\(d\)\s*$/m.test(head.replace(/\/\*[\s\S]*?\*\//g, '')), 'the head opens with the one card');
+  assert.ok(!/kpi\('Notices issued'|kpi\('Total demanded'|kpi\('Fines charged'/.test(legal), 'and the three tiles are gone');
+  assert.ok(legal.indexOf('function lgIssuedCard_(d)') > 0 && legal.indexOf('function lgIssuedCard_(d)') < legal.indexOf('VIEWS.legal = function(){'), 'it is defined in the module, before the view that draws it');
+});
+
+test('the grand recovery card: a row for each lawyer (notices, calls, the two together, each with its percentage), a total row, the same arrows, and the words a missing side needs (Part 149)', () => {
+  const app = appSrc();
+  const src = lgFn_(app, 'lgGrandCard_', 'lg');
+  const card = new Function('esc', 'money', 'pct', src + '\nreturn lgGrandCard_;')(lgEsc_, lgMoney_, lgPct_);
+  const base = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', grand: LG_GRAND };
+  assert.equal(card({ ...base, grand: null }), '', 'a reading with no grand part (an older answer, the dashboard\'s) draws nothing');
+  const html = card(base);
+  assert.match(html, /^<div class="kpi lgwk lggrand" id="lgGrand">/);
+  assert.match(html, /<div class="l">Jumla ya urejeshaji wa mawakili \/ Legal officers' grand recovery · notisi \+ simu \/ notices \+ calls<\/div>/);
+  assert.match(html, /<div class="s">2026-07-20 → 2026-07-26<\/div>/, 'the week the cards above are on');
+  const rows = [...html.matchAll(/<tr( class="tot")?><td class="n">([^<]*)<\/td>((?:<td[^>]*>[^<]*<\/td>)+)<\/tr>/g)]
+    .map(m => [m[1] ? 'tot' : '', m[2], [...m[3].matchAll(/<td class="([^"]*)">([^<]*)<\/td>/g)].map(x => x[2])]);
+  assert.deepEqual(rows, [['', 'WAKILI &lt;ONE&gt;', ['40,000', '40%', '10,000', '9%', '50,000', '24%']], ['', 'WAKILI TWO', ['0', '', '0', '0%', '0', '0%']], ['tot', 'Jumla / Total', ['40,000', '40%', '10,000', '4%', '50,000', '15%']]],
+    'a name is drawn as text; a lawyer a row, then the total; notices, calls, grand, each an amount and a percentage (none where nothing was owed)');
+  assert.ok(/<td class="r g good">50,000<\/td>/.test(html) && /<td class="r g">0<\/td>/.test(html), 'the grand figure is green when something was recovered, and plain at nought');
+  assert.match(html, /<th class="n">Wakili \/ Legal officer<\/th><th colspan="2">Notisi \/ Notices<\/th><th colspan="2">Simu \/ Calls<\/th><th colspan="2">Jumla \/ Grand<\/th>/);
+  // The arrows are the notices card's stepper: this week forward is off, the first week of anything backward is.
+  const off = (h, n) => new RegExp('data-lgwk="' + n + '"[^>]*\\sdisabled').test(h);
+  assert.ok(/onclick="return lgWeekStep_\(-1, event\)"/.test(html) && /onclick="return lgWeekStep_\(1, event\)"/.test(html));
+  assert.ok(!off(html, -1) && off(html, 1) && !/Rudi wiki hii/.test(html) && !/wiki iliyopita/.test(html), 'this week: back on, forward off, no way home');
+  const past = card({ ...base, mon: '2026-07-13', sun: '2026-07-19', since: '2026-07-13' });
+  assert.ok(off(past, -1) && !off(past, 1) && /class="lgwkhome" onclick="return lgWeekStep_\(0, event\)"/.test(past) && /wiki iliyopita \/ past week/.test(past), 'a past week at the floor: back off, forward on, a way home');
+  // What the card says under the table.
+  assert.match(html, /Calls = customers at DC 2\+ spoken to who had no notice yet; one already served a notice is counted under notices only \(TZS 40,000 left out, 1 customer-days\)\./);
+  assert.match(html, /Simu = wateja wa DC 2\+ waliozungumzwa ambao hawakuwa na notisi bado; aliyekwisha pewa notisi huhesabiwa kwenye notisi tu \(TZS 40,000 haikuhesabiwa mara ya pili\)/);
+  assert.ok(!/Timu inayoshikiliwa/.test(html) && !/⚠/.test(html), 'no "shared team" line, and no warning, when nothing needs one');
+  const none = card({ ...base, grand: { ...LG_GRAND, overlap: { customers: 0, recovered: 0 } } });
+  assert.ok(!/left out/.test(none) && /Calls = customers at DC 2\+ spoken to who had no notice yet; one already served a notice is counted under notices only\./.test(none), 'nothing is said to be left out when nothing was');
+  assert.match(card({ ...base, grand: { ...LG_GRAND, shared: true } }), /A team held by two lawyers counts under each of them; the Total row counts each customer once\./);
+  // A SIDE THAT CANNOT BE READ: dashes, never noughts, and the server's words as text.
+  const calls = card({ ...base, grand: { ...LG_GRAND, on: false, pOn: false, pNote: 'run <b>db/RUN-ME-089</b>',
+    rows: LG_GRAND.rows.map(r => ({ ...r, cOwed: null, cRec: null, cPct: null, owed: null, recovered: null, pct: null })), total: { ...LG_GRAND.total, cOwed: null, cRec: null, cPct: null, owed: null, recovered: null, pct: null } } });
+  assert.ok(/<td class="r">—<\/td><td class="r p"><\/td><td class="r g">—<\/td><td class="r p"><\/td><\/tr>/.test(calls), 'the calls and the grand figures are dashes where the file is not run');
+  assert.match(calls, /<div class="s">⚠ run &lt;b&gt;db\/RUN-ME-089&lt;\/b&gt;<\/div>/, 'the file is named, as text');
+  assert.ok(/<td class="r">40,000<\/td><td class="r p">40%<\/td><td class="r">—/.test(calls), 'and the notices side is still read');
+  const notices = card({ ...base, grand: { ...LG_GRAND, on: false, nOn: false, nNote: 'run 041a', rows: LG_GRAND.rows.map(r => ({ ...r, nOwed: null, nRec: null, nPct: null, owed: null, recovered: null, pct: null })) } });
+  assert.match(notices, /<div class="s">⚠ run 041a<\/div>/);
+  assert.match(notices, /<td class="n">WAKILI TWO<\/td><td class="r">—<\/td><td class="r p"><\/td><td class="r">0<\/td>/);
+});
+
+test('the grand card rides with the other two: last on the Legal tab, never on the dashboard, replaced with them on an arrow press, with the focus kept (Part 149)', () => {
+  const app = appSrc();
+  const src = lgFn_(app, 'lgWeekCard_', 'lg') + lgFn_(app, 'lgPhoneCard_', 'lg') + lgFn_(app, 'lgGrandCard_', 'lg');
+  const mk = view => new Function('esc', 'money', 'pct', 'S', src + '\nreturn lgWeekCard_;')(lgEsc_, lgMoney_, lgPct_, { view });
+  const lg = { ...LG_BASE, mon: '2026-07-20', sun: '2026-07-26', phone: LG_PHONE, grand: LG_GRAND };
+  const legal = mk('legal')(lg);
+  const at = id => legal.indexOf('id="' + id + '"');
+  assert.ok(at('lgWkCard') >= 0 && at('lgWkCard') < at('lgPhCard') && at('lgPhCard') < at('lgGrand'), 'the notices card, the phone card, then the grand card: the last of the row');
+  assert.ok(!/lgGrand/.test(mk('dashboard')(lg)), 'the dashboard\'s flavour stays one card');
+  assert.ok(!/lgGrand/.test(mk('legal')({ ...lg, grand: undefined })), 'and an answer without the grand reading draws no card');
+  // The paint: the old twins go, the trio is put back in one piece, HEAD keeps all three between the markers, the focus returns.
+  const paint = lgFn_(app, 'lgWeekPaint_', 'lg');
+  const run = (focusIn, focusOn, withOld = true) => {
+    const page = { html: null, removed: [], focused: null };
+    const el = id => ({ id, contains: x => !!x && x.owner === id, parentNode: { removeChild: e => page.removed.push(e.id) },
+      set outerHTML(v) { page.html = v; }, focus() { page.focused = id; },
+      querySelector: sel => { const n = /data-lgwk="(-?\d)"/.exec(sel)[1]; const part = page.html.split(/(?=<div class="kpi (?:tap )?lgwk)/).find(h => h.includes('id="' + id + '"')) || '';
+        return { disabled: new RegExp('data-lgwk="' + n + '"[^>]*\\sdisabled').test(part), focus() { page.focused = id + ':' + n; } }; } });
+    const document = { activeElement: focusIn ? { owner: focusIn, getAttribute: () => focusOn } : null,
+      getElementById: id => (page.html === null ? (id === 'lgWkCard' || (withOld && (id === 'lgPhCard' || id === 'lgGrand')) ? el(id) : null) : (page.html.includes('id="' + id + '"') ? el(id) : null)) };
+    const S = { view: 'legal', args: {} };
+    const head = new Function('S', 'VC', 'document', 'esc', 'money', 'pct', 'HEAD', src + paint + '\nlgWeekPaint_(' + JSON.stringify({ ...lg, mon: '2026-07-13', sun: '2026-07-19', since: '2026-06-29' }) + ');\nreturn HEAD;')(
+      S, null, document, lgEsc_, lgMoney_, lgPct_, '<div class="kpis">a<!--lgw-->OLD TRIO<!--/lgw--></div>');
+    return { page, head, S };
+  };
+  const a = run('lgGrand', '-1');
+  assert.deepEqual(a.page.removed, ['lgPhCard', 'lgGrand'], 'both old twins are taken out before the trio is put back: never two of either');
+  for (const id of ['lgWkCard', 'lgPhCard', 'lgGrand']) assert.equal((a.page.html.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1, id + ' once');
+  assert.equal(a.page.focused, 'lgGrand:-1', 'the focus is back on the grand card\'s backward arrow');
+  assert.ok(/<!--lgw-->[\s\S]*id="lgWkCard"[\s\S]*id="lgPhCard"[\s\S]*id="lgGrand"[\s\S]*<!--\/lgw-->/.test(a.head) && !/OLD TRIO/.test(a.head), 'HEAD holds all three, so a table repaint brings the same week back');
+  assert.ok(a.S.args.lgLegal.grand && a.S.args.lgLegal.grand.rows.length === 2, 'and the reading the remembered screen keeps has the grand part');
+  // An arrow pressed on a card that is now at its floor: the focus goes to the card, not nowhere.
+  assert.equal(run('lgGrand', '-1').page.focused, 'lgGrand:-1');
+  assert.equal(run('lgPhCard', '-1').page.focused, 'lgPhCard:-1', 'the phone card\'s arrow keeps its focus, as in Part 139');
+  assert.equal(run('lgWkCard', '1').page.focused, 'lgWkCard:1');
+  // A page that had no grand card yet gains it without removing anything.
+  const c = run(null, null, false);
+  assert.deepEqual(c.page.removed, []); assert.equal((c.page.html.match(/id="lgGrand"/g) || []).length, 1);
 });

@@ -27,6 +27,14 @@
         slide as it was"), and the legal officers' own calls slide lists every legal phone, the silent one in red, with its
         calls today and this week and recovery by phone today and for the week, adding up to the card (Part 141).
 
+     10. the Legal tab's FIRST card holds the three figures the tiles had (Notices issued, Total demanded, Fines charged) and its
+        LAST card, the grand recovery per lawyer, closes the row (Part 149, 24 Nov 2026: "Combine these into single card" ...
+        "add a total recovery card at the end that shows each leagl's grand recovery (Notice+Calls by amount and %)"): one of
+        each; the grand card's rows equal the server's reading of the same week; its arrows move all three cards and give the
+        focus back; it survives a table search; it shows dashes and names the file where db/RUN-ME-089 is not run, says so when
+        the read failed, and is not on the dashboard; on a phone's width the page does not scroll sideways. SHOTS=<dir> saves
+        the pictures.
+
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
        npm i --no-save playwright-core
@@ -226,7 +234,7 @@ if (b) {
   check('2 a day whose later file is not in says so instead of a figure', b.rows.some(r => /later file not in/.test(r[iCur])), JSON.stringify(b.rows.map(r => r[iCur])));
   check('2 a customer name that is markup is drawn as text', b.rows.some(r => r.includes(HOSTILE)) && !(await page.evaluate(() => window.__pwned)));
 }
-check('2 it says the rule and that the two cards are never added together', /DC 2 and above/.test(await text(page, '#drawer')) && /never added together/.test(await text(page, '#drawer')));
+check('2 it says the rule and that the grand card counts a noticed customer once, under notices', /DC 2 and above/.test(await text(page, '#drawer')) && /counts them once, under notices/.test(await text(page, '#drawer')));
 check('2 it asked the server for this week, once (the week the cards carry)', weekCalls().length === 1 && (weekCalls()[0] === THIS || weekCalls()[0] === ''), JSON.stringify(weekCalls()));
 await page.fill('#lgPhQ', 'LAWYER ALL'); await page.waitForTimeout(250);
 b = await drawerBoard(page);
@@ -450,6 +458,65 @@ if (lcOff) {
   check('9 not run: the phones and their calls are shown all the same', rows.length === 4 && (rows.find(r => r[iOff] === 'LAWYER ONE') || [])[iCalls] === '3', JSON.stringify(rows.map(r => [r[iOff], r[iCalls]])));
   check('9 not run: nothing under the three phone columns, on the rows or the total', iSp > 0 && iT > 0 && iW > 0 && lcOff.cells.every(r => r[iSp] === '' && r[iT] === '' && r[iW] === ''), JSON.stringify(lcOff.cells.map(r => [r[iSp], r[iT], r[iW]])));
 } else check('9 not run: the legal calls slide is built', false);
+await page.close();
+// --- 10. the tab's first card, and its last (Part 149)
+page = await open('run');
+const fmt = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const gThis = (await portalApi(db, USER, 'legalRecoveries', { period: 'week', weekOf: '' })).legal.grand;
+const gLast = (await portalApi(db, USER, 'legalRecoveries', { period: 'week', weekOf: LAST })).legal.grand;
+const dnRes = await portalApi(db, USER, 'demandNotices', {});
+const issued = await page.evaluate(() => { const c = document.getElementById('lgIssued'); return c ? [...c.querySelectorAll('.m')].map(m => [m.querySelector('.ml').textContent, m.querySelector('.mv').textContent, (m.querySelector('.ms') || {}).textContent || '']) : null; });
+check('10 the first card holds the three figures in the owner\'s order, with the fines\' note', JSON.stringify(issued) === JSON.stringify([['Notices issued', fmt(dnRes.count), ''], ['Total demanded', fmt(dnRes.demanded), ''], ['Fines charged', fmt(dnRes.fines), 'late-payment penalties']]), JSON.stringify(issued));
+check('10 it is the first card of the row, and the three tiles it replaces are gone', await page.evaluate(() => { const k = document.querySelector('.kpis');
+  return !!k && k.firstElementChild.id === 'lgIssued' && ![...document.querySelectorAll('.kpi .l')].some(l => /^(Notices issued|Total demanded|Fines charged)$/i.test(l.textContent.trim())); }));
+const grandOnPage = pg => pg.evaluate(() => [...document.querySelectorAll('#lgGrand tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim())));
+const expectGrand = (pg, g) => pg.evaluate(g => { const a = v => v == null ? '—' : money(v), p = v => v == null ? '' : pct(v);
+  const cells = r => [a(r.nRec), p(r.nPct), a(r.cRec), p(r.cPct), a(r.recovered), p(r.pct)];
+  return g.rows.map(r => [r.officer].concat(cells(r))).concat([['Jumla / Total'].concat(cells(g.total))]); }, g);
+const sameGrand = async (pg, g) => JSON.stringify(await grandOnPage(pg)) === JSON.stringify(await expectGrand(pg, g));
+check('10 the fixture is what it says: three lawyers, the noticed customer\'s 40,000 left out of calls, 6,300 together', gThis.rows.length === 3 && gThis.overlap.recovered === 40000
+  && gThis.total.recovered === 6300 && gThis.total.nRec === 300 && gThis.total.cRec === 6000, JSON.stringify([gThis.rows.map(r => r.officer), gThis.overlap, gThis.total]));
+check('10 one grand card, the LAST of the row, the whole width of it', (await count(page, '#lgGrand')) === 1 && await page.evaluate(() => { const g = document.getElementById('lgGrand'), k = g.parentNode;
+  return k.classList.contains('kpis') && !g.nextElementSibling && g.previousElementSibling.id === 'lgPhCard' && g.getBoundingClientRect().width > k.getBoundingClientRect().width - 4; }));
+check('10 a row for each lawyer, then the total, equal to the server\'s reading of this week', await sameGrand(page, gThis), JSON.stringify(await grandOnPage(page)).slice(0, 400));
+check('10 its notices total is the notices card above it, and the week is the cards\'', dnRes.legal.recovered === gThis.total.nRec && new RegExp(THIS + ' → ' + add(THIS, 6)).test(await text(page, '#lgGrand .s')) && (await attr(page, '#lgWkCard', 'data-mon')) === THIS);
+check('10 it says what it left out of calls, in both languages', /1 customer-days/.test(await text(page, '#lgGrand')) && /TZS 40,000 haikuhesabiwa mara ya pili/.test(await text(page, '#lgGrand')));
+// the arrows of the third card move all three
+await page.click('#lgGrand [data-lgwk="-1"]');
+check('10 backward on the grand card puts all three on last week', await waitWeek(page, LAST) && /past week/.test(await text(page, '#lgGrand .s')) && (await attr(page, '#lgPhCard', 'class') || '').includes('on'));
+check('10 still one of each card, and the grand card shows last week\'s reading', (await count(page, '#lgWkCard')) === 1 && (await count(page, '#lgPhCard')) === 1 && (await count(page, '#lgGrand')) === 1 && await sameGrand(page, gLast), JSON.stringify(await grandOnPage(page)).slice(0, 300));
+check('10 the focus is back on the grand card\'s backward arrow', (await focusId(page)) === 'lgGrand:-1', await focusId(page));
+const q10 = await page.evaluate(() => !!document.querySelector('#tblQ'));
+if (q10) { await page.fill('#tblQ', 'CUSTOMER'); await page.waitForTimeout(500); }
+check('10 a table search keeps all three, on last week', q10 && (await count(page, '#lgGrand')) === 1 && (await count(page, '#lgPhCard')) === 1 && (await attr(page, '#lgWkCard', 'data-mon')) === LAST && await sameGrand(page, gLast));
+await page.click('#lgGrand [data-lgwk="1"]');
+check('10 and its arrows are alive after the repaint: forward lands on this week', await waitWeek(page, THIS) && await sameGrand(page, gThis));
+if (q10) { await page.fill('#tblQ', ''); await page.waitForTimeout(300); }
+// the two ends of the picture: a wide screen and a phone's
+if (process.env.SHOTS) {
+  fs.mkdirSync(process.env.SHOTS, { recursive: true });
+  await (await page.$('.kpis')).screenshot({ path: path.join(process.env.SHOTS, 'legal-cards-wide.png') });
+}
+await page.setViewportSize({ width: 390, height: 900 }); await page.waitForTimeout(300);
+check('10 on a phone\'s width nothing scrolls sideways, not the page and not the screen: the table scrolls inside its own card', await page.evaluate(() => {
+  const body = document.getElementById('view').closest('.body') || document.body, g = document.getElementById('lgGrand'), sc = g.querySelector('.scroll');
+  return document.documentElement.scrollWidth <= window.innerWidth + 1 && body.scrollWidth <= body.clientWidth + 1 && g.getBoundingClientRect().right <= window.innerWidth + 1 && !!sc && sc.scrollWidth > sc.clientWidth;
+}), await page.evaluate(() => { const b = document.getElementById('view').closest('.body') || document.body, sc = document.querySelector('#lgGrand .scroll'); return 'page ' + document.documentElement.scrollWidth + ', screen ' + b.scrollWidth + '/' + b.clientWidth + ', table box ' + (sc ? sc.scrollWidth + '/' + sc.clientWidth : 'none') + ', window ' + window.innerWidth; }));
+if (process.env.SHOTS) await (await page.$('.kpis')).screenshot({ path: path.join(process.env.SHOTS, 'legal-cards-phone.png') });
+await page.close();
+// where db/RUN-ME-089 is not run: dashes for the calls and the grand figures, the file named, the notices still read
+page = await open('notRun');
+const gOff = (await portalApi(db, USER, 'legalRecoveries', { period: 'week', weekOf: '' })).legal.grand;
+check('10 not run: the card names the file, and the calls and grand cells are dashes, never noughts', /db\/RUN-ME-089/.test(await text(page, '#lgGrand')) && gOff.pOn === false && await sameGrand(page, gOff)
+  && (await grandOnPage(page)).every(r => r[3] === '—' && r[5] === '—'), JSON.stringify(await grandOnPage(page)).slice(0, 300));
+check('10 not run: the notices side is still read', (await grandOnPage(page)).some(r => r[1] === '300'), JSON.stringify(await grandOnPage(page)).slice(0, 200));
+await page.close();
+page = await open('failing');
+check('10 a read that failed is said on the card, and the file is not blamed', /could not be read just now/.test(await text(page, '#lgGrand')) && !/RUN-ME-089/.test(await text(page, '#lgGrand')));
+await page.close();
+// the dashboard keeps ONE Legal card
+page = await open('run', 'dashboard');
+check('10 the dashboard has no grand card: one Legal card', (await count(page, '#lgGrand')) === 0 && (await count(page, '#lgWkCard')) <= 1);
 await page.close();
 } catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
 

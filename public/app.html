@@ -137,6 +137,31 @@
   .lgwkhome{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--b700);text-decoration:underline;cursor:pointer}
   .lgwkhome:hover,.lgwkhome:focus-visible{color:var(--b600);outline:none}
   body.dark .lgwkhome{color:var(--b300)}
+  /* THE LEGAL TAB'S FIRST CARD holds three figures in one (Notices issued, Total demanded, Fines charged): a line each, the label
+     on the left and the figure on the right, wrapping under each other when the card is narrow. */
+  .kpi.multi .m{display:flex;flex-wrap:wrap;align-items:baseline;gap:1px 12px;padding:4px 0}
+  .kpi.multi .m:first-child{padding-top:0}
+  .kpi.multi .m + .m{border-top:1px solid var(--line)}
+  .kpi.multi .ml{flex:1 1 auto;font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+  .kpi.multi .mv{font-size:17px;font-weight:800}
+  .kpi.multi .ms{flex:0 0 100%;font-size:11px;color:var(--soft)}
+  /* THE GRAND RECOVERY CARD (lgGrandCard_): the last card of the row, the whole width of it -- a lawyer a line, notices then calls
+     then the two together, each with its percentage. */
+  .kpi.lggrand{grid-column:1/-1}
+  .kpi.lggrand .s{margin-top:2px}
+  .kpi.lggrand .scroll{margin-top:8px}
+  .lgGT{width:100%;border-collapse:collapse;font-size:12.5px}
+  .lgGT th{padding:4px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;border-bottom:1px solid var(--line)}
+  .lgGT th.n,.lgGT td.n{text-align:left}
+  .lgGT tr.sub th{padding-top:0;font-weight:600;border-bottom:1px solid var(--line)}
+  .lgGT td{padding:5px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+  .lgGT td.r{text-align:right;font-variant-numeric:tabular-nums}
+  .lgGT td.p{color:var(--soft)}
+  .lgGT td.g{font-weight:700}
+  .lgGT tr.tot td{font-weight:800;border-top:2px solid var(--line);border-bottom:0}
+  .lgGT th[colspan]{text-align:center}
+  .lgGT th[colspan],.lgGT tr.sub th:nth-child(2),.lgGT tr.sub th:nth-child(4),.lgGT tr.sub th:nth-child(6),
+  .lgGT tbody td:nth-child(2),.lgGT tbody td:nth-child(4),.lgGT tbody td:nth-child(6){border-left:1px solid var(--line)}
   .good{color:var(--ok)}.bad{color:var(--bad)}.warnc{color:var(--warn)}
 
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px}
@@ -800,7 +825,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-g';
+var BUILD = '2026-11-24-h';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -6034,7 +6059,54 @@ function lgWeekCard_(lg){
     /* THE SECOND CARD, RECOVERY BY PHONE, rides with this one on the Legal tab (Part 139): the two are ONE week, drawn from one
        reading (`lg.phone` beside the notices figures), replaced together by every arrow press and kept together inside HEAD's
        markers. The dashboard's flavour stays one card. */
-    + (!dash && lg.phone ? lgPhoneCard_(lg) : '');
+    + (!dash && lg.phone ? lgPhoneCard_(lg) : '')
+    /* AND THE THIRD, the grand recovery per lawyer (Part 149), the last card of the row. The dashboard's flavour stays one card. */
+    + (!dash && lg.grand ? lgGrandCard_(lg) : '');
+}
+/* THE GRAND RECOVERY CARD -- "Then add a total recovery card at the end that shows each leagl's grand recovery (Notice+Calls by amount
+   and %)" (the owner, 24 Nov 2026; Part 149). One line a lawyer: what their customers under notices paid in the week (the dashboard
+   board's own row), what the customers they SPOKE TO who had no notice yet recovered (the phone card's lines), and the two together,
+   each with its percentage; a total row under them. It is the third card of the week: its arrows are the same press (lgWeekStep_), its
+   figures come in the same answer (`lg.grand`), and it is replaced with the other two. A side that cannot be read is a dash, with
+   the file or the reason said under the table; the grand figure is a dash with it, never the other side alone. */
+function lgGrandCard_(lg){
+  var g = lg.grand;
+  if (!g) return '';
+  var mon = lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek;
+  var canBack = !!mon && (!lg.since || mon > lg.since), canFwd = !cur;
+  var arrow = function(n, glyph, ok, tip){
+    return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
+      + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
+  };
+  var home = cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>';
+  var amt = function(v){ return v == null ? '—' : money(v); };
+  var prc = function(v){ return v == null ? '' : pct(v); };
+  var cells = function(r){
+    return '<td class="r">' + amt(r.nRec) + '</td><td class="r p">' + prc(r.nPct) + '</td>'
+      + '<td class="r">' + amt(r.cRec) + '</td><td class="r p">' + prc(r.cPct) + '</td>'
+      + '<td class="r g' + (r.recovered > 0 ? ' good' : '') + '">' + amt(r.recovered) + '</td><td class="r p">' + prc(r.pct) + '</td>';
+  };
+  var rows = (g.rows || []).map(function(r){ return '<tr><td class="n">' + esc(r.officer) + '</td>' + cells(r) + '</tr>'; }).join('');
+  var ov = g.overlap || {};
+  var notes = '';
+  if (!g.nOn) notes += '<div class="s">⚠ ' + esc(g.nNote || '') + '</div>';
+  if (!g.pOn) notes += '<div class="s">⚠ ' + esc(g.pNote || '') + '</div>';
+  notes += '<div class="s">Simu = wateja wa DC 2+ waliozungumzwa ambao hawakuwa na notisi bado; aliyekwisha pewa notisi huhesabiwa kwenye notisi tu'
+    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' haikuhesabiwa mara ya pili)' : '')
+    + ' / Calls = customers at DC 2+ spoken to who had no notice yet; one already served a notice is counted under notices only'
+    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' left out, ' + money(ov.customers) + ' customer-days)' : '') + '.</div>';
+  if (g.shared) notes += '<div class="s">Timu inayoshikiliwa na mawakili wawili inahesabiwa kwa kila mmoja; mstari wa Jumla unahesabu kila mteja mara moja.'
+    + ' / A team held by two lawyers counts under each of them; the Total row counts each customer once.</div>';
+  return '<div class="kpi lgwk lggrand" id="lgGrand">'
+    + '<span class="lgwkNav">' + arrow(-1, '◀', canBack, 'Wiki iliyopita / previous week') + arrow(1, '▶', canFwd, 'Wiki ijayo / next week') + '</span>'
+    + '<div class="l">Jumla ya urejeshaji wa mawakili / Legal officers\' grand recovery · notisi + simu / notices + calls</div>'
+    + '<div class="s">' + esc(mon) + ' → ' + esc(lg.sun || '') + (cur ? '' : ' · wiki iliyopita / past week') + home + '</div>'
+    + '<div class="scroll"><table class="lgGT"><thead><tr><th class="n">Wakili / Legal officer</th><th colspan="2">Notisi / Notices</th>'
+    + '<th colspan="2">Simu / Calls</th><th colspan="2">Jumla / Grand</th></tr>'
+    + '<tr class="sub"><th class="n"></th><th>TZS</th><th>%</th><th>TZS</th><th>%</th><th>TZS</th><th>%</th></tr></thead><tbody>'
+    + (rows || '<tr><td class="n" colspan="7">—</td></tr>')
+    + '<tr class="tot"><td class="n">Jumla / Total</td>' + cells(g.total || {}) + '</tr></tbody></table></div>'
+    + notes + '</div>';
 }
 /* RECOVERY BY PHONE, THE CARD -- "Legal officers should be added another card of legal recovery by phone -- because they get
    responsible to costomers not only those with noptices but also those with 2dc+ before giving out notices" ... "that card will be
@@ -6102,10 +6174,12 @@ function lgWeekPaint_(lg){
   /* The phone card (Part 139) is the notices card's twin: `html` holds both, so the old twin goes first and the pair is put
      back in one piece. The focus returns to the same arrow of the SAME card (or to that card), so a keyboard reader on the
      phone card's arrows keeps stepping from there. */
-  var oldP = document.getElementById('lgPhCard'), act = document.activeElement, had = '', hadIn = '';
+  var oldP = document.getElementById('lgPhCard'), oldG = document.getElementById('lgGrand'), act = document.activeElement, had = '', hadIn = '';
   if (old.contains(act)) { hadIn = 'lgWkCard'; had = act.getAttribute('data-lgwk') || 'card'; }
   else if (oldP && oldP.contains(act)) { hadIn = 'lgPhCard'; had = act.getAttribute('data-lgwk') || 'card'; }
+  else if (oldG && oldG.contains(act)) { hadIn = 'lgGrand'; had = act.getAttribute('data-lgwk') || 'card'; }
   if (oldP && oldP.parentNode) oldP.parentNode.removeChild(oldP);
+  if (oldG && oldG.parentNode) oldG.parentNode.removeChild(oldG);          // the third card of the week (Part 149) goes the same way: never two
   old.outerHTML = html;
   if (had) {
     var host = document.getElementById(hadIn) || document.getElementById('lgWkCard');
@@ -6121,7 +6195,7 @@ function lgWeekGo_(target, mon){
   var want = target || '', card = document.getElementById('lgWkCard');
   LGW_.want = want; LGW_.wantMon = mon || ''; LGW_.busy = true;
   if (S.args) S.args.lgWeek = want;                                  // the chosen week rides with the screen (lgWeekKept_)
-  var dim = function(v){ ['lgWkCard', 'lgPhCard'].forEach(function(id){ var c = document.getElementById(id); if (c) c.style.opacity = v; }); };
+  var dim = function(v){ ['lgWkCard', 'lgPhCard', 'lgGrand'].forEach(function(id){ var c = document.getElementById(id); if (c) c.style.opacity = v; }); };
   if (card) dim('.55');
   return lgWeekAsk_(want).then(function(d){
     if (LGW_.want !== want) return d;
@@ -6283,7 +6357,7 @@ function lgPhoneList_(d, title, when, focusArrow){
   };
   var rule = '<div class="note">Mteja wa <b>DC 2 na zaidi</b> kwenye faili la asubuhi la siku hiyo, aliyezungumzwa kwa simu ya mwanasheria (namba yake, ya mdhamini, au "Ana namba nyingine") kwa zaidi ya muda wa chini wa simu; kilichorejeshwa ni deni la asubuhi kutoa la baadaye siku hiyo.'
     + ' / A customer at <b>DC 2 and above</b> on that day\'s morning file, spoken to from a lawyer\'s phone (their own number, the guarantor\'s, or one under "Ana namba nyingine") for longer than the minimum call length; recovered is that morning\'s arrears less the later file\'s, that day.'
-    + ' Mteja mwenye notisi yumo pia kwenye kadi ya notisi: hazijumlishwi. / A noticed customer is on the notices card too: the two are never added together.'
+    + ' Mteja mwenye notisi yumo pia kwenye kadi ya notisi; kadi ya jumla mwishoni mwa safu inamhesabu mara moja, kwenye notisi. / A noticed customer is on the notices card too; the grand card at the end of the row counts them once, under notices.'
     + (pc.stampedAt ? ' <span class="sub">Imesomwa / read ' + esc(String(pc.stampedAt).slice(0, 16).replace('T', ' ')) + ' UTC</span>' : '') + '</div>';
   drawer('<h3>' + title + ' · ' + esc(when) + '</h3>' + lgWeekBar_(d, true)
     + (!on ? '<div class="note' + (pc.on === null ? ' bad' : '') + '">⚠ ' + esc(pc.note || '') + '</div>'
