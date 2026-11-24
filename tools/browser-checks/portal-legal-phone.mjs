@@ -389,10 +389,10 @@ if (process.env.SHOTS) {
 check('9 the legal officers\' calls slide is built, right after the Legal slide', !!lc && !!slide && lc.at === slide.at + 1 && /Legal calls/.test(lc.title) && /recovery by phone/.test(lc.title), lc ? lc.title : 'no slide');
 if (lc) {
   const H = re => lc.head.findIndex(h => re.test(h));
-  const iOff = H(/^Legal officer$/i), iCalls = H(/^Calls today$/i), iReach = H(/^Reached today$/i), iPf = H(/^Portfolio$/i), iWk = H(/^Calls week$/i), iRw = H(/^Reached week$/i),
+  const iOff = H(/^Legal officer$/i), iCalls = H(/^Calls today$/i), iTalk = H(/^Portfolio talk$/i), iPf = H(/^Portfolio$/i), iWk = H(/^Calls week$/i), iRw = H(/^Reached week$/i),
     iSp = H(/^DC 2\+ spoken$/i), iT = H(/^By phone today$/i), iW = H(/^By phone week$/i);
   check('9 nine columns after the row number, in the order the room reads them: today, the week, then the phone',
-    lc.head.length === 10 && [iOff, iCalls, iReach, iPf, iWk, iRw, iSp, iT, iW].join() === '1,2,3,4,5,6,7,8,9', JSON.stringify(lc.head));
+    lc.head.length === 10 && [iOff, iCalls, iTalk, iPf, iWk, iRw, iSp, iT, iW].join() === '1,2,3,4,5,6,7,8,9' && !lc.head.some(h => /Reached today/i.test(h)), JSON.stringify(lc.head));
   // On the TV: no text leaves its own column and neighbours keep a gap, from a small projector's width to a full-HD screen's.
   for (const w of [1024, 1280, 1366, 1500, 1920]) {
     await page.setViewportSize({ width: w, height: Math.round(w * 9 / 16) });
@@ -410,15 +410,23 @@ if (lc) {
   const R9 = n => rows[names.indexOf(n)] || [];
   check('9 LAWYER TWO: two numbers rung today, one of them a customer of the lawyer\'s own teams, four customers at DC 2+ spoken to, 41,000 by phone today and this week',
     R9('LAWYER TWO')[iCalls] === '2' && R9('LAWYER TWO')[iPf] === '1' && R9('LAWYER TWO')[iSp] === '4' && R9('LAWYER TWO')[iT] === '41,000' && R9('LAWYER TWO')[iW] === '41,000', JSON.stringify(R9('LAWYER TWO')));
-  check('9 LAWYER ONE: three numbers rung, two of them spoken to; nothing by phone (the other lawyer spoke longest)',
-    R9('LAWYER ONE')[iCalls] === '3' && /^6[67]/.test(R9('LAWYER ONE')[iReach] || '') && /^6[67]/.test(R9('LAWYER ONE')[iRw] || '') && R9('LAWYER ONE')[iW] === '0', JSON.stringify(R9('LAWYER ONE')));
+  check('9 LAWYER ONE: three numbers rung, two of them spoken to this week; nothing by phone (the other lawyer spoke longest)',
+    R9('LAWYER ONE')[iCalls] === '3' && /^6[67]/.test(R9('LAWYER ONE')[iRw] || '') && R9('LAWYER ONE')[iW] === '0', JSON.stringify(R9('LAWYER ONE')));
+  /* THE THIRD COLUMN IS TODAY'S PORTFOLIO TALK (Part 143): the talk time of today's calls to customers of the officer's own teams,
+     as the HOPE Calls slide prints it. LAWYER ONE spoke 130 s with one such customer (the 400 s call was to a number of no
+     customer: it is not portfolio talk); LAWYER TWO 20 s; LAWYER ALL 33 s; the silent phone nothing; the total is their sum. */
+  check('9 the third column is today\'s portfolio talk: 2:10, 0:20 and 0:33, the silent phone 0:00',
+    R9('LAWYER ONE')[iTalk] === '2:10' && R9('LAWYER TWO')[iTalk] === '0:20' && R9('LAWYER ALL')[iTalk] === '0:33' && R9('LAWYER SILENT')[iTalk] === '0:00',
+    JSON.stringify(['LAWYER ONE', 'LAWYER TWO', 'LAWYER ALL', 'LAWYER SILENT'].map(n => R9(n)[iTalk])));
   const si = names.indexOf('LAWYER SILENT');
   check('9 the phone that sent no call this week says "kimya / silent" in its own cell, in red, at nought', si >= 0 && /^LAWYER SILENT\s.\skimya\s\/\ssilent$/.test(rows[si][iOff] || '') && lc.red[si] === true
     && rows[si][iCalls] === '0' && rows[si][iWk] === '0' && rows[si][iW] === '0', JSON.stringify([rows[si], lc.red]));
   check('9 nobody else is marked', lc.red.filter(Boolean).length === 1 && rows.filter(r => /kimya/.test(r[iOff] || '')).length === 1, JSON.stringify(lc.red));
   const tot = lc.cells.find(r => /JUMLA/.test(r.join(' '))) || [];
   check('9 the total row adds the phone columns up to the card: 46,000', tot[iT] === '46,000' && tot[iW] === '46,000', JSON.stringify(tot));
+  check('9 and the portfolio talk up to 3:03 (130 + 20 + 33 seconds)', tot[iTalk] === '3:03', JSON.stringify(tot));
   check('9 the caption carries the phone line, with nobody "without a row"', /By phone:/.test(lc.caption) && /TZS 46,000/.test(lc.caption) && !/with no row here/.test(lc.caption), lc.caption.slice(0, 260));
+  check('9 and it says what the third column is: the talk time of today\'s portfolio calls', /Portfolio talk = [^<]*the talk time of those calls today/.test(lc.caption) && !/Reached today/.test(lc.caption), lc.caption.slice(-420, -200));
   check('9 it says one customer waits for the later file and one legal phone is silent', /waiting for the later file/.test(lc.caption) && /1 legal phone has sent no call through HOPE Calls this week/.test(lc.caption), lc.caption.slice(-330));
 }
 // The wall draws a column's own mark on every slide that has one: the HOPE Calls slide's "Busiest" is green and "Least active" red
