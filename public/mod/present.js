@@ -315,19 +315,55 @@ function presSlides(){
       + '<div>Wateja wenye notisi / noticed customers: ' + money(b.legalCustomers || 0)
       + ' · malipo yaliyorekodiwa dhidi ya notisi (REF# au simu), mara moja kwa mteja / payments recorded against notices (REF# or phone), once per customer</div>'
       + ((b.legalAll || []).length ? '<div>Wanasheria wa timu zote, hawapangwi / holding every team, not ranked: ' + esc(b.legalAll.join(', ')) + '</div>' : '')
-      + ((b.legalUnheld || []).length ? '<div>Timu zisizo na mwanasheria / teams no legal code holds: ' + esc(b.legalUnheld.join(', ')) + '</div>' : '')
-      /* RECOVERY BY PHONE ON THE SAME SLIDE -- "find a way to include recovery by phone of legal recovery in the sdame legal
-         recovery slide at presentation" (the owner, 23 Nov 2026; Part 139). Two columns beside each lawyer (today, the week):
-         what the customers at DC 2 and above they spoke to by phone recovered on those days; and one line here with the
-         week's figure, the lawyers who have no row, or the file to run. Its own columns: the Rec % stay the notices'. */
-      + lgPhoneNote_(b.legalPhone, true);
-    slides.push({ id:'legal', kind:'table', title:'Legal recovery — notisi za madai / demand notices · kwa simu / by phone · leo / today, then the week',
+      + ((b.legalUnheld || []).length ? '<div>Timu zisizo na mwanasheria / teams no legal code holds: ' + esc(b.legalUnheld.join(', ')) + '</div>' : '');
+    /* AS IT WAS. Recovery by phone sat on this slide for a day (two columns and a line, Part 139); the owner moved it to the legal
+       officers' own calls slide below: "leaving the demand recovery slide as it was" (24 Nov 2026, Part 141). */
+    slides.push({ id:'legal', kind:'table', title:'Legal recovery — notisi za madai / demand notices · leo / today, then the week',
       caption: lgCap, rows:(b.legal||[]).slice(0,12),
       cols:[col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
         col('owed','Owed at notice','money'),
         col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec', from:['tRecovered','owed']},
-        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec', from:['recovered','owed']},
-        col('phToday','By phone today','money'), col('phWeek','By phone (week)','money')] });
+        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec', from:['recovered','owed']}] });
+    /* THE LEGAL OFFICERS' OWN CALLS SLIDE -- "I'VE BEEN SHOCKED BY LEGAL CALLS at presentation: i need their calls slide too, that
+       is the one that should include calls recovery daily and weeekly. leaving the demand recovery slide as it was" (the owner,
+       24 Nov 2026; handbook Part 141), said over a read-only look that showed two legal phones doing the ringing, nine
+       conversations in ten with numbers the system holds for no customer, and three legal phones that had sent no call at all.
+       One row for each legal phone -- the ones that sent no call this week too, marked red: they are the names the meeting most
+       needs. Today's figures first, in the HOPE Calls slide's own words (numbers rung, reached, the customers of their own
+       teams), then the week's calls, then how many customers at D.C 2 and above they spoke to and what those recovered:
+       today and this week. The rows are the server's (b.legalCalls: the call boards' own rows and the Legal tab's own phone
+       lines, by name); nothing is worked out here. Under the three phone columns the cells are blank until db/RUN-ME-089 is run,
+       and the caption names the file. Today's recovery shows once the day's later file is in (Part 140): the caption says how
+       many are waiting for it. */
+    /* NINE COLUMNS, SHORT HEADERS, A WIDER NAME. The wall's figure columns do not wrap (a number must stay on one line) and the
+       table's columns are equal shares, so a long header runs into its neighbour: the first cut of this slide had thirteen columns
+       and its headers collided on the screen. Every header here fits inside its own column at any width (the browser check measures
+       it at five). A silent phone is marked in the officer's own cell, in red, so the mark costs no column; that cell may wrap and
+       its column takes a double share (tcls 'pname2', styled in app.html). Dials are left to the HOPE Calls slide: this one counts
+       numbers rung, as its caption says. */
+    /* The mark's own words are held together by no-break spaces (written as escapes, never as the invisible character), so a
+       name that needs two lines breaks BEFORE the mark and never inside it. */
+    var lcRows = (b.legalCalls || []).map(function(x){ return { ...x, who: x.officer + (x.silent ? ' —\u00a0kimya\u00a0/\u00a0silent' : '') }; });
+    var lcSilent = lcRows.filter(function(x){ return x.silent; }).length;
+    var lcPh = b.legalPhone || null;
+    var lcCap = (lcPh ? lgPhoneNote_({ ...lcPh, others: [] }, true) : '')
+      + (lcPh && lcPh.on === true && lcPh.waiting ? '<div>Leo / today: ' + money(lcPh.waiting) + ' wanasubiri faili la jioni / waiting for the later file — marejesho ya leo huonekana likishapakiwa / today\'s recovery shows once it is uploaded</div>' : '')
+      + '<div>Calls = namba zilizopigwa, mara moja kwa siku / numbers rung, once a day'
+      + (b.callsReachNote ? ' · Reached % inasubiri / waits for db/RUN-ME-088'
+        : b.callsReachMin != null ? ' · Reached = waliongea zaidi ya sek ' + b.callsReachMin + ' / spoken to for over ' + b.callsReachMin + ' s' : '')
+      + ' · Portfolio = leo, namba za wateja wa timu zake / today, numbers of customers on the officer\'s own teams'
+      + ' · DC 2+ spoken = wateja wa DC 2+ waliozungumzwa wiki hii / customers at DC 2 and above spoken to this week</div>'
+      + (lcSilent ? '<div>⚠ Simu ' + money(lcSilent) + ' za wanasheria hazijapiga simu yoyote kupitia HOPE Calls wiki hii / '
+          + money(lcSilent) + ' legal phone' + (lcSilent === 1 ? ' has' : 's have') + ' sent no call through HOPE Calls this week</div>' : '');
+    slides.push({ id:'legalcalls', kind:'table', tcls:'pname2',
+      title:'Legal calls — simu za wanasheria / the legal officers\' phones · leo / today, then the week · marejesho kwa simu / recovery by phone',
+      /* EVERY legal phone, never the first so many: the rows add up to the phone card, and a row cut off the end would be a lawyer
+         nobody sees. A long list is fitted to the screen by presFit_, as the HOPE Calls slide's is. */
+      caption: lcCap, rows: lcRows,
+      cols:[{ key:'who', label:'Legal officer', cls:function(r){ return r.silent ? 'bad' : ''; } },
+        col('calls','Calls today','num'), col('connectPct','Reached today','pct'), col('portfolio','Portfolio','num'),
+        col('wCalls','Calls week','num'), {key:'wConnectPct', label:'Reached week', kind:'pct', from:['wConnected','wCalls']},
+        col('spoken','DC 2+ spoken','num'), col('phToday','By phone today','money'), col('phWeek','By phone week','money')] });
     /* DAY PROGRESS -- the three office units from the day's FIRST upload to its latest.
          "we'll need to see who pushed more percentages and who is the most stuck guy behind"
        One slide, three columns, each ranked on the percentage points gained since the day's
@@ -546,11 +582,17 @@ function presDraw(){
     var ctx = colourCtx_(s.cols, tot);
     /* Wrapped, so a board still wider than the screen scrolls inside its own box rather than
        pushing the whole slide sideways and taking the navigation arrows off the edge with it. */
-    body = '<div class="pscroll"><table class="ptable"><thead><tr><th>#</th>' + s.cols.map(function(c){
+    /* A slide may give its table a class of its own (tcls): the legal officers' calls slide widens and wraps its name column with
+       it. No slide that does not ask is drawn any differently. */
+    body = '<div class="pscroll"><table class="ptable'+(s.tcls?(' '+s.tcls):'')+'"><thead><tr><th>#</th>' + s.cols.map(function(c){
         return '<th class="'+(isNum(c)?'r':'')+'">'+esc(c.label)+'</th>'; }).join('') + '</tr></thead><tbody>'
       + s.rows.map(function(r,i){ return '<tr><td>'+(i+1)+'</td>'+s.cols.map(function(c){
           var k = cellCls_(r, c, ctx);
-          return '<td class="'+(isNum(c)?'r':'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
+          /* A COLUMN'S OWN MARK IS DRAWN ON THE WALL TOO (handbook Part 141). The tab's table and the boards have always applied a
+             column's cls(); this renderer never did, so the HOPE Calls slide's "Least active" was never red on the TV although the
+             slide asks for it ("format red the least actives") -- seen in a real browser while the legal officers' slide, whose
+             silent phones must be red, was being built. */
+          return '<td class="'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'">'+cellHtml(r,c)+'</td>'; }).join('')+'</tr>'; }).join('')
       + (tot ? '<tr class="ptot"><td></td>' + s.cols.map(function(c,i){
           return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>' : '')
       + '</tbody></table></div>';
