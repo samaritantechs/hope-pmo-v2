@@ -184,6 +184,9 @@
   .tcell .th{font-size:11.5px;font-weight:800;letter-spacing:.03em;margin-bottom:4px}
   .tcell .tl{font-size:12.5px;line-height:1.5}
   .tcell .mutl{color:var(--mut);font-size:11px}
+/* Last week's figure after a rise or fall arrow on the dashboard (Part 142): faint, and smaller than the figure it follows. */
+.lw{opacity:.6;font-size:.72em;font-weight:700;white-space:nowrap}
+.tcell .th .lw,.card-h .lw{font-size:11px}
   .tcell .badl{color:var(--bad);font-size:11px}
   /* The month report's week tiles: the live week wears a ring, and a thin collection bar
      under each week says at a glance how much of the month's line was met. */
@@ -797,7 +800,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-c';
+var BUILD = '2026-11-24-d';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -2948,11 +2951,27 @@ function fold_(key, label, sub, inner, extra){
 /* The rising / steady / dropping mark on the performance strip -- movement against the
    previous period. Null means there WAS no previous period to compare with: no arrow at
    all, never a fake "rising from nothing". */
-function trendArrow(dv){
+function trendArrow(dv, last){
   if (dv == null) return '';
-  if (dv > 0) return ' <span class="good" style="font-size:14px">▲</span>';
-  if (dv < 0) return ' <span class="bad" style="font-size:14px">▼</span>';
-  return ' <span style="color:var(--soft);font-size:14px">▬</span>';
+  var a = dv > 0 ? ' <span class="good" style="font-size:14px">▲</span>'
+        : dv < 0 ? ' <span class="bad" style="font-size:14px">▼</span>'
+        : ' <span style="color:var(--soft);font-size:14px">▬</span>';
+  return a + (last || '');
+}
+/* LAST WEEK'S FIGURE, FAINT, RIGHT AFTER THE ARROW (handbook Part 142) -- "infront of the ▲ put the low opacity last week % e.g
+   ▲ 34% so that i notice if its higher low or the same what exactly was of last week ... those ▲ at dashboard" (the owner,
+   24 Nov 2026). The server sends, beside every difference (d...), the figure of last week it was taken against (lw...), null
+   exactly when the difference is null, so there is never a faint figure without an arrow nor an arrow without one. It is printed
+   as the tile prints its own figure (whole per cent; one decimal on the Expected Defaulters card, whose rates sit under 1%).
+   Nothing is worked out here. */
+function lwPct_(v, one){
+  return v == null ? '' : ' <span class="lw" title="Wiki iliyopita / last week">' + (one ? pct1(v) : pct(v)) + '</span>';
+}
+/* The applications card counts, and its arrow compares ARRIVALS, which a day's tile does not show (the tile shows the pile still
+   unworked). So a day prints both sides, last week's then this week's; the card's title prints last week's and the difference. */
+function lwCount_(last, now){
+  return last == null ? '' : ' <span class="lw" title="Yaliyofika: wiki iliyopita ' + (now == null ? '' : '→ wiki hii ') + '/ arrived: last week'
+    + (now == null ? '' : ' → this week') + '">' + money(last) + (now == null ? '' : '→' + money(now)) + '</span>';
 }
 function trendSub(dv, label){
   return dv == null ? 'hakuna kipindi kilichopita / no previous period'
@@ -3533,9 +3552,12 @@ function trendGrid(title, sub, id, cells, totalCell, headArrow){
     trendSub's fuller "...dhidi ya wiki iliyopita / vs last week" sentence, since the card's own
     subtitle sits right beside it and already says what the figures are. `unit` defaults to a
     percentage point; apps passes its own, since a count is never a "%". */
-function headDelta_(dv, unit){
-  return dv == null ? '' : '<span style="font-size:11px;color:var(--mut);font-weight:400">'
-    + (dv > 0 ? '+' : '') + Math.round(dv) + (unit == null ? '%' : unit) + ' wiki iliyopita</span>';
+/* The small text after a card title's arrow. It follows last week's faint figure and NAMES it, with the difference in brackets:
+   "34% wiki iliyopita (+12%)" -- which is also what tells a reader what the faint figure after every other arrow is. `one`
+   prints the difference to one decimal, for the Expected Defaulters card (a whole-number difference of a rate under 1% read +0%). */
+function headDelta_(dv, unit, one){
+  return dv == null ? '' : '<span style="font-size:11px;color:var(--mut);font-weight:400"> wiki iliyopita ('
+    + (dv > 0 ? '+' : '') + (one ? Number(dv).toFixed(1) : Math.round(dv)) + (unit == null ? '%' : unit) + ')</span>';
 }
 /* headArrow, like trendGrid's own: raw HTML (unescaped), beside the day's own label -- "i now
    need comparison of this Friday to that of last week ... arrows inside each day's card".
@@ -3841,15 +3863,15 @@ VIEWS.dashboard = function(){
          last week's movement: ▲ rising, ▬ constant, ▼ dropping, nothing when there was no
          last week to compare against. */
       + (function(){ var p = d.perf || {}; return '<div class="kpis sm" style="margin-top:8px">'
-          + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales), leaderSub_(trendSub(p.dSales), p.topSales))
+          + kpi('Sales %', pct(p.salesPct) + trendArrow(p.dSales, lwPct_(p.lwSales)), leaderSub_(trendSub(p.dSales), p.topSales))
           /* "add ealy col widget btn sales and col" -- Early Collection sits between Sales %
              and Collection %. "should be of week and showing rise or fall as the other
              widgets" -- 14 Nov 2026, reversing the month-to-date choice above: now
              week-over-week, with the same arrow its three neighbours already carry. */
-          + kpi('Early Collection %', pct(p.ecolPct) + trendArrow(p.dEcol), trendSub(p.dEcol))
-          + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol), leaderSub_(trendSub(p.dCol), p.topCol))
-          + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec), leaderSub_(trendSub(p.dRec), p.topRec))
-          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg), leaderSub_(avgSub(p.dAvg, p.avgOn), p.topAvg))
+          + kpi('Early Collection %', pct(p.ecolPct) + trendArrow(p.dEcol, lwPct_(p.lwEcol)), trendSub(p.dEcol))
+          + kpi('Collection %', pct(p.colPct) + trendArrow(p.dCol, lwPct_(p.lwCol)), leaderSub_(trendSub(p.dCol), p.topCol))
+          + kpi('Recovery %', pct(p.recPct) + trendArrow(p.dRec, lwPct_(p.lwRec)), leaderSub_(trendSub(p.dRec), p.topRec))
+          + kpi('Performance · wastani', pct(p.avgPct) + trendArrow(p.dAvg, lwPct_(p.lwAvg)), leaderSub_(avgSub(p.dAvg, p.avgOn), p.topAvg))
           + '</div>'; })()
       + (rec.note ? '<div class="note">'+esc(rec.note)+'</div>' : '')
       + (d.recoveryNote && d.recoveryNote !== rec.note ? '<div class="note">'+esc(d.recoveryNote)+'</div>' : '')
@@ -3870,20 +3892,20 @@ VIEWS.dashboard = function(){
       + trendGrid('Loan applications (Mon–Sun)', 'unassigned & assigned per weekday', 'gApps',
           d.appsTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['U '+x.unassigned+' · A '+x.assigned, 'mutl'], ['<b>'+x.apps+' apps</b>'], ['TZS '+money(x.amount), 'mutl']],
-            '', '', trendArrow(x.dApps)); }),
+            '', '', trendArrow(x.dApps, lwCount_(x.lwApps, x.arrived))); }),
           tcell('TOTAL', [
             ['U '+d.appsTrend.reduce(function(s,x){return s+x.unassigned;},0)+' · A '+d.appsTrend.reduce(function(s,x){return s+x.assigned;},0), 'mutl'],
             ['<b>'+d.appsTrend.reduce(function(s,x){return s+x.apps;},0)+' apps</b>'],
             ['TZS '+money(d.appsTrend.reduce(function(s,x){return s+x.amount;},0)), 'mutl']], 'tot'),
-          trendArrow((d.perf||{}).dApps) + headDelta_((d.perf||{}).dApps, ' maombi'))
+          trendArrow((d.perf||{}).dApps, lwCount_((d.perf||{}).appsPrevCount)) + headDelta_((d.perf||{}).dApps, ' maombi'))
       + trendGrid('Sales trend (Mon–Sat)', 'approved principal · % vs daily target ('+money(d.dailyTarget)+')', 'gSales',
           d.salesTrend.map(function(x){ return tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.amount)+'</b>'], [pct(x.pct), 'good'], [x.loans+' loans', 'mutl']],
-            '', '', trendArrow(x.dSales)); }),
+            '', '', trendArrow(x.dSales, lwPct_(x.lwSales))); }),
           tcell('TOTAL', [['<b>TZS '+money(d.salesTrend.reduce(function(s,x){return s+x.amount;},0))+'</b>'],
             [pct(d.dailyTarget>0?Math.round(1000*d.salesTrend.reduce(function(s,x){return s+x.amount;},0)/(d.dailyTarget*5))/10:null), 'good'],
             [d.salesTrend.reduce(function(s,x){return s+x.loans;},0)+' loans', 'mutl']], 'tot'),
-          trendArrow((d.perf||{}).dSales) + headDelta_((d.perf||{}).dSales))
+          trendArrow((d.perf||{}).dSales, lwPct_((d.perf||{}).lwSales)) + headDelta_((d.perf||{}).dSales))
       /* "add ealy col cards between" Sales trend and Weekly expected trend. "the card ...
          should be of 5 days as the others ... like loan apps, sales, col and rec" -- 14 Nov
          2026: the Mon-Sat-grid neighbour this card was once said to need none of (the old
@@ -3895,11 +3917,11 @@ VIEWS.dashboard = function(){
             ? tcell(wdLabel(x.weekday), [['—', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']],
-            '', '', trendArrow(x.dEcol)); }),
+            '', '', trendArrow(x.dEcol, lwPct_(x.lwEcol))); }),
           tcell('TOTAL', [['<b>TZS '+money(d.ecolTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.ecolTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.ecolTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
             ['Col '+pct((function(){var e=d.ecolTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.ecolTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'),
-          trendArrow((d.perf||{}).dEcol) + headDelta_((d.perf||{}).dEcol))
+          trendArrow((d.perf||{}).dEcol, lwPct_((d.perf||{}).lwEcol)) + headDelta_((d.perf||{}).dEcol))
       /* THE HEADLINE IS THE DAY'S EXPECTED, not what came in.
            "i wanted them to show expected, uncollected and % -- replace collection with
             total expected"
@@ -3913,11 +3935,11 @@ VIEWS.dashboard = function(){
             ? tcell(wdLabel(x.weekday), [['\u2014', 'mutl'], ['haijapakiwa bado', 'mutl'], ['not uploaded yet', 'mutl']], 'pend')
             : tcell(wdLabel(x.weekday), [
             ['<b>TZS '+money(x.expected)+'</b>'], ['Uncol TZS '+money(x.uncollected)+adjTag_(x.adjusted), 'badl'], ['Col '+pct(x.pct), 'good']],
-            '', '', trendArrow(x.dCol)); }),
+            '', '', trendArrow(x.dCol, lwPct_(x.lwCol))); }),
           tcell('TOTAL', [['<b>TZS '+money(d.colTrend.reduce(function(s,x){return s+x.expected;},0))+'</b>'],
             ['Uncol TZS '+money(d.colTrend.reduce(function(s,x){return s+x.uncollected;},0))+adjTag_(d.colTrend.reduce(function(s,x){return s+(x.adjusted||0);},0)), 'badl'],
             ['Col '+pct((function(){var e=d.colTrend.reduce(function(s,x){return s+x.expected;},0),cl=d.colTrend.reduce(function(s,x){return s+x.collected;},0);return e>0?Math.round(1000*cl/e)/10:null;})()), 'good']], 'tot'),
-          trendArrow((d.perf||{}).dCol) + headDelta_((d.perf||{}).dCol))
+          trendArrow((d.perf||{}).dCol, lwPct_((d.perf||{}).lwCol)) + headDelta_((d.perf||{}).dCol))
       /* THE DENOMINATOR IS JANA'S -- "everywhere uses jana except only where there is recovery
          officers". Monday divides by Monday, Tuesday to Friday by the day before, the weekend
          by the week; each tile says which. The TOTAL comes from the server (recTrendTotal):
@@ -3937,7 +3959,7 @@ VIEWS.dashboard = function(){
               ? tcell(wdLabel(x.weekday), [
                   ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
                   ['no col', 'mutl'],
-                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']], '', press, trendArrow(x.dRec))
+                  [x.full ? '<span class="good">full recovery</span>' : 'Rec —', 'good']], '', press, trendArrow(x.dRec, lwPct_(x.lwRec)))
               : tcell(wdLabel(x.weekday), [
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             /* RECOVERED, THEN UNRECOVERED, THEN THE PERCENTAGE -- in that order everywhere.
@@ -3947,11 +3969,11 @@ VIEWS.dashboard = function(){
             ['Unrecovered TZS '+money(x.unrecovered)+adjTag_(x.dayAdjusted), 'badl'],
             [x.pct != null
               ? 'Rec '+pct(x.pct)+' <span class="mutl">÷ '+(x.basis==='yesterday'?'jana':x.basis==='week'?'wiki':'leo')+'</span>'
-              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']], '', press, trendArrow(x.dRec))); }),
+              : (x.full ? '<span class="good">full recovery</span>' : 'Rec —'), 'good']], '', press, trendArrow(x.dRec, lwPct_(x.lwRec)))); }),
           tcell('TOTAL', [['<b>TZS '+money(d.recTrendTotal ? d.recTrendTotal.recovered : d.recTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Unrecovered TZS '+money(d.recTrendTotal ? d.recTrendTotal.unrecovered : 0)+adjTag_(d.recTrendTotal ? d.recTrendTotal.adjusted : 0), 'badl'],
             ['Rec '+pct(d.recTrendTotal ? d.recTrendTotal.pct : null)+' <span class="mutl">÷ wiki</span>', 'good']], 'tot', recTileAttrs_('week')),
-          trendArrow((d.perf||{}).dRec) + headDelta_((d.perf||{}).dRec))
+          trendArrow((d.perf||{}).dRec, lwPct_((d.perf||{}).lwRec)) + headDelta_((d.perf||{}).dRec))
       /* THE LOAN PIPELINE WIDGET'S REPLACEMENT -- "Remove the Loan pipeline widget at
          dashboard replace with expected defaulters recovery cards Monday to Sunday with
          rising and falling arrows as usual" -- the owner, 14 Nov 2026. Team-wide, day by
@@ -3979,12 +4001,12 @@ VIEWS.dashboard = function(){
             ['<b class="'+(x.recovered>0?'good':'bad')+'">TZS '+money(x.recovered)+'</b>'],
             ['Owing TZS '+money(x.current), 'badl'],
             [x.pct != null ? 'Rec '+pct1(x.pct) : 'Rec —', 'good']],
-            '', '', trendArrow(x.dEdr)); }),
+            '', '', trendArrow(x.dEdr, lwPct_(x.lwEdr, true))); }),
           tcell('TOTAL', [['wiki nzima / the week', 'mutl'],
             ['<b>TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.recovered : d.edrTrend.reduce(function(s,x){return s+x.recovered;},0))+'</b>'],
             ['Owing TZS '+money(d.edrTrendTotal ? d.edrTrendTotal.current : 0), 'badl'],
             ['Rec '+pct1(d.edrTrendTotal ? d.edrTrendTotal.pct : null), 'good']], 'tot'),
-          trendArrow((d.edrTrendTotal||{}).dEdr) + headDelta_((d.edrTrendTotal||{}).dEdr))
+          trendArrow((d.edrTrendTotal||{}).dEdr, lwPct_((d.edrTrendTotal||{}).lwEdr, true)) + headDelta_((d.edrTrendTotal||{}).dEdr, null, true))
       + (d.edrNote ? '<div class="note">'+esc(d.edrNote)+'</div>' : '');
     // The officer boards load after the headline numbers so the page paints immediately --
     // one execution never waits on all of it, which is what made v1's dashboard time out.

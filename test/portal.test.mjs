@@ -7493,6 +7493,11 @@ test('the dashboard performance strip carries the three percentages, their avera
   assert.equal(p.dSales, 15);
   assert.equal(p.dCol, 50);
   assert.equal(p.dRec, null, 'no defaulter decks last week: no arrow, not a fake rise');
+  // And last week's own figure rides beside each difference (Part 142): sales 10%, collection 0%; none where there is no arrow.
+  assert.equal(p.lwSales, 10, 'last week sold 200 of 2,000');
+  assert.equal(p.lwCol, 0, 'last week collected nothing of 1,000: a nought is a figure, not "nothing to show"');
+  assert.equal(p.lwRec, null, 'no arrow, so no figure of last week beside it');
+  lwHolds(d, 'the strip');
   /* THE AVERAGE IS OVER WHAT WAS MEASURED, AND THAT IS WHY THIS IS 33.3 AND NOT 35.
      Last week had sales 10% and collection 0%, and NO defaulter deck at all -- so recovery was
      not measured, which is not the same as being zero. Averaging over three counted that
@@ -7513,6 +7518,7 @@ test('the dashboard performance strip carries the three percentages, their avera
   const p2 = (await run('dashboardFull', {}, ADMIN, dbWithRpc(t2))).perf;
   assert.equal(p2.dSales, null);
   assert.equal(p2.dCol, null);
+  assert.deepEqual([p2.lwSales, p2.lwCol, p2.lwRec, p2.lwAvg], [null, null, null, null], 'no last week to compare with: no arrow and no figure beside it');
   assert.equal(p2.dAvg, null);
 
   /* AN AVERAGE OVER A PERCENTAGE NOBODY COULD MEASURE IS NOT AN AVERAGE.
@@ -7586,6 +7592,36 @@ test('the loan-apps arrow counts every application that arrived, not just what i
    card." TODAY (2026-07-24) is a Friday; last Friday is 2026-07-17 -- the owner's own named
    example. Each of the four trend cards now carries its own day-level delta, every day against
    the SAME weekday the week before, not the week before's total. */
+/* LAST WEEK'S FIGURE RIDES WITH EVERY DIFFERENCE (handbook Part 142) -- "infront of the arrow put the low opacity last week %
+   ... so that i notice if its higher low or the same what exactly was of last week" (the owner, 24 Nov 2026). Whatever the book
+   holds: the figure is there exactly when the arrow is, and this week's figure less last week's IS the difference (each side is
+   rounded to one decimal, so the two agree to a tenth). */
+function lwHolds(d, label) {
+  const pair = (now, dv, lw, what) => {
+    assert.equal(lw == null, dv == null, label + ', ' + what + ': last week\'s figure is there exactly when the arrow is (' + JSON.stringify([now, dv, lw]) + ')');
+    if (dv != null) {
+      assert.equal(typeof lw, 'number', label + ', ' + what + ': a figure');
+      assert.ok(Math.abs((now - lw) - dv) < 0.11, label + ', ' + what + ': ' + now + ' less ' + lw + ' is the difference ' + dv);
+    }
+  };
+  for (const x of d.salesTrend) pair(x.pct, x.dSales, x.lwSales, 'sales ' + x.weekday);
+  for (const x of d.colTrend) pair(x.pct, x.dCol, x.lwCol, 'collection ' + x.weekday);
+  for (const x of d.ecolTrend) pair(x.pct, x.dEcol, x.lwEcol, 'early collection ' + x.weekday);
+  for (const x of d.recTrend) pair(x.pct, x.dRec, x.lwRec, 'recovery ' + x.weekday);
+  for (const x of d.edrTrend) pair(x.pct, x.dEdr, x.lwEdr, 'expected defaulters ' + x.weekday);
+  for (const x of d.appsTrend) {
+    assert.ok(Number.isInteger(x.arrived), label + ', applications ' + x.weekday + ': this day\'s arrivals are a count');
+    assert.equal(x.lwApps == null, x.dApps == null, label + ', applications ' + x.weekday + ': last week\'s count is there exactly when the arrow is');
+    if (x.dApps != null) assert.equal(x.arrived - x.lwApps, x.dApps, label + ', applications ' + x.weekday + ': arrived this day less arrived that day last week');
+  }
+  const p = d.perf;
+  pair(p.salesPct, p.dSales, p.lwSales, 'the week\'s sales'); pair(p.colPct, p.dCol, p.lwCol, 'the week\'s collection');
+  pair(p.recPct, p.dRec, p.lwRec, 'the week\'s recovery'); pair(p.avgPct, p.dAvg, p.lwAvg, 'the week\'s average');
+  pair(p.ecolPct, p.dEcol, p.lwEcol, 'the week\'s early collection');
+  assert.equal(p.appsCount - p.appsPrevCount, p.dApps, label + ': the week\'s applications');
+  if (d.edrTrendTotal) pair(d.edrTrendTotal.pct, d.edrTrendTotal.dEdr, d.edrTrendTotal.lwEdr, 'the week\'s expected defaulters');
+}
+
 test('each trend card carries its own day-by-day arrow against the same weekday last week', async () => {
   const t = tables();
   t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
@@ -7646,6 +7682,67 @@ test('each trend card carries its own day-by-day arrow against the same weekday 
   for (const x of d.recTrend) {
     if (x.weekday === 'SAT' || x.weekday === 'SUN') assert.equal(x.dRec, null, 'weekend tiles have no % to move');
     else assert.ok(x.dRec === null || typeof x.dRec === 'number', x.weekday + ': dRec is a real number or null, never NaN');
+  }
+
+  /* LAST WEEK'S FIGURE BESIDE EACH ARROW (Part 142). Exact where the book fixes it, and the invariant everywhere. */
+  assert.deepEqual([fri.arrived, fri.lwApps], [2, 1], 'two arrived this Friday, one last Friday (since approved: it still arrived)');
+  assert.equal(colFri.lwCol, 0, 'last Friday collected nothing of 1,000');
+  assert.equal(ecolFri.lwEcol, 0);
+  assert.equal(d.perf.lwEcol, 0, 'the strip\'s tile carries the week\'s');
+  assert.ok(salesFri.lwSales > 0 && salesFri.lwSales < salesFri.pct, 'last Friday sold 100 against this Friday\'s 300');
+  assert.equal(Math.round(salesFri.pct / salesFri.lwSales), 3, 'a third of it, on the same daily target');
+  if (notUploaded) assert.equal(notUploaded.lwCol, null, 'a day with no sheet has no arrow and no figure of last week');
+  lwHolds(d, 'the per-day book');
+  /* A DAY THAT HAS NOT COME YET CARRIES NO ARROW on the two cards whose days wait on no upload (today is the Friday): Saturday
+     and Sunday have no applications and no sales because they have not happened, which is not a fall against last weekend. */
+  for (const wd of ['SAT', 'SUN']) {
+    const a = d.appsTrend.find(x => x.weekday === wd);
+    assert.deepEqual([a.dApps, a.lwApps], [null, null], wd + ' is still to come: no arrow on its applications');
+  }
+  assert.deepEqual([d.salesTrend.find(x => x.weekday === 'SAT').dSales, d.salesTrend.find(x => x.weekday === 'SAT').lwSales], [null, null], 'nor on its sales');
+  for (const x of d.appsTrend) if (x.date <= TODAY) assert.equal(typeof x.dApps, 'number', x.weekday + ' has come: its arrow is there, a nought included');
+  for (const x of d.salesTrend) if (x.date <= TODAY) assert.equal(typeof x.dSales, 'number', x.weekday + ' has come: its sales arrow is there');
+  /* AND IT IS WHAT LAST WEEK'S OWN DASHBOARD SHOWS. Step the week bar back one week: each tile there reads the figure this week
+     prints, faint, beside its arrow -- one calculation seen from two weeks, never two that could differ. */
+  const prev = await run('dashboardFull', { weekOf: '2026-07-17' }, ADMIN, dbWithRpc(t));
+  const lastFri = k => prev[k].find(x => x.date === '2026-07-17');
+  for (const x of prev.appsTrend) assert.equal(typeof x.dApps, 'number', 'a finished week: every one of its days has come, ' + x.weekday + ' too');
+  assert.equal(lastFri('colTrend').pct, colFri.lwCol, 'collection: last Friday\'s own tile');
+  assert.equal(lastFri('ecolTrend').pct, ecolFri.lwEcol, 'early collection');
+  assert.equal(lastFri('salesTrend').pct, salesFri.lwSales, 'sales');
+  assert.equal(lastFri('appsTrend').arrived, fri.lwApps, 'applications that arrived');
+  assert.equal(prev.perf.colPct, d.perf.lwCol, 'the week\'s collection');
+  assert.equal(prev.perf.ecolPct, d.perf.lwEcol, 'the week\'s early collection');
+  assert.equal(prev.perf.salesPct, d.perf.lwSales, 'the week\'s sales');
+  assert.equal(prev.perf.appsCount, d.perf.appsPrevCount, 'the week\'s applications');
+});
+
+/* RECOVERY: the same promise, on decks. This Friday 400 came back of 1,000 uncollected (40%); last Friday 100 of 1,000 (10%).
+   The arrow says +30, the faint figure beside it says 10, and last Friday's own tile, with the week bar stepped back, says 10.
+   With the database's sums and with the rows added up in memory: one figure. */
+test('last week\'s recovery figure beside the arrow is last Friday\'s own tile, whichever way the sums are made (Part 142)', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0),
+    E('222', 'KONGOWE', 1000, 'UNPAID', 0, '2026-07-17'),
+  ];
+  t.defaulter_snapshots = [
+    D('R1', 'KONGOWE', 1000, 'initial'), D('R1', 'KONGOWE', 600, 'current'),
+    D('R1', 'KONGOWE', 1000, 'initial', 45, '2026-07-17'), D('R1', 'KONGOWE', 900, 'current', 45, '2026-07-17'),
+  ];
+  for (const [world, db] of [['the database sums', dbWithRpc(t)], ['the rows added up', fakeDb(t)]]) {
+    const d = await run('dashboardFull', {}, ADMIN, db);
+    const fri = d.recTrend.find(x => x.date === TODAY);
+    assert.deepEqual([fri.pct, fri.dRec, fri.lwRec], [40, 30, 10], world + ': 40% against last Friday\'s 10%');
+    /* The WEEK's recovery is not asserted to the figure here: a day with no file of its own adds the standing carried forward to it
+       (RUN-ME-032's rule, which the commission board pays on), so the week is more than its one Friday. What is asserted is the
+       promise: a figure of last week beside the week's arrow, consistent with it (lwHolds), and equal to last week's own strip. */
+    assert.ok(d.perf.dRec != null && d.perf.lwRec != null, world + ': the week has an arrow and last week\'s figure beside it');
+    for (const x of d.recTrend) if (x.weekday === 'SAT' || x.weekday === 'SUN') assert.equal(x.lwRec, null, world + ': a weekend tile has no percentage, no arrow and no figure of last week');
+    lwHolds(d, world);
+    const prev = await run('dashboardFull', { weekOf: '2026-07-17' }, ADMIN, db);
+    assert.equal(prev.recTrend.find(x => x.date === '2026-07-17').pct, fri.lwRec, world + ': last Friday\'s own tile reads the figure');
+    assert.equal(prev.perf.recPct, d.perf.lwRec, world + ': and last week\'s own strip');
   }
 });
 
@@ -7784,6 +7881,14 @@ test('Expected Defaulters recovery is each day\'s own list from its initial deck
   assert.equal(fri.recovered, 90000, "X1's 60,000 + X3's full 30,000 -- X2's loss clamped to 0, X5's 70,000 is not Friday's, X4 excluded outright");
   assert.equal(fri.pct, 50, '90,000 of 180,000 -- over the day\'s own list, "total arrea of the day given"');
   assert.equal(fri.dEdr, 40, '50.0 this Friday vs 10.0 last Friday (10,000 of 100,000)');
+  assert.equal(fri.lwEdr, 10, 'and last Friday\'s own 10.0 rides beside the arrow (Part 142)');
+  assert.equal(d.edrTrendTotal.lwEdr, 10, 'the week\'s too: last week was that one Friday');
+  lwHolds(d, 'the Expected Defaulters book');
+  {  // last week's own card, with the week bar stepped back, reads the figure this week prints beside its arrow
+    const prevE = await run('dashboardFull', { weekOf: '2026-07-17' }, ADMIN, db);
+    assert.equal(prevE.edrTrend.find(x => x.date === '2026-07-17').pct, fri.lwEdr, 'last Friday\'s own tile');
+    assert.equal(prevE.edrTrendTotal.pct, d.edrTrendTotal.lwEdr, 'and last week\'s own total');
+  }
   assert.equal(d.edrNote, null, 'the database answered: nothing to say');
 
   // THE WHOLE BOOK, READ recTrend's OWN way, is a different figure on the same decks -- it has
@@ -7799,6 +7904,7 @@ test('Expected Defaulters recovery is each day\'s own list from its initial deck
   assert.equal(mon.uploaded, false);
   assert.equal(mon.pct, null);
   assert.equal(mon.dEdr, null);
+  assert.equal(mon.lwEdr, null, 'no arrow, no figure of last week');
 
   // The week's own total, worked out beside the tiles it sums.
   assert.equal(d.edrTrendTotal.initial, 180000);
