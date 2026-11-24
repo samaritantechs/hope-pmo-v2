@@ -27,7 +27,16 @@ HOW A DATE IS READ (the report counts each kind):
   U  nobody can read it (31/04/2026; 09/054/2026): the row goes into the list with no date, the engine leaves it out and names its row.
 Rows with no REF NO are not written at all (the owner brings them later).
 
+A LATER DELIVERY (the legal team gave REF NOs, and some teams, to rows that had none, once or several times, each delivery a workbook: "Legal team submitted more ref nos and teams in the
+table" -- the owner, 24 Nov 2026) is the SAME sheet with more rows in it. --more <their workbook> finds each of its rows among the first
+sheet's rows that had no REF NO -- by the officer, the customer, the date cell and every amount, ALL of them, exactly; a row found by anything
+less stops the builder and names the row of THEIR sheet -- and reads it as if it had had its REF NO from the start: the same date rules, the
+same officers' habits, the row of the first sheet as its `line`. It writes the blocks of the NEW rows only (the first delivery's rows are in
+the system already) and the engine built for all of them together.
+
     python3 -I tools/historic-notices/build_blocks.py <workbook.xlsx> <output folder outside the repository>
+    python3 -I tools/historic-notices/build_blocks.py <workbook.xlsx> <output folder outside the repository> --more <second workbook.xlsx>
+    ... --more <second workbook.xlsx> --more <third workbook.xlsx>        (the LAST one is the delivery being written; the ones before it are in the list already)
 Needs openpyxl. """
 import sys, re, datetime, collections, os, hashlib
 import openpyxl
@@ -68,7 +77,38 @@ def text_date(raw):
     else: return None, False
     return day(y, mm, dd), fixed
 
-def read(path):
+def cellkey(v):
+    if isinstance(v, (datetime.datetime, datetime.date)): return ('d', (v.date() if isinstance(v, datetime.datetime) else v).isoformat())
+    return ('t', ' '.join(str(v or '').split()))
+def same_row(r):
+    """What a row of the first sheet and the same row in the legal team's second delivery must agree on, ALL of it."""
+    return (clean(r[0]), clean(r[1]), cellkey(r[8]), amount(r[7]), amount(r[4]), amount(r[5]), amount(r[6]))
+def team_of(v): return re.sub(r'\s+', ' ', str(v or '')).strip().upper()
+def match_more(rows, path, taken=None):
+    """first-sheet row number -> (REF NO, team) for each row of a later delivery that has a REF NO, found among the first sheet's rows with none.
+    `taken` is what the EARLIER deliveries gave (row -> (REF NO, team, ...)): a later workbook may repeat their rows (it may be the same sheet with
+    more rows in it), and a repeated row is not new; a row given a DIFFERENT REF NO than before stops the builder."""
+    taken = taken or {}
+    wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    second = list(wb[wb.sheetnames[0]].iter_rows(values_only=True))[1:]
+    free = collections.defaultdict(list)
+    for line, r in enumerate(rows, start=2):
+        if not refnorm(r[2]): free[same_row(r)].append(line)
+    given, lost, changed = {}, [], []
+    for j, r in enumerate(second, start=2):
+        ref = refnorm(r[2])
+        if not ref: continue
+        k = same_row(r)
+        if not free[k]: lost.append(j); continue
+        line = free[k].pop(0)
+        if line in taken:
+            if taken[line][0] != ref: changed.append(j)
+        else: given[line] = (ref, team_of(r[3]))
+    assert not lost, 'rows of the later sheet that are not, exactly, a row of the first sheet that had no REF NO: ' + ', '.join(map(str, lost))
+    assert not changed, 'rows of the later sheet that give a row another REF NO than an earlier delivery did: ' + ', '.join(map(str, changed))
+    return given
+
+def read(path, mores=()):
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     held = collections.defaultdict(set)
     if OLD in wb.sheetnames:
@@ -82,12 +122,18 @@ def read(path):
     texts = collections.Counter()                             # the officer's own habit: do their rows hold text dates at all?
     for r in rows:
         if r[8] is not None and not isinstance(r[8], (datetime.datetime, datetime.date)) and str(r[8]).strip(): texts[clean(r[0])] += 1
+    given = {}                                                # first-sheet row -> (REF NO, team, the delivery that gave it: 1, 2, ...)
+    for k, m in enumerate(mores, start=1):
+        for line, v in match_more(rows, m, taken=given).items(): given[line] = v + (k,)
     out, noref = [], 0
     for line, r in enumerate(rows, start=2):
-        ref = refnorm(r[2])
+        ref, team = refnorm(r[2]), team_of(r[3])
+        late = given[line][2] if (not ref and line in given) else 0       # which later delivery gave this row its REF NO (0: the first sheet had it)
+        kept = team                                              # the team the first sheet had for this row ('' when it had none)
+        if late: ref, team = given[line][0], given[line][1] or team
         if not ref: noref += 1; continue
         who, v = clean(r[0]), r[8]
-        rec = dict(line=line, by=who, name=clean(r[1]), ref=ref, team=re.sub(r'\s+', ' ', str(r[3] or '')).strip().upper(),
+        rec = dict(line=line, by=who, name=clean(r[1]), ref=ref, team=team, late=late, was=kept,
                    principal=amount(r[4]), loan=amount(r[5]), paid=amount(r[6]), arrears=amount(r[7]), date=None, how='U', cell='')
         if isinstance(v, (datetime.datetime, datetime.date)):
             st = v.date() if isinstance(v, datetime.datetime) else v
@@ -120,7 +166,7 @@ def once(text, a, b):
     assert text.count(a) == 1, 'the template does not hold this exactly once: ' + a[:60]
     return text.replace(a, b)
 
-def blocks(recs, template):
+def blocks(recs, template, base=0):
     codes = {who: chr(65 + i) for i, who in enumerate(sorted({r['by'] for r in recs}))}
     a = template.index('create table if not exists public.demand_import_2025')
     b = template.index('-- END OF DATA BLOCK 1 OF 1')
@@ -137,7 +183,7 @@ def blocks(recs, template):
         if cur and size + len(l) + 1 > room: groups.append(cur); cur, size = [], 0
         cur.append(l); size += len(l) + 1
     if cur: groups.append(cur)
-    out, total = [], 0
+    out, total = [], base
     for n, g in enumerate(groups, start=1):
         total += len(g)
         t = once(tail, "= '%s' as ok" % fingerprint(made_up), "= '%s' as ok" % fingerprint(g))
@@ -146,9 +192,10 @@ def blocks(recs, template):
         t = once(t, "'data block 1 of 1: OK'", "'data block %d of %d: OK'" % (n, len(groups)))
         t = once(t, 'when (select c from n) < 3 then', 'when (select c from n) < %d then' % total)
         t = once(t, '3 as rows_there_should_be_after_this_block', '%d as rows_there_should_be_after_this_block' % total)
-        text = ('-- HISTORIC DEMAND NOTICES, DATA BLOCK %d OF %d: rows of the legal team\'s sheet that have a loan number. It fills a private list and\n'
+        what = ('rows the legal team gave a REF NO later (a second delivery: the list already holds %d rows)' % base) if base else 'rows of the legal team\'s sheet that have a loan number'
+        text = ('-- HISTORIC DEMAND NOTICES, DATA BLOCK %d OF %d: %s. It fills a private list and\n'
                 '-- changes no notice. Paste ALL of it in a NEW tab, see that the last line says END, run. Safe to run again. Run the blocks in order.\n'
-                '-- Its answer must say OK. A block that was cut or altered on the way writes nothing and says so.\n' % (n, len(groups))
+                '-- Its answer must say OK. A block that was cut or altered on the way writes nothing and says so.\n' % (n, len(groups), what)
                 + head + '\n'.join(g) + t + '-- END OF DATA BLOCK %d OF %d\n' % (n, len(groups)))
         assert len(text) < 10000 and not any(l[:1] in (' ', '\t') for l in text.split('\n')) and all(ord(c) < 127 for c in text), 'block %d is not a block the owner can paste' % n
         out.append(text)
@@ -163,22 +210,31 @@ def engine(template, rows):
     return text
 
 if __name__ == '__main__':
-    book, outdir = sys.argv[1], sys.argv[2]
+    args, mores = sys.argv[1:], []
+    while '--more' in args: i = args.index('--more'); mores.append(args[i + 1]); del args[i:i + 2]
+    more = bool(mores)
+    book, outdir = args
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     assert not os.path.abspath(outdir).startswith(root + os.sep), 'the blocks carry customers\' names: write them outside the repository'
-    recs, noref = read(book)
+    recs, noref = read(book, mores)
     template = open(os.path.join(root, 'db', 'TEMPLATE-historic-demand-notices-import.sql'), encoding='utf-8').read()
-    out, codes = blocks(recs, template)
+    first = [r for r in recs if r['late'] < len(mores)]                  # the first sheet's rows and every earlier delivery's: in the list already
+    new = [r for r in recs if r['late'] == len(mores)] if more else recs
+    assert (not more) or new, 'the last workbook gives no row a REF NO that an earlier delivery had not given: nothing to write'
+    out, codes = blocks(new, template, len(first) if more else 0)
     os.makedirs(outdir, exist_ok=True)
     for n, t in enumerate(out, start=1): open(os.path.join(outdir, 'block-%d.sql' % n), 'w', encoding='utf-8').write(t)
     eng = engine(template, len(recs))
     open(os.path.join(outdir, 'engine.sql'), 'w', encoding='utf-8').write(eng)
-    how = collections.Counter(r['how'] for r in recs)
-    rep = ['rows of the sheet with no REF NO (left out): %d' % noref, 'rows with a REF NO (written): %d' % len(recs), 'officers: %d' % len(codes),
+    how = collections.Counter(r['how'] for r in new)
+    rep = (['the list holds %d rows already (the first sheet\'s and %d earlier deliveries\'): not written again' % (len(first), len(mores) - 1), 'this delivery: %d rows written; teams: %d gained (the first sheet had none), %d changed (the second sheet\'s team is written), %d the same, %d none at all' % (len(new),
+              sum(1 for r in new if r['team'] and not r['was']), sum(1 for r in new if r['team'] and r['was'] and r['team'] != r['was']), sum(1 for r in new if r['team'] and r['team'] == r['was']), sum(1 for r in new if not r['team'])),
+            'rows of the sheet that still have no REF NO (left out): %d' % noref] if more else
+           ['rows of the sheet with no REF NO (left out): %d' % noref, 'rows with a REF NO (written): %d' % len(recs)]) + ['officers: %d' % len(codes),
            'how the dates were read: ' + ', '.join('%s %d' % (k, how[k]) for k in 'TCSXxsU' if how[k]),
-           'unreadable (their rows of the sheet, and the cell): ' + '; '.join('%d [%s]' % (r['line'], r['cell']) for r in recs if r['how'] == 'U'),
-           'corrected text (row, cell, read as): ' + '; '.join('%d [%s] %s' % (r['line'], r['cell'], r['date']) for r in recs if r['how'] == 'C'),
-           'by month of the date read: ' + ', '.join('%s: %d' % kv for kv in sorted(collections.Counter(r['date'].strftime('%Y-%m') for r in recs if r['date']).items())),
+           'unreadable (their rows of the sheet, and the cell): ' + '; '.join('%d [%s]' % (r['line'], r['cell']) for r in new if r['how'] == 'U'),
+           'corrected text (row, cell, read as): ' + '; '.join('%d [%s] %s' % (r['line'], r['cell'], r['date']) for r in new if r['how'] == 'C'),
+           'by month of the date read: ' + ', '.join('%s: %d' % kv for kv in sorted(collections.Counter(r['date'].strftime('%Y-%m') for r in new if r['date']).items())),
            'blocks: %d, characters: %s; the engine: %d characters, built for %d rows' % (len(out), ', '.join(str(len(t)) for t in out), len(eng), len(recs))]
     open(os.path.join(outdir, 'report.txt'), 'w', encoding='utf-8').write('\n'.join(rep) + '\n')
     print('\n'.join(rep))
