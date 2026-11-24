@@ -517,10 +517,12 @@ test('the Recovery-by-officer presentation slide is ranked by weekly Rec %, not 
 test('each unit slide carries its own unassigned-teams line, drawn under its total', () => {
   const app = appSrc();
   const view = app.slice(app.indexOf('function presSlides'), app.indexOf('function presApply'));
-  /* Four captions on the deck: the three unit slides' (the early and collection ones also
-     carrying their Count 1 note -- a step not done is said on the screen that expected it) and
-     the legal recovery slide's source line. One "Unassigned:" heading, in uaCap, used thrice. */
-  assert.equal((view.match(/caption:/g) || []).length, 4, 'four slides with a caption');
+  /* Five captions on the deck: the three unit slides' (the early and collection ones also
+     carrying their Count 1 note -- a step not done is said on the screen that expected it), the
+     legal recovery slide's source line, and the legal officers' calls slide's (Part 141: what
+     recovery by phone is, who waits for the later file, how many legal phones are silent).
+     One "Unassigned:" heading, in uaCap, used thrice. */
+  assert.equal((view.match(/caption:/g) || []).length, 5, 'five slides with a caption');
   assert.equal((view.match(/Unassigned:/g) || []).length, 1, 'one heading, in uaCap');
   assert.equal((view.match(/caption: uaCap\(/g) || []).length, 3, 'under three slides');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));
@@ -3588,7 +3590,7 @@ test('the list behind the phone card: the same drawer on a second kind, the same
   assert.match(src, /return \[r\.officer, r\.full_name, r\.ref, r\.team, r\.phone, r\.who, r\.othersTxt, r\.day\]\.some\(/, 'the search reads the lawyer, the customer, the number and the day');
 });
 
-test('recovery by phone beside each lawyer on the dashboard\'s boards and on the Presentation\'s Legal slide, with one line that says the week or names the file (Part 139)', () => {
+test('recovery by phone beside each lawyer on the dashboard\'s boards and on the Presentation\'s legal calls slide, with one line that says the week or names the file (Parts 139 and 141)', () => {
   const app = appSrc();
   const note = new Function('esc', 'money', lgFn_(app, 'lgPhoneNote_', 'p, plain') + '\nreturn lgPhoneNote_;')(lgEsc_, lgMoney_);
   assert.equal(note(null), ''); assert.equal(note(undefined, true), '', 'an answer from before the change says nothing');
@@ -3605,10 +3607,14 @@ test('recovery by phone beside each lawyer on the dashboard\'s boards and on the
   assert.match(dash, /\{key:'phToday', label:'Kwa simu \/ By phone', kind:'money', cls:function\(r\)\{ return r\.phToday>0\?'good':''; \}\}\], sumRow\(b\.legal \|\| \[\], \['teams','customers','owed','tRecovered','phToday'\]\)\)/);
   assert.match(dash, /\{key:'phWeek', label:'Kwa simu \/ By phone', kind:'money', cls:function\(r\)\{ return r\.phWeek>0\?'good':''; \}\}\], sumRow\(b\.legal \|\| \[\], \['teams','customers','owed','recovered','phWeek'\]\),/);
   assert.ok(dash.indexOf("{key:'tPct', label:'Rec %', kind:'pct', target:'rec', from:['tRecovered','owed']}") > 0 && dash.indexOf("{key:'pct', label:'Rec %', kind:'pct', target:'rec', from:['recovered','owed']}") > 0, 'the Rec % stay the notices\' own ratio');
-  // The Presentation's Legal slide: two columns and the same line in its caption.
+  /* The Presentation: recovery by phone sat on the Legal (demand notices) slide for a day; the owner moved it to the legal officers'
+     own calls slide -- "i need their calls slide too, that is the one that should include calls recovery daily and weeekly. leaving
+     the demand recovery slide as it was" (24 Nov 2026, Part 141; test/legal-calls-slide.test.mjs holds that slide). */
   const pres = readFileSync(join(PUBLIC, 'mod', 'present.js'), 'utf-8');
   const slide = pres.slice(pres.indexOf('var lgCap ='), pres.indexOf("slides.push({ id:'legal'") + 900);
-  assert.match(slide, /\+ lgPhoneNote_\(b\.legalPhone, true\);\n\s+slides\.push\(\{ id:'legal', kind:'table'/);
-  assert.match(slide, /\{key:'pct', label:'Rec % \(week\)', kind:'pct', target:'rec', from:\['recovered','owed'\]\},\n\s+col\('phToday','By phone today','money'\), col\('phWeek','By phone \(week\)','money'\)\] \}\);/);
-  assert.match(slide, /title:'Legal recovery — notisi za madai \/ demand notices · kwa simu \/ by phone · leo \/ today, then the week'/);
+  assert.match(slide, /title:'Legal recovery — notisi za madai \/ demand notices · leo \/ today, then the week'/, 'the demand-recovery slide\'s title is as it was');
+  assert.match(slide, /\{key:'pct', label:'Rec % \(week\)', kind:'pct', target:'rec', from:\['recovered','owed'\]\}\] \}\);/, 'and it ends at the week\'s Rec %: no phone column');
+  const calls = pres.slice(pres.indexOf('var lcRows ='), pres.indexOf("slides.push({ id:'legalcalls'") + 1400);
+  assert.match(calls, /lgPhoneNote_\(\{ \.\.\.lcPh, others: \[\] \}, true\)/, 'the line is in the legal calls slide\'s caption');
+  assert.match(calls, /col\('phToday','By phone today','money'\), col\('phWeek','By phone week','money'\)\] \}\);/, 'and the two columns are its last two');
 });

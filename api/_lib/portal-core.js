@@ -14559,6 +14559,58 @@ function legalPhoneWho_(r) {
   if (p && p === pnorm(r.guarantor_contact)) return 'Mdhamini / Guarantor';
   return K(r.match_type) === 'GUARANTOR' ? 'Mdhamini / Guarantor' : 'Namba nyingine / Other number';
 }
+/** THE ROLE A PHONE IS READ AS (handbook Parts 139 and 141): the role of the ONE access code that carries the phone's name, when
+    exactly one does; else the role the phone registered with. It is the sentence of legal_phones() in db/RUN-ME-089, which decides
+    whose calls are stamped ("coalesce((select min(c.role) ... having count(*) = 1), u.role, '')"), written again here because the
+    legal officers' calls slide must list the legal phones that made NO call, and those have no stamped row to read a role from.
+    test/legal-calls-slide.test.mjs holds the two readings together, case by case. */
+export function phoneRoleRead(phoneUser, codeRows) {
+  const name = K(phoneUser && phoneUser.name);
+  const same = name ? (codeRows || []).filter(c => c && c.name != null && K(c.name) === name) : [];
+  const ofCode = same.length === 1 ? same[0].role : null;
+  return ofCode != null ? String(ofCode) : (phoneUser && phoneUser.role != null ? String(phoneUser.role) : '');
+}
+/** THE LEGAL OFFICERS' PHONES, ONE ROW EACH (handbook Part 141) -- "I'VE BEEN SHOCKED BY LEGAL CALLS at presentation: i need
+    their calls slide too, that is the one that should include calls recovery daily and weeekly. leaving the demand recovery slide
+    as it was" (the owner, 24 Nov 2026, after a read-only look showed two legal phones doing the ringing, nine conversations in
+    ten with numbers the system holds for no customer, and three legal phones that had sent no call at all).
+
+    WHO: every phone whose role, read as above, is a legal role (isLegalRole: the one test, the Legal boards' and the phone
+    card's) and that is not switched off -- THE SILENT ONES TOO, at nought: they are the names the meeting most needs. And anybody
+    a phone-recovery line names who is not among them (a phone switched off since), so that the rows always add up to the card.
+    WHAT: today's and the week's call figures are the call boards' own rows for that name (callBoard: one counting rule, Ripoti's);
+    the customers at D.C 2 and above spoken to this week and what they recovered today and this week are the Legal tab's own
+    lines (legalPhoneLines_: the lawyer who spoke longest is credited, the day's recovery once). Null, not nought, where recovery
+    by phone cannot be read (db/RUN-ME-089 not run): a dash on the slide.
+    Arithmetic over what the boards already hold: no read. */
+function legalCallRows_(phoneUsers, codeRows, legalRoleName, callToday, callWeek, phoneCard, phoneLines, today) {
+  const on = !!phoneCard && phoneCard.on === true;
+  const tBy = new Map((callToday || []).map(r => [K(r.agent), r])), wBy = new Map((callWeek || []).map(r => [K(r.agent), r]));
+  const rec = new Map();
+  for (const l of phoneLines || []) {
+    const k = K(l.officer); let o = rec.get(k);
+    if (!o) rec.set(k, o = { officer: l.officer, t: 0, w: 0, n: 0 });
+    o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;
+  }
+  const names = new Map();
+  for (const u of phoneUsers || []) {
+    if (u.active === false) continue;
+    const name = String(u.name || '').trim();
+    if (!name || names.has(K(name)) || !isLegalRole(phoneRoleRead(u, codeRows), legalRoleName)) continue;
+    names.set(K(name), name);
+  }
+  for (const o of rec.values()) if (!names.has(K(o.officer))) names.set(K(o.officer), o.officer);
+  return [...names.entries()].map(([k, name]) => {
+    const t = tBy.get(k) || {}, w = wBy.get(k) || {}, o = rec.get(k);
+    return { officer: name, team: t.team || w.team || '',
+      calls: t.calls || 0, dials: t.dials || 0, connected: t.connected == null ? null : t.connected, connectPct: t.connectPct == null ? null : t.connectPct,
+      portfolio: t.portfolio || 0, duration: t.duration || 0,
+      wCalls: w.calls || 0, wDials: w.dials || 0, wConnected: w.connected == null ? null : w.connected, wConnectPct: w.connectPct == null ? null : w.connectPct,
+      // What the slide marks in red: a legal phone that has sent no call through HOPE Calls this week.
+      silent: !(w.dials || 0),
+      spoken: on ? (o ? o.n : 0) : null, phToday: on ? (o ? o.t : 0) : null, phWeek: on ? (o ? o.w : 0) : null };
+  }).sort((a, b) => (b.phWeek || 0) - (a.phWeek || 0) || b.wCalls - a.wCalls || b.wDials - a.wDials || String(a.officer).localeCompare(String(b.officer)));
+}
 /** One line a customer a day, from the stamped rows: lawyers only, D.C 2 and above only; the lawyer who spoke longest is named
     (a tie goes to the name), the calls and the seconds are every lawyer's, the day's recovery is the customer's, once. */
 function legalPhoneLines_(rows, legalRoleName, noticeDays) {
@@ -15363,6 +15415,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      same rows in the other order rather than a separate calculation -- two boards that could
      disagree about the same week would be worse than no board at all. */
   const callWeekWorst = callWeek.slice().reverse();
+  // The legal officers' phones for their own slide (Part 141): the call boards' rows and the phone-recovery lines, by name. No read.
+  const legalCalls = legalCallRows_(myPhoneUsers, codeRows, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT), callToday, callWeek, legalPhone, legalPhoneLines, today);
 
   /* ---- PMO COLLECTION OFFICERS ----
 
@@ -15589,6 +15643,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
     legalCustomers: legal.customers, legalUnheld: legal.unheld,
     // Recovery by phone for the same week (Part 139): the card's own figures, and the lawyers the board has no row for.
     legalPhone,
+    // The legal officers' phones, one row each, the silent ones too: today's and the week's calls with recovery by phone (Part 141).
+    legalCalls,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
        belongs on the commission panel where the person it concerns can see their own figure;
        a projector in a meeting room is the wrong place for anybody's pay. Building the row

@@ -23,7 +23,9 @@
      7. a read that FAILS is said on the card, and nothing else on the tab is touched;
      8. the dashboard keeps ONE Legal card, and its two lawyers' boards carry "By phone" beside each lawyer with a line that
         says the week and the lawyers who have no row;
-     9. the Presentation's Legal slide carries the two phone columns and the same line.
+     9. the Presentation: the Legal (demand notices) slide is AS IT WAS (the owner, 24 Nov 2026: "leaving the demand recovery
+        slide as it was"), and the legal officers' own calls slide lists every legal phone, the silent one in red, with its
+        calls today and this week and recovery by phone today and for the week, adding up to the card (Part 141).
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -74,6 +76,7 @@ const STAMPED = [
   R(add(LAST, 3), '200', 'MBAGALA', 2, 'u2', 'LAWYER TWO', 'Legal Officer', '0712000200', 40, 1, 52500, 50000, 2500),
   R(add(BEFORE, 2), '100', 'KONGOWE', 3, 'u1', 'LAWYER ONE', 'LEGAL', '0712000100', 55, 1, 125000, 120000, 5000),
 ];
+const CL = (id, officer, team, phone, date, extra = {}) => ({ id, officer, team, phone, call_date: date, duration: 0, portfolio: false, outcome: 'CONNECTED', ref: null, category: null, ...extra });
 const NP = { notice_payments: (store, args) => args.p_refs.map((ref, i) => ({ ref, since: args.p_dates[i], paid: 0, n: 0, last_paid: null, n_phone: 0 })), fold_notice_payments: () => 0 };
 const book = rpc => fakeDb({
   // The only notice is THIS week's: the notices' own floor is this week, so a backward arrow that works is the phone table's doing.
@@ -87,7 +90,26 @@ const book = rpc => fakeDb({
     { code: 'R1', name: 'NOT A LAWYER', role: 'PMO RECOVERY', teams: ['KONGOWE'], tabs: ['legal'] }],
   legal_phone_recovery: STAMPED.map(r => ({ ...r })),
   legal_phone_days: [...new Set(STAMPED.map(r => r.day))].map(day => ({ day, stamped_at: day + 'T12:00:00Z' })),
-  settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }], call_users: [], call_logs: [], roles: [], audit_log: [], defaulter_snapshots: [],
+  settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }], roles: [], audit_log: [], defaulter_snapshots: [],
+  /* THE LEGAL PHONES (Part 141). ONE and TWO ring through the app (TWO's phone is registered as a field officer's: the one access
+     code of her name makes it a lawyer's), ALL made one call, SILENT none this week. A recovery officer's phone is not on the
+     legal officers' slide. */
+  call_users: [
+    { user_id: 'u1', name: 'LAWYER ONE', team: 'KONGOWE', role: 'LEGAL' },
+    { user_id: 'u2', name: 'LAWYER TWO', team: 'MBAGALA', role: 'FIELD OFFICER' },
+    { user_id: 'u3', name: 'LAWYER ALL', team: 'TANDIKA', role: 'LEGAL' },
+    { user_id: 'u4', name: 'LAWYER SILENT', team: 'KONGOWE', role: 'LEGAL' },
+    { user_id: 'u9', name: 'NOT A LAWYER', team: 'KONGOWE', role: 'PMO RECOVERY' },
+  ],
+  call_logs: [
+    CL('k1', 'LAWYER ONE', 'KONGOWE', '0712000100', TODAY, { duration: 130, portfolio: true, ref: '100', category: 'DEFAULTER' }),
+    CL('k2', 'LAWYER ONE', 'KONGOWE', '0799000001', TODAY, { duration: 400 }),
+    CL('k3', 'LAWYER ONE', 'KONGOWE', '0799000002', TODAY, { duration: 2 }),
+    CL('k4', 'LAWYER TWO', 'MBAGALA', '0755000100', TODAY, { duration: 300, ref: '100' }),
+    CL('k5', 'LAWYER TWO', 'MBAGALA', '0712000200', TODAY, { duration: 20, portfolio: true, ref: '200', category: 'DEFAULTER' }),
+    CL('k6', 'LAWYER ALL', 'TANDIKA', '0712000500', TODAY, { duration: 33, portfolio: true, ref: '500', category: 'DEFAULTER' }),
+    CL('k7', 'NOT A LAWYER', 'KONGOWE', '0712000901', TODAY, { duration: 90, portfolio: true, ref: '901' }),
+  ],
 }, { rpc });
 const WORLDS = {
   run: book({ ...NP, ...LEGAL_PHONE_RPC }),
@@ -302,38 +324,114 @@ const notes = await page.evaluate(() => [...document.querySelectorAll('#view .no
 check('8 a line above the boards says the week and the lawyer who has no row', notes.some(n => /By phone:/.test(n) && /week TZS 46,000 \(5 wateja \/ customers\)/.test(n) && /LAWYER ALL TZS 5,000/.test(n) && /never added to the notices figure/.test(n)), JSON.stringify(notes.filter(n => /simu/.test(n))));
 await page.close();
 
-// --- 9. the Presentation's Legal slide
-page = await open('run', 'present');
-await page.waitForFunction(() => window.S && S.slides && S.slides.some(s => s.id === 'legal') && S.presData && S.presData.b, null, { timeout: 15000 }).catch(() => {});
-await page.waitForTimeout(300);
-const slide = await page.evaluate(() => {
-  const i = S.slides.findIndex(s => s.id === 'legal'); if (i < 0) return null;
+// --- 9. the Presentation: the Legal slide as it was, and the legal officers' own calls slide
+const readSlide = (pg, id) => pg.evaluate(id => {
+  const i = S.slides.findIndex(s => s.id === id); if (i < 0) return null;
   const s = S.slides[i]; S.presI = i; presDraw();
   const t = document.querySelector('table.ptable');
-  return { title: s.title, caption: s.caption, head: t ? [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()) : [],
-    cells: t ? [...t.querySelectorAll('tbody tr, tfoot tr')].map(tr => [...tr.children].map(td => td.textContent.trim())) : [], body: document.body.textContent };
-});
-check('9 the Legal slide is built and its title says by phone', !!slide && /kwa simu \/ by phone/.test(slide.title), slide ? slide.title : 'no slide');
+  return { at: i, title: s.title, caption: s.caption || '', head: t ? [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()) : [],
+    cells: t ? [...t.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim())) : [],
+    red: t ? [...t.querySelectorAll('tbody tr')].map(tr => { const td = tr.children[1]; return !!td && /(^| )bad( |$)/.test(td.className); }) : [],
+    body: document.body.textContent };
+}, id);
+/* THE LAYOUT, MEASURED. The wall's figure columns never wrap, so a header or a figure that is wider than its column runs into the
+   one beside it, and a right-aligned cell spills to the LEFT, which scrollWidth does not see (the first form of this check asked
+   scrollWidth and passed on a slide whose headers touched). So the TEXT of every cell is measured against the cell's own box, and
+   the gap between neighbouring texts of a row is kept. The slide is shown as the TV shows it, at three widths. */
+const layoutOf = (pg, id, width) => pg.evaluate(async ({ id, width }) => {
+  const i = S.slides.findIndex(s => s.id === id); if (i < 0) return null;
+  S.presI = i; const pres = document.getElementById('pres'); pres.style.display = 'block'; presDraw(); if (typeof presFit_ === 'function') presFit_();
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const t = document.querySelector('table.ptable'), out = { width, vw: window.innerWidth, spill: 0, minGap: 1e9, worst: '', lines: 0, cols: 0, tw: 0 };
+  if (t) {
+    out.tw = Math.round(t.getBoundingClientRect().width); out.cols = t.querySelectorAll('thead th').length;
+    for (const tr of t.querySelectorAll('tr')) {
+      const cells = [...tr.children].map(el => { const r = document.createRange(); r.selectNodeContents(el); const a = r.getBoundingClientRect(), c = el.getBoundingClientRect();
+        return { el, tl: a.left, tr: a.right, cl: c.left, cr: c.right, w: a.width, h: a.height }; }).filter(c => c.w > 0);
+      cells.forEach((c, k) => {
+        const over = Math.max(c.cl - c.tl, c.tr - c.cr);
+        if (over > 0.5) { out.spill++; out.worst = out.worst || (c.el.textContent.trim().slice(0, 30) + ' by ' + over.toFixed(1) + 'px'); }
+        if (k) out.minGap = Math.min(out.minGap, c.tl - cells[k - 1].tr);
+      });
+    }
+    // how many lines the tallest name cell takes (a wrapped name is right; a figure cell is always one line)
+    const lh = parseFloat(getComputedStyle(t).fontSize) * 1.3;
+    out.lines = Math.max(...[...t.querySelectorAll('tbody tr')].map(tr => { const el = tr.children[1]; const r = document.createRange(); r.selectNodeContents(el); return Math.round(r.getBoundingClientRect().height / lh); }));
+    out.minGap = Math.round(out.minGap * 10) / 10;
+    // the mark is never broken across lines: the characters from the dash to the end sit in one line box
+    const cell = [...t.querySelectorAll('tbody tr td:nth-child(2)')].find(td => /kimya/.test(td.textContent));
+    if (cell && cell.firstChild && cell.firstChild.nodeType === 3) { const tx = cell.firstChild, k = tx.data.indexOf('kimya') - 2; const r = document.createRange(); r.setStart(tx, k); r.setEnd(tx, tx.data.length);
+      out.markWhole = r.getClientRects().length === 1; } else out.markWhole = null;
+  }
+  pres.style.display = 'none';
+  return out;
+}, { id, width });
+page = await open('run', 'present');
+await page.waitForFunction(() => window.S && S.slides && S.slides.some(s => s.id === 'legalcalls') && S.presData && S.presData.b, null, { timeout: 15000 }).catch(() => {});
+await page.waitForTimeout(300);
+const slide = await readSlide(page, 'legal');
+check('9 the Legal slide is as it was: its title says nothing of the phone', !!slide && /Legal recovery/.test(slide.title) && !/simu|phone/i.test(slide.title), slide ? slide.title : 'no slide');
 if (slide) {
-  const it = slide.head.findIndex(h => /By phone today/.test(h)), iw = slide.head.findIndex(h => /By phone \(week\)/.test(h));
-  const two = slide.cells.find(r => r.includes('LAWYER TWO')) || [];
-  check('9 two columns, today and the week, with LAWYER TWO\'s 41,000 in each', it > 0 && iw > 0 && two[it] === '41,000' && two[iw] === '41,000', JSON.stringify([slide.head, two]));
-  check('9 the caption carries the line (the week, the lawyer with no row)', /By phone:/.test(slide.caption) && /TZS 46,000/.test(slide.caption) && /LAWYER ALL TZS 5,000/.test(slide.caption) && /LAWYER ALL TZS 5,000/.test(slide.body), slide.caption.slice(-300));
+  check('9 and it has no By phone column: it ends at the week\'s Rec %', !slide.head.some(h => /By phone/.test(h)) && /Rec % \(week\)/.test(slide.head[slide.head.length - 1] || ''), JSON.stringify(slide.head));
+  check('9 nor the phone line in its caption', !/By phone/.test(slide.caption), slide.caption.slice(-200));
+}
+const lc = await readSlide(page, 'legalcalls');
+// SHOTS=<dir> saves a picture of the slide as the TV shows it.
+if (process.env.SHOTS) {
+  fs.mkdirSync(process.env.SHOTS, { recursive: true });
+  await page.evaluate(() => { document.getElementById('pres').style.display = 'block'; presDraw(); if (typeof presFit_ === 'function') presFit_(); });
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: path.join(process.env.SHOTS, 'legalcalls-slide.png') });
+  await page.evaluate(() => { document.getElementById('pres').style.display = 'none'; });
+}
+check('9 the legal officers\' calls slide is built, right after the Legal slide', !!lc && !!slide && lc.at === slide.at + 1 && /Legal calls/.test(lc.title) && /recovery by phone/.test(lc.title), lc ? lc.title : 'no slide');
+if (lc) {
+  const H = re => lc.head.findIndex(h => re.test(h));
+  const iOff = H(/^Legal officer$/i), iCalls = H(/^Calls today$/i), iReach = H(/^Reached today$/i), iPf = H(/^Portfolio$/i), iWk = H(/^Calls week$/i), iRw = H(/^Reached week$/i),
+    iSp = H(/^DC 2\+ spoken$/i), iT = H(/^By phone today$/i), iW = H(/^By phone week$/i);
+  check('9 nine columns after the row number, in the order the room reads them: today, the week, then the phone',
+    lc.head.length === 10 && [iOff, iCalls, iReach, iPf, iWk, iRw, iSp, iT, iW].join() === '1,2,3,4,5,6,7,8,9', JSON.stringify(lc.head));
+  // On the TV: no text leaves its own column and neighbours keep a gap, from a small projector's width to a full-HD screen's.
+  for (const w of [1024, 1280, 1366, 1500, 1920]) {
+    await page.setViewportSize({ width: w, height: Math.round(w * 9 / 16) });
+    const L = await layoutOf(page, 'legalcalls', w);
+    check('9 at ' + w + ' px wide nothing on the slide leaves its own column and neighbouring texts stay 6 px apart or more', !!L && L.cols === 10 && L.spill === 0 && L.minGap >= 6, JSON.stringify(L));
+    if (w === 1500) check('9 the silent phone\'s name and its mark wrap inside their own cell (two lines at most), the mark kept whole on its line', !!L && L.lines <= 2 && L.markWhole === true, JSON.stringify(L));
+  }
+  // every other table slide is laid out as before: none of them carries the class
+  const other = await page.evaluate(() => S.slides.filter(s => s.tcls).map(s => s.id));
+  check('9 no other slide asks for the wider name column', JSON.stringify(other) === JSON.stringify(['legalcalls']), JSON.stringify(other));
+  await page.setViewportSize({ width: 1500, height: 950 });
+  const rows = lc.cells.filter(r => !/JUMLA/.test(r.join(' ')));
+  const names = rows.map(r => r[iOff].replace(/\s.\skimya\s\/\ssilent$/, ''));
+  check('9 it lists the four legal phones, the one that rings as a field officer too, and not the recovery officer', JSON.stringify(names) === JSON.stringify(['LAWYER TWO', 'LAWYER ALL', 'LAWYER ONE', 'LAWYER SILENT']), JSON.stringify(names));
+  const R9 = n => rows[names.indexOf(n)] || [];
+  check('9 LAWYER TWO: two numbers rung today, one of them a customer of the lawyer\'s own teams, four customers at DC 2+ spoken to, 41,000 by phone today and this week',
+    R9('LAWYER TWO')[iCalls] === '2' && R9('LAWYER TWO')[iPf] === '1' && R9('LAWYER TWO')[iSp] === '4' && R9('LAWYER TWO')[iT] === '41,000' && R9('LAWYER TWO')[iW] === '41,000', JSON.stringify(R9('LAWYER TWO')));
+  check('9 LAWYER ONE: three numbers rung, two of them spoken to; nothing by phone (the other lawyer spoke longest)',
+    R9('LAWYER ONE')[iCalls] === '3' && /^6[67]/.test(R9('LAWYER ONE')[iReach] || '') && /^6[67]/.test(R9('LAWYER ONE')[iRw] || '') && R9('LAWYER ONE')[iW] === '0', JSON.stringify(R9('LAWYER ONE')));
+  const si = names.indexOf('LAWYER SILENT');
+  check('9 the phone that sent no call this week says "kimya / silent" in its own cell, in red, at nought', si >= 0 && /^LAWYER SILENT\s.\skimya\s\/\ssilent$/.test(rows[si][iOff] || '') && lc.red[si] === true
+    && rows[si][iCalls] === '0' && rows[si][iWk] === '0' && rows[si][iW] === '0', JSON.stringify([rows[si], lc.red]));
+  check('9 nobody else is marked', lc.red.filter(Boolean).length === 1 && rows.filter(r => /kimya/.test(r[iOff] || '')).length === 1, JSON.stringify(lc.red));
+  const tot = lc.cells.find(r => /JUMLA/.test(r.join(' '))) || [];
+  check('9 the total row adds the phone columns up to the card: 46,000', tot[iT] === '46,000' && tot[iW] === '46,000', JSON.stringify(tot));
+  check('9 the caption carries the phone line, with nobody "without a row"', /By phone:/.test(lc.caption) && /TZS 46,000/.test(lc.caption) && !/with no row here/.test(lc.caption), lc.caption.slice(0, 260));
+  check('9 it says one customer waits for the later file and one legal phone is silent', /waiting for the later file/.test(lc.caption) && /1 legal phone has sent no call through HOPE Calls this week/.test(lc.caption), lc.caption.slice(-330));
 }
 await page.close();
-// and on a database where the file was not run, the slide and the boards say so and show no figure
+// and on a database where the file was not run: the phones and their calls are shown, the three phone columns are blank, the file is named
 page = await open('notRun', 'present');
-await page.waitForFunction(() => window.S && S.slides && S.slides.some(s => s.id === 'legal') && S.presData && S.presData.b, null, { timeout: 15000 }).catch(() => {});
-const slideOff = await page.evaluate(() => {
-  const i = S.slides.findIndex(s => s.id === 'legal'); if (i < 0) return null;
-  const s = S.slides[i]; S.presI = i; presDraw();
-  const t = document.querySelector('table.ptable');
-  return { caption: s.caption, head: t ? [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()) : [], cells: t ? [...t.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim())) : [] };
-});
-if (slideOff) {
-  const iw = slideOff.head.findIndex(h => /By phone \(week\)/.test(h));
-  check('9 not run: the slide names the file and shows no figure under By phone', /db\/RUN-ME-089/.test(slideOff.caption) && iw > 0 && slideOff.cells.length >= 2 && slideOff.cells.every(r => r[iw] === ''), JSON.stringify([slideOff.caption.slice(-160), slideOff.cells.map(r => r[iw])]));
-} else check('9 not run: the slide is built', false);
+await page.waitForFunction(() => window.S && S.slides && S.slides.some(s => s.id === 'legalcalls') && S.presData && S.presData.b, null, { timeout: 15000 }).catch(() => {});
+const lcOff = await readSlide(page, 'legalcalls');
+if (lcOff) {
+  const H = re => lcOff.head.findIndex(h => re.test(h));
+  const iOff = H(/^Legal officer$/i), iCalls = H(/^Calls today$/i), iSp = H(/^DC 2\+ spoken$/i), iT = H(/^By phone today$/i), iW = H(/^By phone week$/i);
+  const rows = lcOff.cells.filter(r => !/JUMLA/.test(r.join(' ')));
+  check('9 not run: the slide names the file', /db\/RUN-ME-089/.test(lcOff.caption), lcOff.caption.slice(0, 200));
+  check('9 not run: the phones and their calls are shown all the same', rows.length === 4 && (rows.find(r => r[iOff] === 'LAWYER ONE') || [])[iCalls] === '3', JSON.stringify(rows.map(r => [r[iOff], r[iCalls]])));
+  check('9 not run: nothing under the three phone columns, on the rows or the total', iSp > 0 && iT > 0 && iW > 0 && lcOff.cells.every(r => r[iSp] === '' && r[iT] === '' && r[iW] === ''), JSON.stringify(lcOff.cells.map(r => [r[iSp], r[iT], r[iW]])));
+} else check('9 not run: the legal calls slide is built', false);
 await page.close();
 } catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
 
