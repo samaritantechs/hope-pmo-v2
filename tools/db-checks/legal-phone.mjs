@@ -25,7 +25,8 @@
      5. PRIVACY: the API's roles can neither read the two tables nor call the five functions; the service role can.
      6. THE COST on two million deck rows laid in the worst order: a day with no legal call reads no deck; a day with calls reads that
         day's two files and no more; a day nothing changed on reads no deck at the next tick.
-     7. pg_cron, where this server has it: the job is there once, with its schedule and its command, after one run and after two.
+     7. pg_cron, where this server has it: the job is there once, with its schedule and its command, after one run and after two,
+        and RUN BY pg_cron the command calls the tick under its twenty-second limit (two statements in one command).
      8. EVERY ONE of a list of deliberate breaks of the file makes a check fail.
 
        PGHOST=/var/run/postgresql PGUSER=postgres node tools/db-checks/legal-phone.mjs       (NOBIG=1 skips the two million rows, NOBREAKS=1)
@@ -398,9 +399,20 @@ function cron(fails, report, text = FILE) {
     const jobs = psqlTo("select schedule, command from cron.job where jobname = 'legal-phone-tick'", cdb).trim().split('\n').filter(Boolean);
     if (jobs.length !== 1 || jobs[0] !== "*/10 * * * *\tset statement_timeout = '20s'; select public.legal_phone_tick(interval '9 minutes', 1);") note('after two runs the job is not there once with its schedule and its command: ' + JSON.stringify(jobs));
     if (!says || one('select answer from (select 0 as k, null::text as what, null::text as answer ' + says + ') x where k = 3', cdb) !== 'yes (pg_cron)') note('where pg_cron is, the file\'s answer does not say so');
-    report.push('pg_cron (database ' + cdb + '): the job is there once after two runs, every ten minutes, with a twenty-second limit');
+    /* AND THE JOB'S COMMAND RUNS AS WRITTEN: two statements in one command, the first of which must hold for the second. The command
+       is taken back out of cron.job (the file's own words) and given to pg_cron on a two-second schedule, against a stand-in of the
+       tick that writes down the statement timeout it runs under and what it was asked. Nothing of the real book is needed for this. */
+    psqlTo(`create table if not exists public.legal_phone_cron_try (at timestamptz default now(), timeout text, age text, extra integer);
+truncate public.legal_phone_cron_try;
+create or replace function public.legal_phone_tick(p_max_age interval, p_extra integer) returns jsonb language plpgsql as $f$
+begin insert into public.legal_phone_cron_try (timeout, age, extra) values (current_setting('statement_timeout'), p_max_age::text, p_extra); return '{}'::jsonb; end $f$;
+select cron.schedule('legal-phone-tick-try', '2 seconds', (select command from cron.job where jobname = 'legal-phone-tick'));`, cdb);
+    let ran = '';
+    for (let i = 0; i < 40 && !ran; i++) { execFileSync('sleep', ['0.5']); ran = one('select timeout, age, extra from public.legal_phone_cron_try order by at limit 1', cdb); }
+    if (ran !== '20s\t00:09:00\t1') note('run by pg_cron, the job\'s command did not call the tick under a twenty-second limit with nine minutes and one more day: ' + JSON.stringify(ran));
+    report.push('pg_cron (database ' + cdb + '): the job is there once after two runs, every ten minutes; run by pg_cron, its command calls the tick under a twenty-second limit');
   } catch (e) { note('scheduling failed on a server that has pg_cron: ' + errLine(e)); }
-  finally { try { psqlTo("select cron.unschedule(jobid) from cron.job where jobname = 'legal-phone-tick'", cdb); } catch {} }
+  finally { try { psqlTo("select cron.unschedule(jobid) from cron.job where jobname in ('legal-phone-tick', 'legal-phone-tick-try'); drop function if exists public.legal_phone_tick(interval, integer); drop table if exists public.legal_phone_cron_try;", cdb); } catch {} }
   return true;
 }
 

@@ -41,13 +41,13 @@ const R = (day, ref, team, dc, uid, officer, role, phone, secs, calls, ini, cur,
   calls, secs, initial_arrears: ini, current_arrears: cur, recovered: rec, paired: true, stamped_at: day + 'T12:00:00Z', ...extra });
 const stamped = () => [
   R(TODAY, '100', 'KONGOWE', 3, 'u1', 'WAKILI ONE', 'LEGAL', '0712000100', 130, 2, 100000, 60000, 40000),
-  R(TODAY, '100', 'KONGOWE', 3, 'u2', 'wakili two', 'Legal Officer', '255755000100', 300, 1, 100000, 60000, 40000, { match_type: 'GUARANTOR' }),
+  R(TODAY, '100', 'KONGOWE', 3, 'u2', 'wakili two', 'Legal Officer', '255755000100', 300, 1, 100000, 60000, 40000),
   R('2026-07-21', '100', 'KONGOWE', 3, 'u1', 'WAKILI ONE', 'LEGAL', '0799999999', 45, 1, 110000, 100000, 10000),
   R(TODAY, '200', 'MBAGALA', 2, 'u2', 'wakili two', 'Legal Officer', '0712000200', 20, 1, 50000, 50000, 0),
   R('2026-07-22', '300', 'KONGOWE', 1, 'u1', 'WAKILI ONE', 'LEGAL', '0712000300', 60, 1, 30000, 21000, 9000),
   R(TODAY, '400', 'KONGOWE', 4, 'u8', 'PARA ONE', 'PARALEGAL', '0712000400', 500, 3, 40000, 32000, 8000),
   R(TODAY, '500', 'TANDIKA', 2, 'u3', 'WAKILI ALL', 'LEGAL', '0712000500', 33, 1, 20000, 15000, 5000),
-  R('2026-07-23', '600', 'MBAGALA', 5, 'u2', 'wakili two', 'Legal Officer', '0712000600', 80, 2, 70000, null, 0, { paired: false }),
+  R('2026-07-23', '600', 'MBAGALA', 5, 'u2', 'wakili two', 'Legal Officer', '0788888888', 80, 2, 70000, null, 0, { paired: false, match_type: 'GUARANTOR' }),
   R(TODAY, '700', 'KONGOWE', 2, 'u6', 'ADV ONE', 'Advocate - HQ', '0712000700', 90, 1, 30000, 24000, 6000),
   R('2026-07-15', '100', 'KONGOWE', 3, 'u1', 'WAKILI ONE', 'LEGAL', '0712000100', 70, 1, 120000, 113000, 7000),
 ];
@@ -110,11 +110,12 @@ test('the list behind the phone card: any week, the lawyer who spoke longest nam
   const a = rows[0];
   assert.equal(a.officer, 'wakili two', 'two lawyers spoke to her that day: the one who spoke longest is named');
   assert.deepEqual(a.others, ['WAKILI ONE']); assert.equal(a.calls, 3, 'the calls are both lawyers\''); assert.equal(a.secs, 430);
-  assert.equal(a.who, 'Mdhamini / Guarantor', 'the longest call was on the guarantor\'s number (255755... is 0755...)'); assert.equal(a.phone, '255755000100');
+  assert.equal(a.who, 'Mdhamini / Guarantor', 'the longest call was on the guarantor\'s number on that day\'s file (255755... is 0755...), whatever tag the call carried'); assert.equal(a.phone, '255755000100');
   assert.equal(a.initial, 100000); assert.equal(a.current, 60000); assert.equal(a.dc, 3); assert.equal(a.team, 'KONGOWE'); assert.equal(a.full_name, 'CUSTOMER 100');
   assert.equal(a.noticed, true); assert.equal(rows[1].noticed, false, 'on the 21st her notice had not been served');
   assert.equal(rows[1].who, 'Namba nyingine / Other number', 'a number that is neither on the day\'s file: one recorded under Ana namba nyingine');
   assert.equal(rows[4].who, 'Mteja / Customer');
+  assert.equal(rows[3].who, 'Mdhamini / Guarantor', 'a number on neither line of the file that the call app tied to her as a guarantor\'s (an older one): the tag is all there is');
   assert.equal(rows[3].paired, false); assert.equal(rows[3].current, null, 'no later file that day: no current figure, never a nought');
   assert.equal(rows.reduce((s, r) => s + r.recovered, 0), wk.legal.phone.recovered, 'the list adds up to the card');
   assert.equal(rows.reduce((s, r) => s + r.initial, 0), wk.legal.phone.owed);
