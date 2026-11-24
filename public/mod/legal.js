@@ -4,6 +4,21 @@
    the core page defines. Bump `var BUILD` in app.html whenever this file changes -- the
    loader fetches it as /mod/legal.js?v=BUILD. */
 
+/* THE FIRST CARD OF THE TAB -- "Combine these into single card (NOTICES ISSUED 1,485 / TOTAL DEMANDED 1,298,367,000 / FINES CHARGED
+   103,548,000 late-payment penalties)" (the owner, 24 Nov 2026; Part 149). The three figures the register's own rows add up to
+   (notices, what they demanded, the fines in them), one card, a line each: it had been three tiles of its own. */
+function lgIssuedCard_(d){
+  var line = function(label, val, cls, sub){
+    return '<div class="m"><span class="ml">' + esc(label) + '</span><span class="mv' + (cls ? ' ' + cls : '') + '">' + val + '</span>'
+      + (sub ? '<span class="ms">' + esc(sub) + '</span>' : '') + '</div>';
+  };
+  return '<div class="kpi multi" id="lgIssued">'
+    + line('Notices issued', money(d.count))
+    + line('Total demanded', money(d.demanded), 'bad')
+    + line('Fines charged', money(d.fines), 'warnc', 'late-payment penalties')
+    + '</div>';
+}
+
 VIEWS.legal = function(){
   // A fresh open of the tab (go() cleared S.args): whatever the week arrows remembered belongs to the screen before
   // it, and the card below is drawn on this week. A QUIET REFRESH of a remembered screen keeps S.args.lgWeek, so it
@@ -15,9 +30,7 @@ VIEWS.legal = function(){
     var lk = function(id, label, val){
       return ' <a href="#" id="'+id+'" data-val="'+esc(val||'')+'">'+label+'</a>';
     };
-    HEAD = '<div class="kpis">' + kpi('Notices issued', money(d.count))
-      + kpi('Total demanded', money(d.demanded), null, 'bad')
-      + kpi('Fines charged', money(d.fines), 'late-payment penalties', 'warnc')
+    HEAD = '<div class="kpis">' + lgIssuedCard_(d)
       /* THE QUESTION THE REGISTER EXISTS TO ANSWER: does serving a notice bring money back?
          TWO READINGS, TWO CARDS, KEPT APART -- "all i needed is 1. recovery to have difference
          of arrears at notice and current and rec% and 2. recovered amount since notices":

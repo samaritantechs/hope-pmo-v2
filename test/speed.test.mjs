@@ -484,7 +484,11 @@ const BUDGETS = [
   /* 24 Nov, the phone card: ONE more trip (this week's stamped phone rows, legal_phone_week); which role is the lawyers'
      comes with the settings read the tab already makes for its letterhead, so no second one. Measured on this fixture:
      8 before, 9 now, in both worlds; the ceiling of 10 is not raised. The annual deck, which reads this register for
-     its book of notices, passes `phone: false` and is not charged (17 and 15 trips, as before). */
+     its book of notices, passes `phone: false` and is not charged (17 and 15 trips, as before).
+     24 Nov, the grand recovery card (Part 149): NO trip added. The card needs the access codes (who the lawyers are, which teams
+     they hold); the tab's first wave already reads them (branchByTeam lays them over the teams) through readCodesAll, the
+     memoised read the boards make, and a second call made while the first is in flight shares it. Counted on this tab before and
+     after: one read of the codes and nine trips, both times. test/legal-grand.test.mjs pins the one read. */
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN, 10,   800, 10,  800],
   /* The list behind either card: the register, the fold and the week's ledger. */
   /* 3 -> 5 (23 Nov, "add 'Legal Officer' name between s/n and customer name"): the access codes and the legal-role
