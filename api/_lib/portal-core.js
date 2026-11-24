@@ -3498,7 +3498,10 @@ async function legalBrand_(db) {
   const get = k => { const r = rows.find(x => x.key === k); return (r && r.value) || ''; };
   return { logo: get('BRAND_LOGO'), stamp: get('BRAND_STAMP'), sign: get('BRAND_SIGN'),
     signatory: get(LEGAL_SIGNATORY_KEY) || 'RHOBI MSIRA', title: get(LEGAL_TITLE_KEY) || 'MWANASHERIA',
-    phone: get(LEGAL_PHONE_KEY) };
+    phone: get(LEGAL_PHONE_KEY),
+    // Which role is the lawyers' (the LEGAL_ROLE setting, read as settingsMany reads it): this read holds every setting already,
+    // so the Legal tab's phone card asks for it here and makes no settings trip of its own (Part 139).
+    legalRole: String(get(LEGAL_ROLE_KEY)).trim() || LEGAL_ROLE_DEFAULT };
 }
 
 /* EVERYTHING THE LETTER IS PRINTED FROM, in one object, stored on the register row (`letter`,
@@ -3791,14 +3794,19 @@ async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.n
      access codes whose ROLE is legal, by the teams they carry (Part 26; the dashboard's boards and the week's
      [Report] are summed from the same lines), '(unassigned)' when no legal code holds the team. The codes and
      the role setting are the two memoised reads the boards make (fifteen and twenty seconds per instance). */
-  const [notices, ledger, codeRows, cfgS] = await Promise.all([
+  const [notices, ledger, codeRows, cfgS, phone] = await Promise.all([
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, full_name, contact, notice_id, notice_date, arrears_at_notice'), user.teams)),
     legalLedgerWeek_(db, mon, sun, { fold: mon === thisMon }),
     readCodesAll(db, nowMs),
     settingsMany(db, [LEGAL_ROLE_KEY]),
+    /* RECOVERY BY PHONE for the same week (Part 139): one more trip, in this wave, for the week's list only (today's
+       list has no phone card behind it). The answer for a week serves both cards and both lists. */
+    week ? legalPhoneRead_(db, user, mon, sun) : null,
   ]);
   const mine = scoped(user, notices);
-  const L = legalLines_(codeRows, mine, ledger, user, today, mon, sun, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
+  const legalRoleName = cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT);
+  const L = legalLines_(codeRows, mine, ledger, user, today, mon, sun, legalRoleName);
+  const phoneLines = phone && phone.on === true ? legalPhoneLines_(phone.rows, legalRoleName, legalNoticeDays_(mine)) : [];
   const from = week ? mon : today, to = week ? sun : today;
   // One row per customer. A customer stands under every lawyer whose code holds their team (the boards count
   // them under each); here the names are joined, in the roster's order, so the figure is never doubled.
@@ -3824,7 +3832,10 @@ async function legalRecoveries(db, user, { period, weekOf } = {}, nowMs = Date.n
   return { period: week ? 'week' : 'today', from, to, today, weekOf: mon, on, note: on ? null : LEGAL_NOTE, rows,
     totals: { customers: rows.length, paid: rows.reduce((s, r) => s + r.paid, 0),
       owed: rows.reduce((s, r) => s + r.owed, 0), noticed: L.customers },
-    legal: legalCard_(mine, ledger, today, mon, sun, thisMon) };
+    legal: week ? legalWithPhone_(legalCard_(mine, ledger, today, mon, sun, thisMon), legalPhoneCard_(phone, phoneLines, today, mon, sun))
+      : legalCard_(mine, ledger, today, mon, sun, thisMon),
+    // The list behind the phone card: one line a customer a day, the most recovered first.
+    ...(week ? { phoneRows: phoneLines } : {}) };
 }
 
 /* "TAP A ROW TO REPRINT" -- the SAME letter, off the register row's stored `letter`
@@ -4227,8 +4238,9 @@ function noticeTiles_(rows) {
     cleared: customers.filter(c => c.cleared).length, customers: customers.length };
 }
 
-async function demandNotices(db, user, args, nowMs = Date.now()) {
-  const [r, cur, teamBranch, brand, mine] = await Promise.all([
+async function demandNotices(db, user, args, nowMs = Date.now(), { phone: wantPhone = true } = {}) {
+  const weekMon0 = weekMondayKey(nowMs);
+  const [r, cur, teamBranch, brand, mine, phoneWeek] = await Promise.all([
     listTable(db, user, 'demand_notices'),
     defaulterBook(db, user, { type: 'current', notAfter: todayKey(nowMs), teams: user.teams }),
     branchByTeam(db, nowMs),
@@ -4236,6 +4248,10 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
     // The signed-in officer's own number -- the handset they are on, else their registration
     // by name -- so the tab can say what their letters will carry, and from where.
     staffPhone_(db, user, args && args.device),
+    /* THIS WEEK'S RECOVERY BY PHONE, for the second card (Part 139): the stamped rows of the week, ONE trip, in this wave,
+       never fatal (legalPhoneRead_). Which role is the lawyers' comes with the letterhead's read above. A caller with no
+       phone card to draw (the annual deck's book of notices) does not ask: `phone: false`, an option the page cannot send. */
+    wantPhone ? legalPhoneRead_(db, user, weekMon0, addDaysKey(weekMon0, 6)) : null,
   ]);
   const nowBy = {}, dsBy = {};
   for (const d of cur.rows) { nowBy[K(d.ref)] = num(d.arrears); dsBy[K(d.ref)] = dsOf(d); }
@@ -4310,7 +4326,9 @@ async function demandNotices(db, user, args, nowMs = Date.now()) {
   // The card's reading with the bounds its week arrows need (legalCard_: thisWeek, and `since`, the
   // week of the earliest notice, where the backward arrow stops) -- the same object legalRecoveries
   // hands back for any other week, so the card is drawn from one shape.
-  const legal = legalCard_(r.rows, ledgerWeek, today, mon, sun, mon);
+  const legal0 = legalCard_(r.rows, ledgerWeek, today, mon, sun, mon);
+  const legal = !wantPhone ? legal0 : legalWithPhone_(legal0, legalPhoneCard_(phoneWeek, phoneWeek && phoneWeek.on === true
+    ? legalPhoneLines_(phoneWeek.rows, brand.legalRole, legalNoticeDays_(r.rows)) : [], today, mon, sun));
   return { ...r, rows,
     legal,
     demanded: rows.reduce((s, x) => s + num(x.total_demand), 0),
@@ -14471,6 +14489,126 @@ function legalCard_(notices, ledger, today, mon, sun, thisWeek) {
      whose teams were never served a notice could step back week after week, two trips a press, for ever. */
   return { ...legalTotals_(notices, ledger, today, mon, sun), today, mon, sun, thisWeek, since: legalSince_(notices) || thisWeek };
 }
+/* =====================================================================================
+   LEGAL RECOVERY BY PHONE (24 Nov 2026, handbook Part 139).
+   =====================================================================================
+     "Legal officers should be added another card of legal recovery by phone -- because they get
+      responsible to costomers not only those with noptices but also those with 2dc+ before giving
+      out notices" ... "that card will be able to go forward and backward as usual" ... "For all
+      those customer's or guarantors of a defaulter of DC 2+ of a day initial default file, having
+      that number called and recorded in legal officer phone at minimum duration of 5 seconds, if
+      such defaulter has recovered amount after current arrea, then adds-up to recovery by phone
+      of legal" ... "remember capturing phone calls is 2 weeks temporary I think -- that's why I
+      said 'stamp'" -- the owner, 23 Nov 2026.
+
+   THE DATABASE KEEPS THE FACTS, THE PORTAL DECIDES. db/RUN-ME-089 stamps, for each day, every
+   customer of that day's INITIAL defaulters file who was spoken to from a phone whose role LOOKS
+   legal (a superset), one row for each such phone, with the customer's D.C and D.S that morning
+   and what they recovered that day; the rows outlive the call logs. Here the two rules are
+   applied by the ONE definition each already has: WHO IS A LAWYER is isLegalRole (the word
+   LEGAL, or the LEGAL_ROLE setting's name: the boards' own test), and WHO COUNTS is the demand
+   notice's own reading of the deck's D.C against its own number (missedDc_, LEGAL_MIN_DC). A
+   conversation is the call app's own definition (longer than the setting "Minimum seconds to
+   count a call": call_min_secs() in the database, callMinSecsOf here, kept equal by
+   tools/db-checks/reached-rule.mjs), and the number is the customer's, the guarantor's or one
+   recorded under "Ana namba nyingine" because that is what the phone index ties to a customer
+   when a call is synced (call-core.js: nothing was added to /api/call for this).
+
+   ONE LINE A CUSTOMER A DAY. Two lawyers who spoke to the same customer on one day are one
+   line: the one who spoke longest is named, and the day's recovery is counted once. A customer
+   spoken to on two days is two lines, each with that day's own recovery. THE TWO CARDS ARE NEVER
+   ADDED TOGETHER: a noticed customer who was phoned and paid is on both (`noticed` says so).
+
+   WITHOUT THE MIGRATION the answer is { on: false, note } and the card names the file; a read
+   that failed is { on: null, note } and is not remembered. Nothing here throws. */
+const LEGAL_PHONE_FN = 'legal_phone_week';
+const LEGAL_PHONE_FILE = 'db/RUN-ME-089-legal-recovery-by-phone.sql';
+const LEGAL_PHONE_NOTE = 'Urejeshaji kwa simu haurekodiwi bado: endesha ' + LEGAL_PHONE_FILE + ' kwenye SQL editor. '
+  + '/ Recovery by phone is not being recorded yet: run ' + LEGAL_PHONE_FILE + ' in the SQL editor.';
+const LEGAL_PHONE_MISSING_MS = 5 * 60 * 1000;
+const legalPhoneMissing = new WeakMap();            // db -> when "no such function" was last heard
+const legalPhoneFnMissing_ = e => /could not find the function|does not exist|PGRST202|42883|schema cache/i.test(String(e && typeof e === 'object' ? (e.code || '') + ' ' + (e.message || '') : e || ''));
+async function legalPhoneRead_(db, user, from, to) {
+  if (user.teams && !user.teams.length) return { on: true, rows: [], days: [], first: null };            // holds no team: nothing to ask
+  const heard = legalPhoneMissing.get(db);
+  if (heard && Date.now() - heard < LEGAL_PHONE_MISSING_MS) return { on: false, note: LEGAL_PHONE_NOTE };
+  let why = '';
+  try {
+    const { data, error } = await db.rpc(LEGAL_PHONE_FN, { p_from: from, p_to: to,
+      p_teams: user.teams && user.teams.length ? teamMatchList(user.teams) : null });
+    if (!error && data && data.v === 1 && Array.isArray(data.rows)) {
+      return { on: true, rows: scoped(user, data.rows), days: Array.isArray(data.days) ? data.days : [], first: data.first || null };
+    }
+    if (error && legalPhoneFnMissing_(error)) { legalPhoneMissing.set(db, Date.now()); return { on: false, note: LEGAL_PHONE_NOTE }; }
+    why = error ? errWords(error) : 'an answer of another shape';
+  } catch (e) {
+    if (legalPhoneFnMissing_(e)) { legalPhoneMissing.set(db, Date.now()); return { on: false, note: LEGAL_PHONE_NOTE }; }
+    why = errWords(e);
+  }
+  console.warn('[legal] ' + LEGAL_PHONE_FN + ' did not answer: ' + why);
+  return { on: null, note: 'Urejeshaji kwa simu haukusomeka sasa hivi; jaribu tena. / Recovery by phone could not be read just now; try again. (' + why + ')' };
+}
+/** Whose number the officer spoke on: the customer's own, the guarantor's, or another number tied to the customer (one recorded
+    under "Ana namba nyingine", or an older one). The deck's two numbers are read by the call app's own reader (pnorm). */
+function legalPhoneWho_(r) {
+  const p = pnorm(r.phone);
+  if (p && p === pnorm(r.contact)) return 'Mteja / Customer';
+  if (p && p === pnorm(r.guarantor_contact)) return 'Mdhamini / Guarantor';
+  return K(r.match_type) === 'GUARANTOR' ? 'Mdhamini / Guarantor' : 'Namba nyingine / Other number';
+}
+/** One line a customer a day, from the stamped rows: lawyers only, D.C 2 and above only; the lawyer who spoke longest is named
+    (a tie goes to the name), the calls and the seconds are every lawyer's, the day's recovery is the customer's, once. */
+function legalPhoneLines_(rows, legalRoleName, noticeDays) {
+  const by = new Map();
+  for (const r of rows || []) {
+    if (!isLegalRole(r.role, legalRoleName) || missedDc_(r) < LEGAL_MIN_DC) continue;
+    const day = String(r.day || '').slice(0, 10), ref = K(r.ref);
+    if (!ref || !/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+    let l = by.get(day + '|' + ref);
+    if (!l) {
+      const first = noticeDays ? noticeDays.get(ref) : null;
+      by.set(day + '|' + ref, l = { day, ref: r.ref, team: r.team || '', full_name: r.full_name || '', dc: missedDc_(r), ds: r.ds || '',
+        initial: num(r.initial_arrears), current: r.current_arrears == null ? null : num(r.current_arrears), recovered: Math.max(0, num(r.recovered)),
+        paired: !!r.paired, calls: 0, secs: 0, best: null, names: [],
+        // Served a demand notice on or before that day: such a customer can be on the notices card too.
+        noticed: !!first && first <= day });
+    }
+    const o = { officer: String(r.officer == null ? '' : r.officer).trim() || '(unknown)', secs: num(r.secs), phone: r.phone || '', who: legalPhoneWho_(r) };
+    l.calls += num(r.calls); l.secs += o.secs;
+    if (!l.names.includes(o.officer)) l.names.push(o.officer);
+    if (!l.best || o.secs > l.best.secs || (o.secs === l.best.secs && o.officer < l.best.officer)) l.best = o;
+  }
+  return [...by.values()].map(({ best, names, ...l }) => ({ ...l, officer: best.officer, phone: best.phone, who: best.who, others: names.filter(n => n !== best.officer) }))
+    .sort((a, b) => b.recovered - a.recovered || a.day.localeCompare(b.day) || String(a.full_name).localeCompare(String(b.full_name)));
+}
+/** The first notice day of each customer (ref -> 'YYYY-MM-DD'), for `noticed`. */
+function legalNoticeDays_(notices) {
+  const m = new Map();
+  for (const n of notices || []) { const ref = K(n.ref), d = String(n.notice_date || '').slice(0, 10); if (ref && d && (!m.has(ref) || d < m.get(ref))) m.set(ref, d); }
+  return m;
+}
+/** THE PHONE CARD's figures for the week mon..sun (and for `today` inside it): what the customers the lawyers spoke to recovered on
+    the days they were spoken to, over what those customers owed on those mornings. */
+function legalPhoneCard_(src, lines, today, mon, sun) {
+  if (!src || src.on !== true) return { on: src ? src.on : false, note: (src && src.note) || LEGAL_PHONE_NOTE };
+  const wk = (lines || []).filter(l => l.day >= mon && l.day <= sun), td = wk.filter(l => l.day === today);
+  const sum = (a, k) => a.reduce((s, l) => s + l[k], 0);
+  const at = (src.days || []).map(d => String(d.at || '')).filter(Boolean).sort().pop() || null;
+  const owed = sum(wk, 'initial'), recovered = sum(wk, 'recovered'), tOwed = sum(td, 'initial'), tRecovered = sum(td, 'recovered');
+  return { on: true, note: null, recovered, owed, pct: pctOf(recovered, owed), tRecovered, tOwed, tPct: pctOf(tRecovered, tOwed),
+    spoken: wk.length, customers: new Set(wk.map(l => K(l.ref))).size, paid: wk.filter(l => l.recovered > 0).length,
+    tSpoken: td.length, tPaid: td.filter(l => l.recovered > 0).length,
+    // Days of the week whose later file is not in yet: their customers are counted as spoken to, with nothing recovered yet.
+    waiting: wk.filter(l => !l.paired).length, noticed: wk.filter(l => l.noticed && l.recovered > 0).length,
+    noticedRecovered: sum(wk.filter(l => l.noticed), 'recovered'), stampedAt: at, first: src.first || null };
+}
+/** One `legal` object for both cards: the notices card's reading (legalCard_) with the phone card's beside it (`phone`). The two
+    share the week arrows, so the backward arrow's floor (`since`) is the EARLIER of the first notice's week and the first week the
+    phone table holds a row for: a lawyer whose teams were never served a notice can still step back to last week's calls. */
+function legalWithPhone_(legal, phoneCard) {
+  const first = phoneCard && phoneCard.on === true && /^\d{4}-\d{2}-\d{2}$/.test(String(phoneCard.first || '')) ? weekMondayKey(Date.parse(phoneCard.first + 'T09:00:00Z')) : null;
+  return { ...legal, since: first && (!legal.since || first < legal.since) ? first : legal.since, phone: phoneCard };
+}
 /** The lawyers: the access codes whose ROLE is legal -- the same isLegalRole the staff roster
     and the portfolio tab use (the word LEGAL, or the configured LEGAL_ROLE name). A recovery or
     credit code that merely holds the legal tab is NOT a lawyer here, which is what "its mixed
@@ -14706,7 +14844,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      here too. The tests' fake database returns only what is asked for, so a forgotten column
      fails a test rather than quietly reporting zero. */
   const [teamRows, expWeek, tomorrow, defWeek, fu, loansAll, callSrc, csRoster, phoneUsers,
-         codeRows, cfgS, adj, expInitWeek, notices, ledger] = await Promise.all([
+         codeRows, cfgS, adj, expInitWeek, notices, ledger, legalPhoneSrc] = await Promise.all([
     readTeamsAll(db),
     expectedTotalsInRange(db, { type: 'today', from: mon, to: fri, teams: user.teams }),
     earlyList(db, { today, teams: user.teams }),
@@ -14755,6 +14893,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        ROLE -- no roles-table read, since the tab is not what makes a lawyer. */
     fetchAll(() => onTeams(db.from('demand_notices').select('ref, team, notice_date, arrears_at_notice'), user.teams)),
     legalLedgerWeek_(db, mon, sun),
+    /* RECOVERY BY PHONE on the same slide -- "find a way to include recovery by phone of legal recovery in the sdame
+       legal recovery slide at presentation" (Part 139). One trip, in this wave: the week's stamped rows. */
+    legalPhoneRead_(db, user, mon, sun),
   ]);
   const pmoRoleName = cfgS.get(PMO_ROLE_KEY, PMO_ROLE_DEFAULT);
   const teamBy = {};
@@ -14766,6 +14907,31 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const myPhoneUsers = scoped(user, phoneUsers);
   const legal = legalBoard_(codeRows, scoped(user, notices), ledger, user, today, mon, sun,
     cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT));
+  /* BY PHONE, BESIDE EACH LAWYER (Part 139). The lines are the Legal tab's own (legalPhoneLines_: lawyers only, D.C 2
+     and above, one line a customer a day, the lawyer who spoke longest named); a row of the board takes the lines that
+     name its lawyer (by name, as the call app ties a phone to its access code). Null on every row until db/RUN-ME-089
+     is run: a dash, never a nought. Lines whose lawyer has no row of the board (a lawyer who holds every team, a name
+     the board does not carry) are added up in `legalPhone.others`, so the slide's caption can say them. */
+  const legalPhoneLines = legalPhoneSrc.on === true
+    ? legalPhoneLines_(legalPhoneSrc.rows, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT), legalNoticeDays_(scoped(user, notices))) : [];
+  const legalPhone = legalPhoneCard_(legalPhoneSrc, legalPhoneLines, today, mon, sun);
+  {
+    const byOfficer = new Map();
+    for (const l of legalPhoneLines) {
+      const k = K(l.officer); let o = byOfficer.get(k);
+      if (!o) byOfficer.set(k, o = { officer: l.officer, t: 0, w: 0, n: 0 });
+      o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;
+    }
+    for (const row of legal.rows) {
+      const o = legalPhone.on === true ? byOfficer.get(K(row.officer)) : null;
+      row.phToday = legalPhone.on === true ? (o ? o.t : 0) : null;
+      row.phWeek = legalPhone.on === true ? (o ? o.w : 0) : null;
+      row.phSpoken = legalPhone.on === true ? (o ? o.n : 0) : null;
+      if (o) byOfficer.delete(K(row.officer));
+    }
+    if (legalPhone.on === true) legalPhone.others = [...byOfficer.values()].map(o => ({ officer: o.officer, tRecovered: o.t, recovered: o.w, spoken: o.n }))
+      .sort((a, b) => b.recovered - a.recovered || String(a.officer).localeCompare(String(b.officer)));
+  }
   /* Resolve a deck the SAME way the dashboard card does: by date, type AND WEEKDAY.
      Ignoring weekday here was the bug behind "initial right, current bigger, recovery
      negative". A day can carry decks stamped with more than one weekday -- Monday's baseline
@@ -15418,6 +15584,8 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
        `legalNote`; `legalAll` names the lawyers who hold every team and are not ranked. */
     legal: legal.rows, legalOn: legal.on, legalNote: legal.note, legalAll: legal.allTeams,
     legalCustomers: legal.customers, legalUnheld: legal.unheld,
+    // Recovery by phone for the same week (Part 139): the card's own figures, and the lawyers the board has no row for.
+    legalPhone,
     /* THE PUBLIC SHAPE, built by pmo.js rather than by leaving fields off here. Commission
        belongs on the commission panel where the person it concerns can see their own figure;
        a projector in a meeting room is the wrong place for anybody's pay. Building the row

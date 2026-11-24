@@ -315,13 +315,19 @@ function presSlides(){
       + '<div>Wateja wenye notisi / noticed customers: ' + money(b.legalCustomers || 0)
       + ' · malipo yaliyorekodiwa dhidi ya notisi (REF# au simu), mara moja kwa mteja / payments recorded against notices (REF# or phone), once per customer</div>'
       + ((b.legalAll || []).length ? '<div>Wanasheria wa timu zote, hawapangwi / holding every team, not ranked: ' + esc(b.legalAll.join(', ')) + '</div>' : '')
-      + ((b.legalUnheld || []).length ? '<div>Timu zisizo na mwanasheria / teams no legal code holds: ' + esc(b.legalUnheld.join(', ')) + '</div>' : '');
-    slides.push({ id:'legal', kind:'table', title:'Legal recovery — notisi za madai / demand notices · leo / today, then the week',
+      + ((b.legalUnheld || []).length ? '<div>Timu zisizo na mwanasheria / teams no legal code holds: ' + esc(b.legalUnheld.join(', ')) + '</div>' : '')
+      /* RECOVERY BY PHONE ON THE SAME SLIDE -- "find a way to include recovery by phone of legal recovery in the sdame legal
+         recovery slide at presentation" (the owner, 23 Nov 2026; Part 139). Two columns beside each lawyer (today, the week):
+         what the customers at DC 2 and above they spoke to by phone recovered on those days; and one line here with the
+         week's figure, the lawyers who have no row, or the file to run. Its own columns: the Rec % stay the notices'. */
+      + lgPhoneNote_(b.legalPhone, true);
+    slides.push({ id:'legal', kind:'table', title:'Legal recovery — notisi za madai / demand notices · kwa simu / by phone · leo / today, then the week',
       caption: lgCap, rows:(b.legal||[]).slice(0,12),
       cols:[col('officer','Legal officer'), col('teams','Teams','num'), col('customers','Customers','num'),
         col('owed','Owed at notice','money'),
         col('tRecovered','Recovered today','money'), {key:'tPct', label:'Rec % (today)', kind:'pct', target:'rec', from:['tRecovered','owed']},
-        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec', from:['recovered','owed']}] });
+        col('recovered','Recovered (week)','money'), {key:'pct', label:'Rec % (week)', kind:'pct', target:'rec', from:['recovered','owed']},
+        col('phToday','By phone today','money'), col('phWeek','By phone (week)','money')] });
     /* DAY PROGRESS -- the three office units from the day's FIRST upload to its latest.
          "we'll need to see who pushed more percentages and who is the most stuck guy behind"
        One slide, three columns, each ranked on the percentage points gained since the day's

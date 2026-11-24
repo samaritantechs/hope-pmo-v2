@@ -21,7 +21,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fakeDb } from './fake-db.mjs';
-import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, CALL_BOARD_RPC } from './snapshot-totals-rpc.mjs';
+import { SNAPSHOT_TOTALS_RPC, UPLOAD_STATUS_RPC, LOAN_STAGE_RPC, STORAGE_USAGE_RPC, LOAN_TOTALS_RPC, LOAN_MONTH_RPC, EXPDF_RECOVERY_RPC, CALL_BOARD_RPC, LEGAL_PHONE_RPC } from './snapshot-totals-rpc.mjs';
 
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
@@ -479,17 +479,27 @@ const BUDGETS = [
      9 -> 10: the week's ledger rows for the Recovered leo / this week cards -- "add recovered
      leo and recovered weekly cards at demand notice pannel" -- the dashboard card's own
      reading, so the two screens say one figure. No fold trip: notice_payments just folded. */
+  /* 24 Nov, the phone card: ONE more trip (this week's stamped phone rows, legal_phone_week); which role is the lawyers'
+     comes with the settings read the tab already makes for its letterhead, so no second one. Measured on this fixture:
+     8 before, 9 now, in both worlds; the ceiling of 10 is not raised. The annual deck, which reads this register for
+     its book of notices, passes `phone: false` and is not charged (17 and 15 trips, as before). */
   ['Demand notices (legal)',  'demandNotices',       {}, ADMIN, 10,   800, 10,  800],
   /* The list behind either card: the register, the fold and the week's ledger. */
   /* 3 -> 5 (23 Nov, "add 'Legal Officer' name between s/n and customer name"): the access codes and the legal-role
      setting, so each row names the lawyer whose code holds the customer's team -- the two memoised reads the dashboard's
      legal boards already make (readCodesAll fifteen seconds, settings twenty, per instance); a cold instance pays them,
      a warm one does not, and this fixture is always cold. A drawer opened by a tap, never a sync or an upload. */
-  ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 5, 800, 5, 800],
+  /* 5 -> 6 (24 Nov, "Legal officers should be added another card of legal recovery by phone"): the week's stamped phone
+     rows, ONE small answer of one value (legal_phone_week, db/RUN-ME-089), in the same wave, for the WEEK's list only
+     (today's list asks nothing more: test/legal-phone.test.mjs). That one answer serves the phone card and the list behind
+     it for the week the arrows are on; the adding up is done here over a few hundred rows. Until the file is run it is one
+     cheap refusal, remembered five minutes for each instance. A tap or an arrow press, never a sync or an upload. */
+  ['Legal recoveries list',   'legalRecoveries',     { period: 'week' }, ADMIN, 6, 800, 6, 800],
   /* ANOTHER WEEK (the Legal tab's week arrows, 23 Nov): the register and that week's ledger, plus the two memoised reads
      above, FOUR trips -- no fold, since the tab folded when it opened and what is filed for a week that has gone is all
      there is to read. Never more than this week's list asks, which is the ceiling a press of an arrow must keep. */
-  ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 4, 800, 4, 800],
+  /* 4 -> 5 (24 Nov): that week's stamped phone rows, the same one answer as above. Still never more than this week's list. */
+  ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 5, 800, 5, 800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
@@ -591,7 +601,9 @@ const WORLDS = [
      (2026-11-20): 26 trips before the change, 27 un-migrated (one cheap failed call, remembered five minutes per server
      instance), 21 here, unchanged by it: the function REPLACES the week's read. Budgets unchanged: the ceilings above are
      far over all of these. */
-  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC, ...EXPDF_RECOVERY_RPC, ...CALL_BOARD_RPC } }, 6, 7],
+  /* db/RUN-ME-089 (legal_phone_week) likewise: the Officer boards, the Legal tab and the week's Legal list each ask it once
+     (measured 24 Nov: Officer boards 27 -> 28 un-migrated and 21 -> 22 here; the ceilings above are far over both). */
+  ['team-day totals', { rpc: { ...SNAPSHOT_TOTALS_RPC, ...LOAN_STAGE_RPC, ...STORAGE_USAGE_RPC, ...LOAN_TOTALS_RPC, ...LOAN_MONTH_RPC, ...EXPDF_RECOVERY_RPC, ...CALL_BOARD_RPC, ...LEGAL_PHONE_RPC } }, 6, 7],
 ];
 
 for (const [world, opts, tripIdx, rowIdx] of WORLDS) {

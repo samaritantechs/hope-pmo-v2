@@ -674,3 +674,22 @@ export const CALL_BOARD_OLD_RPC = {
     return { w: boardRowsFromLogs(rows, a.p_from, a.p_to, -Infinity), t: boardRowsFromLogs(rows, a.p_day, a.p_day, -Infinity) };
   },
 };
+
+/* db/RUN-ME-089's READ: legal_phone_week(p_from, p_to, p_teams) -- recovery by phone for the lawyers (handbook Part 139).
+   What the database STAMPS (who was spoken to from a legal phone, their D.C that morning, what they recovered that day) is held to a
+   model on a real PostgreSQL by tools/db-checks/legal-phone.mjs, not mirrored here. This stands in for what the READ answers, exactly:
+   ONE value (never a row set, so no 1,000-row cap), the stamped rows of the range and of the teams asked for (exact team spellings,
+   as `= any (p_teams)` matches) in order of day, customer and phone, when each day of the range was stamped, and the first day
+   that holds a row at all. A test puts the rows a stamp would have written into the store's `legal_phone_recovery`. */
+export const LEGAL_PHONE_RPC = {
+  legal_phone_week: (store, a = {}) => {
+    const all = ((store.legal_phone_recovery || {}).rows || []);
+    const inRange = d => String(d) >= String(a.p_from) && String(d) <= String(a.p_to);
+    const cmp = (x, y) => (x < y ? -1 : x > y ? 1 : 0);
+    const rows = all.filter(r => inRange(r.day) && (a.p_teams == null || a.p_teams.includes(r.team)))
+      .map(r => ({ ...r })).sort((x, y) => cmp(String(x.day), String(y.day)) || cmp(String(x.ref), String(y.ref)) || cmp(String(x.user_id), String(y.user_id)));
+    const days = ((store.legal_phone_days || {}).rows || []).filter(d => inRange(d.day))
+      .map(d => ({ day: d.day, at: d.stamped_at })).sort((x, y) => cmp(String(x.day), String(y.day)));
+    return { v: 1, tick: { stamped: [] }, first: all.length ? all.map(r => String(r.day)).sort()[0] : null, days, rows };
+  },
+};
