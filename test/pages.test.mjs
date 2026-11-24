@@ -1972,7 +1972,7 @@ test('every paint wires the whole screen: wireForms runs from paintNow_ and pain
   const paintNow = /function paintNow_\(\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(paintNow, 'paintNow_ is where it was');
   assert.match(paintNow[0], /wireTable\(rows, ONROW\);\s*\n\s*wireTableSearch\(\);\s*\n\s*wireBar\(\);\s*\n\s*wireOfficerFind\(\);\s*\n\s*wireForms\(\);/, 'the table repaint wires the head too, after the bar');
-  assert.match(app, /function paintHeadOnly\(\)\{ \$\('#view'\)\.innerHTML = HEAD; wireBar\(\); wireForms\(\); \}/, 'a screen with no table too');
+  assert.match(app, /function paintHeadOnly\(\)\{ \$\('#view'\)\.innerHTML = HEAD \+ \(S\.tail \|\| ''\); wireBar\(\); wireForms\(\); \}/, 'a screen with no table too (and what a screen draws under its list, Part 152)');
   const draw = /function drawView_\(\)\{[\s\S]*?\n\}\n/.exec(app);
   assert.ok(draw && !/wireForms/.test(draw[0]), 'drawView_ does not wire a second time (paint already did)');
   assert.match(draw[0], /if \(S\.cols && S\.cols\.length\) paint\(\); else paintHeadOnly\(\);\s*\n\s*if \(window\.bpWire_\) bpWire_\(\);[^\n]*\n\s*imprestOpenDeepLink_\(\);/, 'and keeps the two once-only hooks after the paint');
@@ -2097,13 +2097,15 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
      all card neccesary": every card is a pill (data-arg="show"), lit when chosen; Taken, Awaiting HR, Outstanding-before and
      Reporters are the added ones; the list follows the dates and opens newest first, without the report button. */
   assert.ok(/function dedCard_\(key, on, label, value, sub, cls\)/.test(view) && /data-arg="show" data-val="' \+ key \+ '" role="button" tabindex="0"/.test(view), 'a card is a pill of the bar');
-  for (const k of ['all', 'taken', 'topay', 'proposed', 'deducted', 'remaining', 'nohr', 'prev', 'reporters']) assert.ok(new RegExp("card\\('" + k + "', ").test(view), 'card ' + k);
-  assert.ok(/S\.rows = rows\.filter\(DED_SHOW_\[show\]\.keep\);/.test(view) && /show === 'prev'/.test(view) && /show === 'reporters'/.test(view), 'each card opens its own list');
+  // THE REPORTERS CARD IS GONE (Part 152): it swapped the cases list for the earners' list, which is now under the list, always.
+  for (const k of ['all', 'taken', 'topay', 'proposed', 'deducted', 'remaining', 'nohr', 'prev']) assert.ok(new RegExp("card\\('" + k + "', ").test(view), 'card ' + k);
+  assert.ok(!/card\('reporters'/.test(view) && !/reporters:\s*\{ label/.test(view) && !/show === 'reporters'/.test(view), 'no Walioripoti card, no list it opens');
+  assert.ok(/S\.rows = rows\.filter\(DED_SHOW_\[show\]\.keep\);/.test(view) && /show === 'prev'/.test(view), 'each card opens its own list');
   /* "At Makato ya PMO / PMO Deduction Orodha / List, remove branch column" (the owner, 24 Nov 2026; Part 143): the list goes from
      Team straight to the customer, and no column of any of the tab's three lists is the branch. */
   assert.ok(view.includes("col('dept','Dept'),") && view.includes("col('team','Team'), col('customer','Mteja / Customer'), col('ref','REF NO'),"), 'Dept, Team, then the customer');
   assert.doesNotMatch(view, /col\('branch'/, 'no Branch column on the deductions tab');
-  assert.equal((view.match(/S\.cols = \[/g) || []).length, 3, 'its three lists: the cases, the balances before, the reporters');
+  assert.equal((view.match(/S\.cols = \[/g) || []).length, 2, 'its two lists: the cases and the balances before (the earners are a board under them)');
   assert.ok(/if \(S\.sort == null\)\{ S\.sort = 'submitted_at'; S\.asc = false; \}/.test(view), 'newest first on the tab\'s first paint');
   assert.ok(/The list follows the dates you pick, newest first/.test(view), 'said on the screen');
   assert.ok(/\.kpi\.tap\{cursor:pointer/.test(app) && /\.kpi\.tap\.on\{border-color:var\(--b500\)/.test(app), 'the tappable card style, lit when chosen');
@@ -2427,7 +2429,7 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/\$\('#asActive'\)\.onclick = function\(\)\{ setStatus\('Active'\); \}/.test(form) && /\$\('#asInactive'\)\.onclick = function\(\)\{ setStatus\('Inactive'\); \}/.test(form) && /srv\('advStaffStatus', \{ id: x\.id, status: next \}\)/.test(form), 'each button sets its own state, after a confirm');
   assert.ok(/\.btn\.good\{background:var\(--ok\)/.test(appSrc()), 'the green button style');
   assert.ok(/Read-only list of your zones\\' staff/.test(staffV) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(staffV), 'a reader is told what to send for a change');
-  assert.ok(/S\.foldDot=''; S\.fit=false;/.test(appSrc()), 'go() clears it, so no other tab inherits the wrap');
+  assert.ok(/S\.foldDot=''; S\.tail=''; S\.fit=false;/.test(appSrc()), 'go() clears it (and what a screen draws under its list, Part 152), so no other tab inherits the wrap');
   assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class');
   assert.ok(/@media \(min-width:900px\)\{\s*\.scroll\.fit th,\.scroll\.fit td\{white-space:normal;overflow-wrap:anywhere/.test(appSrc()), 'cells wrap on a laptop; a phone keeps the sideways scroll');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
@@ -3954,4 +3956,112 @@ test('the list behind the dashboard\'s Legal card: a summary of notices, calls a
   assert.match(dr, /phHtml = board\('lgPh', lgPhoneBoardTitle_\(d\), lgPhoneSub_\(d, prow, dl\.phone\.all\), prow, dl\.phone\.cols, sumRow\(prow, \['calls', 'secs', 'initial', 'recovered'\]\)\);/, 'the phone board is the Legal tab\'s own, one search for both');
   assert.match(dr, /var prow = dl\.phone\.all\.filter\(function\(r\)\{ return lgPhoneHit_\(r, q\); \}\);/, 'the one search reaches the phone board too');
   assert.match(dr, /host\.innerHTML = \(all\.length\s*\? board\('lgRec'/, 'the payments board is first');
+});
+
+/* THE PMO DEDUCTION TAB'S EARNERS' TABLE AND THE ADMIN'S COMMISSION SETTINGS (handbook Part 152) -- "the bluedot at Makato ya PMO / PMO
+   Deduction opens commisions, it just kills the meaning - remove it there but under the makato table add the earner's table and as admin
+   could have copmmission settings alone, i need to set earners amount there - b/se like now its 10,000 per case sometimes the amount
+   changes to boost followup" (the owner, 24 Nov 2026). The builders and the two handlers are RUN, not read. */
+const dedStand_ = () => ({
+  col: (key, label, kind) => ({ key, label, kind }),
+  sumRow: (rows, fields) => ({ sum: fields.map(f => rows.reduce((s, r) => s + (+r[f] || 0), 0)) }),
+  board: (id, title, sub, rows, cols, total) => '[board ' + JSON.stringify({ id, title, sub, rows: rows.length, cols: cols.map(c => c.label), total }) + ']',
+});
+const dedBuilders_ = () => {
+  const src = [['dedRateNote_', 'd'], ['dedEarnBoard_', 'd, reps'], ['dedRatesPanel_', 'd']].map(([n, a]) => lgFn_(page('deduct'), n, a)).join('\n');
+  const s = dedStand_();
+  return new Function('esc', 'money', 'board', 'col', 'sumRow', 'today', src + '\nreturn { dedRateNote_, dedEarnBoard_, dedRatesPanel_ };')(lgEsc_, lgMoney_, s.board, s.col, s.sumRow, () => '2026-07-24');
+};
+
+test('the earners\' table and the commission settings are drawn from the server\'s answer: a board under the cases, and for the admin a card with the form and the dated amounts (Part 152)', () => {
+  const m = dedBuilders_();
+  // The amount in words: one amount for the whole window, or each amount with the day it began.
+  assert.equal(m.dedRateNote_({ rate: 10000 }), 'TZS 10,000 kwa kila kesi / per unique case', 'no steps: the amount in force');
+  assert.equal(m.dedRateNote_({ rate: 15000, rateSteps: [{ from: '2026-07-01', tzs: 15000 }] }), 'TZS 15,000 kwa kila kesi / per unique case', 'one amount all window');
+  assert.equal(m.dedRateNote_({ rate: 15000, rateSteps: [{ from: '2026-07-01', tzs: 10000 }, { from: '2026-07-17', tzs: 15000 }] }),
+    'TZS 10,000 kuanzia / from 2026-07-01 · TZS 15,000 kuanzia / from 2026-07-17 kwa kila kesi / per unique case', 'two amounts: each with the day it began');
+  // The board: its id, the window in its title, the amount note, one row for each reporter, the three columns, a total row.
+  const d = { on: true, from: '2026-07-01', to: '2026-07-24', rate: 15000, rateSteps: [{ from: '2026-07-01', tzs: 15000 }] };
+  const reps = [{ reporter: 'R ONE', cases: 3, earnings: 35000 }, { reporter: 'R TWO', cases: 1, earnings: 15000 }];
+  const html = m.dedEarnBoard_(d, reps), b = JSON.parse(html.slice('[board '.length, -1));
+  assert.equal(b.id, 'dedEarn'); assert.ok(b.title.includes('Wapataji wa malipo / Earners') && b.title.includes('2026-07-01') && b.title.includes('2026-07-24'));
+  assert.equal(b.sub, m.dedRateNote_(d)); assert.equal(b.rows, 2);
+  assert.deepEqual(b.cols, ['Aliyeripoti / Reporter', 'Kesi / Unique cases', 'Malipo / Earnings']);
+  assert.deepEqual(b.total.sum, [4, 50000], 'the total row adds the cases and the earnings');
+  assert.equal(m.dedEarnBoard_({ ...d, on: false }, reps), '', 'the deductions table is not there (RUN-ME-043): nothing drawn');
+  assert.match(m.dedEarnBoard_(d, []), /Hakuna kesi katika kipindi hiki[\s\S]*No cases in this window/, 'no cases: said, not an empty table');
+  // The settings card: the amount now and the base, the form (an amount, a from date that starts on today, Save), the dated amounts with a way out of each.
+  const panel = m.dedRatesPanel_({ rate: 15000, rateBase: 10000, rates: [{ from: '2026-07-17', tzs: 15000 }, { from: '2026-07-24', tzs: 13000 }] });
+  assert.ok(/id="dedRates"/.test(panel) && /admin pekee \/ admin only/.test(panel), 'its own card, said to be the admin\'s');
+  assert.ok(panel.includes('Amount per unique case now: <b>TZS 15,000</b>') && panel.includes('base TZS 10,000') && panel.includes('DEDUCTION_REPORTER_TZS'), 'the amount in force and the base');
+  assert.ok(/id="dedRateTzs"/.test(panel) && /id="dedRateFrom" type="date" value="2026-07-24"/.test(panel) && /id="dedRateSave"/.test(panel), 'the form');
+  assert.deepEqual([...panel.matchAll(/data-dedrate-del="([^"]+)"/g)].map(x => x[1]), ['2026-07-17', '2026-07-24'], 'a way to take each entry out');
+  assert.ok(panel.includes('<td>2026-07-17</td><td class="r">15,000</td>') && panel.includes('<td>2026-07-24</td><td class="r">13,000</td>'), 'the dated amounts, in order');
+  assert.ok(/A PAST date changes what cases reported since then earn/.test(panel) && /earlier cases keep what they earned/.test(panel), 'what a date does, said on the card');
+  const none = m.dedRatesPanel_({ rate: 10000, rateBase: 10000, rates: [] });
+  assert.ok(/No dated changes yet/.test(none) && !/data-dedrate-del/.test(none) && !/<table/.test(none), 'no dated amount: said, no empty table');
+  // A date that came from a hand-edited setting is text, never markup.
+  const bad = m.dedRatesPanel_({ rate: 1, rateBase: 1, rates: [{ from: '<img src=x onerror=1>', tzs: 5 }] });
+  assert.ok(!/<img src=x/.test(bad) && /&lt;img src=x/.test(bad), 'escaped');
+});
+
+test('saving an earners\' amount: the page refuses a blank or negative amount itself, sends the amount and the date, says NOT saved when the server refuses, and reads the screen again when it saved (Part 152)', async () => {
+  const src = lgFn_(page('deduct'), 'dedRateSave_', '');
+  const run = async (fields, impl) => {
+    const toasts = [], sent = [], renders = [];
+    const $ = sel => (fields[sel] === undefined ? null : { value: fields[sel] });
+    new Function('$', 'srv', 'toast', 'render', 'money', 'today', src + '\ndedRateSave_();')($, (fn, args) => { sent.push([fn, args]); return impl(fn, args); },
+      (t, bad) => toasts.push([t, !!bad]), o => renders.push(o), lgMoney_, () => '2026-07-24');
+    await new Promise(r => setTimeout(r, 0));
+    return { toasts, sent, renders };
+  };
+  const ok = (fn, args) => Promise.resolve({ saved: { from: args.from, tzs: Number(args.tzs) } });
+  for (const v of ['', '   ', 'abc', '-5']) {
+    const r = await run({ '#dedRateTzs': v, '#dedRateFrom': '2026-07-24' }, ok);
+    assert.equal(r.sent.length, 0, JSON.stringify(v) + ' is not sent');
+    assert.deepEqual(r.toasts, [['Weka kiasi cha kila kesi. / Enter the amount per case.', true]], JSON.stringify(v) + ' is refused on the page, as an error');
+  }
+  const good = await run({ '#dedRateTzs': '15000', '#dedRateFrom': '2026-07-17' }, ok);
+  assert.deepEqual(good.sent, [['dedRateSet', { tzs: '15000', from: '2026-07-17' }]]);
+  assert.equal(good.toasts.length, 1); assert.equal(good.toasts[0][1], false);
+  assert.equal(good.toasts[0][0], 'Imehifadhiwa: TZS 15,000 kuanzia 2026-07-17. / Saved: TZS 15,000 from 2026-07-17.');
+  assert.deepEqual(good.renders, [{ force: true }], 'the screen is read again, past the memory');
+  const nd = await run({ '#dedRateTzs': '0', '#dedRateFrom': '' }, ok);
+  assert.deepEqual(nd.sent, [['dedRateSet', { tzs: '0', from: '2026-07-24' }]], 'zero is an amount, and a blank date is today');
+  const no = await run({ '#dedRateTzs': '5', '#dedRateFrom': '2026-07-24' }, () => Promise.reject(new Error('Kubadilisha kiasi cha malipo ni kwa admin.')));
+  assert.equal(no.toasts.length, 1); assert.equal(no.toasts[0][1], true);
+  assert.match(no.toasts[0][0], /^Haikuhifadhiwa \/ NOT saved: Kubadilisha/, 'a refusal is never read as a save');
+  assert.deepEqual(no.renders, [], 'and the screen is not re-read as if something had changed');
+});
+
+test('taking an earners\' amount out: the page asks for that date, says what happened, and a refusal is said as NOT removed (Part 152)', async () => {
+  const src = lgFn_(page('deduct'), 'dedRateDel_', 'from');
+  const run = async (impl) => {
+    const toasts = [], sent = [], renders = [];
+    new Function('srv', 'toast', 'render', src + '\ndedRateDel_("2026-07-17");')((fn, args) => { sent.push([fn, args]); return impl(); },
+      (t, bad) => toasts.push([t, !!bad]), o => renders.push(o));
+    await new Promise(r => setTimeout(r, 0));
+    return { toasts, sent, renders };
+  };
+  const a = await run(() => Promise.resolve({ removed: true }));
+  assert.deepEqual(a.sent, [['dedRateDelete', { from: '2026-07-17' }]]); assert.deepEqual(a.toasts, [['Imeondolewa. / Removed.', false]]); assert.deepEqual(a.renders, [{ force: true }]);
+  const b = await run(() => Promise.resolve({ removed: false }));
+  assert.match(b.toasts[0][0], /No amount on that date/); assert.deepEqual(b.renders, [{ force: true }], 'read again either way');
+  const c = await run(() => Promise.reject(new Error('refused')));
+  assert.deepEqual(c.toasts, [['Haikuondolewa / NOT removed: refused', true]]); assert.deepEqual(c.renders, []);
+});
+
+test('the earners\' table is drawn under the list by BOTH painters and kept with a remembered screen; its settings are the admin\'s and are wired on every paint (Part 152)', () => {
+  const app = appCore(), view = page('deduct');
+  assert.match(app, /S\.args = args \|\| \{\}; S\.filters=\{\}; S\.foot=''; S\.foldMain=''; S\.foldLabel=''; S\.foldDot=''; S\.tail='';/, 'go() starts every tab with nothing under its list');
+  assert.match(app, /\? fold_\(S\.foldMain[\s\S]{0,160}: main\) \+ \(S\.tail \|\| ''\);/, 'the table painter draws it under the list');
+  assert.match(app, /function paintHeadOnly\(\)\{ \$\('#view'\)\.innerHTML = HEAD \+ \(S\.tail \|\| ''\);/, 'and the head-only painter too');
+  assert.match(app, /foldDot:S\.foldDot \|\| '', tail:S\.tail \|\| ''/, 'a remembered screen keeps it');
+  assert.match(app, /S\.foldDot = s\.foldDot \|\| ''; S\.tail = s\.tail \|\| '';/, 'and brings it back');
+  assert.match(app, /var drs = document\.getElementById\('dedRateSave'\);\s*\n\s*if \(drs\) drs\.onclick = function\(\)\{ dedRateSave_\(\); \};/, 'Save is wired by wireForms, which every paint runs');
+  assert.match(app, /querySelectorAll\('\[data-dedrate-del\]'\)[\s\S]{0,140}el\.onclick = function\(\)\{ dedRateDel_\(el\.getAttribute\('data-dedrate-del'\)\); \};/, 'and each way out of a dated amount');
+  assert.match(view, /S\.tail = dedEarnBoard_\(d, reps\) \+ \(d\.canRates \? dedRatesPanel_\(d\) : ''\);/, 'the board always; the settings card only where the server says the person is the admin');
+  assert.match(view, /board\('dedRep', '2\. Malipo ya walioripoti \/ Reporter earnings', dedRateNote_\(d\)/, 'the report\'s section 2 says the amount the same way');
+  assert.doesNotMatch(view, /TZS ' \+ money\(d\.rate\) \+ ' kwa kila kesi \/ per unique case \(DEDUCTION_REPORTER_TZS\)/, 'no amount typed into a title: the one note says it');
+  assert.equal((app.match(/dedRateSave_\(\)/g) || []).length, 1, 'wired once, in wireForms, never inline');
 });

@@ -9,7 +9,8 @@
         (which the server still answers with each row) is printed nowhere in the table;
      2. the row itself is whole: the team, then the customer, the accused staff and the amounts, each under its own header;
      3. the list's own columns (what its Excel, JPG and CSV are made from) do not hold the branch either;
-     4. the other two lists of the tab (balances before the window, the reporters) have no Branch column;
+     4. the other list of the tab (balances before the window) has no Branch column (the reporters' list is a board under the cases
+        since Part 152: tools/browser-checks/portal-deductions-earners.mjs);
      5. the columns that remain are the ones the list had, in the order it had them: nothing else moved;
      6. no page error.
 
@@ -137,7 +138,7 @@ check('3 the list\'s own columns (its Excel, JPG and CSV) do not hold the branch
 if (process.env.SHOTS) await page.screenshot({ path: path.join(process.env.SHOTS, 'deductions-list.png') });
 
 // 4 the other two lists of the tab
-for (const [show, cols] of [['prev', ['Staff', 'Salio / Remaining']], ['reporters', ['Aliyeripoti / Reporter', 'Kesi / Unique cases', 'Malipo / Earnings']]]) {
+for (const [show, cols] of [['prev', ['Staff', 'Salio / Remaining']]]) {
   await page.evaluate(s => { const el = document.querySelector('[data-arg="show"][data-val="' + s + '"]'); if (el) el.click(); }, show);
   await page.waitForTimeout(500);
   L = await read();

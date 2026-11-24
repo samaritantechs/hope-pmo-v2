@@ -830,7 +830,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-j';
+var BUILD = '2026-11-24-k';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -1424,7 +1424,7 @@ function go(view, args){
   S.view = view; S.q=''; S.sort=null; S.sort2=null; S.asc=true; S.asc2=false;
   /* args is only ever passed by a [data-go] button that CARRIES something across the switch
      (the month-report chip carries the chosen week); everything else still starts clean. */
-  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot=''; S.fit=false; S.judging=false;
+  S.args = args || {}; S.filters={}; S.foot=''; S.foldMain=''; S.foldLabel=''; S.foldDot=''; S.tail=''; S.fit=false; S.judging=false;
   /* WHICH BOOK THIS REQUEST READS, DECIDED FROM THE TAB ITSELF -- no toggle to flip first, no
      mode left over from whatever was open before. Every request from here rides S.workspace to
      the server (see srv() below), which resolves it for real against this code's own tabs --
@@ -3086,16 +3086,19 @@ function paintNow_(){
   /* A view that sets S.foldMain gets its whole Orodha / List behind the same open/close chip
      the Settings sections use -- for the screens where the boards are the read and the raw
      log is the occasional dig. Cleared in go(), so no other tab inherits the fold. */
+  /* S.tail: what a screen draws UNDER its list (Part 152: the PMO Deduction tab's earners' table and, for the admin, its commission
+     settings). Cleared in go(), kept with a remembered screen, drawn by both painters; the buttons in it are wired by wireBar() (the
+     boards' Excel / JPG / CSV) and wireForms() (a screen's own buttons), on every paint like the rest. */
   $('#view').innerHTML = HEAD + (S.foldMain
     ? fold_(S.foldMain, S.foldLabel || 'Orodha / List', rows.length + ' / ' + S.rows.length, main, S.foldDot || '')
-    : main);
+    : main) + (S.tail || '');
   wireTable(rows, ONROW);
   wireTableSearch();
   wireBar();
   wireOfficerFind();
   wireForms();
 }
-function paintHeadOnly(){ $('#view').innerHTML = HEAD; wireBar(); wireForms(); }
+function paintHeadOnly(){ $('#view').innerHTML = HEAD + (S.tail || ''); wireBar(); wireForms(); }
 /* THE OFFICER SEARCH. Asks the database, not the browser's copy of everybody.
 
    Typed at, it waits a moment and then asks -- a request per keystroke on a laptop is a request
@@ -6855,7 +6858,7 @@ function viewKey_(){
 }
 function snapTake_(){
   return { at:Date.now(), head:HEAD, onrow:ONROW, rows:S.rows, cols:S.cols, foot:S.foot,
-           foldMain:S.foldMain || '', foldLabel:S.foldLabel || '', foldDot:S.foldDot || '',
+           foldMain:S.foldMain || '', foldLabel:S.foldLabel || '', foldDot:S.foldDot || '', tail:S.tail || '',
            args:JSON.parse(JSON.stringify(S.args || {})),
            // The team/status dropdowns live inside the remembered HEAD, already ticked. Bring
            // the choice back with them, or you return to a tab showing "Team KONGOWE" in the
@@ -6865,7 +6868,7 @@ function snapTake_(){
 function snapPut_(s){
   HEAD = s.head; ONROW = s.onrow;
   S.rows = s.rows; S.cols = s.cols; S.foot = s.foot; S.foldMain = s.foldMain || '';
-  S.foldLabel = s.foldLabel || ''; S.foldDot = s.foldDot || '';
+  S.foldLabel = s.foldLabel || ''; S.foldDot = s.foldDot || ''; S.tail = s.tail || '';
   S.args = JSON.parse(JSON.stringify(s.args || {}));
   S.filters = JSON.parse(JSON.stringify(s.filters || {}));
 }
@@ -7545,6 +7548,12 @@ function wireForms(){
   if (ndd) ndd.onclick = function(){ dedNew(); };
   var drp = document.getElementById('dedReport');
   if (drp) drp.onclick = function(){ dedReport(); };
+  // ... and the admin's commission settings under the earners' table (Part 152): the amount per case from a date, and taking one entry out.
+  var drs = document.getElementById('dedRateSave');
+  if (drs) drs.onclick = function(){ dedRateSave_(); };
+  Array.prototype.forEach.call(document.querySelectorAll('[data-dedrate-del]'), function(el){
+    el.onclick = function(){ dedRateDel_(el.getAttribute('data-dedrate-del')); };
+  });
   // Salary advance: the ask, the GMO's bulk decision, HR's new-staff form.
   var asb = document.getElementById('advSubmit');
   if (asb) asb.onclick = function(){ advSubmit(); };
