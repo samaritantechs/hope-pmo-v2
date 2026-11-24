@@ -800,7 +800,12 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-e';
+var BUILD = '2026-11-24-f';
+/* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
+   "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
+   (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
+   module reads it too. A row PRESENT_SECONDS in Settings wins over it, and the box on the Presentation tab over both. */
+var PRES_SECS_DEFAULT = 45;
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -1943,7 +1948,7 @@ function start(me){
      it always does and Play is pressed for the room the moment the dashboard half is in. */
   var resume = presResumeTake_();
   if (resume && allowed('present')) {
-    S.presSecs = Math.max(5, Math.min(300, Number(resume.secs) || 15));
+    S.presSecs = Math.max(5, Math.min(300, Number(resume.secs) || PRES_SECS_DEFAULT));
     go('present', resume.weekOf ? { weekOf: resume.weekOf } : {});
     var tries = 0, wait = setInterval(function(){
       if (S.view !== 'present') { clearInterval(wait); return; }
@@ -3246,7 +3251,7 @@ function wireBar(){
       if (id === 'mainCard') exportXls(); else exportBoard(id, 'xls'); };
   });
   var ps = document.getElementById('presStart');
-  if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || 15; presStart(0); };
+  if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || PRES_SECS_DEFAULT; presStart(0); };
   var pbr = document.getElementById('presBoardsRetry');
   if (pbr) pbr.onclick = function(){ presBoards_(S.presWk || { weekOf: S.args.weekOf || '' }); presRedraw_(); };
   // Segment and team choices persist -- the same meeting runs every week and nobody wants to
@@ -6610,7 +6615,7 @@ VIEWS.findcust = function(){
    fills it. */
 var PRES_RESUME_KEY = 'hopePresResume';
 function presResumeNote_(){
-  return { i: S.presI || 0, secs: S.presSecs || 15, weekOf: (S.presWk && S.presWk.weekOf) || '' };
+  return { i: S.presI || 0, secs: S.presSecs || PRES_SECS_DEFAULT, weekOf: (S.presWk && S.presWk.weekOf) || '' };
 }
 function presCheckBuild_(){
   if (!S.code) return;
@@ -6661,7 +6666,7 @@ var VC_MS = 90000;
 function applyCadences(ui){
   if (!ui) return;
   VC_MS = Math.max(10, Number(ui.refreshSeconds) || 90) * 1000;
-  S.presSecs = Number(ui.presentSeconds) || 15;
+  S.presSecs = Number(ui.presentSeconds) || PRES_SECS_DEFAULT;
   S.hintEverySec = Number(ui.hintIntervalSeconds) || 240;
   S.hintHoldSec = Number(ui.hintLifetimeSeconds) || 7;
 }

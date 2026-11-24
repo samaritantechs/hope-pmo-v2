@@ -612,7 +612,7 @@ test('a playing presentation checks the build on every refetch and resumes after
   assert.ok(/sessionStorage\.setItem\(PRES_RESUME_KEY, JSON\.stringify\(presResumeNote_\(\)\)\)/.test(check)
     && /freshEnough_\(me\);/.test(check), 'behind: write down where the deck was, then reload past the cache by the one guarded path');
   const note = app.slice(app.indexOf('function presResumeNote_'), app.indexOf('function presCheckBuild_'));
-  assert.ok(/i: S\.presI \|\| 0, secs: S\.presSecs \|\| 15, weekOf:/.test(note), 'the slide, the seconds and the week');
+  assert.ok(/i: S\.presI \|\| 0, secs: S\.presSecs \|\| PRES_SECS_DEFAULT, weekOf:/.test(note), 'the slide, the seconds and the week');
   const start = app.slice(app.indexOf('function start(me)'), app.indexOf('/* ----------------------------------------------------------- table engine'));
   assert.ok(/var resume = presResumeTake_\(\);\s*\n\s*if \(resume && allowed\('present'\)\)/.test(start), 'start() picks the note up');
   assert.ok(/go\('present', resume\.weekOf \? \{ weekOf: resume\.weekOf \} : \{\}\);/.test(start), 'opens the present tab on the same week');
