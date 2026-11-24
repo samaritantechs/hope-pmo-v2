@@ -643,7 +643,7 @@ async function bookCompute_(db, user, year, today, nowMs, deps) {
         byStatus: [...status.values()].sort((a, b) => b.customers - a.customers), byTeam, byRegion: regions, unplaced: regionsRaw.unplaced };
     }),
     attempt('legal', 'Legal', async () => {
-      const dn = await deps.demandNotices(db, user, {}, nowMs);
+      const dn = await deps.demandNotices(db, user, {}, nowMs, { phone: false });   // the deck has no phone card: it does not ask for one
       const rows = (dn.rows || []).filter(r => String(r.notice_date || '').slice(0, 4) === String(year));
       const tiles = deps.noticeTiles_(rows);
       const byMonth = [];
