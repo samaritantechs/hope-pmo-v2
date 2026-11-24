@@ -7622,6 +7622,22 @@ function lwHolds(d, label) {
   if (d.edrTrendTotal) pair(d.edrTrendTotal.pct, d.edrTrendTotal.dEdr, d.edrTrendTotal.lwEdr, 'the week\'s expected defaulters');
 }
 
+test('a week whose early collection sheet has not come yet carries no arrow and no figure of last week, though last week had one (Part 142)', async () => {
+  /* Monday morning, or any week before its first early-collection sheet: last week's figure exists, this week's does not, so
+     there is nothing to compare. The strip must not print last week's figure alone -- a faint number with no arrow in front
+     of it would read as this week's. */
+  const t = tables();
+  t.repayment_snapshots = [E('444', 'KONGOWE', 1000, 'PAID', 0, '2026-07-17', 'initial')];
+  for (const [world, db] of [['the database sums', dbWithRpc(t)], ['the rows added up', fakeDb(t)]]) {
+    const d = await run('dashboardFull', {}, ADMIN, db);
+    assert.deepEqual([d.perf.ecolPct, d.perf.dEcol, d.perf.lwEcol], [null, null, null], world + ': no sheet this week, so no arrow and no figure');
+    for (const x of d.ecolTrend) assert.deepEqual([x.dEcol, x.lwEcol], [null, null], world + ', ' + x.weekday + ': a day with no sheet');
+    lwHolds(d, world);
+  }
+  const prev = await run('dashboardFull', { weekOf: '2026-07-17' }, ADMIN, dbWithRpc(t));
+  assert.equal(prev.perf.ecolPct, 100, 'and last week\'s own dashboard does hold the figure: it was there to be shown, and was rightly not');
+});
+
 test('each trend card carries its own day-by-day arrow against the same weekday last week', async () => {
   const t = tables();
   t.settings = t.settings.concat([{ key: 'SALES_TARGET_WEEKLY', value: '1000' }]);
