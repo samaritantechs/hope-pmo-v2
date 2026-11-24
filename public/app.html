@@ -791,7 +791,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-a';
+var BUILD = '2026-11-24-b';
 
 /* One call shape for the whole portal -- every tab goes through /api/portal. */
 /* THE SERVER DID NOT SEND JSON, AND SAYING SO IN JAVASCRIPT'S WORDS HELPS NOBODY.
@@ -4498,6 +4498,17 @@ function xdDaysNote_(d){
     + '<br><b>Siku zilizohesabiwa / Days added:</b> ' + (on.length ? esc(on.join(' · ')) : '—')
     + (off.length ? '<br><b>Hazikupakiwa / Not filed (nothing added):</b> ' + esc(off.join(' · ')) : '') + proof + '</div>';
 }
+/* THE DAY'S LATER FILE IS NOT IN YET (handbook Part 140). A day's morning file comes in at about 05:00 and its later file at
+   about 20:00 (the owner's own look at the upload times, RUN-ME-087, 24 Nov 2026). Through the working day the day therefore
+   reads recovered 0 and nobody CLEARED because NOTHING HAS BEEN COMPARED YET, and a nought with no words reads as "nobody
+   recovered anything". The server names the stage (dayStage, api/_lib/expdf.js); the Exp.Def Report's day, a leader's card and
+   the Expected Defaulters tab draw this ONE line for it. The dashboard's own card already says "not uploaded yet" (Part 79). */
+function xdLaterNote_(d){
+  return (d && d.stage === 'morning')
+    ? '<div class="note bad xd-later">Faili la jioni la siku hii bado halijapakiwa: marejesho yanasoma 0 na hakuna aliye CLEARED hadi lipakiwe.'
+      + ' / The later file of this day is not uploaded yet: recovery reads 0 and nobody reads CLEARED until it is.</div>'
+    : '';
+}
 function xdBar_(d, extra){
   var period = d.period || 'day', w = XD_WORDS[period] || XD_WORDS.day;
   var pills = ['day','week','month'].map(function(p){
@@ -4551,6 +4562,7 @@ VIEWS.expdfrep = function(){
       + '</div>'
       + (d.hasBaseline ? '' : '<div class="note bad">Orodha ya awali haijapakiwa — marejesho yanaonyesha 0.'
           + ' / The baseline deck is not uploaded, so recovery reads 0.</div>')
+      + xdLaterNote_(d)
       + xdDaysNote_(d)
       /* THREE BOARDS, one per recycling role (a fourth, "Kwa OPM / By OPM", was tried and dropped
          at the GM's word). Every board sorts on any header like the others. The OPM of the
@@ -4651,6 +4663,7 @@ function xdLeaderOpen_(role, leader, weekOf, wantDay){
       + '</div>'
       + (d.inCalls ? '' : '<div class="note">Hakuna afisa wa HOPE Calls aliyelinganishwa na <b>'+esc(d.leader)+'</b> — kwa namba yake ya Teams &amp; Staff ('+esc(d.role)+' NO), wala kwa jina — hivyo simu zinasoma 0. Weka namba yake kwenye Teams &amp; Staff ili alinganishwe kwa namba. / Nobody in HOPE Calls matches <b>'+esc(d.leader)+'</b> — by the number on Teams &amp; Staff ('+esc(d.role)+' NO) or by name — so calls read 0. Put the leader’s number on Teams &amp; Staff and the match is by number.</div>')
       + (d.hasBaseline ? '' : '<div class="note">Orodha ya awali ya kipindi hiki haipo — marejesho yanasoma 0. / No initial deck for this period, so recovery reads 0.</div>')
+      + xdLaterNote_(d)
       + '<div class="mut" style="font-size:11.5px;margin:6px 0">Simu = namba moja kwa siku (dials kando yake), za portfolio tu, kwa wateja, wadhamini na namba nyingine zilizorekodiwa (ANA NAMBA NYINGINE) za orodha hii, katika kipindi hiki. Maoni = yaliyoandikwa kwa jina lake katika kipindi hiki kwa wateja hao. / A call is one number per day (dials beside it), portfolio calls only, to the customers, guarantors and recorded other numbers on this list, in this period. Comments are those written under this name in this period on these customers.</div>';
     var cols = [col('full_name','Customer'), col('ref','REF'), col('team','Team'), col('cycle','Cycle'),
           col('calls','Calls','num'), col('dials','Dials','num'), col('lastCall','Last call','date'),
@@ -4870,6 +4883,7 @@ VIEWS.defexp = function(){
             + ' / No customers are assigned to you in today’s deck — press'
             + ' <b>Wote / Everyone</b> to see the whole book.</div>'
           : '')
+      + xdLaterNote_(d)
       + '<div class="kpis">'
       + kpi('In the weekly cycle', money(book.length), 'chronic + expired + defaulters, cleared ones kept and marked')
       + kpi('Expected ' + (names[day]||''), money(onDay.length), 'due on the selected day', onDay.length?'warnc':'good')

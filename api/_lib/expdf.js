@@ -289,7 +289,7 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
   const teamBy = {};
   for (const t of teamRows) teamBy[K(t.team)] = t;
   const paired = dayIni.rows.length > 0 && dayCur.rows.length > 0;
-  const stage = paired ? 'pair' : dayIni.rows.length ? 'morning' : dayCur.rows.length ? 'current' : older.rows.length ? 'earlier' : 'none';
+  const stage = dayStage(dayIni.rows.length > 0, dayCur.rows.length > 0, older.rows.length > 0);
   // WHERE THINGS STAND: the day's later file, else the day's morning file, else the freshest file of an earlier day.
   const book = dayCur.rows.length ? dayCur : dayIni.rows.length ? dayIni : older;
   // A month compares against its first deck, a week against Monday's, a day against the same
@@ -314,6 +314,22 @@ export async function expdfCore(db, user, nowMs, { weekly = false, monthly = fal
     baseline: monthly ? 'month' : (weekly ? 'week' : 'day'),
     // The teams sheet, as already read above: expdfMine names the teams that give its caller a book their own code cannot see.
     teams: teamRows };
+}
+
+/** WHICH OF THE DAY'S OWN TWO FILES ARE IN, NAMED ONCE (handbook Parts 136 and 140).
+    'pair'     both: the morning file's customers, read against the later file.
+    'morning'  the morning file only: its customers owe the morning's arrears and NOTHING HAS BEEN COMPARED, so nothing
+               is recovered and nobody reads CLEARED. The owner's RUN-ME-087 answer (24 Nov 2026) showed the later file
+               comes in at about 20:00, so this is how a day reads through the whole working day: every screen that
+               shows the day must SAY the later file is not in, or its noughts read as "nobody recovered anything"
+               (CLAUDE.md section 2: silence reads as success).
+    'current'  a later file only (no morning file that day).
+    'earlier'  neither yet: the freshest file of an earlier day stands in.
+    'none'     no file at all.
+    expdfCore names the day with it for the phone, the report and the leader's card; expectedDefaulters (portal-core.js)
+    for the tab. The pages draw their line on 'morning' and on nothing else. */
+export function dayStage(hasInitial, hasCurrent, hasEarlier) {
+  return hasInitial && hasCurrent ? 'pair' : hasInitial ? 'morning' : hasCurrent ? 'current' : hasEarlier ? 'earlier' : 'none';
 }
 
 /* =======================================================================================
@@ -603,7 +619,9 @@ export async function expdfMine(db, user, { all = false, weekly = false, scope =
       dated: dated.length, onToday: mine.filter(r => r.onToday).length, undated: undated.length,
       deckWeekday: core.weekday, deckDate: core.date, noCycleDates,
       // Whether the day's initial and current decks are the same date: only then does a customer the current deck no longer names read as recovered (Part 87).
-      paired: !!core.paired, enteredAfter: core.enteredAfter || null },
+      paired: !!core.paired, enteredAfter: core.enteredAfter || null,
+      // Which of the day's two files are in (dayStage): on 'morning' the page says the later file is not in yet (Part 140).
+      stage: core.stage || null },
     totals: sumExpdf(scopeRows), allTotals: sumExpdf(mine),
     // Who is carrying what, so anyone looking at the list can see the split without leaving it.
     byLeader: Object.values(scopeRows.reduce((m, r) => {
@@ -877,7 +895,8 @@ export async function expdfReport(db, user, { weekly = false, monthly = false, d
   // and this is always empty (answered as null, which the page does not draw). Kept so an older page finds nothing, not an error.
   const unassignedCleared = core.unassignedCleared || [];
   return { weekly, monthly, period: core.baseline, weekday: core.weekday, date: core.date, baseDate: core.baseDate, weekOf: win.weekOf,
-    ...(core.paired === undefined ? {} : { paired: core.paired, enteredAfter: core.enteredAfter }),     // a day reading: were the day's two decks the same date (Part 87), and how many customers entered default after the morning deck and so are not on the day (Part 88)
+    ...(core.paired === undefined ? {} : { paired: core.paired, enteredAfter: core.enteredAfter }),
+    ...(core.baseline === 'day' && core.stage ? { stage: core.stage } : {}),          // a day reading only: on 'morning' the page says the day's later file is not in yet (Part 140)     // a day reading: were the day's two decks the same date (Part 87), and how many customers entered default after the morning deck and so are not on the day (Part 88)
     dayName: DAY_NAMES[core.dayIdx] || '', hasBaseline: core.hasBaseline,
     days: core.days || null,                                   // a week: which days were added, and which were not filed
     sections, totals: sumExpdf(all),
@@ -941,6 +960,7 @@ export async function expdfLeader(db, user, { role, leader, weekOf, weekEnd, per
       recent: (dw.recent || []).slice(0, 10) };
   }) : null;
   return { role: R, leader: L, period: core.baseline, weekOf: win.weekOf, weekEnd: win.weekEnd, inCalls: !!inCalls[K(L)], hasBaseline: core.hasBaseline,
+    ...(core.baseline === 'day' && core.stage ? { stage: core.stage } : {}),          // a day reading only (Part 140)
     days: core.days || null, ...(dayTabs ? { dayTabs } : {}),
     totals: { ...t, recoveredCustomers: rows.filter(r => r.recovered > 0).length,
       calls: w.calls, dials: w.dials, talk: w.talk, connected: w.connected,

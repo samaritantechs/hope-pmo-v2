@@ -2999,7 +2999,7 @@ test('the call app\'s top bar shows a bike officer their own summary -- customer
     'customers, debt, recovered and recovery %, in the summary\'s own words');
   const draw = call.slice(call.indexOf('function drawBikeStrip_(){'), call.indexOf('function bikeStripLoad_(force){'));
   assert.ok(/var rows = S\.cache\.expdf \? filterForView_\(S\.cache\.expdf, 'expdf'\) : null;/.test(draw) && /var t = rows \? xdSum_\(rows\) : null;/.test(draw), 'added up from the very rows the Exp.Def tab shows, by the summary\'s own sum');
-  assert.ok(/\$\('#bkCust'\)\.textContent = t \? String\(t\.customers\) : '\\u2014';/.test(draw) && /\$\('#bkPct'\)\.textContent = \(t && t\.pct != null\) \? Math\.round\(t\.pct\) \+ '%' : '\\u2014';/.test(draw), 'dashes until the list has arrived, never a guess');
+  assert.ok(/\$\('#bkCust'\)\.textContent = t \? String\(t\.customers\) : '\\u2014';/.test(draw) && /\$\('#bkPct'\)\.textContent = \(t && !morning && t\.pct != null\) \? Math\.round\(t\.pct\) \+ '%' : '\\u2014';/.test(draw), 'dashes until the list has arrived (and while the day\'s later file is not in, Part 140), never a guess');
   assert.ok(/var old = !!\(deck && deck !== todayKeyLocal_\(\)\);/.test(draw) && /el\.classList\.toggle\('stale', old\);/.test(draw), 'a deck that is not today\'s says which day, in red');
   // Nothing is asked of the server for it beyond the list the phone holds anyway.
   assert.ok(/if \(S\.bike\)\{ bikeStripLoad_\(force\); return; \}/.test(call), 'no daily-summary request from a bike handset');

@@ -2924,6 +2924,9 @@ test('a customer the day\'s current deck no longer names stays on the phone\'s E
   assert.equal(summary.expdf.customers, 3);
   assert.equal(summary.expdf.num, 2000, 'GONE2\'s 1,200 and NOCUR2\'s 800: the strip counts what was recovered, as the dashboard\'s card does');
   assert.equal(summary.expdf.den, 2300, '300 + 1,200 + 800 owed at the start of the day');
+  // Part 140: both of the day's files are in, so the day is measured and the bar prints its percentage.
+  assert.equal(mine.expdf.diag.stage, 'pair'); assert.equal(summary.expdf.stage, 'pair');
+  assert.ok(Math.abs(summary.expdf.pct - 2000 / 2300) < 1e-9, 'the bar\'s Exp.Def % is recovered over owed: ' + summary.expdf.pct);
 });
 
 test('before the day\'s later file is in, the phone lists THIS MORNING\'s file: its customers owing the morning\'s arrears, nobody marked paid, nobody from last week\'s file', async () => {
@@ -2944,6 +2947,12 @@ test('before the day\'s later file is in, the phone lists THIS MORNING\'s file: 
   const summary = await callApi(db, 'api_callDailySummary', ['dBEE'], NOW);
   assert.equal(summary.expdf.num, 0, 'nothing recovered yet: nothing has been compared');
   assert.equal(summary.expdf.den, 2300, 'against the morning\'s 300 + 1,200 + 800');
+  /* Part 140: the later file comes in at about 20:00 (the owner's RUN-ME-087 answer), so this is how a day reads through the whole
+     working day. The answer NAMES the stage, so the page can say the later file is not in; and the bar's Exp.Def % is null (a dash),
+     because a day that has not been compared is not measured -- a nought read as "nobody recovered anything" on every handset. */
+  assert.equal(mine.expdf.diag.stage, 'morning', 'the list says which of the day\'s files are in');
+  assert.equal(summary.expdf.stage, 'morning');
+  assert.equal(summary.expdf.pct, null, 'not measured yet is a dash on the bar, never 0%');
 });
 
 test('closing the customers who left the current deck costs the phone\'s Exp.Def list no extra read', async () => {

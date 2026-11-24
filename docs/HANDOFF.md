@@ -9368,6 +9368,37 @@ The owner's seven lines: the minimum is **5** seconds; in the last 7 days **121,
 
 **Not done, said plainly.** Nothing run on the live book: its numbers are not known until COUNT is run there. The 258 rows with no REF NO; the three rows whose date nobody can read. A customer the system held and who has since left its decks is Cleared on the Legal tab, but no week is credited with it (no payment of theirs is known and the owner's default covers only the never-held). The imported notices carry no mark on the screen that they came from the sheet (no Kumb.Na. is the sign). The builder is Python (it needs openpyxl) and is not run by `npm test`. No screen was opened in a browser (no page changed). The fingerprint guards the lines of a data block, not the SQL around them nor the engine: those are compared with the files through the session's record, and a paste of them that was cut fails to run (an unclosed quote, or no END line).
 
+## Part 138, addendum — the owner ran the import on the live book (24 Nov): 435 notices and 14 clearance lines, as counted (docs only)
+
+**The six data blocks** each answered `OK`: 79, 157, 233, 311, 391 and 472 rows in the list, as each should leave it.
+
+**The engine with the word COUNT, then with IMPORT** (the same sixteen lines both times, the first and the last aside):
+
+| Line | Answer |
+|---|---|
+| rows in the list | 472 |
+| with a date nobody can read: left out | 3 (the sheet's rows 254, 400, 401) |
+| a notice written twice in the sheet: counted once | 6 |
+| already in the system (a notice of that loan number within seven days) | 28 |
+| NOTICES TO IMPORT / customers / arrears at notice | 435 / 416 / TZS 414,481,113 |
+| by month of the notice | 2025-08: 22, 09: 29, 10: 69, 11: 26, 12: 41, 2026-01: 86, 02: 46, 03: 67, 04: 44, 05: 5 |
+| with no arrears figure (imported with it blank) | 31 |
+| customers never on a file of the system: CLEARED BY DEFAULT one month after their last notice | 12 / TZS 14,255,500 |
+| customers the system holds or has held: read from its own files | 404 |
+| teams of the sheet that are not on Teams & Staff | none |
+| noticed customers: before and after | 997 and 1,368 |
+| owed at each customer's latest notice: before and after | TZS 737,724,644 and 1,070,955,367 |
+| the expected sheets were asked too | no: they have no index by loan number (the decks and the follow-up register were asked) |
+| WRITTEN BY THE IMPORT: notices / default clearances | 435 / 14 |
+
+**Read against the copy of this Part.** The lines that do not depend on who is on a file are the same to the shilling (472; 3; 6; 28; 435 / 416 / 414,481,113). The customers cleared by default are 12 where the copy, with nobody on a deck, said 387, as the Part said they would be fewer; they have 14 notices between them, so 14 clearance lines. Every team of the sheet is on Teams & Staff (KIHONDA A was the one in doubt).
+
+**What it changes on the screens, from that minute.** Noticed customers 1,368. The owed that the weekly Legal cards divide recovery by grew by 45%, so the same money reads a lower Rec % (the existing rule: a cleared notice stays in it; leaving it out is offered in `CHAT.md` section 8 and not built). The week arrows reach back to August 2025; the twelve are credited in the week one month after their last notice. The expected sheets could not be asked, so "never on a file" was judged by the defaulters decks and the follow-up register: for the twelve it decides only which past week their clearance is credited to.
+
+**The pastes.** The seven texts were pasted on 24 Nov early in the morning and, under the order of 23 Nov ("never leave pending sql text to run"), again in full at about 09:00 East Africa time; the engine a third time with the word IMPORT already written, so that nothing had to be edited by hand. Each paste was compared byte for byte with the builder's files through the session's record before the owner was told to run it. Nothing of them is in the repository.
+
+**Still open.** The real dates of the sheet's rows 254 (`09/054/2026`), 400 and 401 (`31/04/2026`: April has thirty days); the REF NOs of the 258 rows that have none (a later delivery goes the same way: the builder, then the engine); and a look by the legal officers at the 43 dates the per-officer rule decided.
+
 ## Part 139 — Legal recovery by phone: a second Legal card with the week arrows, stamped so that it outlives the call logs, and beside each lawyer on the boards and the Presentation's slide (24 Nov)
 
 > "Legal officers should be added another card of legal recovery by phone – because they get responsible to costomers not only those with noptices but also those with 2dc+ before giving out notices" · "that card will be able to go forward and backward as usual, so that we always get legal recovery of both demand notices and call recovery – and find a way to include recovery by phone of legal recovery in the sdame legal recovery slide at presentation" · "So pull And record called numbers against customers, their guarantors and their "new no – from ana namba nyin gine" of 2dc+ in initial default reports of the day and stamp all recovery by phone, remember capturing phone calls is 2 weeks temporary I think – that's why I said "stamp" so please find a way to do it" · "For all those customer's or guarantors of a defaulter of DC 2+ of a day initial default file, having that number called and recorded in legal officer phone at minimum duration of 5 seconds, if such defaulter has recovered amount after current arrea, then adds-up to recovery by phone of legal" — the owner, 23 Nov 2026.
@@ -9471,3 +9502,27 @@ group by p.user_id, p.name, p.role
 order by 3 desc, 1;
 -- END OF THE PHONES LOOK
 ```
+
+## Part 140 — The day's later file is not in yet: the phone, the Exp.Def Report, a leader's card and the Expected Defaulters tab say so, and the phone prints a dash for what is not known (24 Nov)
+
+> Nobody asked for this in words. The owner ran `db/RUN-ME-087` and pasted its table (Part 136's addendum): from Monday to Saturday the morning file comes in at about 05:00 and the later file at about 20:00. CLAUDE.md section 2: "Say what was not done. A step that was skipped, deferred, or could not be reached is reported on the screen that expected it. Silence reads as success."
+
+**What was wrong.** Since Part 136 a day is read off its own two files. With the morning file in and the later file not (the stage `morning`), the list is the morning file's customers owing the morning's arrears; nothing is recovered and nobody reads CLEARED, because nothing has been compared. That is right. But the owner's table shows this stage lasts from about 05:00 to about 20:00: the whole working day. Through it the phone's Exp.Def strip read *Marejesho 0 · Rec % 0%*, a bike officer's top bar the same, every officer's top bar *Exp.Def 0%*, the Exp.Def Report's day *Recovered 0*, and no screen said why. A nought with no words reads as "nobody recovered anything". (Before Part 136 the same hours showed last week's figures, which looked like progress and were not.) Part 136 had this under Not done, as a matter of the morning.
+
+**What changed.**
+
+- *The stage is named in one place.* `dayStage(hasInitial, hasCurrent, hasEarlier)` in `api/_lib/expdf.js` answers `pair`, `morning`, `current`, `earlier` or `none`. `expdfCore` asks it (the ladder it already had, moved into the function) and `expectedDefaulters` asks it for the tab.
+- *It rides in answers the screens already ask for.* The phone's list: `diag.stage` (the list call already hands `diag` to the page whole). The Exp.Def Report and a leader's card: `stage`, on a DAY reading only (a week lists the days that were not filed in its own note; a month is its first deck against the freshest file, a comparison that was made). The Expected Defaulters tab: `stage`.
+- *The phone's daily summary.* The bar's Exp.Def % is `null` on the morning stage, and the bar already prints a dash for null. Arithmetic on what `expdfMine` already answered.
+- *The phone page (`public/call.html`, `CALL_BUILD 2026-11-24-a`).* `xdMorning_()` reads the stage. On it the Exp.Def strip carries one line, *Orodha ya jioni ya leo bado haijapakiwa — marejesho yataonekana ikishapakiwa* (today's evening list is not uploaded yet: recoveries will show once it is); *Marejesho* and *Rec %* are a dash; the split by leader prints its customers and no recovery; a bike officer's top bar prints a dash for *Marejesho* and *Rec* (customers and debt stay figures) and the card under their tabs is the line alone. With both files in everything is as it was.
+- *The portal (`public/app.html`, `BUILD 2026-11-24-b`).* One builder, `xdLaterNote_(d)`, one line in Swahili and English, red like its neighbour for a missing baseline: *Faili la jioni la siku hii bado halijapakiwa: marejesho yanasoma 0 na hakuna aliye CLEARED hadi lipakiwe. / The later file of this day is not uploaded yet: recovery reads 0 and nobody reads CLEARED until it is.* It is drawn by the Exp.Def Report's day, a leader's card and the Expected Defaulters tab. The figures of those screens are not changed: the line explains them, as the line for a missing baseline does.
+
+**A dash on the phone, a nought with a line on the portal: why two forms.** The phone's bars have no room for words and are on every tab: there a figure that is not known must not look like a figure, so it is a dash, the form the same bar already uses before any deck is in and the form the house uses for anything not measured (Reached before RUN-ME-088, a week that was not filed, the dashboard's "not uploaded yet"). The portal's screens have the room, and their line for a missing baseline already says "recovery reads 0" over the same noughts: the new line follows it. Nothing else of what a screen shows was changed.
+
+**Cost (CLAUDE.md section 1).** `/api/upload`: nothing. `/api/call`: no read added on any path: the stage is one more word in the answer of `expdfMine`, which the list and the daily summary already call, and `test/speed.test.mjs` is unchanged and green. The portal: no read added. Each handset reloads the call page once (`CALL_BUILD`) and each browser the portal page once (`BUILD`).
+
+**Checked.** `test/expdf-later-note.test.mjs` (new, 9 tests): the naming; the stage on the phone, the report (through the portal's own dispatch), three leaders' cards and the tab at the four stages; a past day that never got its later file says so too; a week and a month carry none; `xdLaterNote_` RUN (the line on `morning`, nothing on eight other answers) and pinned to the three screens; `xdMorning_` and the bike officer's bar RUN on stand-ins (dashes before the later file, figures after, and an answer that names no stage draws as it always did); the strip's four changes pinned; nothing asks the server anything for it. `test/call.test.mjs`: the two day tests, through the real call dispatch, now also say the stage, and that the bar's Exp.Def % is null before the later file and recovered over owed after it. `tools/browser-checks/expdef-later-file.mjs` (new): the real phone page against a stub in the real answers' shapes (a leader and a bike officer, both stages, two widths) and the real portal page against the REAL `portalApi` over the fake database (the report's day, a leader's card, the week view, the tab, both stages, two widths): **66 points; on the pages as merged 48 pass and 18 are red, each of them a point this change adds** (read line by line: the line, the two dashes, the split, the bike officer's bar and card, and the three portal screens). **33 of 33 deliberate breaks of the change each turn a test red** (14 of the server code, 8 of the portal page, 11 of the phone page; none needed the browser check). `npm test`: 2,067 pass.
+
+**Mistakes of mine.** (1) Part 136 called this stage "the morning" and left its note out as something to offer: I had not looked at when the files arrive, and the owner's table shows it is the working day. A cure is not finished until the screen says what it cannot show. (2) Three expectations of the new browser check were wrong at first (the portal draws its figure labels in capitals, and the tab's status filter carries the word CLEARED): the check failed on them, not the page.
+
+**Not done, said plainly.** Nothing seen on a live phone or the live portal. The portal's figures stay noughts under the line, not dashes: changing every figure of three screens is a larger change than the line, and nobody asked for it. A customer's own row on the phone still shows nothing recovered before the later file (a row is not a total). The stages `current` and `earlier` keep the words they had (*Orodha ya awali haijapakiwa — marejesho yanaonyesha 0*). Whether the later file can be uploaded earlier in the day is the company's to say. No `hints` tip: the screens say it themselves. Not read by a second reader.
