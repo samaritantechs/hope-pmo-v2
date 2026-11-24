@@ -425,8 +425,8 @@ VIEWS.advstaff = function(){
         + '<select data-filter="status"><option value="">Active + Inactive</option>'
           + '<option value="ACTIVE"' + (S.filters.status==='ACTIVE'?' selected':'') + '>Active</option>'
           + '<option value="INACTIVE"' + (S.filters.status==='INACTIVE'?' selected':'') + '>Inactive</option></select>'
-        /* newAdvStaff, not newStaff: Teams & Staff's own "+ Mpya / New" button carries that id, and
-           wireForms wires both by id -- the later wiring won, and this button opened the wrong form. */
+        /* newAdvStaff, not newStaff: Teams & Staff's by-person card (removed on 24 Nov 2026) had a "+ Mpya / New" button that
+           carried that id, and wireForms wires by id -- the later wiring won, and this button opened the wrong form. The name stays. */
         + (edit ? '<button class="btn sm" id="newAdvStaff">+ Staff mpya / New staff</button>' : '<span class="chip mut">kusoma tu / read-only</span>'));
     /* Eleven columns: on a laptop the list wraps to the card's width so Status (the last one) is in sight without a
        scroll right -- "the table should autofit width so that hr sees to status of active and inactive". */

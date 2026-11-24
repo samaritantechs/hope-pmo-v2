@@ -81,7 +81,7 @@ const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname === '/' || u.pathname.startsWith('/app') || u.pathname === '/dashboard') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(APP); return; }
   if (u.pathname.startsWith('/mod/')) {
-    const f = path.join(ROOT, 'public', u.pathname.split('?')[0]);
+    const f = process.env.MOD_DIR ? path.join(process.env.MOD_DIR, path.basename(u.pathname.split('?')[0])) : path.join(ROOT, 'public', u.pathname.split('?')[0]);   // MOD_DIR: the modules of the page APP_FILE names
     if (fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(f)); return; }
   }
   if (u.pathname === '/api/me') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, build: null })); return; }
@@ -241,9 +241,10 @@ try {
   page = await open('teams');
   await type(page, 'a');
   await opens(page, '#newTeam', 'New team', 'Teams & Staff: after a repaint "+ New team" opens the form');
-  await opens(page, '#newStaff', 'New staff member', 'Teams & Staff: "+ New" (staff by person) opens its form');
   await opens(page, '#newAgent', 'New agent', 'Teams & Staff: "+ Agent" opens its form');
-  await opens(page, 'tr[data-staff]', 'GMO ONE', 'Teams & Staff: a person\'s row opens that person');
+  // "remove the wafanyakazi / staff by person at teams and staff" (the owner, 24 Nov 2026, Part 148): the card, its buttons and its rows are gone, before and after a repaint
+  check('Teams & Staff: the staff-by-person card is gone (no card, no "+ New" button, no row of a person), after a repaint too', await page.evaluate(() =>
+    !document.getElementById('staffCard') && !document.getElementById('newStaff') && !document.getElementById('staffXl') && !document.querySelector('[data-staff]') && !/by person/i.test(document.getElementById('view').textContent)));
   await page.close();
   // PMO deductions, Complaints, Restructuring, HR staff
   for (const [view, sel, word, name] of [['deduct', '#newDeduction', 'New PMO deduction case', 'PMO deductions: "+ New case" opens the form'],

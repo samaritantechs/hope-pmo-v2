@@ -59,7 +59,7 @@ function makeBook(extraCodes = []) {
 }
 let db = makeBook();
 let USER = { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['teams', 'settings', 'upload'] };
-const REAL = new Set(['leadersCheck', 'leadersSync', 'leadersSyncUndo', 'teams', 'staffRoster', 'callAgents', 'saveAccessCode', 'deleteAccessCode']);
+const REAL = new Set(['leadersCheck', 'leadersSync', 'leadersSyncUndo', 'teams', 'callAgents', 'saveAccessCode', 'deleteAccessCode']);
 const calls = [];                      // [fn, args] for everything the page asked, in order
 let failFn = null;                     // a portal function the server answers with a 500
 
@@ -122,6 +122,8 @@ const rowsOf = page => page.evaluate(() => [...document.querySelectorAll('#view 
 let page = await open(ME);
 check('the check is asked first, then the write, once each, then the list', names()[0] === 'leadersCheck' && names().filter(n => n === 'leadersSync').length === 1
   && names().indexOf('leadersSync') < names().indexOf('teams'), names().join(','));
+// "remove the wafanyakazi / staff by person at teams and staff" (the owner, 24 Nov 2026, Part 148): the screen no longer draws that card and no longer asks for the roster behind it
+check('opening Teams & Staff asks no staff roster, and draws no staff-by-person card or its button', !names().includes('staffRoster') && !(await has(page, '#staffCard')) && !(await has(page, '#newStaff')), names().join(','));
 check('the book is brought into line', cellOf('KONGOWE', 'gmo') === 'NEW GMO' && cellOf('MBAGALA', 'gmo') === 'NEW GMO' && cellOf('KONGOWE', 'manager') === 'NEW MGR');
 check('the previous leader\'s number is not left beside the new one', cellOf('KONGOWE', 'gmo_no') === null && cellOf('KONGOWE', 'gmo_id') === null);
 check('the card says 3 leaders were brought into line', /3/.test(await text(page, '#leadersCard')) && /brought into line/.test(await text(page, '#leadersCard')));
