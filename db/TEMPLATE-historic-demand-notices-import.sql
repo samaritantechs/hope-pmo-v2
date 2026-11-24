@@ -47,19 +47,16 @@ else 'data block 1 of 1: OK' end as block, (select c from n) as rows_in_the_list
 -- END OF DATA BLOCK 1 OF 1
 -- ===== THE ENGINE =====
 -- HISTORIC DEMAND NOTICES: COUNT, THEN IMPORT. Run it AFTER every data block. ONE statement: all of it or none of it.
--- WITH THE WORD COUNT (as it is) IT CHANGES NOTHING and prints what an import would do. Read the answer; then change the word on
--- the line marked CHANGE to IMPORT and run it again. Any other word changes nothing. A second IMPORT writes 0. It writes ONLY
--- when the list holds the number of rows on the line under the CHANGE line (a missing or damaged data block: nothing is written).
--- WHAT IT IMPORTS: one notice for each row of the list whose date was read, once (a notice written twice in the sheet is one),
--- that the system does not hold: it holds a notice when it has one of that loan number within seven days of the sheet's date.
--- Columns: loan number, team, customer, notice date, arrears at notice, issued by; stamped at noon of its day. The phone is the
--- follow-up register's when the system holds that loan. Principal, total loan and total paid stay in the list (no column).
--- CLEARED BY DEFAULT: a customer whose loan number was never on a file of the system (the defaulters decks, the follow-up
--- register, and the expected sheets when they have an index by loan number) is recorded as having cleared ONE MONTH AFTER THEIR
--- LAST NOTICE of the sheet: one line in notice_payment_ledger for the arrears at that notice, marked 'default', under each of
--- their notices. With no arrears figure nothing is recorded.
--- WHAT IT COSTS: nothing to /api/upload or /api/call. The decks are asked through the (team, loan number) index, never read
--- end to end; a 45-second ceiling: if it is reached the answer is an error and nothing changed.
+-- With the word COUNT (as it is) it CHANGES NOTHING and prints what an import would do; then change the word on the line
+-- marked CHANGE to IMPORT and run it again. Any other word changes nothing. A second IMPORT writes 0. It writes ONLY when
+-- the list holds the number of rows on the line under the CHANGE line (a block missing or damaged: nothing is written).
+-- IMPORTS one notice for each row whose date was read, once, that the system does not hold. A LATER DELIVERY of the same
+-- sheet is run the same way and ends where one delivery of everything would have: what an earlier run wrote is not written
+-- again, nor held against the new rows.
+-- CLEARED BY DEFAULT: a customer never on a deck, in the follow-up register or on an expected sheet (when it has an index by
+-- loan number) cleared ONE MONTH AFTER THEIR LAST NOTICE: one line in notice_payment_ledger
+-- for the arrears at that notice, marked 'default', under each of their notices (an earlier run's line is corrected when a
+-- later notice moves it). No arrears figure: nothing is recorded. COST: nothing to /api/upload or /api/call; 45 s ceiling.
 -- UNDO (the two lines at the foot, as one statement, alone).
 set local statement_timeout = '45s';
 set local lock_timeout = '3s';
@@ -67,14 +64,15 @@ set local enable_seqscan = off;
 set local enable_hashjoin = off;
 set local enable_mergejoin = off;
 with recursive mode as (select upper(btrim('COUNT')) as m), -- CHANGE: COUNT changes nothing; IMPORT writes
-whole as (select (select count(*) from public.demand_import_2025) = 3 as ok), -- ROWS THE LIST MUST HOLD: on any other count nothing is written
+whole as (select (select count(*) from public.demand_import_2025) = 3 as ok), -- ROWS THE LIST MUST HOLD
 st as (select s.*, upper(btrim(s.ref)) as kref from public.demand_import_2025 s),
 uniq as (select distinct on (kref, notice_date) * from st where notice_date is not null order by kref, notice_date, line),
 mine as (select md5('notice|import2025|' || u.kref || '|' || u.notice_date)::uuid as id, u.* from uniq u),
 alln as (select n.id, upper(btrim(n.ref)) as kref, n.notice_date, n.arrears_at_notice from public.demand_notices n where n.ref is not null and n.notice_date is not null),
-cand as (select m.*, exists (select 1 from alln x where x.kref = m.kref and abs(x.notice_date - m.notice_date) <= 7) as in_system from mine m),
-todo as (select * from cand where not in_system),
-refs as (select distinct kref, ref from todo),
+cand as (select m.*, m.id in (select id from alln) as have, exists (select 1 from alln x where x.kref = m.kref and x.id not in (select id from mine) and abs(x.notice_date - m.notice_date) <= 7) as in_system from mine m),
+ours as (select * from cand where have or not in_system),
+todo as (select * from ours where not have),
+refs as (select distinct kref, ref from ours),
 tm(team) as ((select d.team from public.defaulter_snapshots d order by d.team limit 1)
 union all select (select d.team from public.defaulter_snapshots d where d.team > tm.team order by d.team limit 1) from tm where tm.team is not null),
 hasidx as (select exists (select 1 from pg_indexes where schemaname = 'public' and tablename = 'repayment_snapshots' and indexdef ~* '\(ref\M') as ok),
@@ -84,15 +82,16 @@ union select r.kref from refs r where exists (select 1 from tm where exists (sel
 union select r.kref from refs r where exists (select 1 from public.defaulter_snapshots d where d.team is null and d.ref = r.ref)
 union select r.kref from refs r where (select ok from hasidx) and exists (select 1 from public.repayment_snapshots e where e.ref = r.ref)
 ),
-lastn as (select distinct on (t.kref) t.kref, t.notice_date, t.arrears from todo t where t.kref not in (select kref from known) order by t.kref, t.notice_date desc),
+lastn as (select distinct on (t.kref) t.kref, t.notice_date, t.arrears from ours t where t.kref not in (select kref from known) order by t.kref, t.notice_date desc),
 clr as (select t.ref, t.notice_date as since, md5('cleared|import2025|' || l.kref)::uuid as payment_id, (l.notice_date + interval '1 month')::date as paid_at, l.arrears as amount
-from lastn l join todo t on t.kref = l.kref where coalesce(l.arrears, 0) > 0),
+from lastn l join ours t on t.kref = l.kref where coalesce(l.arrears, 0) > 0),
 ins as (insert into public.demand_notices (id, ref, team, full_name, contact, notice_date, arrears_at_notice, issued_by, created_at)
 select t.id, t.ref, nullif(btrim(t.team), ''), t.name, (select f.contact from public.followup_status f where f.ref = t.ref limit 1), t.notice_date, t.arrears, t.issued_by,
 (t.notice_date::timestamp + interval '9 hours') at time zone 'UTC'
 from todo t where (select m from mode) = 'IMPORT' and (select ok from whole) on conflict (id) do nothing returning id),
 led as (insert into public.notice_payment_ledger (ref, since, payment_id, paid_at, amount, matched_by)
-select c.ref, c.since, c.payment_id, c.paid_at, c.amount, 'default' from clr c where (select m from mode) = 'IMPORT' and (select ok from whole) on conflict do nothing returning 1),
+select c.ref, c.since, c.payment_id, c.paid_at, c.amount, 'default' from clr c where (select m from mode) = 'IMPORT' and (select ok from whole) on conflict (ref, since, payment_id) do update set paid_at = excluded.paid_at, amount = excluded.amount
+where notice_payment_ledger.matched_by = 'default' and (notice_payment_ledger.paid_at, notice_payment_ledger.amount) is distinct from (excluded.paid_at, excluded.amount) returning (xmax = 0) as added),
 aft as (select kref, notice_date, arrears_at_notice from alln union all select kref, notice_date, arrears from todo t where t.id not in (select id from alln)),
 own as (select 'now' as w, count(*) as c, coalesce(sum(a), 0) as o from (select distinct on (kref) kref, arrears_at_notice as a from alln order by kref, notice_date desc) q
 union all select 'after', count(*), coalesce(sum(a), 0) from (select distinct on (kref) kref, arrears_at_notice as a from aft order by kref, notice_date desc) q)
@@ -101,7 +100,7 @@ select 1 as k, 'the word on the CHANGE line' as what, (select m || case when m =
 union all select 2, 'rows in the list (rows of the sheet with a loan number)', (select count(*) || case when (select ok from whole) then '' else ': NOT THE ROWS THIS ENGINE WAS BUILT FOR. A data block is missing or damaged: NOTHING IS WRITTEN' end from st)
 union all select 3, 'of them with a date nobody can read: left out (their rows of the sheet)', (select count(*) || coalesce(': ' || string_agg(line::text, ', ' order by line), '') from st where notice_date is null)
 union all select 4, 'a notice written twice in the sheet: counted once', (select (count(*) - (select count(*) from uniq))::text from st where notice_date is not null)
-union all select 5, 'already in the system (a notice of that loan number within seven days): not imported', (select count(*)::text from cand where in_system)
+union all select 5, 'not imported: held by the system (a notice within seven days) / written by an earlier run', (select count(*) filter (where in_system and not have) || ' / ' || count(*) filter (where have) from cand)
 union all select 6, 'NOTICES TO IMPORT / customers / arrears at notice TZS', (select count(*) || ' / ' || count(distinct kref) || ' / ' || to_char(coalesce(sum(arrears), 0), 'FM999,999,999,999,990') from todo)
 union all select 7, 'by month of the notice', (select coalesce(string_agg(ym || ': ' || n, ', ' order by ym), 'none') from (select to_char(notice_date, 'YYYY-MM') as ym, count(*) as n from todo group by 1) q)
 union all select 8, 'of them with no arrears figure (imported with it blank)', (select count(*)::text from todo where arrears is null)
@@ -111,8 +110,9 @@ union all select 11, 'customers the system holds or has held: read from its own 
 union all select 12, 'teams of the sheet that are not on Teams & Staff', (select coalesce(string_agg(distinct t.team, ', '), 'none') from todo t where coalesce(btrim(t.team), '') <> '' and not exists (select 1 from public.teams m where upper(btrim(m.team)) = upper(btrim(t.team))))
 union all select 13, 'noticed customers: now -> after', (select max(c) filter (where w = 'now') || ' -> ' || max(c) filter (where w = 'after') from own)
 union all select 14, 'owed at each customer''s latest notice TZS: now -> after', (select to_char(max(o) filter (where w = 'now'), 'FM999,999,999,999,990') || ' -> ' || to_char(max(o) filter (where w = 'after'), 'FM999,999,999,999,990') from own)
-union all select 15, 'the expected sheets were asked too', (select case when ok then 'yes' else 'no: they have no index by loan number (the decks and the follow-up register were asked)' end from hasidx)
-union all select 16, 'WRITTEN BY THIS RUN: notices / default clearances', (select count(*) from ins) || ' / ' || (select count(*) from led)
+union all select 15, 'the expected sheets were asked too', (select case when ok then 'yes' else 'no: no index by loan number (the decks and the register were asked)' end from hasidx)
+union all select 16, 'WRITTEN BY THIS RUN: notices / default clearances', (select count(*) from ins) || ' / ' || (select count(*) filter (where added) from led) || ' (corrected: ' || (select count(*) filter (where not added) from led) || ')'
+union all select 17, 'clearance lines to write / to correct', (select count(*) filter (where l.ref is null) || ' / ' || count(*) filter (where l.matched_by = 'default' and (l.paid_at, l.amount) is distinct from (c.paid_at, c.amount)) from clr c left join public.notice_payment_ledger l using (ref, since, payment_id))
 ) x order by x.k;
 -- UNDO, as one statement, alone (it removes what the import wrote and nothing else; the list stays):
 -- with st as (select upper(btrim(ref)) as kref, notice_date from public.demand_import_2025 where notice_date is not null), a as (delete from public.notice_payment_ledger where matched_by = 'default' and payment_id in (select md5('cleared|import2025|' || kref)::uuid from st) returning 1), b as (delete from public.demand_notices where id in (select md5('notice|import2025|' || kref || '|' || notice_date)::uuid from st) returning 1) select (select count(*) from a) as clearances_removed, (select count(*) from b) as notices_removed;

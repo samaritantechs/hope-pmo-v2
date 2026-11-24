@@ -25,7 +25,13 @@
         screens read what was written, a past week holding the default clearance among it, is test/historic-notices-import.test.mjs.)
      6. THE COST: on a deck table of two million rows the engine never reads the decks end to end (the plan names no Seq Scan on
         defaulter_snapshots) and answers inside a few seconds; with the expected sheets' index by loan number absent they are not asked.
-     7. EVERY ONE of a list of deliberate breaks of the engine and of the data block makes a check fail.
+     7. A LATER DELIVERY (the legal team gave REF NOs to rows that had none: the same sheet with more rows, "Legal team submitted more
+        ref nos and teams in the table", 24 Nov): the first delivery is imported, the second one's blocks are added to the list, the engine
+        is built for both; the book then ends byte for byte where ONE delivery of everything ends and equal to the model, the first
+        delivery's notices are not written again and are not held against the new rows, a clearance line the first run wrote is CORRECTED
+        when a later notice moves it (a line of another kind under the same key is never touched), COUNT says what it will write and what
+        it will correct, a second IMPORT writes nothing, and the undo removes both deliveries.
+     8. EVERY ONE of a list of deliberate breaks of the engine and of the data block makes a check fail.
 
        PGHOST=/var/run/postgresql PGUSER=postgres node tools/db-checks/historic-notices-import.mjs       (NOBIG=1 skips the two million rows, NOBREAKS=1)
 
@@ -102,6 +108,27 @@ const SHEET = [
   // the system holds nothing of this loan number: imported
   '16|C|JUST BEFORE|9900000013|TEAM TWO|400000|544000|100000|80000|260510|s|',
 ];
+/* A SECOND DELIVERY: more rows of the same sheet (their lines are over those of the first), run after the first was imported. */
+const EXTRA = [
+  // a LATER notice of a customer the first delivery cleared by default: the clearance moves to a month after THIS one, under all three notices
+  '30|A|NEVER ONE|9900000001|TEAM ONE|700000|952000|600000|352000|260301|T|',
+  // the first delivery's line 4 written again: one notice, and not written again
+  '31|B|NEVER TWO|9900000002|TEAM TWO|500000|680000|292500|387500|251216|X|',
+  // an EARLIER notice of a customer already imported: imported; the clearance stays a month after their LAST notice
+  '32|B|NEVER TWO|9900000002|TEAM TWO|500000|680000|292500|300000|251110|T|',
+  // two days AFTER a notice the first delivery wrote: another notice (the list's own earlier rows are not "the system")
+  '33|B|NEVER TWO|9900000002|TEAM TWO|500000|680000|292500|380000|251218|T|',
+  // a second notice of a customer on a deck: imported, never cleared by default
+  '34|A|ON A DECK|9900000004|TEAM ONE|400000|544000|100000|430000|251125|T|',
+  // four days from a notice the system holds (23 May): the same letter, not imported
+  '35|C|NEAR NOTICE|9900000009|TEAM ONE|400000|544000|100000|310000|260527|S|',
+  // a new customer with two notices two days apart: both imported, cleared a month after the second
+  '36|A|BRAND NEW|9900000020|TEAM ONE|300000|408000|50000|200000|251101|T|',
+  '37|A|BRAND NEW|9900000020|TEAM ONE|300000|408000|50000|210000|251103|T|',
+  // a date nobody can read: left out
+  '38|A|NO DATE TWO|9900000021|TEAM ONE|400000|544000|100000|250000||U|9/9/2026',
+];
+const ALL = SHEET.concat(EXTRA);
 const SYSTEM_FIRST = '2026-05-13';
 function seed(extraSql = '') {
   psqlTo(`truncate demand_notices, notice_payment_ledger, defaulter_snapshots, followup_status, repayment_snapshots, received_payments, teams cascade;
@@ -126,8 +153,8 @@ insert into repayment_snapshots (ref, team, full_name, snapshot_type, snapshot_d
 ${extraSql}`);
 }
 /* ---- the model, written again: what an import must write ---- */
-function model({ expectedAsked = true } = {}) {
-  const rows = SHEET.map(l => { const f = l.split('|'); return { line: +f[0], by: { A: 'OFFICER ONE', B: 'OFFICER TWO' }[f[1]] || f[1], name: f[2], ref: f[3], team: f[4],
+function model({ expectedAsked = true, sheet = SHEET } = {}) {
+  const rows = sheet.map(l => { const f = l.split('|'); return { line: +f[0], by: { A: 'OFFICER ONE', B: 'OFFICER TWO' }[f[1]] || f[1], name: f[2], ref: f[3], team: f[4],
     arrears: f[8] === '' ? null : +f[8], date: f[9] ? '20' + f[9].slice(0, 2) + '-' + f[9].slice(2, 4) + '-' + f[9].slice(4, 6) : null }; });
   const seen = new Set(), uniq = [];
   for (const r of rows.filter(r => r.date).sort((a, b) => a.line - b.line)) { const k = r.ref + '|' + r.date; if (!seen.has(k)) { seen.add(k); uniq.push(r); } }
@@ -216,15 +243,16 @@ function run(fails, { text = ENGINE, data = DATA, expectedIndex = true, label = 
     'rows in the list (rows of the sheet with a loan number)': String(SHEET.length),
     'of them with a date nobody can read: left out (their rows of the sheet)': '1: 14',
     'a notice written twice in the sheet: counted once': '1',
-    'already in the system (a notice of that loan number within seven days): not imported': String(M.inSystemN),
+    'not imported: held by the system (a notice within seven days) / written by an earlier run': M.inSystemN + ' / 0',
     'NOTICES TO IMPORT / customers / arrears at notice TZS': M.todo.length + ' / ' + new Set(M.todo.map(r => r.ref)).size + ' / ' + M.todo.reduce((s, r) => s + (r.arrears || 0), 0).toLocaleString('en-US'),
     'of them with no arrears figure (imported with it blank)': '1',
     'customers never on a file of the system: CLEARED BY DEFAULT one month after their last notice / TZS': [...M.last.values()].filter(l => l.arrears > 0).length + ' / ' + [...M.last.values()].reduce((s, l) => s + (l.arrears || 0), 0).toLocaleString('en-US'),
     'customers never on a file of the system with no arrears figure: nothing to record': '1',
     'customers the system holds or has held: read from its own files from here on': String(new Set(M.todo.filter(r => M.known.has(r.ref)).map(r => r.ref)).size),
     'teams of the sheet that are not on Teams & Staff': 'TEAM NOWHERE',
-    'the expected sheets were asked too': expectedIndex ? 'yes' : 'no: they have no index by loan number (the decks and the follow-up register were asked)',
-    'WRITTEN BY THIS RUN: notices / default clearances': '0 / 0',
+    'the expected sheets were asked too': expectedIndex ? 'yes' : 'no: no index by loan number (the decks and the register were asked)',
+    'clearance lines to write / to correct': M.ledger.length + ' / 0',
+    'WRITTEN BY THIS RUN: notices / default clearances': '0 / 0 (corrected: 0)',
   };
   for (const [k, v] of Object.entries(expect)) if (a[k] !== v) note('COUNT: "' + k + '" reads ' + JSON.stringify(a[k]) + ', the model says ' + JSON.stringify(v));
   const customersNow = Object.keys({ '9900000008': 1, '9900000009': 1, '9900000010': 1, '8800000001': 1, '9900000014': 1, '9900000015': 1 }).length;
@@ -239,14 +267,14 @@ function run(fails, { text = ENGINE, data = DATA, expectedIndex = true, label = 
       if (bookSum() !== before) note('IMPORT wrote although the list holds ' + SHEET.length + ' rows and the engine was built for ' + rows);
       if (w0['the word on the CHANGE line'] !== 'IMPORT: NOT WRITTEN, the list is not whole (next line)') note('IMPORT on a list that is not whole does not say NOT WRITTEN: ' + w0['the word on the CHANGE line']);
       if (!/^\d+: NOT THE ROWS THIS ENGINE WAS BUILT FOR\. A data block is missing or damaged: NOTHING IS WRITTEN$/.test(w0['rows in the list (rows of the sheet with a loan number)'] || '')) note('the answer does not say the list is not whole: ' + w0['rows in the list (rows of the sheet with a loan number)']);
-      if (w0['WRITTEN BY THIS RUN: notices / default clearances'] !== '0 / 0') note('IMPORT on a list that is not whole says it wrote ' + w0['WRITTEN BY THIS RUN: notices / default clearances']);
+      if (w0['WRITTEN BY THIS RUN: notices / default clearances'] !== '0 / 0 (corrected: 0)') note('IMPORT on a list that is not whole says it wrote ' + w0['WRITTEN BY THIS RUN: notices / default clearances']);
       const c0 = answerOf(psqlTo(engine('COUNT', text, rows)));
       if (!/NOT THE ROWS THIS ENGINE WAS BUILT FOR/.test(c0['rows in the list (rows of the sheet with a loan number)'] || '') || c0['the word on the CHANGE line'] !== 'COUNT: nothing was changed') note('COUNT on a list that is not whole does not say so');
     } catch (e) { note('the engine failed on a list that is not whole: ' + errLine(e)); }
   }
   // 4. IMPORT writes the model, exactly
   let w; try { w = answerOf(psqlTo(engine('IMPORT', text))); } catch (e) { note('IMPORT failed: ' + errLine(e)); return; }
-  if (w['WRITTEN BY THIS RUN: notices / default clearances'] !== M.notices.length + ' / ' + M.ledger.length) note('IMPORT says it wrote ' + w['WRITTEN BY THIS RUN: notices / default clearances'] + ', the model ' + M.notices.length + ' / ' + M.ledger.length);
+  if (w['WRITTEN BY THIS RUN: notices / default clearances'] !== M.notices.length + ' / ' + M.ledger.length + ' (corrected: 0)') note('IMPORT says it wrote ' + w['WRITTEN BY THIS RUN: notices / default clearances'] + ', the model ' + M.notices.length + ' / ' + M.ledger.length + ' (corrected: 0)');
   const sysIds = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444',
     '55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666'];
   const got = noticesNow().filter(n => !sysIds.includes(n.id));
@@ -258,16 +286,105 @@ function run(fails, { text = ENGINE, data = DATA, expectedIndex = true, label = 
   if (L !== LM) note('the default clearances written are not the model\'s: ' + L + ' against ' + LM);
   // after the import, COUNT says there is nothing left to do (the imported notices are held now)
   try { const c2 = answerOf(psqlTo(engine('COUNT', text)));
-    if (!/^0 \/ 0 \/ 0$/.test(c2['NOTICES TO IMPORT / customers / arrears at notice TZS'])) note('after the import COUNT still finds notices to import: ' + c2['NOTICES TO IMPORT / customers / arrears at notice TZS']); }
+    if (!/^0 \/ 0 \/ 0$/.test(c2['NOTICES TO IMPORT / customers / arrears at notice TZS'])) note('after the import COUNT still finds notices to import: ' + c2['NOTICES TO IMPORT / customers / arrears at notice TZS']);
+    if (c2['clearance lines to write / to correct'] !== '0 / 0') note('after the import COUNT still finds clearance lines to write or correct: ' + c2['clearance lines to write / to correct']);
+    if (c2['not imported: held by the system (a notice within seven days) / written by an earlier run'] !== M.inSystemN + ' / ' + M.notices.length) note('after the import COUNT does not count the notices an earlier run wrote: ' + c2['not imported: held by the system (a notice within seven days) / written by an earlier run']); }
   catch (e) { note('COUNT after the import failed: ' + errLine(e)); }
   // 5. a second IMPORT writes nothing; the fold adds and removes nothing for these notices
   const after = bookSum();
-  try { const w2 = answerOf(psqlTo(engine('IMPORT', text))); if (w2['WRITTEN BY THIS RUN: notices / default clearances'] !== '0 / 0' || bookSum() !== after) note('a second IMPORT wrote something: ' + w2['WRITTEN BY THIS RUN: notices / default clearances']); }
+  try { const w2 = answerOf(psqlTo(engine('IMPORT', text))); if (w2['WRITTEN BY THIS RUN: notices / default clearances'] !== '0 / 0 (corrected: 0)' || bookSum() !== after) note('a second IMPORT wrote something: ' + w2['WRITTEN BY THIS RUN: notices / default clearances']); }
   catch (e) { note('a second IMPORT failed: ' + errLine(e)); }
   try { psqlTo('select public.fold_notice_payments(null);'); if (bookSum() !== after) note('the fold changed the ledger after the import'); } catch (e) { note('the fold failed after the import: ' + errLine(e)); }
   // 6. the undo removes what was written and nothing else
   try { const u = psqlTo(undo()).trim(); if (u !== M.ledger.length + '\t' + M.notices.length) note('the undo says it removed ' + u + ', the import wrote ' + M.ledger.length + ' and ' + M.notices.length);
     if (bookSum() !== before) note('after the undo the book is not what it was before the import'); } catch (e) { note('the undo failed: ' + errLine(e)); }
+}
+
+/* ---- 5b. A LATER DELIVERY: the first delivery imported, the second one's blocks added to the list, the engine built for both ---- */
+function staged(fails, { text = ENGINE, data = DATA, expectedIndex = true, label = '' } = {}) {
+  const note = m => { if (fails.length < 20) fails.push(label + m); };
+  const idx = expectedIndex ? 'create index if not exists idx_repay_snap_ref on repayment_snapshots(ref, snapshot_date);' : 'drop index if exists idx_repay_snap_ref;';
+  const block = (lines, total) => psqlTo(dataBlock(lines, { shape: data, total })).trim().split('\n').pop();
+  const state = () => JSON.stringify([noticesNow(), ledgerNow()]);
+  const key = l => l.ref + '|' + String(l.since).slice(0, 10) + '|' + l.payment_id;
+  const KEY = 'WRITTEN BY THIS RUN: notices / default clearances';
+  const COUNT_L = 'clearance lines to write / to correct', HELD = 'not imported: held by the system (a notice within seven days) / written by an earlier run';
+  const M1 = model({ expectedAsked: expectedIndex }), MA = model({ expectedAsked: expectedIndex, sheet: ALL });
+  const oldIds = new Set(M1.notices.map(n => n.id)), newN = MA.notices.filter(n => !oldIds.has(n.id));
+  const oldL = new Map(M1.ledger.map(l => [key(l), l]));
+  const toWrite = MA.ledger.filter(l => !oldL.has(key(l))), toFix = MA.ledger.filter(l => oldL.has(key(l)) && (oldL.get(key(l)).paid_at !== l.paid_at || oldL.get(key(l)).amount !== l.amount));
+  if (!(toFix.length >= 3 && toWrite.length >= 3 && newN.length >= 5)) { note('the second delivery of the fixture does not exercise what it must: ' + newN.length + ' notices, ' + toWrite.length + ' lines to write, ' + toFix.length + ' to correct'); return; }
+  const sysIds = ['11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333', '44444444-4444-4444-4444-444444444444',
+    '55555555-5555-5555-5555-555555555555', '66666666-6666-6666-6666-666666666666'];
+  const notices = () => noticesNow().filter(n => !sysIds.includes(n.id));
+  const same = (got, M, what) => {
+    const gi = sortBy(got, x => x.id), mi = sortBy(M.notices, x => x.id).map(n => Object.fromEntries(Object.keys(gi[0] || n).map(k => [k, n[k]])));
+    if (JSON.stringify(gi) !== JSON.stringify(mi)) { const i = gi.findIndex((x, j) => JSON.stringify(x) !== JSON.stringify(mi[j])); note(what + ': the notices are not the model\'s (' + gi.length + ' against ' + mi.length + '; first difference: ' + JSON.stringify(gi[i]) + ' against ' + JSON.stringify(mi[i]) + ')'); }
+    const L = JSON.stringify(ledgerNow().filter(l => l.matched_by === 'default')), LM = JSON.stringify(sortBy(M.ledger, x => x.ref + x.since + x.payment_id));
+    if (L !== LM) note(what + ': the default clearances are not the model\'s: ' + L + ' against ' + LM);
+  };
+  try {
+    seed(idx);
+    // the first delivery: as the owner did it
+    if (block(SHEET, SHEET.length) !== 'data block 1 of 1: OK\t' + SHEET.length + '\t' + SHEET.length) note('the first delivery\'s block does not say OK');
+    const w1 = answerOf(psqlTo(engine('IMPORT', text, SHEET.length)));
+    if (w1[KEY] !== M1.notices.length + ' / ' + M1.ledger.length + ' (corrected: 0)') note('the first delivery says it wrote ' + w1[KEY]);
+    same(notices(), M1, 'after the first delivery');
+    // the second delivery's block: the list grows; the block says so
+    const b2 = block(EXTRA, ALL.length);
+    if (b2 !== 'data block 1 of 1: OK\t' + ALL.length + '\t' + ALL.length) note('the second delivery\'s block does not say OK and ' + ALL.length + ' rows: ' + b2);
+    // the engine still built for the first delivery's rows writes nothing now: the list is not what it was built for
+    const stale = answerOf(psqlTo(engine('IMPORT', text, SHEET.length)));
+    if (stale[KEY] !== '0 / 0 (corrected: 0)' || !/NOT THE ROWS THIS ENGINE WAS BUILT FOR/.test(stale['rows in the list (rows of the sheet with a loan number)'] || '')) note('the first delivery\'s engine wrote or did not refuse on the grown list: ' + stale[KEY]);
+    // COUNT of the engine built for both: changes nothing, and says what will be written and what corrected
+    const mid = bookSum(), stateMid = state();
+    const c = answerOf(psqlTo(engine('COUNT', text, ALL.length)));
+    if (bookSum() !== mid) note('COUNT changed the book after the first delivery');
+    const arrears = newN.reduce((x, n) => x + (n.arrears_at_notice || 0), 0).toLocaleString('en-US');
+    const want = {
+      'rows in the list (rows of the sheet with a loan number)': String(ALL.length),
+      'of them with a date nobody can read: left out (their rows of the sheet)': '2: 14, 38',
+      'a notice written twice in the sheet: counted once': '2',
+      [HELD]: MA.inSystemN + ' / ' + M1.notices.length,
+      'NOTICES TO IMPORT / customers / arrears at notice TZS': newN.length + ' / ' + new Set(newN.map(n => n.ref)).size + ' / ' + arrears,
+      [COUNT_L]: toWrite.length + ' / ' + toFix.length,
+      [KEY]: '0 / 0 (corrected: 0)',
+    };
+    for (const [k, v] of Object.entries(want)) if (c[k] !== v) note('the second delivery\'s COUNT reads "' + k + '" as ' + JSON.stringify(c[k]) + ', the model says ' + JSON.stringify(v));
+    // a clearance line of ANOTHER KIND under a key the second delivery would correct is never touched
+    const corr = toFix[0];
+    psqlTo(`create temp table _k as select payment_id from notice_payment_ledger where ref = '${corr.ref}' and since = '${corr.since}' and matched_by = 'default';
+      delete from notice_payment_ledger where ref = '${corr.ref}' and since = '${corr.since}' and matched_by = 'default';
+      insert into notice_payment_ledger (ref, since, payment_id, paid_at, amount, matched_by) select '${corr.ref}', '${corr.since}', payment_id, '2026-03-03', 777, 'phone' from _k;`);
+    const cc = answerOf(psqlTo(engine('COUNT', text, ALL.length)));
+    if (cc[COUNT_L] !== toWrite.length + ' / ' + (toFix.length - 1)) note('COUNT counts a ledger line of another kind as one to correct: ' + cc[COUNT_L]);
+    // IMPORT the second delivery
+    const w2 = answerOf(psqlTo(engine('IMPORT', text, ALL.length)));
+    if (w2[KEY] !== newN.length + ' / ' + toWrite.length + ' (corrected: ' + (toFix.length - 1) + ')') note('the second delivery says it wrote ' + w2[KEY] + ', the model ' + newN.length + ' / ' + toWrite.length + ' (corrected: ' + (toFix.length - 1) + ')');
+    const kept = json(`select paid_at, amount::float8 as amount, matched_by from notice_payment_ledger where ref = '${corr.ref}' and since = '${corr.since}' and matched_by = 'phone'`);
+    if (kept.length !== 1 || kept[0].amount !== 777) note('a ledger line of another kind under the same key was changed: ' + JSON.stringify(kept));
+    psqlTo(`delete from notice_payment_ledger where ref = '${corr.ref}' and since = '${corr.since}' and matched_by = 'phone';`);
+    // put the corrected line back as the engine would have, to compare the rest: run it again (the line is written now, its key being free)
+    const w2b = answerOf(psqlTo(engine('IMPORT', text, ALL.length)));
+    if (w2b[KEY] !== '0 / 1 (corrected: 0)') note('the line the guard left alone is not written when its key is free: ' + w2b[KEY]);
+    same(notices(), MA, 'after the second delivery');
+    const staged2 = state();
+    // a second IMPORT writes nothing
+    const again = answerOf(psqlTo(engine('IMPORT', text, ALL.length)));
+    if (again[KEY] !== '0 / 0 (corrected: 0)' || state() !== staged2) note('a second IMPORT after the second delivery wrote something: ' + again[KEY]);
+    const after = answerOf(psqlTo(engine('COUNT', text, ALL.length)));
+    if (after[COUNT_L] !== '0 / 0' || !/^0 \/ 0 \/ 0$/.test(after['NOTICES TO IMPORT / customers / arrears at notice TZS'])) note('after both deliveries COUNT still finds something to do: ' + after[COUNT_L] + ' | ' + after['NOTICES TO IMPORT / customers / arrears at notice TZS']);
+    // ONE delivery of everything ends in the very same book
+    seed(idx); const before2 = bookSum();
+    if (block(ALL, ALL.length) !== 'data block 1 of 1: OK\t' + ALL.length + '\t' + ALL.length) note('the one-shot block does not say OK');
+    psqlTo(engine('IMPORT', text, ALL.length));
+    if (state() !== staged2) note('two deliveries do not end where one delivery of everything ends');
+    same(notices(), MA, 'one delivery of everything');
+    // the undo removes both deliveries and nothing else
+    const u = psqlTo(undo()).trim();
+    if (u !== MA.ledger.length + '\t' + MA.notices.length) note('the undo says it removed ' + u + ', the two deliveries wrote ' + MA.ledger.length + ' and ' + MA.notices.length);
+    if (bookSum() !== before2) note('after the undo of both deliveries the book is not what it was before the first');
+  } catch (e) { note('the later-delivery scenario failed: ' + errLine(e)); }
 }
 
 /* ---- 6. the cost, on two million deck rows ---- */
@@ -302,8 +419,8 @@ const BREAKS = [
   ['eight days apart still counts as held', 'and abs(x.notice_date - m.notice_date) <= 7)', 'and abs(x.notice_date - m.notice_date) <= 8)'],
   ['six days is the limit', 'and abs(x.notice_date - m.notice_date) <= 7)', 'and abs(x.notice_date - m.notice_date) <= 6)'],
   ['only a LATER notice of the system counts as held', 'and abs(x.notice_date - m.notice_date) <= 7)', 'and x.notice_date - m.notice_date between 0 and 7)'],
-  ['any notice of the customer in the system stops the import', 'x.kref = m.kref and abs(x.notice_date - m.notice_date) <= 7)', 'x.kref = m.kref)'],
-  ['a notice of ANOTHER customer on a near day stops the import', 'x.kref = m.kref and abs(x.notice_date - m.notice_date) <= 7)', 'abs(x.notice_date - m.notice_date) <= 7)'],
+  ['any notice of the customer in the system stops the import', 'x.kref = m.kref and x.id not in (select id from mine) and abs(x.notice_date - m.notice_date) <= 7)', 'x.kref = m.kref and x.id not in (select id from mine))'],
+  ['a notice of ANOTHER customer on a near day stops the import', 'x.kref = m.kref and x.id not in (select id from mine) and abs(x.notice_date - m.notice_date) <= 7)', 'x.id not in (select id from mine) and abs(x.notice_date - m.notice_date) <= 7)'],
   ['a customer on a deck is cleared by default', "union select r.kref from refs r where exists (select 1 from tm where exists (select 1 from public.defaulter_snapshots d where d.team = tm.team and d.ref = r.ref))\n", ''],
   ['a customer on a deck under no team is cleared by default', "union select r.kref from refs r where exists (select 1 from public.defaulter_snapshots d where d.team is null and d.ref = r.ref)\n", ''],
   ['a customer in the follow-up register is cleared by default', "select r.kref from refs r where exists (select 1 from public.followup_status f where f.ref = r.ref)\nunion ", ''],
@@ -313,7 +430,7 @@ const BREAKS = [
   ['cleared a month after the FIRST notice, not the last', 'order by t.kref, t.notice_date desc),\nclr as', 'order by t.kref, t.notice_date asc),\nclr as'],
   ['cleared on the day of the notice', "(l.notice_date + interval '1 month')::date as paid_at", 'l.notice_date as paid_at'],
   ['cleared two months after', "interval '1 month')::date as paid_at", "interval '2 months')::date as paid_at"],
-  ['the clearance is recorded under the last notice only', 'from lastn l join todo t on t.kref = l.kref where', 'from lastn l join todo t on t.kref = l.kref and t.notice_date = l.notice_date where'],
+  ['the clearance is recorded under the last notice only', 'from lastn l join ours t on t.kref = l.kref where', 'from lastn l join ours t on t.kref = l.kref and t.notice_date = l.notice_date where'],
   ['a clearance for each notice with its own id (the customer is credited twice)', "md5('cleared|import2025|' || l.kref)::uuid as payment_id", "md5('cleared|import2025|' || l.kref || t.notice_date)::uuid as payment_id"],
   ['a clearance of nothing is recorded', 'where coalesce(l.arrears, 0) > 0),', '),'],
   ['the clearance is the arrears of each notice, not of the last', 'l.arrears as amount', 't.arrears as amount'],
@@ -332,6 +449,18 @@ const BREAKS = [
   ['IMPORT on a list that is not whole says WRITTEN', "when m = 'IMPORT' and not (select ok from whole) then ': NOT WRITTEN, the list is not whole (next line)' ", ''],
   ['the answer does not say the list is not whole', "(select count(*) || case when (select ok from whole) then '' else ': NOT THE ROWS THIS ENGINE WAS BUILT FOR. A data block is missing or damaged: NOTHING IS WRITTEN' end from st)", '(select count(*)::text from st)'],
   ['any word imports', "upper(btrim('COUNT')) as m)", "'IMPORT'::text as m), unused as (select upper(btrim('COUNT')) as m)"],
+  // ---- a later delivery ----
+  ['the notices an earlier run wrote are held against its own rows', 'x.id not in (select id from mine) and ', ''],
+  ['a notice an earlier run wrote is counted among the notices still to write', 'todo as (select * from ours where not have),', 'todo as (select * from ours),'],
+  ['a clearance line of an earlier run is never corrected', "do update set paid_at = excluded.paid_at, amount = excluded.amount\nwhere notice_payment_ledger.matched_by = 'default' and (notice_payment_ledger.paid_at, notice_payment_ledger.amount) is distinct from (excluded.paid_at, excluded.amount) returning (xmax = 0) as added)", 'do nothing returning true as added)'],
+  ['a clearance line of another kind is overwritten', "where notice_payment_ledger.matched_by = 'default' and (notice_payment_ledger", 'where (notice_payment_ledger'],
+  ['a clearance line already right is written again', " and (notice_payment_ledger.paid_at, notice_payment_ledger.amount) is distinct from (excluded.paid_at, excluded.amount) returning", ' returning'],
+  ['the last notice is taken among the notices still to write only', 'from ours t where t.kref not in (select kref from known)', 'from todo t where t.kref not in (select kref from known)'],
+  ['a customer on a deck is judged only by the notices still to write', 'refs as (select distinct kref, ref from ours),', 'refs as (select distinct kref, ref from todo),'],
+  ['the clearance is written under the notices still to write only', 'from lastn l join ours t on', 'from lastn l join todo t on'],
+  ['the notices an earlier run wrote are not counted in the answer', 'count(*) filter (where have) from cand', '0 from cand'],
+  ['COUNT does not count the clearance lines to write', 'count(*) filter (where l.ref is null) ||', '0 ||'],
+  ['COUNT counts a line of another kind as one to correct', "count(*) filter (where l.matched_by = 'default' and (l.paid_at", 'count(*) filter (where l.ref is not null and (l.paid_at'],
   ['an unreadable date is imported as today', 'from st where notice_date is not null order by kref, notice_date, line', 'from (select line, issued_by, name, ref, team, principal, total_loan, total_paid, arrears, coalesce(notice_date, current_date) as notice_date, how, cell, staged_at, kref from st) z order by kref, notice_date, line'],
   // ---- the data block ----
   ['a damaged block writes', "from ln where l <> '' and (select ok from ok)\n", "from ln where l <> ''\n", 'data'],
@@ -363,6 +492,8 @@ create index if not exists idx_def_snap_team_ref on defaulter_snapshots(team, re
 alter default privileges in schema public grant all on tables to anon, authenticated;   -- as the live book: a new table is the API's unless it is taken back`);
 run(fails);
 run(fails, { expectedIndex: false, label: '(no index on the expected sheets) ' });
+staged(fails);
+staged(fails, { expectedIndex: false, label: '(no index on the expected sheets) ' });
 if (!process.env.NOBIG) big(fails, report);
 console.log(report.join('\n'));
 console.log(fails.length ? 'FAIL on the template as it is:\n  ' + fails.join('\n  ') : 'the template does what it says: the list and its fingerprint, COUNT, IMPORT only on a whole list, a second run, the fold, the undo, the cost.');
@@ -373,7 +504,7 @@ if (!process.env.NOBREAKS && !fails.length) {
     const text = once(where === 'data' ? DATA : ENGINE, a, b);
     if (text === null) { res.push([name, 'BAD BREAK: its text is not in the ' + (where === 'data' ? 'data block' : 'engine') + ' exactly once']); bad = 1; continue; }
     const f = []; const o = where === 'data' ? { data: text } : { text };
-    try { run(f, o); if (!f.length) run(f, { ...o, expectedIndex: false }); } catch (e) { f.push('the broken copy could not be run: ' + String(e.message).slice(0, 80)); }
+    try { run(f, o); if (!f.length) run(f, { ...o, expectedIndex: false }); if (!f.length && where !== 'data') staged(f, o); } catch (e) { f.push('the broken copy could not be run: ' + String(e.message).slice(0, 80)); }
     /* a break the check itself could not build is no catch: it is a fault of this file */
     const own = f.length && /the engine does not say how many rows|the CHANGE line is not there once|does not hold this once|could not be run/.test(f[0]);
     res.push([name, own ? 'BAD BREAK: the check could not build it (' + f[0].slice(0, 70) + ')' : f.length ? (/failed: /.test(f[0]) && !/reads|model|wrote|changed/.test(f[0]) ? 'caught (it does not run: ' + f[0].slice(0, 60) + ')' : 'caught') : 'NOT CAUGHT']); if (!f.length || own) bad = 1;

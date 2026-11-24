@@ -94,7 +94,7 @@ const TPL = read('db/TEMPLATE-historic-demand-notices-import.sql');
 const ENGINE = TPL.slice(TPL.indexOf('-- HISTORIC DEMAND NOTICES: COUNT, THEN IMPORT.'));
 const DATA = TPL.slice(TPL.indexOf('create table if not exists public.demand_import_2025'), TPL.indexOf('-- END OF DATA BLOCK 1 OF 1'));
 // the SQL without its comments: whole comment lines, and the three comments that follow code on a line
-const code = t => t.split('\n').filter(l => !/^\s*--/.test(l)).map(l => l.replace(/ -- (CHANGE: |ROWS THE LIST MUST HOLD: |the lines' own fingerprint).*$/, '')).join('\n');
+const code = t => t.split('\n').filter(l => !/^\s*--/.test(l)).map(l => l.replace(/ -- (CHANGE: |ROWS THE LIST MUST HOLD|the lines' own fingerprint).*$/, '')).join('\n');
 
 test('the template holds no real person, and each of its two blocks is one the owner can paste', () => {
   const lines = DATA.slice(DATA.indexOf('$d$\n') + 4, DATA.indexOf('\n$d$', DATA.indexOf('$d$\n') + 4)).split('\n');
@@ -136,12 +136,15 @@ test('the engine changes nothing unless the word is IMPORT, is one statement, an
   const c = code(ENGINE);
   assert.equal((c.match(/\(select m from mode\) = 'IMPORT'/g) || []).length, 2, 'both writes ask for the word');
   assert.equal((c.match(/where \(select m from mode\) = 'IMPORT' and \(select ok from whole\) on conflict/g) || []).length, 2, 'and both write only when the list is whole');
-  assert.ok(ENGINE.includes("whole as (select (select count(*) from public.demand_import_2025) = 3 as ok), -- ROWS THE LIST MUST HOLD: on any other count nothing is written\n"),
+  assert.ok(ENGINE.includes("whole as (select (select count(*) from public.demand_import_2025) = 3 as ok), -- ROWS THE LIST MUST HOLD\n"),
     'the list is whole when it holds the rows the engine was built for (the template\'s made-up block has three)');
   assert.ok(c.includes("when m = 'IMPORT' and not (select ok from whole) then ': NOT WRITTEN, the list is not whole (next line)'"), 'IMPORT on a list that is not whole says NOT WRITTEN');
   assert.ok(c.includes("else ': NOT THE ROWS THIS ENGINE WAS BUILT FOR. A data block is missing or damaged: NOTHING IS WRITTEN' end from st)"), 'and the answer says why');
   assert.equal((c.match(/\binsert into\b/g) || []).length, 2, 'two writes: the notices and the clearances');
-  assert.ok(!/\b(update|delete|truncate|drop|alter)\b/i.test(c), 'and nothing else that changes a row or a table');
+  assert.ok(!/\b(delete|truncate|drop|alter)\b/i.test(c), 'and nothing else that removes a row or changes a table');
+  assert.equal((c.match(/\bupdate\b/g) || []).length, 1, 'one update, and it is the correction of a clearance line this very import wrote');
+  assert.ok(c.includes("on conflict (ref, since, payment_id) do update set paid_at = excluded.paid_at, amount = excluded.amount\nwhere notice_payment_ledger.matched_by = 'default' and (notice_payment_ledger.paid_at, notice_payment_ledger.amount) is distinct from (excluded.paid_at, excluded.amount) returning (xmax = 0) as added)"),
+    'a line of another kind (a real payment) is never touched, and a line already right is not written again');
   assert.equal(c.trim().split(';').filter(x => x.trim()).length, 6, 'five settings and ONE statement');
   for (const s of ["set local statement_timeout = '45s';", "set local lock_timeout = '3s';", 'set local enable_seqscan = off;', 'set local enable_hashjoin = off;', 'set local enable_mergejoin = off;'])
     assert.ok(c.includes(s), s);
@@ -149,13 +152,18 @@ test('the engine changes nothing unless the word is IMPORT, is one statement, an
     'the teams the decks carry are walked through the index, one probe a team');
   assert.match(c, /exists \(select 1 from tm where exists \(select 1 from public\.defaulter_snapshots d where d\.team = tm\.team and d\.ref = r\.ref\)\)/, 'and a loan number is asked under each team: the (team, loan number) index');
   assert.match(c, /where \(select ok from hasidx\) and exists \(select 1 from public\.repayment_snapshots e where e\.ref = r\.ref\)/, 'the expected sheets are asked only when they have an index by loan number');
-  assert.match(c, /exists \(select 1 from alln x where x\.kref = m\.kref and abs\(x\.notice_date - m\.notice_date\) <= 7\) as in_system/, 'held = a notice of that loan number within seven days');
-  assert.match(c, /lastn as \(select distinct on \(t\.kref\) t\.kref, t\.notice_date, t\.arrears from todo t where t\.kref not in \(select kref from known\) order by t\.kref, t\.notice_date desc\),/, 'cleared by default at the LAST notice of a customer the system never held');
-  assert.match(c, /\(l\.notice_date \+ interval '1 month'\)::date as paid_at, l\.arrears as amount\nfrom lastn l join todo t on t\.kref = l\.kref where coalesce\(l\.arrears, 0\) > 0\),/, 'one month after it, for its arrears, under each of their notices, and only with a figure');
+  assert.match(c, /exists \(select 1 from alln x where x\.kref = m\.kref and x\.id not in \(select id from mine\) and abs\(x\.notice_date - m\.notice_date\) <= 7\) as in_system/,
+    'held = a notice of that loan number within seven days that this list did not write itself');
+  assert.match(c, /m\.id in \(select id from alln\) as have/, 'what an earlier run wrote is told from what the system holds');
+  assert.match(c, /ours as \(select \* from cand where have or not in_system\),\ntodo as \(select \* from ours where not have\),\nrefs as \(select distinct kref, ref from ours\),/,
+    'the customer is judged on every notice of the list (an earlier run\'s included); only the notices not yet written are written');
+  assert.match(c, /lastn as \(select distinct on \(t\.kref\) t\.kref, t\.notice_date, t\.arrears from ours t where t\.kref not in \(select kref from known\) order by t\.kref, t\.notice_date desc\),/, 'cleared by default at the LAST notice of a customer the system never held');
+  assert.match(c, /\(l\.notice_date \+ interval '1 month'\)::date as paid_at, l\.arrears as amount\nfrom lastn l join ours t on t\.kref = l\.kref where coalesce\(l\.arrears, 0\) > 0\),/, 'one month after it, for its arrears, under each of their notices, and only with a figure');
   assert.match(c, /c\.amount, 'default' from clr c/, 'marked, so it is never taken for a payment the book recorded');
   assert.match(ENGINE, /^-- with st as \(select upper\(btrim\(ref\)\) as kref, notice_date from public\.demand_import_2025 where notice_date is not null\), a as \(delete from public\.notice_payment_ledger where matched_by = 'default' and payment_id in /m, 'the undo is written, and removes only what the import marked');
-  assert.match(ENGINE, /WITH THE WORD COUNT \(as it is\) IT CHANGES NOTHING/);
-  assert.match(ENGINE, /WHAT IT COSTS: nothing to \/api\/upload or \/api\/call\./);
+  assert.match(ENGINE, /With the word COUNT \(as it is\) it CHANGES NOTHING/);
+  assert.match(ENGINE, /COST: nothing to \/api\/upload or \/api\/call; 45 s ceiling\./);
+  assert.match(ENGINE, /A LATER DELIVERY of the same\n-- sheet is run the same way and ends where one delivery of everything would have/, 'the header says what a later delivery is');
 });
 
 test('the builder writes outside the repository, reads a date by the rules the handbook gives, and refuses a block the owner cannot paste', () => {
@@ -184,11 +192,36 @@ test('the kept check runs the template on the real schema, against a model, and 
   assert.match(k, /if \(bookSum\(\) !== before\) note\('COUNT changed the book'\);/);
   assert.match(k, /after the undo the book is not what it was before the import/);
   const m = k.match(/const BREAKS = \[([\s\S]*?)\n\];/);
-  assert.ok(m && (m[1].match(/^  \[/gm) || []).length >= 49, 'deliberate breaks: ' + (m ? (m[1].match(/^  \[/gm) || []).length : 0));
+  assert.ok(m && (m[1].match(/^  \[/gm) || []).length >= 60, 'deliberate breaks: ' + (m ? (m[1].match(/^  \[/gm) || []).length : 0));
   assert.ok((m[1].match(/, 'data'\],$/gm) || []).length >= 13, 'of the data block among them');
   assert.match(k, /if \(!NOT\.test\(ans\)\) note\('a damaged block \(' \+ what \+ '\) did not say so: ' \+ ans\);/, 'a damaged block must say so in words');
   assert.match(k, /note\('IMPORT wrote although the list holds ' \+ SHEET\.length \+ ' rows and the engine was built for ' \+ rows\);/, 'and an engine built for another list must write nothing');
   assert.match(k, /alter default privileges in schema public grant all on tables to anon, authenticated;/, 'the list\'s privacy is checked on a book that hands new tables to the API roles');
+});
+
+/* ---- A LATER DELIVERY (24 Nov 2026, handbook Part 147): "Legal team submitted more ref nos and teams in the table" ---- */
+test('a later delivery: the builder places each new row among the first sheet\'s rows by every field, writes the new rows only, and builds the engine for all of them', () => {
+  const b = read('tools/historic-notices/build_blocks.py');
+  assert.match(b, /def same_row\(r\):[\s\S]*?return \(clean\(r\[0\]\), clean\(r\[1\]\), cellkey\(r\[8\]\), amount\(r\[7\]\), amount\(r\[4\]\), amount\(r\[5\]\), amount\(r\[6\]\)\)/,
+    'a row is found by the officer, the customer, the date cell and EVERY amount: all of them, exactly');
+  assert.match(b, /assert not lost, 'rows of the later sheet that are not, exactly, a row of the first sheet that had no REF NO: '/, 'a row found by anything less stops the builder, naming the row of THEIR sheet (never a customer)');
+  assert.match(b, /assert not changed, 'rows of the later sheet that give a row another REF NO than an earlier delivery did: '/, 'a repeated row is not new, but a REF NO that changed stops the builder');
+  assert.match(b, /line = free\[k\]\.pop\(0\)\n\s+if line in taken:[\s\S]*?else: given\[line\] = \(ref, team_of\(r\[3\]\)\)/, 'each row of the first sheet is used once, and a row an earlier delivery gave is not new');
+  assert.match(b, /if late: ref, team = given\[line\]\[0\], given\[line\]\[1\] or team/, 'the second sheet\'s team is written where it has one, the first sheet\'s otherwise');
+  assert.match(b, /rec = dict\(line=line, by=who, name=clean\(r\[1\]\), ref=ref, team=team, late=late, was=kept,/, 'the row keeps its place in the first sheet as its line, and is read by the same date rules as any row');
+  assert.match(b, /out, codes = blocks\(new, template, len\(first\) if more else 0\)/, 'only the new rows are written into blocks, counted from the rows the list already holds');
+  assert.match(b, /first = \[r for r in recs if r\['late'\] < len\(mores\)\]/, 'the rows of every earlier delivery are in the list already: several deliveries are told apart by the one that gave the row its REF NO');
+  assert.match(b, /out, total = \[\], base\n/, 'the count each block says the list should hold starts at the rows already in it');
+  assert.match(b, /eng = engine\(template, len\(recs\)\)/, 'and the engine is built for the first delivery\'s rows and the second\'s together');
+  assert.ok(!/[^\x09\x0A\x20-\x7E]/.test(b), 'the tool is plain ASCII');
+  // the engine: what an earlier run wrote is told from what the system holds, and corrected where a later notice moves it
+  const c = code(ENGINE);
+  assert.match(c, /on conflict \(ref, since, payment_id\) do update set paid_at = excluded\.paid_at, amount = excluded\.amount\nwhere notice_payment_ledger\.matched_by = 'default'/, 'a clearance line this import wrote is corrected; one of another kind never is');
+  const k = read('tools/db-checks/historic-notices-import.mjs');
+  assert.match(k, /function staged\(fails,/, 'the kept check runs the first delivery, then the second, then one delivery of everything');
+  assert.match(k, /two deliveries do not end where one delivery of everything ends/);
+  assert.match(k, /a ledger line of another kind under the same key was changed/);
+  assert.match(k, /engine wrote or did not refuse on the grown list/, 'an engine built for the first delivery\'s rows writes nothing on the grown list');
 });
 
 test('the handbook and CHAT.md record the import, its rules and what is not done', () => {
