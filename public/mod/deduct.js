@@ -86,7 +86,10 @@ VIEWS.deduct = function(){
     } else {
       S.rows = rows.filter(DED_SHOW_[show].keep);
       S.cols = [col('submitted_at','Tarehe / Date','dt'), col('reporter','Aliyeripoti / Reporter'), col('dept','Dept'),
-        col('team','Team'), col('branch','Branch'), col('customer','Mteja / Customer'), col('ref','REF NO'),
+        /* "At Makato ya PMO / PMO Deduction Orodha / List, remove branch column" (the owner, 24 Nov 2026; handbook Part 143):
+           the list, and so its Excel, JPG and CSV, goes from Team straight to the customer. The server still answers the
+           branch with each row; nothing reads it here. */
+        col('team','Team'), col('customer','Mteja / Customer'), col('ref','REF NO'),
         col('staff','Staff mtuhumiwa / Accused staff'), col('amount_taken','Alichokula / Taken','money'),
         col('received_date','Aliyopokea / Received','date'), col('discovery_date','Ugunduzi / Discovered','date'),
         col('deduction','Makato / Deduction','money'), col('to_pay','Cha kulipiwa / To pay','money'),

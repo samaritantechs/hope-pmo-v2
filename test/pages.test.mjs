@@ -2099,6 +2099,11 @@ test('the PMO Deduction tab sits under Abnormal Payments, with its form, HR colu
   assert.ok(/function dedCard_\(key, on, label, value, sub, cls\)/.test(view) && /data-arg="show" data-val="' \+ key \+ '" role="button" tabindex="0"/.test(view), 'a card is a pill of the bar');
   for (const k of ['all', 'taken', 'topay', 'proposed', 'deducted', 'remaining', 'nohr', 'prev', 'reporters']) assert.ok(new RegExp("card\\('" + k + "', ").test(view), 'card ' + k);
   assert.ok(/S\.rows = rows\.filter\(DED_SHOW_\[show\]\.keep\);/.test(view) && /show === 'prev'/.test(view) && /show === 'reporters'/.test(view), 'each card opens its own list');
+  /* "At Makato ya PMO / PMO Deduction Orodha / List, remove branch column" (the owner, 24 Nov 2026; Part 143): the list goes from
+     Team straight to the customer, and no column of any of the tab's three lists is the branch. */
+  assert.ok(view.includes("col('dept','Dept'),") && view.includes("col('team','Team'), col('customer','Mteja / Customer'), col('ref','REF NO'),"), 'Dept, Team, then the customer');
+  assert.doesNotMatch(view, /col\('branch'/, 'no Branch column on the deductions tab');
+  assert.equal((view.match(/S\.cols = \[/g) || []).length, 3, 'its three lists: the cases, the balances before, the reporters');
   assert.ok(/if \(S\.sort == null\)\{ S\.sort = 'submitted_at'; S\.asc = false; \}/.test(view), 'newest first on the tab\'s first paint');
   assert.ok(/The list follows the dates you pick, newest first/.test(view), 'said on the screen');
   assert.ok(/\.kpi\.tap\{cursor:pointer/.test(app) && /\.kpi\.tap\.on\{border-color:var\(--b500\)/.test(app), 'the tappable card style, lit when chosen');

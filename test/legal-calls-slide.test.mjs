@@ -278,7 +278,12 @@ test('THE PRESENTATION: the demand-recovery slide is as it was, and the legal of
     'the server\'s rows; a silent phone is marked in the officer\'s own cell, the mark held together by no-break spaces written as escapes');
   assert.doesNotMatch(pres, /\u00a0/, 'and no invisible no-break space is typed into the file itself');
   assert.match(slide, /cols:\[\{ key:'who', label:'Legal officer', cls:function\(r\)\{ return r\.silent \? 'bad' : ''; \} \},/, 'in red');
-  assert.match(slide, /col\('calls','Calls today','num'\), col\('connectPct','Reached today','pct'\), col\('portfolio','Portfolio','num'\),/);
+  /* "replace (reached today %) column with Duration of todays portifolio talk" (the owner, 24 Nov 2026; Part 143): the third column is
+     the row's own `duration` (today's talk with customers of the officer's own teams), printed as the HOPE Calls slide prints it. */
+  assert.match(slide, /col\('calls','Calls today','num'\), col\('duration','Portfolio talk','dur'\), col\('portfolio','Portfolio','num'\),/);
+  assert.doesNotMatch(slide, /Reached today|col\('connectPct'/, 'today\'s Reached % is off this slide');
+  assert.match(slide, /Portfolio talk = muda wa maongezi hayo leo \/ the talk time of those calls today/, 'and the caption says what the new column is');
+  assert.ok(pres.includes("col('duration','Portfolio talk','dur'), col('portfolio','Portfolio','num'), col('connectPct','Reached %','pct')] });"), 'the HOPE Calls slide keeps its own three, as it was');
   assert.match(slide, /col\('wCalls','Calls week','num'\), \{key:'wConnectPct', label:'Reached week', kind:'pct', from:\['wConnected','wCalls'\]\},/, 'the week\'s Reached % total is the totals\' ratio');
   assert.match(slide, /col\('spoken','DC 2\+ spoken','num'\), col\('phToday','By phone today','money'\), col\('phWeek','By phone week','money'\)\] \}\);/);
   assert.match(slide, /caption: lcCap, rows: lcRows,\n/, 'every legal phone is a row: no cap, so the rows add up to the card');
