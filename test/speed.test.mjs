@@ -66,7 +66,9 @@ function bigBook() {
     }
   }
   for (let i = 0; i < 2000; i++) {
-    t.followup_status.push({ ref: 'R' + i, team: TEAMS[i % TEAMS.length], full_name: 'C' + i,
+    // a number on every register row, as a real register has: without one the phone index holds nobody of the register
+    // and the search could never be measured finding one (handbook Part 145)
+    t.followup_status.push({ ref: 'R' + i, team: TEAMS[i % TEAMS.length], full_name: 'C' + i, contact: '0714' + String(100000 + i),
       arrears: 4000, status: 'Defaulter', fu_status: 'AMETOA AHADI' });
     t.loans.push({ id: 'l' + i, team: TEAMS[i % TEAMS.length], stage: 'approved',
       principal_amt: 300000, approved_date: day(i % 7), track_no: '1', created_by: 'CS1' });
@@ -720,6 +722,13 @@ const PHONE = [
      ONE read of `loans` narrowed at the database to the handset's teams and 25 rows. Warm it is the
      device, the scope, the two stamps and that one read. Rule 1, counted. */
   ['Calls: find a customer', 'api_callFind', ['DEV1', 'JUMA'], 12, 30000],
+  /* ...AND WHEN THE SEARCH FINDS SOMEBODY THE FOLLOW-UP REGISTER NAMES, ONE MORE (24 Nov 2026, handbook Part 145): the register is asked
+     about the few it found, by its primary key (25 rows at most), so that a customer who owes comes back with the Def tab's own
+     figures and one who has left the defaulters file is not called a defaulter ("people are reporting some customer cards ...
+     Not showing arreas"). 13 trips cold: the 12 above and that read; it goes out while the loans read is still on its way.
+     A search that finds nobody of the register (the row above) does not make it. Rule 1, counted and written down in
+     call-core.js beside find. */
+  ['Calls: find a customer the register names', 'api_callFind', ['DEV1', 'C19'], 13, 30000],
   /* The phone's search index. It used to read EVERY comment ever written to find the few
      hundred carrying a replacement phone number -- the portal's copy of this was fixed weeks
      ago and the phone's was not, which is why the app felt slower than the portal on the same

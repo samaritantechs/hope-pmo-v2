@@ -3146,6 +3146,9 @@ async function callBeat(db, [dev, fix], nowMs) {
    would have paid on its next call anyway. A missing loans table costs nothing but that part.
    ======================================================================================= */
 const FIND_MIN_CHARS = 3, FIND_LIMIT = 25;
+/* What a search row says of somebody the follow-up register names (see find, below). Exported for the tests. */
+export const FIND_NOT_DEFAULTER = 'Si mdaiwa kwa sasa: hayupo kwenye faili la sasa la waliokosa / Not a defaulter now: not on the current defaulters file';
+export const FIND_REG_UNREAD = 'Kwenye rejista ya ufuatiliaji (deni halikusomeka sasa) / In the follow-up register (the arrears could not be read just now)';
 const STAGE_SEG = {
   unassigned: 'Maombi', assigned: 'Maombi', unassessed: 'Maombi', assessed: 'Maombi', pending_approval: 'Maombi',
   approved: 'Imeidhinishwa', pending_disb: 'Imeidhinishwa', disbursed: 'Mkopo', funded: 'Mkopo', closed: 'Imefungwa',
@@ -3176,9 +3179,10 @@ async function find(db, [dev, q], nowMs) {
   const num9 = digits.length >= 7 ? digits.slice(-9) : '';
   const has = (v, what) => String(v || '').toUpperCase().includes(what);
   const vs = await settingsMany(db, ['DATA_VERSION', 'NEW_NUMBER_VERSION']);
-  const [byNum, loansRes] = await Promise.all([
+  const [byNum, loansP] = await Promise.all([
     phoneIndex(db, nowMs, vs('DATA_VERSION') || '', vs('NEW_NUMBER_VERSION') || ''),
-    runQuery(() => {
+    // started now and awaited below: wrapped so that awaiting the index does not also wait for it
+    (async () => ({ p: runQuery(() => {
       const like = '%' + needle.replace(/[%_\\]/g, m => '\\' + m) + '%';
       const clauses = ['full_name.ilike.' + like, 'guarantor_name.ilike.' + like];
       if (/-/.test(needle)) clauses.push('docket_no.ilike.' + like);
@@ -3189,7 +3193,7 @@ async function find(db, [dev, q], nowMs) {
         .or(clauses.join(',')).order('created_at', { ascending: false }).limit(FIND_LIMIT);
       if (user.teams && user.teams.length) lq = lq.in('team', teamMatchList(user.teams));
       return lq;
-    }, 1),
+    }, 1) }))(),
   ]);
   const rows = [], seen = new Set();
   for (const e of refIndexOf_(byNum).values()) {
@@ -3203,8 +3207,55 @@ async function find(db, [dev, q], nowMs) {
     const def = e.src === 'DEF';
     rows.push({ ref: e.ref, name: e.name, contact: e.contact, gName: e.gName, gContact: e.gContact, team: e.team,
       amt: null, installment: null, custStatus: '', fuStatus: '', ds: '', days: '', called: false, noBook: true,
-      note: def ? 'Kwenye rejista ya waliokosa / in the defaulter register' : 'Kwenye Expected (wiki 2) / on an Expected sheet (two weeks)',
+      note: def ? FIND_REG_UNREAD : 'Kwenye Expected (wiki 2) / on an Expected sheet (two weeks)',
       _seg: def ? 'Def' : 'Exp', src: def ? 'DEF' : 'EXP' });
+  }
+  /* WHAT THE REGISTER SAYS OF THE ONES IT NAMED -- 24 Nov 2026 (handbook Part 145).
+
+       "people are reporting some customer cards abnormally displaying what were not used of as on the
+        picture, Not showing arreas e.t.c" -- the owner, with a card that read only
+        "Hali / Status: Kwenye rejista ya waliokosa / in the defaulter register"
+
+     The index sync keeps knows a NAME and NUMBERS and nothing else, and it holds every row of the
+     follow-up register: the customers who owe today, and also every customer who has LEFT the
+     defaulters file (the upload blanks their status and arrears and keeps the row: retireFollowupAfterDeck)
+     and every Expected customer somebody once wrote a comment on (a row made so the comment has
+     something to hang on). All of them came back from a search as "in the defaulter register", with no
+     arrears: true of none of the last two kinds, and unhelpful for the first (a defaulter of the
+     officer's own team that the role narrowing keeps off a collection or credit officer's list).
+
+     So the register itself is asked about the few the search found: ONE read by its primary key, of at
+     most 25 rows, and only when the search found somebody the register names. It goes out while the
+     loans read is still on its way, so a search waits no longer than it did. A row that OWES comes back
+     as the Def tab draws it (arrears, rejesho, status, the last follow-up, D.S, days): the card then
+     shows what an officer is used to. A row with no status and no arrears is NOT a defaulter now, and
+     says so. If the read fails the search still answers, and the row says only what is known.
+
+     RULE 1, COUNTED (test/speed.test.mjs raises the search's ceiling by this one trip, with the reason):
+     an officer-initiated request after a pause in typing, never on sync, boot or a list. */
+  const defRows = rows.filter(r => r.src === 'DEF');
+  const [loansRes, regRes] = await Promise.all([
+    loansP.p,
+    defRows.length
+      ? runQuery(() => db.from('followup_status').select('ref, arrears, rejesho, status, fu_status, ds, days_elapsed')
+          .in('ref', defRows.map(r => r.ref)), 1)
+      : null,
+  ]);
+  if (defRows.length && regRes && !regRes.error && Array.isArray(regRes.data)) {
+    const reg = new Map(regRes.data.map(x => [String(x.ref), x]));
+    for (const r of defRows) {
+      const x = reg.get(String(r.ref));
+      if (x && !(x.status == null && x.arrears == null)) {
+        // the Def tab's own row, field for field (list(), 'defaulters')
+        r.amt = num(x.arrears); r.installment = num(x.rejesho);
+        r.custStatus = statusWithPaid(x.arrears, x.status, ''); r.fuStatus = x.fu_status || '';
+        r.ds = dsFmt(x.ds); r.days = x.days_elapsed == null ? '' : x.days_elapsed;
+        r.noBook = false; r.note = '';
+      } else {
+        r.fuStatus = (x && x.fu_status) || '';
+        r.note = FIND_NOT_DEFAULTER; r._seg = 'Rejista';
+      }
+    }
   }
   const loans = (loansRes && !loansRes.error && Array.isArray(loansRes.data)) ? loansRes.data : [];
   for (const l of loans) {

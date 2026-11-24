@@ -3452,6 +3452,139 @@ test('find: fewer than three letters asks the database for nothing; a missing lo
   assert.deepEqual(d.rows.map(r => r.ref), ['555'], 'the register still answers');
 });
 
+/* THE SEARCH SAYS WHAT THE REGISTER KNOWS OF A CUSTOMER -- 24 Nov 2026 (handbook Part 145).
+     "people are reporting some customer cards abnormally displaying what were not used of as on the picture, Not showing
+      arreas e.t.c" -- the owner, with a card that read only "Hali / Status: Kwenye rejista ya waliokosa / in the defaulter register"
+   THE OWNER'S OWN SAMPLE, REPLAYED with made-up people: a customer who was a defaulter, has LEFT the defaulters file (the upload
+   blanks the status and the arrears and keeps the row) and carries an "Ana namba nyingine" comment, exactly the card of the
+   picture. And the other customer the same search could bring back with nothing on the card: one who owes today, kept off a
+   collection officer's own list by the single-count narrowing. */
+async function findRegDb_(extra = {}) {
+  const t = makeTables();
+  t.followup_status.push(
+    // left the defaulters file: the row stays, blanked (retireFollowupAfterDeck)
+    { ref: '601', team: 'KONGOWE', full_name: 'ALIYEMALIZA DENI', contact: '0714000601', guarantor_name: 'MDHAMINI WA 601', guarantor_contact: '0715000601',
+      arrears: null, rejesho: 200, status: null, fu_status: 'ANA NAMBA NYINGINE', ds: '11-12', days_elapsed: 80, updated_at: '2026-07-20T05:00:00Z' },
+    // a comment once written on an Expected customer: a row made for the comment to hang on, never a defaulter
+    { ref: '602', team: 'KONGOWE', full_name: 'MTEJA WA EXPECTED', contact: '0714000602', guarantor_name: '', guarantor_contact: '',
+      arrears: null, rejesho: null, status: null, fu_status: null, ds: null, days_elapsed: null, updated_at: '2026-07-01T05:00:00Z' },
+    // owes today, eight installments behind: on the Def tab of a field officer, narrowed off a collection officer's
+    { ref: '603', team: 'KONGOWE', full_name: 'MDAIWA WA MBALI', contact: '0714000603', guarantor_name: 'MDHAMINI WA 603', guarantor_contact: '0715000603',
+      arrears: 48000, rejesho: 6000, status: 'Chronic', fu_status: 'Ametoa Ahadi', ds: '4-12', days_elapsed: 140, updated_at: '2026-07-24T05:00:00Z' },
+    // owes nothing any more but is still on the file: the Def tab says PAID, and so must the search
+    { ref: '604', team: 'KONGOWE', full_name: 'AMELIPA YOTE', contact: '0714000604', guarantor_name: '', guarantor_contact: '',
+      arrears: 0, rejesho: 3000, status: 'Defaulter', fu_status: '', ds: '6-6', days_elapsed: 30, updated_at: '2026-07-24T05:00:00Z' },
+    // a debt with no status word on it: the Def tab lists it (only a row with NEITHER is blanked), and so must the search
+    { ref: '605', team: 'KONGOWE', full_name: 'DENI BILA HALI', contact: '0714000605', guarantor_name: '', guarantor_contact: '',
+      arrears: 2500, rejesho: 500, status: null, fu_status: '', ds: '2-12', days_elapsed: 200, updated_at: '2026-07-24T05:00:00Z' });
+  t.followup_comments.push({ ref: '601', team: 'KONGOWE', full_name: 'ALIYEMALIZA DENI', comment: 'namba mpya', fu_status: 'ANA NAMBA NYINGINE',
+    new_number: '0752430101', created_by: 'JUMA ISSA', created_at: '2026-07-15T08:00:00Z' });
+  t.access_codes.push({ code: 'COL1', name: 'CATHERINE C', role: 'PMO COLLECTION', teams: ['KONGOWE'], tabs: [] });
+  const db = fakeDb(t, extra);
+  await callApi(db, 'api_callRegister', ['d1', 'JUMA ISSA', '', '', '0712999999', 'KON123'], NOW);
+  await callApi(db, 'api_callRegister', ['dC', '', '', 'COL1', '0788111288'], NOW);
+  return db;
+}
+
+test('find: a customer who has LEFT the defaulters file is not called a defaulter, and the card says so (the owner\'s sample, replayed)', async () => {
+  const { FIND_NOT_DEFAULTER } = await import('../api/_lib/call-core.js');
+  const db = await findRegDb_();
+  // The officer's own Def tab does not hold them (a blanked row is not a defaulter), which is why the search is what finds them.
+  const defTab = await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW);
+  assert.ok(!defTab.rows.some(r => r.ref === '601' || r.ref === '602'), 'not on the Def tab');
+  const d = await callApi(db, 'api_callFind', ['d1', 'ALIYEMALIZA'], NOW);
+  assert.equal(d.rows.length, 1);
+  const r = d.rows[0];
+  assert.equal(r.note, FIND_NOT_DEFAULTER, 'the card\'s Status line: not a defaulter now');
+  assert.doesNotMatch(r.note, /in the defaulter register/, 'never the words of the picture again');
+  assert.match(r.note, /Si mdaiwa kwa sasa/); assert.match(r.note, /not on the current defaulters file/);
+  assert.equal(r.noBook, true, 'there is no debt to print, so the card prints the status line and no "Deni TZS 0"');
+  assert.deepEqual([r.amt, r.installment, r.custStatus, r.ds, r.days], [null, null, '', '', ''], 'no figure is made up for somebody who owes nothing on a file');
+  assert.equal(r._seg, 'Rejista', 'and the chip does not say Def');
+  assert.equal(r.fuStatus, 'ANA NAMBA NYINGINE', 'the last follow-up still rides on the card, as the picture\'s history shows it');
+  assert.deepEqual([r.name, r.contact, r.gName, r.gContact, r.team, r.ref], ['ALIYEMALIZA DENI', '714000601', 'MDHAMINI WA 601', '715000601', 'KONGOWE', '601'], 'the card can still be rung, noted and pinned');
+  // found by the other number recorded for them too, as the picture's customer would be
+  const byAlt = await callApi(db, 'api_callFind', ['d1', '0752430101'], NOW);
+  assert.deepEqual(byAlt.rows.map(x => [x.ref, x.note]), [], 'the other number is a number of the index, not a field the search matches: unchanged (only name, own number, guarantor, REF)');
+  // the Expected customer who only ever had a comment: the same honest line
+  const e = await callApi(db, 'api_callFind', ['d1', 'MTEJA WA EXPECTED'], NOW);
+  assert.deepEqual(e.rows.map(x => [x.ref, x.note, x.noBook, x._seg]), [['602', FIND_NOT_DEFAULTER, true, 'Rejista']]);
+});
+
+test('find: a defaulter the role narrowing keeps off a collection officer\'s list comes back with the Def tab\'s own figures', async () => {
+  const db = await findRegDb_();
+  const colTab = await callApi(db, 'api_callList', ['dC', 'defaulters'], NOW);
+  assert.ok(!colTab.rows.some(r => r.ref === '603'), 'eight behind: not on a collection officer\'s Def tab (single counts only)');
+  const d = await callApi(db, 'api_callFind', ['dC', 'MDAIWA WA MBALI'], NOW);
+  assert.equal(d.rows.length, 1);
+  const r = d.rows[0];
+  assert.equal(r.noBook, false, 'a real debt: the card draws Deni / Arrears, as an officer is used to');
+  assert.deepEqual([r.amt, r.installment, r.custStatus, r.fuStatus, r.ds, r.days], [48000, 6000, 'Chronic', 'Ametoa Ahadi', '4-12', 140]);
+  assert.equal(r.note, ''); assert.equal(r._seg, 'Def'); assert.equal(r.src, 'DEF');
+  // and it is field for field the row a field officer's Def tab carries for the same customer
+  const fo = (await callApi(db, 'api_callList', ['d1', 'defaulters'], NOW)).rows.find(x => x.ref === '603');
+  for (const k of ['ref', 'name', 'gName', 'amt', 'installment', 'custStatus', 'fuStatus', 'ds', 'days', 'team']) assert.deepEqual(r[k], fo[k], k + ' is the Def tab\'s');
+  // a customer still on the file who owes nothing says PAID, by the Def tab's own rule
+  const paid = await callApi(db, 'api_callFind', ['dC', 'AMELIPA YOTE'], NOW);
+  assert.deepEqual([paid.rows[0].noBook, paid.rows[0].amt, paid.rows[0].custStatus], [false, 0, 'PAID']);
+  // a debt with no status word is still a debt: the Def tab's own test is "neither a status nor arrears"
+  const bare = await callApi(db, 'api_callFind', ['dC', 'DENI BILA HALI'], NOW);
+  assert.deepEqual([bare.rows[0].noBook, bare.rows[0].amt, bare.rows[0].custStatus, bare.rows[0].note], [false, 2500, '', '']);
+});
+
+test('find: the register is asked ONCE, by its key, only for the customers the search found there; a failed read never fails the search', async () => {
+  const { FIND_REG_UNREAD } = await import('../api/_lib/call-core.js');
+  const db = await findRegDb_();
+  await callApi(db, 'api_callFind', ['d1', 'nobody at all'], NOW);              // the index is warm, as on a working handset (a sync of no calls does not build it)
+  const asked = [];
+  const from = db.from.bind(db);
+  db.from = n => { const q = from(n); if (n === 'followup_status') { const inn = q.in.bind(q); q.in = (c, v) => { asked.push([c, v.slice().sort()]); return inn(c, v); }; } return q; };
+  let reads = 0; const from2 = db.from.bind(db); db.from = n => { if (n === 'followup_status') reads++; return from2(n); };
+  const d = await callApi(db, 'api_callFind', ['d1', 'ALIYEMALIZA'], NOW);      // one hit in the register
+  assert.equal(d.rows.length, 1);
+  assert.equal(reads, 1, 'one read of the register');
+  assert.deepEqual(asked, [['ref', ['601']]], 'by its primary key, for exactly the customer found');
+  reads = 0; asked.length = 0;
+  const none = await callApi(db, 'api_callFind', ['d1', 'KESHO K'], NOW);       // on tomorrow's sheet only: nobody of the register
+  assert.equal(none.rows.length, 1); assert.equal(none.rows[0]._seg, 'Exp');
+  assert.equal(reads, 0, 'nobody of the register among the found: the register is not read at all');
+  assert.equal(none.rows[0].note, 'Kwenye Expected (wiki 2) / on an Expected sheet (two weeks)', 'an Expected customer\'s row is as it was');
+  // the register read fails: the search still answers, and the row says only what is known
+  const db2 = await findRegDb_();
+  await callApi(db2, 'api_callFind', ['d1', 'nobody at all'], NOW);
+  const f2 = db2.from.bind(db2);
+  db2.from = n => { const q = f2(n); if (n === 'followup_status') { q.in = () => Promise.resolve({ data: null, error: { message: 'canceling statement due to statement timeout', code: '57014' } }); } return q; };
+  const bad = await callApi(db2, 'api_callFind', ['d1', 'MDAIWA WA MBALI'], NOW);
+  assert.equal(bad.ok, true); assert.equal(bad.rows.length, 1, 'still found');
+  assert.equal(bad.rows[0].note, FIND_REG_UNREAD, 'no "defaulter", no "not a defaulter": the arrears could not be read just now');
+  assert.equal(bad.rows[0].noBook, true);
+});
+
+test('find: the register read goes out while the loans read is still on its way, so a search waits no longer than it did', async () => {
+  const db = await findRegDb_();
+  await callApi(db, 'api_callFind', ['d1', 'nobody at all'], NOW);              // warm index
+  const events = [];
+  const from = db.from.bind(db);
+  db.from = n => {
+    const q = from(n);
+    if (n === 'loans') {
+      // a loans read that takes a while: its answer arrives a tick of the clock later
+      const then = q.then.bind(q);
+      const limit = q.limit.bind(q);
+      q.limit = (...a) => { const r = limit(...a); events.push('loans asked');
+        const t = r.then.bind(r);
+        r.then = (ok, bad) => new Promise(res => setTimeout(res, 25)).then(() => t(v => { events.push('loans answered'); return v; })).then(ok, bad);
+        return r; };
+      void then;
+    }
+    if (n === 'followup_status') { const inn = q.in.bind(q); q.in = (c, v) => { events.push('register asked'); return inn(c, v); }; }
+    return q;
+  };
+  const d = await callApi(db, 'api_callFind', ['d1', 'MDAIWA WA MBALI'], NOW);
+  assert.equal(d.rows.length, 1); assert.equal(d.rows[0].amt, 48000);
+  assert.deepEqual(events, ['loans asked', 'register asked', 'loans answered'], 'asked before the loans read has answered, not after it');
+});
+
 /* THE CALL APP KEEPS UP: boot carries the build of the call.html the server holds, read off the file. */
 test('boot says which call.html the server has, and it is the one in public/', async () => {
   const { readFileSync } = await import('node:fs');
