@@ -150,6 +150,11 @@
   .kpi.lggrand{grid-column:1/-1}
   .kpi.lggrand .s{margin-top:2px}
   .kpi.lggrand .scroll{margin-top:8px}
+  /* The card's own row of buttons (Part 150): the way home on the left when the card is on a past week, Excel and JPG on the right.
+     The picture drops every button, so in it this row is empty and takes no room. */
+  .lgGact{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:6px}
+  .lgGact .lgwkhome{font-size:11px}
+  .lgGdl{margin-left:auto;display:flex;gap:6px}
   .lgGT{width:100%;border-collapse:collapse;font-size:12.5px}
   .lgGT th{padding:4px 10px;text-align:right;font-size:10.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;border-bottom:1px solid var(--line)}
   .lgGT th.n,.lgGT td.n{text-align:left}
@@ -825,7 +830,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-h';
+var BUILD = '2026-11-24-i';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -3463,24 +3468,35 @@ function exportBoard(id, kind){
   var b = BOARDS[id];
   if (!b || !b.rows.length){ toast(t('nothing'), true); return; }
   var name = b.title.replace(/[^A-Za-z0-9]+/g,'-').replace(/^-|-$/g,'') + '-' + today();
+  /* A BOARD MAY ASK THAT ITS DOWNLOAD IS THE CARD AS DRAWN (the Legal tab's grand recovery card, Part 150): `b.xls.total` is the
+     total row the card prints under its lines, `b.xls.foot` the sentences it prints under the table, and `b.xls.blank` says a figure
+     that is NOT KNOWN (null) goes out as an empty cell, never as the nought every other board writes there (a dash on the screen
+     must not read as 0 in the sheet). A board that asks for none of the three is written exactly as it always was. */
+  var x = b.xls || null, tot = x && x.total ? x.total : null, blank = !!(x && x.blank);
   if (kind === 'csv'){
     var lines = ['"S/N",' + b.cols.map(function(c){ return '"'+String(c.label).replace(/"/g,'""')+'"'; }).join(',')];
     b.rows.forEach(function(r,i){
       lines.push('"'+(i+1)+'",' + b.cols.map(function(c){ return '"'+cellText(r,c).replace(/"/g,'""')+'"'; }).join(','));
     });
+    if (tot) lines.push('"",' + b.cols.map(function(c, i){ return '"' + (i === 0 ? 'JUMLA / TOTAL' : cellText(tot, c)).replace(/"/g,'""') + '"'; }).join(','));
     download(new Blob(['﻿'+lines.join('\r\n')], {type:'text/csv;charset=utf-8;'}), name+'.csv');
     return;
   }
+  var xcell = function(r, c){
+    var raw = c.get ? c.get(r) : r[c.key];
+    if (!isNum(c)) return '<td>'+esc(cellText(r,c))+'</td>';
+    return blank && raw == null ? '<td></td>' : '<td x:num>'+(c.kind==='pct' ? pctRound_(c, raw) : (Number(raw)||0))+'</td>';
+  };
   var html = '<html xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="utf-8">'
     + '<style>th{background:#0B2A6B;color:#fff}td,th{border:1px solid #ccc;padding:4px 6px}</style></head><body>'
     + '<h3>'+esc(b.title)+'</h3><table><thead><tr><th>S/N</th>'
     + b.cols.map(function(c){ return '<th>'+esc(c.label)+'</th>'; }).join('')+'</tr></thead><tbody>'
     + b.rows.map(function(r,i){
-        return '<tr><td>'+(i+1)+'</td>'+b.cols.map(function(c){
-          var raw = c.get ? c.get(r) : r[c.key];
-          return isNum(c) ? '<td x:num>'+(c.kind==='pct' ? pctRound_(c, raw) : (Number(raw)||0))+'</td>' : '<td>'+esc(cellText(r,c))+'</td>';
-        }).join('')+'</tr>'; }).join('')
-    + '</tbody></table></body></html>';
+        return '<tr><td>'+(i+1)+'</td>'+b.cols.map(function(c){ return xcell(r, c); }).join('')+'</tr>'; }).join('')
+    + (tot ? '<tr><td></td>' + b.cols.map(function(c, i){ return i === 0 ? '<td>JUMLA / TOTAL</td>' : xcell(tot, c); }).join('') + '</tr>' : '')
+    + '</tbody></table>'
+    + (x && x.foot ? x.foot.map(function(l){ return '<p>' + esc(l) + '</p>'; }).join('') : '')
+    + '</body></html>';
   download(new Blob(['﻿'+html], {type:'application/vnd.ms-excel;charset=utf-8;'}), name+'.xls');
 }
 /* THE WEEK'S LEGAL REPORT, off the [Report] button on the "Legal recovery — this week" board:
@@ -6072,13 +6088,20 @@ function lgWeekCard_(lg){
 function lgGrandCard_(lg){
   var g = lg.grand;
   if (!g) return '';
+  BOARDS.lgGrandX = lgGrandBoard_(lg);                  // what Excel downloads is the card now on the screen (Part 150)
   var mon = lg.mon || '', cur = !lg.thisWeek || mon === lg.thisWeek;
   var canBack = !!mon && (!lg.since || mon > lg.since), canFwd = !cur;
   var arrow = function(n, glyph, ok, tip){
     return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
       + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
   };
-  var home = cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>';
+  var home = cur ? '' : '<button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>';
+  /* THE DOWNLOADS (Part 150): "add excel and jpg button at weekly grand recovery of legal teams so that we could always download
+     it". Inline handlers, like the arrows: the card is replaced whole on every arrow press and a table search repaints it from HEAD,
+     so nothing wired once would survive. The picture takes the card's buttons out of itself (saveJpg), so this row is empty in it. */
+  var acts = '<div class="lgGact">' + home + '<span class="lgGdl">'
+    + '<button type="button" class="btn sm ghost" title="Pakua Excel / Download Excel" onclick="return lgGrandSave_(\'xls\', event)" onkeydown="event.stopPropagation()">Excel</button>'
+    + '<button type="button" class="btn sm ghost" title="Pakua picha / Download the picture" onclick="return lgGrandSave_(\'jpg\', event)" onkeydown="event.stopPropagation()">JPG</button></span></div>';
   var amt = function(v){ return v == null ? '—' : money(v); };
   var prc = function(v){ return v == null ? '' : pct(v); };
   var cells = function(r){
@@ -6087,26 +6110,53 @@ function lgGrandCard_(lg){
       + '<td class="r g' + (r.recovered > 0 ? ' good' : '') + '">' + amt(r.recovered) + '</td><td class="r p">' + prc(r.pct) + '</td>';
   };
   var rows = (g.rows || []).map(function(r){ return '<tr><td class="n">' + esc(r.officer) + '</td>' + cells(r) + '</tr>'; }).join('');
-  var ov = g.overlap || {};
-  var notes = '';
-  if (!g.nOn) notes += '<div class="s">⚠ ' + esc(g.nNote || '') + '</div>';
-  if (!g.pOn) notes += '<div class="s">⚠ ' + esc(g.pNote || '') + '</div>';
-  notes += '<div class="s">Simu = wateja wa DC 2+ waliozungumzwa ambao hawakuwa na notisi bado; aliyekwisha pewa notisi huhesabiwa kwenye notisi tu'
-    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' haikuhesabiwa mara ya pili)' : '')
-    + ' / Calls = customers at DC 2+ spoken to who had no notice yet; one already served a notice is counted under notices only'
-    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' left out, ' + money(ov.customers) + ' customer-days)' : '') + '.</div>';
-  if (g.shared) notes += '<div class="s">Timu inayoshikiliwa na mawakili wawili inahesabiwa kwa kila mmoja; mstari wa Jumla unahesabu kila mteja mara moja.'
-    + ' / A team held by two lawyers counts under each of them; the Total row counts each customer once.</div>';
+  var notes = lgGrandNotes_(g).map(function(l){ return '<div class="s">' + esc(l) + '</div>'; }).join('');
   return '<div class="kpi lgwk lggrand" id="lgGrand">'
     + '<span class="lgwkNav">' + arrow(-1, '◀', canBack, 'Wiki iliyopita / previous week') + arrow(1, '▶', canFwd, 'Wiki ijayo / next week') + '</span>'
     + '<div class="l">Jumla ya urejeshaji wa mawakili / Legal officers\' grand recovery · notisi + simu / notices + calls</div>'
-    + '<div class="s">' + esc(mon) + ' → ' + esc(lg.sun || '') + (cur ? '' : ' · wiki iliyopita / past week') + home + '</div>'
+    + '<div class="s">' + esc(mon) + ' → ' + esc(lg.sun || '') + (cur ? '' : ' · wiki iliyopita / past week') + '</div>' + acts
     + '<div class="scroll"><table class="lgGT"><thead><tr><th class="n">Wakili / Legal officer</th><th colspan="2">Notisi / Notices</th>'
     + '<th colspan="2">Simu / Calls</th><th colspan="2">Jumla / Grand</th></tr>'
     + '<tr class="sub"><th class="n"></th><th>TZS</th><th>%</th><th>TZS</th><th>%</th><th>TZS</th><th>%</th></tr></thead><tbody>'
     + (rows || '<tr><td class="n" colspan="7">—</td></tr>')
     + '<tr class="tot"><td class="n">Jumla / Total</td>' + cells(g.total || {}) + '</tr></tbody></table></div>'
     + notes + '</div>';
+}
+/* THE CARD'S SENTENCES, written once: the card draws them under its table and the download carries the same words under its own
+   (Part 150). A side that cannot be read is named first, with the file or the reason; then what "Calls" counts (and how much was
+   left out so that a customer is counted once); then the shared-team line. Plain text: the card escapes it as it draws it. */
+function lgGrandNotes_(g){
+  var ov = g.overlap || {}, out = [];
+  if (!g.nOn) out.push('⚠ ' + (g.nNote || ''));
+  if (!g.pOn) out.push('⚠ ' + (g.pNote || ''));
+  out.push('Simu = wateja wa DC 2+ waliozungumzwa ambao hawakuwa na notisi bado; aliyekwisha pewa notisi huhesabiwa kwenye notisi tu'
+    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' haikuhesabiwa mara ya pili)' : '')
+    + ' / Calls = customers at DC 2+ spoken to who had no notice yet; one already served a notice is counted under notices only'
+    + (g.pOn && ov.customers ? ' (TZS ' + money(ov.recovered || 0) + ' left out, ' + money(ov.customers) + ' customer-days)' : '') + '.');
+  if (g.shared) out.push('Timu inayoshikiliwa na mawakili wawili inahesabiwa kwa kila mmoja; mstari wa Jumla unahesabu kila mteja mara moja.'
+    + ' / A team held by two lawyers counts under each of them; the Total row counts each customer once.');
+  return out;
+}
+/* WHAT EXCEL DOWNLOADS (Part 150): the card's own table as a board for the one board exporter (exportBoard), for the week the card
+   is on -- a line a lawyer, notices then calls then the two together, each an amount and a percentage, then the total row and the
+   card's sentences; a figure that is not known is an empty cell, never a nought (xls.blank). lgGrandCard_ registers it every time
+   the card is drawn, so the sheet is always the card in view, a past week included. */
+function lgGrandBoard_(lg){
+  var g = lg.grand || {};
+  return { title: 'Legal grand recovery — week of ' + (lg.mon || '') + ' to ' + (lg.sun || ''), rows: g.rows || [],
+    cols: [col('officer', 'Wakili / Legal officer'),
+      { key: 'nRec', label: 'Notisi TZS / Notices TZS', kind: 'money' }, { key: 'nPct', label: 'Notisi % / Notices %', kind: 'pct' },
+      { key: 'cRec', label: 'Simu TZS / Calls TZS', kind: 'money' }, { key: 'cPct', label: 'Simu % / Calls %', kind: 'pct' },
+      { key: 'recovered', label: 'Jumla TZS / Grand TZS', kind: 'money' }, { key: 'pct', label: 'Jumla % / Grand %', kind: 'pct' }],
+    xls: { total: g.total || null, foot: lgGrandNotes_(g), blank: true } };
+}
+/* The card's two buttons: Excel is the board above through exportBoard, JPG is the card itself through saveJpg (which takes the
+   card's buttons out of the picture, the week arrows and these two included). */
+function lgGrandSave_(kind, ev){
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  if (kind === 'jpg') saveJpg(document.getElementById('lgGrand'));
+  else exportBoard('lgGrandX', 'xls');
+  return false;
 }
 /* RECOVERY BY PHONE, THE CARD -- "Legal officers should be added another card of legal recovery by phone -- because they get
    responsible to costomers not only those with noptices but also those with 2dc+ before giving out notices" ... "that card will be

@@ -35,6 +35,12 @@
         the read failed, and is not on the dashboard; on a phone's width the page does not scroll sideways. SHOTS=<dir> saves
         the pictures.
 
+     11. the grand card's EXCEL and JPG buttons (Part 150, 24 Nov 2026: "add excel and jpg button at weekly grand recovery of legal
+        teams so that we could always download it"): Excel downloads the card's own figures, week and total row included, for
+        this week AND for the past week the arrows are on; the buttons still work after a table search repaints the card; where
+        db/RUN-ME-089 is not run the calls and grand cells are EMPTY in the sheet (never noughts) and the sheet names the file;
+        JPG downloads a real picture of the card, wide enough for its table.
+
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
        npm i --no-save playwright-core
@@ -517,6 +523,51 @@ await page.close();
 // the dashboard keeps ONE Legal card
 page = await open('run', 'dashboard');
 check('10 the dashboard has no grand card: one Legal card', (await count(page, '#lgGrand')) === 0 && (await count(page, '#lgWkCard')) <= 1);
+await page.close();
+
+// --- 11. the grand card's downloads (Part 150)
+const jpegSize = buf => { let i = 2; while (i < buf.length) { if (buf[i] !== 0xFF) { i++; continue; } const m = buf[i + 1];
+  if (m >= 0xC0 && m <= 0xCF && m !== 0xC4 && m !== 0xC8 && m !== 0xCC) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) }; i += 2 + buf.readUInt16BE(i + 2); } return null; };
+const sheetOf = async dl => { const raw = fs.readFileSync(await dl.path()); return { name: dl.suggestedFilename(), bom: raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF, text: raw.subarray(3).toString('utf8') }; };
+const sheetRows = text => [...text.matchAll(/<tr><td>([^<]*)<\/td>((?:<td[^>]*>[^<]*<\/td>)+)<\/tr>/g)].map(m => [...m[2].matchAll(/<td[^>]*>([^<]*)<\/td>/g)].map(c => c[1]));
+const wantSheet = g => { const n = v => v == null ? '' : String(v), p = v => v == null ? '' : String(Math.round(v));
+  const cells = r => [n(r.nRec), p(r.nPct), n(r.cRec), p(r.cPct), n(r.recovered), p(r.pct)];
+  return g.rows.map(r => [r.officer].concat(cells(r))).concat([['JUMLA / TOTAL'].concat(cells(g.total))]); };
+const press = (pg, kind) => Promise.all([pg.waitForEvent('download', { timeout: 30000 }), pg.click('#lgGrand button[onclick*="\'' + kind + '\'"]')]).then(r => r[0]);
+page = await open('run');
+check('11 the grand card has an Excel and a JPG button, in a row of their own', await page.evaluate(() => { const r = document.querySelector('#lgGrand .lgGact'); return !!r && [...r.querySelectorAll('button')].map(b => b.textContent).join('|') === 'Excel|JPG'; }));
+const x1 = await sheetOf(await press(page, 'xls'));
+check('11 Excel: a real .xls file named for the week, with the byte-order mark', /^Legal-grand-recovery-week-of-/.test(x1.name) && x1.name.includes(THIS) && x1.name.endsWith('.xls') && x1.bom, x1.name);
+check('11 Excel: the title says the week', x1.text.includes('<h3>Legal grand recovery — week of ' + THIS + ' to ' + add(THIS, 6) + '</h3>'));
+check('11 Excel: a row for each lawyer then the total row, equal to the server\'s reading of this week', JSON.stringify(sheetRows(x1.text)) === JSON.stringify(wantSheet(gThis)), JSON.stringify(sheetRows(x1.text)).slice(0, 300));
+check('11 Excel: the sentences are under the table, with what was left out of calls', /Calls = customers at DC 2\+ spoken to who had no notice yet/.test(x1.text) && /TZS 40,000 left out/.test(x1.text));
+check('11 Excel: the sheet\'s notices total is the notices card\'s figure', Number((sheetRows(x1.text).pop() || [])[1]) === dnRes.legal.recovered, JSON.stringify(sheetRows(x1.text).pop()));
+// a past week: the arrows are on last week, and the sheet is last week's
+await page.click('#lgGrand [data-lgwk="-1"]');
+check('11 the cards are on last week', await waitWeek(page, LAST));
+const x2 = await sheetOf(await press(page, 'xls'));
+check('11 Excel on a past week: its title, its file name and its figures are last week\'s', x2.text.includes('week of ' + LAST + ' to ' + add(LAST, 6)) && x2.name.includes(LAST) && JSON.stringify(sheetRows(x2.text)) === JSON.stringify(wantSheet(gLast)), x2.name);
+check('11 the way home is in the same row, and the row still holds Excel and JPG', await page.evaluate(() => [...document.querySelectorAll('#lgGrand .lgGact button')].map(b => b.textContent.trim()).join('|') === 'Rudi wiki hii / Back to this week|Excel|JPG'));
+// a table search repaints the card from HEAD: the buttons are alive after it
+const q11 = await page.evaluate(() => !!document.querySelector('#tblQ'));
+if (q11) { await page.fill('#tblQ', 'CUSTOMER'); await page.waitForTimeout(500); }
+const x3 = await sheetOf(await press(page, 'xls'));
+check('11 after a table search repainted the card, Excel still downloads the same week', q11 && JSON.stringify(sheetRows(x3.text)) === JSON.stringify(wantSheet(gLast)) && x3.text.includes('week of ' + LAST), x3.name);
+if (q11) { await page.fill('#tblQ', ''); await page.waitForTimeout(300); }
+// the picture
+const cardBox = await page.evaluate(() => { const r = document.getElementById('lgGrand').getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; });
+const jdl = await press(page, 'jpg');
+const jraw = fs.readFileSync(await jdl.path()), jsz = jpegSize(jraw);
+check('11 JPG: a real JPEG picture, named for the screen and the day', jraw[0] === 0xFF && jraw[1] === 0xD8 && jraw[2] === 0xFF && /^legal-\d{4}-\d\d-\d\d\.jpg$/.test(jdl.suggestedFilename()), jdl.suggestedFilename() + ' ' + jraw.length + ' bytes');
+check('11 JPG: at least as wide and as tall as the card on the screen (all of the table, none cut)', !!jsz && jsz.w >= cardBox.w && jsz.h >= cardBox.h, JSON.stringify([jsz, cardBox]));
+if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); fs.writeFileSync(path.join(process.env.SHOTS, 'grand-card-past-week.jpg'), jraw); }
+await page.close();
+// where db/RUN-ME-089 is not run: empty cells in the sheet, never noughts, and the file named
+page = await open('notRun');
+const xo = await sheetOf(await press(page, 'xls'));
+const wantOff = wantSheet(gOff);
+check('11 not run: the calls and grand cells are EMPTY in the sheet, the notices side is read', JSON.stringify(sheetRows(xo.text)) === JSON.stringify(wantOff) && sheetRows(xo.text).every(r => r[3] === '' && r[5] === '') && sheetRows(xo.text).some(r => r[1] === '300'), JSON.stringify(sheetRows(xo.text)).slice(0, 300));
+check('11 not run: the sheet names the file', /<p>⚠ [^<]*RUN-ME-089/.test(xo.text));
 await page.close();
 } catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
 
