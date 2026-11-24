@@ -41,6 +41,13 @@
         db/RUN-ME-089 is not run the calls and grand cells are EMPTY in the sheet (never noughts) and the sheet names the file;
         JPG downloads a real picture of the card, wide enough for its table.
 
+     12. the DASHBOARD's Legal widget includes call recovery (Part 151, 24 Nov 2026: "in summary and in the data rows of Legal Recovery
+        widget (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should include call recovery"): the card's headline
+        and week are notices + calls, equal to the server's own grand total; a tap opens the list with a summary of the three
+        figures and, under the payments, the data rows of recovery by phone; one search filters both boards; both boards download;
+        a name that is markup is text; last week through the card's arrows; where db/RUN-ME-089 is not run, or its read failed,
+        the card and the list say the calls are not included; and the Legal TAB's notices card still opens the notices alone.
+
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
        npm i --no-save playwright-core
@@ -568,6 +575,76 @@ const xo = await sheetOf(await press(page, 'xls'));
 const wantOff = wantSheet(gOff);
 check('11 not run: the calls and grand cells are EMPTY in the sheet, the notices side is read', JSON.stringify(sheetRows(xo.text)) === JSON.stringify(wantOff) && sheetRows(xo.text).every(r => r[3] === '' && r[5] === '') && sheetRows(xo.text).some(r => r[1] === '300'), JSON.stringify(sheetRows(xo.text)).slice(0, 300));
 check('11 not run: the sheet names the file', /<p>⚠ [^<]*RUN-ME-089/.test(xo.text));
+await page.close();
+
+// --- 12. the dashboard's Legal widget includes call recovery (Part 151)
+page = await open('run', 'dashboard');
+await page.waitForSelector('#lgWkCard', { timeout: 10000 }).catch(() => {});
+const dRes = await portalApi(db, USER, 'dashboardFull', {}), dG = dRes.legal.grand, dT = dG.total;
+const wkRes = await portalApi(db, USER, 'legalRecoveries', { period: 'week', weekOf: '' }), wkG = wkRes.legal.grand.total;
+const cardOf = pg => pg.evaluate(() => ({ title: (document.querySelector('#lgWkCard .l') || {}).textContent || '', head: (document.getElementById('lgRecW') || {}).textContent || '', sub: (document.getElementById('lgRecWS') || {}).textContent || '' }));
+let c12 = await cardOf(page);
+check('12 the dashboard\'s server total is the Legal tab\'s for the week (one computation), with 45,300 of today and 6,300 of the week', JSON.stringify(dT) === JSON.stringify(wkG) && dT.recovered === 6300 && dT.nRec === 300 && dT.cRec === 6000 && dT.tRecovered === 6300, JSON.stringify([dT, wkG]));
+check('12 the card says it is notices + calls', /notisi \+ simu \/ notices \+ calls/.test(c12.title), c12.title);
+check('12 its headline is today\'s notices + calls, the server\'s figure', c12.head.trim() === fmt(dT.tRecovered), JSON.stringify(c12));
+check('12 the week beneath it is the grand figure with its two parts', c12.sub.includes('TZS ' + fmt(dT.recovered) + ' (' + Math.round(dT.pct) + '%)') && c12.sub.includes('notisi / notices ' + fmt(dT.nRec) + ' + simu / calls ' + fmt(dT.cRec)), c12.sub);
+check('12 there is ONE Legal card, and no grand card (that is the tab\'s)', (await count(page, '#lgWkCard')) === 1 && (await count(page, '#lgGrand')) === 0);
+// the tap: the list
+if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await (await page.$('#lgWkCard')).screenshot({ path: path.join(process.env.SHOTS, 'dashboard-legal-card.png') }); }
+await page.click('#lgWkCard');
+await page.waitForSelector('#drawer #lgRec', { timeout: 10000 }).catch(() => {});
+if (process.env.SHOTS) await (await page.$('#drawer')).screenshot({ path: path.join(process.env.SHOTS, 'dashboard-legal-list.png') });
+const tiles = await page.evaluate(() => [...document.querySelectorAll('#drawer .kpis .kpi')].map(k => [k.querySelector('.l').textContent, k.querySelector('.v').textContent, (k.querySelector('.s') || {}).textContent || '']));
+check('12 the list opens with a SUMMARY: notices, calls and the two together, equal to the server\'s total', JSON.stringify(tiles.map(t => [t[0], t[1]])) === JSON.stringify([['Notisi / Notices', fmt(wkG.nRec)], ['Simu / Calls', fmt(wkG.cRec)], ['Jumla / Grand', fmt(wkG.recovered)]]), JSON.stringify(tiles));
+check('12 each figure says what it is a percentage of', tiles.every(t => /% ya \/ of /.test(t[2])), JSON.stringify(tiles.map(t => t[2])));
+check('12 the summary says how the two are added (a noticed customer once) and what was left out', /haikuhesabiwa mara ya pili/.test(await text(page, '#drawer')) && /customer-days/.test(await text(page, '#drawer')));
+const phRows = await listOf('');
+const bd = await page.evaluate(() => ({ rec: !!document.getElementById('lgRec'), ph: !!document.getElementById('lgPh'),
+  recRows: [...document.querySelectorAll('#lgRec tbody tr:not(.totrow)')].length, phRows: [...document.querySelectorAll('#lgPh tbody tr:not(.totrow)')].length,
+  order: [...document.querySelectorAll('#drawer .card')].map(c => c.id) }));
+check('12 under the payments recorded against notices come the DATA ROWS of recovery by phone', bd.rec && bd.ph && JSON.stringify(bd.order) === JSON.stringify(['lgRec', 'lgPh']), JSON.stringify(bd));
+check('12 the phone board has every line the Legal tab\'s phone list has', bd.phRows === phRows.length && bd.phRows > 0, bd.phRows + ' of ' + phRows.length);
+check('12 its total row adds up to the phone card\'s own figure', await page.evaluate(() => { const t = document.querySelector('#lgPh tr.totrow'); return t ? t.textContent : ''; }).then(tx => tx.includes(fmt(wkRes.legal.phone.recovered))), wkRes.legal.phone.recovered + '');
+check('12 a customer name that is markup is drawn as text, nothing runs', (await page.evaluate(() => window.__pwned)) === undefined && /<img src=x/.test(await text(page, '#lgPh')));
+// ONE search for both boards
+await page.fill('#lgRecQ', 'CUSTOMER 500'); await page.waitForTimeout(300);
+const found = await page.evaluate(() => ({ rec: [...document.querySelectorAll('#lgRec tbody tr:not(.totrow)')].length, ph: [...document.querySelectorAll('#lgPh tbody tr:not(.totrow)')].map(tr => tr.textContent) }));
+check('12 one search box filters both boards: customer 500 is on the phone board alone', found.ph.length === 1 && /CUSTOMER 500/.test(found.ph[0]) && found.rec === 0, JSON.stringify(found).slice(0, 200));
+await page.fill('#lgRecQ', ''); await page.waitForTimeout(300);
+// both boards download
+const phX = await sheetOf(await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#lgPh [data-xls]')]).then(r => r[0]));
+check('12 the phone board\'s Excel downloads, with its week in the title', /Recovery-by-phone/.test(phX.name) && phX.text.includes(THIS) && /CUSTOMER 500/.test(phX.text), phX.name);
+const recX = await sheetOf(await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#lgRec [data-xls]')]).then(r => r[0]));
+check('12 and so does the payments board\'s', /Payments-recorded-against-notices/.test(recX.name), recX.name);
+// last week through the card's own arrows (the drawer closed first)
+await page.click('#drawer .dx'); await page.waitForTimeout(300);
+await page.click('#lgWkCard [data-lgwk="-1"]');
+check('12 the card steps back a week', await waitWeek(page, LAST));
+c12 = await cardOf(page);
+const lastG = (await portalApi(db, USER, 'legalRecoveries', { period: 'week', weekOf: LAST })).legal.grand.total;
+check('12 last week\'s card: the week\'s grand figure is the headline, with its parts', /past week · notisi \+ simu/.test(c12.title) && c12.head.includes(fmt(lastG.recovered)) && c12.sub.includes('notisi / notices ' + fmt(lastG.nRec) + ' + simu / calls ' + fmt(lastG.cRec)), JSON.stringify(c12));
+await page.close();
+// the Legal TAB's notices card is not changed: it opens the notices list alone
+page = await open('run');
+await page.click('#lgWkCard'); await page.waitForSelector('#drawer #lgRec', { timeout: 10000 }).catch(() => {});
+check('12 the Legal tab\'s notices card still opens the payments list alone: no summary tiles, no phone board', (await count(page, '#drawer #lgRec')) === 1 && (await count(page, '#drawer .kpis')) === 0 && (await count(page, '#drawer #lgPh')) === 0);
+check('12 and the tab\'s card is still the notices figure', (await text(page, '#lgRecW')).trim() === fmt(dnRes.legal.recovered) || /^\d+% · /.test((await text(page, '#lgRecW')).trim()), await text(page, '#lgRecW'));
+await page.close();
+// where db/RUN-ME-089 is not run: the card and the list say the calls are not included
+page = await open('notRun', 'dashboard');
+await page.waitForSelector('#lgWkCard', { timeout: 10000 }).catch(() => {});
+c12 = await cardOf(page);
+check('12 not run: the card is the notices alone and says the calls are not included', /simu hazijajumuishwa \/ calls not included/.test(c12.sub) && !/notisi \+ simu/.test(c12.title), JSON.stringify(c12));
+await page.click('#lgWkCard'); await page.waitForSelector('#drawer #lgRec', { timeout: 10000 }).catch(() => {});
+check('12 not run: the list names the file and has no phone board; the calls and grand tiles are dashes', /RUN-ME-089/.test(await text(page, '#drawer')) && (await count(page, '#drawer #lgPh')) === 0
+  && JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#drawer .kpis .kpi .v')].map(v => v.textContent))) === JSON.stringify([fmt(300), '—', '—']));
+await page.close();
+page = await open('failing', 'dashboard');
+await page.waitForSelector('#lgWkCard', { timeout: 10000 }).catch(() => {});
+c12 = await cardOf(page);
+check('12 a read that failed: the card says the calls are not included, and the dashboard is up', /calls not included/.test(c12.sub) && (await count(page, '#lgWkCard')) === 1, JSON.stringify(c12));
+await page.click('#lgWkCard'); await page.waitForSelector('#drawer #lgRec', { timeout: 10000 }).catch(() => {});
+check('12 a read that failed: the list says so and does not blame the file', /could not be read just now/.test(await text(page, '#drawer')) && !/RUN-ME-089/.test(await text(page, '#drawer')));
 await page.close();
 } catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
 

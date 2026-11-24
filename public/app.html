@@ -830,7 +830,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-24-i';
+var BUILD = '2026-11-24-j';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -6048,19 +6048,31 @@ function lgWeekCard_(lg){
      card (which would open the list), and it takes its colour from the theme in both themes (a bare link was
      1.67:1 on the lit card in the dark theme). Found by the second reader of #775, Part 131. */
   var home = cur ? '' : ' · <button type="button" class="lgwkhome" onclick="return lgWeekStep_(0, event)" onkeydown="event.stopPropagation()">Rudi wiki hii / Back to this week</button>';
-  var weekTxt = (lg.pct != null ? pct(lg.pct) + ' · ' : '') + money(lg.recovered || 0);
+  /* THE DASHBOARD'S CARD INCLUDES CALL RECOVERY (Part 151) -- "in summary and in the data rows of Legal Recovery widget
+     (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should include call recovery" (the owner, 24 Nov 2026). The server
+     sends the Legal tab's own grand total beside the notices (`lg.grand.total`: notices + calls, a customer who was served a notice and
+     phoned counted once, under notices); the page prints it and works nothing out. With both sides read, the card is the grand figure
+     (headline today's, the week beneath with its two parts); with the calls not read, it is the notices alone and SAYS so. The Legal
+     tab's own cards are unchanged. */
+  var gt = dash && !off && lg.grand && lg.grand.nOn && lg.grand.pOn && lg.grand.total ? lg.grand.total : null;
+  var noCalls = dash && !off && !!lg.grand && !!lg.grand.nOn && !lg.grand.pOn;
+  var wkRec = gt ? gt.recovered : lg.recovered, wkPct = gt ? gt.pct : lg.pct, wkOwed = gt ? gt.owed : lg.owed;
+  var mix = gt ? ' · notisi / notices ' + money(gt.nRec || 0) + ' + simu / calls ' + money(gt.cRec || 0) : '';
+  var weekTxt = (wkPct != null ? pct(wkPct) + ' · ' : '') + money(wkRec || 0);
   var sub = off ? esc(lg.note || 'db/RUN-ME-041 haijaendeshwa / not run yet')
     : (dash && cur
         /* pct() takes the percentage as the server sends it (36.2 -> "36%"); dividing by a hundred first was showing
            "(0%)" beside every week's figure. */
-        ? 'wiki / week TZS ' + money(lg.recovered || 0) + (lg.pct != null ? ' (' + pct(lg.pct) + ')' : '')
-          + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(lg.owed || 0)
-        : esc(mon) + ' → ' + esc(lg.sun || '') + (dash ? ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed' : '') + ' · owed TZS ' + money(lg.owed || 0))
+        ? 'wiki / week TZS ' + money(wkRec || 0) + (wkPct != null ? ' (' + pct(wkPct) + ')' : '') + mix
+          + ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed · owed TZS ' + money(wkOwed || 0)
+        : esc(mon) + ' → ' + esc(lg.sun || '') + mix + (dash ? ' · ' + money(lg.customers || 0) + ' wenye notisi / noticed' : '') + ' · owed TZS ' + money(wkOwed || 0))
+      + (noCalls ? ' · ⚠ simu hazijajumuishwa / calls not included' : '')
       + ' · bofya kuona orodha / tap for the list' + home;
-  var title = dash ? (cur ? 'Legal recovery' : 'Legal recovery — wiki iliyopita / past week')
+  var title = dash ? (cur ? 'Legal recovery' : 'Legal recovery — wiki iliyopita / past week') + (gt ? ' · notisi + simu / notices + calls' : '')
     : (cur ? 'Imerejeshwa wiki hii / Recovered this week' : 'Imerejeshwa wiki iliyopita / Recovered, past week');
-  var headline = dash && cur ? money(lg.tRecovered || 0) : weekTxt;
-  var good = dash && cur ? (lg.tRecovered || 0) > 0 : (lg.recovered || 0) > 0;
+  var tRec = gt ? gt.tRecovered : lg.tRecovered;
+  var headline = dash && cur ? money(tRec || 0) : weekTxt;
+  var good = dash && cur ? (tRec || 0) > 0 : (wkRec || 0) > 0;
   var arrow = function(n, glyph, ok, tip){
     return '<button type="button" class="lgwkb" data-lgwk="' + n + '" title="' + tip + '" aria-label="' + tip + '"' + (ok ? '' : ' disabled')
       + ' onclick="return lgWeekStep_(' + n + ', event)" onkeydown="event.stopPropagation()">' + glyph + '</button>';
@@ -6288,6 +6300,26 @@ function lgWeekBar_(d, ph){
     + (cur ? '<span class="chip mut" style="margin-left:8px">Wiki hii / this week</span>'
            : '<span class="chip warn" style="margin-left:8px">Wiki iliyopita / past week</span> <button class="btn sm ghost" type="button" data-lgwd="0">Rudi wiki hii / Back to this week</button>'));
 }
+/* THE LIST BEHIND THE DASHBOARD'S LEGAL CARD INCLUDES CALL RECOVERY (Part 151) -- "in summary and in the data rows of Legal Recovery
+   widget (Imerejeshwa wiki hii / Recovered this week) at dashboard tab, should include call recovery" (the owner, 24 Nov 2026).
+   The dashboard has ONE Legal card, so its list is the whole recovery: a SUMMARY on top (notices, calls and the two together, an
+   amount and a percentage each, from the server's own grand total, and the sentences that say how the two are added) and, under the
+   payments recorded against notices, the DATA ROWS of recovery by phone (the Legal tab's phone list, the same rows and columns).
+   The Legal tab keeps its three cards and its own lists: its notices card still opens the notices list alone. */
+function lgDashList_(d){
+  var g = d.legal && d.legal.grand;
+  if (!g) return null;
+  var t = g.total || {}, fig = function(v){ return v == null ? '—' : money(v); }, of = function(p, o){ return p == null ? '' : pct(p) + ' ya / of ' + money(o); };
+  var sum = '<div class="kpis">'
+    + kpi('Notisi / Notices', fig(t.nRec), of(t.nPct, t.nOwed))
+    + kpi('Simu / Calls', fig(t.cRec), of(t.cPct, t.cOwed))
+    + kpi('Jumla / Grand', fig(t.recovered), of(t.pct, t.owed), (t.recovered || 0) > 0 ? 'good' : '')
+    + '</div>'
+    + lgGrandNotes_({ nOn: g.nOn, pOn: g.pOn, nNote: g.nNote, pNote: g.pNote, overlap: g.overlap, shared: false })
+      .map(function(l){ return '<div class="note">' + esc(l) + '</div>'; }).join('');
+  var ph = d.legal.phone && d.legal.phone.on === true && d.phoneRows && d.phoneRows.length ? { all: lgPhoneRows_(d), cols: lgPhoneCols_() } : null;
+  return { sum: sum, phone: ph };
+}
 function legalRecoveriesDrawer_(period, weekOf, focusArrow, kind){
   var week = period === 'week', ph = week && kind === 'phone';            // 'phone': the list behind the phone card (Part 139)
   var title = ph ? 'Urejeshaji kwa simu / Recovered by phone' : week ? 'Imerejeshwa wiki / Recovered by the week' : 'Imerejeshwa leo / Recovered today';
@@ -6325,9 +6357,11 @@ function legalRecoveriesDrawer_(period, weekOf, focusArrow, kind){
       return money(d.totals.customers) + ' waliolipa / paid · ' + money(d.totals.noticed) + ' wenye notisi / noticed'
         + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
     };
-    drawer('<h3>' + title + ' · ' + esc(when) + '</h3>' + (week ? lgWeekBar_(d) : '')
+    var dl = week && S.view === 'dashboard' ? lgDashList_(d) : null;           // the dashboard's list includes call recovery (Part 151)
+    var hasBoard = all.length || !!(dl && dl.phone);
+    drawer('<h3>' + title + ' · ' + esc(when) + '</h3>' + (week ? lgWeekBar_(d) : '') + (dl ? dl.sum : '')
       + (d.on === false ? '<div class="note">⚠ ' + esc(d.note || '') + '</div>'
-        : all.length
+        : hasBoard
           ? '<div class="bar"><input id="lgRecQ" placeholder="Tafuta jina / ref / timu — search"></div><div id="lgRecBoard"></div>'
           : '<div class="note">Hakuna malipo kutoka kwa wateja wenye notisi katika kipindi hiki. / No payments from noticed customers in this period.</div>'), { wide: true });
     // The week arrows at the top of the list: another week is the same drawer on that week. The arrow pressed keeps
@@ -6339,7 +6373,7 @@ function legalRecoveriesDrawer_(period, weekOf, focusArrow, kind){
       };
     });
     if (focusArrow) { var fa = document.querySelector('#drawer [data-lgwd="' + focusArrow + '"]'); if (fa && !fa.disabled) fa.focus(); else { var dx = document.querySelector('#drawer .dx'); if (dx) dx.focus(); } }
-    if (d.on === false || !all.length) return;
+    if (d.on === false || !hasBoard) return;
     var host = document.getElementById('lgRecBoard');
     function paint_(){
       var q = ($('#lgRecQ').value || '').trim().toUpperCase();
@@ -6348,8 +6382,15 @@ function legalRecoveriesDrawer_(period, weekOf, focusArrow, kind){
         return [r.officer, r.full_name, r.ref, r.team, r.contact, r.notice_id].some(function(v){ return String(v || '').toUpperCase().indexOf(q) >= 0; });
       });
       // The week is in the title so a download of last week's list says whose week it is.
-      host.innerHTML = board('lgRec', 'Malipo yaliyorekodiwa dhidi ya notisi / Payments recorded against notices' + (week ? ' · ' + d.from + ' → ' + d.to : ''), sub(rows), rows, cols,
-        sumRow(rows, ['owed', 'paid', 'payments']));
+      var phHtml = '';
+      if (dl && dl.phone) {
+        var prow = dl.phone.all.filter(function(r){ return lgPhoneHit_(r, q); });
+        phHtml = board('lgPh', lgPhoneBoardTitle_(d), lgPhoneSub_(d, prow, dl.phone.all), prow, dl.phone.cols, sumRow(prow, ['calls', 'secs', 'initial', 'recovered']));
+      }
+      host.innerHTML = (all.length
+        ? board('lgRec', 'Malipo yaliyorekodiwa dhidi ya notisi / Payments recorded against notices' + (week ? ' · ' + d.from + ' → ' + d.to : ''), sub(rows), rows, cols,
+            sumRow(rows, ['owed', 'paid', 'payments']))
+        : '<div class="note">Hakuna malipo kutoka kwa wateja wenye notisi katika kipindi hiki. / No payments from noticed customers in this period.</div>') + phHtml;
       var root = document.getElementById('drawer');
       Array.prototype.forEach.call(root.querySelectorAll('[data-jpg]'), function(el){
         el.onclick = function(e){ e.stopPropagation(); saveJpg(document.getElementById(el.getAttribute('data-jpg'))); };
@@ -6382,9 +6423,10 @@ function legalRecoveriesDrawer_(period, weekOf, focusArrow, kind){
    customer's, the guarantor's, or another number tied to the customer: one recorded under "Ana namba nyingine"), for how long,
    what the customer owed that morning and after, and what they recovered that day. The same week bar as the notices list; its
    arrows move both cards. Drawn from the answer the cards were drawn from (lgWeekAsk_), so the list adds up to the card. */
-function lgPhoneList_(d, title, when, focusArrow){
-  var pc = (d.legal && d.legal.phone) || {}, on = pc.on === true;
-  var all = (d.phoneRows || []).map(function(r){
+/* THE PHONE LIST'S ROWS, COLUMNS, SUBTITLE AND SEARCH, written once: the Legal tab's phone list draws them, and so does the list behind
+   the DASHBOARD's Legal card, which includes call recovery since Part 151 -- one definition of what a line of recovery by phone shows. */
+function lgPhoneRows_(d){
+  return (d.phoneRows || []).map(function(r){
     var o = {}; Object.keys(r).forEach(function(k){ o[k] = r[k]; });
     o.pct = r.initial > 0 ? Math.round(r.recovered / r.initial * 1000) / 10 : null;
     o.noticeTxt = r.noticed ? 'Ana notisi / Noticed' : '';
@@ -6392,7 +6434,9 @@ function lgPhoneList_(d, title, when, focusArrow){
     o.currentTxt = r.paired ? money(r.current || 0) : 'faili la jioni bado / later file not in';
     return o;
   });
-  var cols = [col('day', 'Tarehe / Day', 'date'), col('officer', 'Afisa wa sheria / Legal officer'), col('full_name', 'Mteja / Customer'), col('ref', 'REF#'), col('team', 'Timu / Team'),
+}
+function lgPhoneCols_(){
+  return [col('day', 'Tarehe / Day', 'date'), col('officer', 'Afisa wa sheria / Legal officer'), col('full_name', 'Mteja / Customer'), col('ref', 'REF#'), col('team', 'Timu / Team'),
     col('dc', 'D.C', 'num'), col('ds', 'D.S'),
     col('who', 'Aliyepigiwa / Spoken to'), {key:'phone', label:'Namba / Number', kind:'tel'},
     col('calls', 'Simu / Calls', 'num'), {key:'secs', label:'Muda / Talk time', kind:'dur'},
@@ -6401,10 +6445,23 @@ function lgPhoneList_(d, title, when, focusArrow){
     {key:'recovered', label:'Imerejeshwa / Recovered', kind:'money', cls:function(r){ return r.recovered > 0 ? 'good' : ''; }},
     {key:'pct', label:'Rec %', kind:'pct', from:['recovered', 'initial']},
     col('noticeTxt', 'Notisi / Notice'), col('othersTxt', 'Wengine waliompigia / Also spoke')];
-  var sub = function(rows){
-    return money(pc.spoken || 0) + ' mazungumzo / conversations · ' + money(pc.customers || 0) + ' wateja / customers · ' + money(pc.paid || 0) + ' walilipa / paid'
-      + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
-  };
+}
+function lgPhoneSub_(d, rows, all){
+  var pc = (d.legal && d.legal.phone) || {};
+  return money(pc.spoken || 0) + ' mazungumzo / conversations · ' + money(pc.customers || 0) + ' wateja / customers · ' + money(pc.paid || 0) + ' walilipa / paid'
+    + (rows.length !== all.length ? ' · inaonyesha / showing ' + money(rows.length) + ' / ' + money(all.length) : '');
+}
+function lgPhoneBoardTitle_(d){
+  return 'Urejeshaji kwa simu, wateja wa DC 2+ / Recovery by phone, customers at DC 2 and above · ' + d.from + ' → ' + d.to;
+}
+function lgPhoneHit_(r, q){
+  return !q || [r.officer, r.full_name, r.ref, r.team, r.phone, r.who, r.othersTxt, r.day].some(function(v){ return String(v || '').toUpperCase().indexOf(q) >= 0; });
+}
+function lgPhoneList_(d, title, when, focusArrow){
+  var pc = (d.legal && d.legal.phone) || {}, on = pc.on === true;
+  var all = lgPhoneRows_(d);
+  var cols = lgPhoneCols_();
+  var sub = function(rows){ return lgPhoneSub_(d, rows, all); };
   var rule = '<div class="note">Mteja wa <b>DC 2 na zaidi</b> kwenye faili la asubuhi la siku hiyo, aliyezungumzwa kwa simu ya mwanasheria (namba yake, ya mdhamini, au "Ana namba nyingine") kwa zaidi ya muda wa chini wa simu; kilichorejeshwa ni deni la asubuhi kutoa la baadaye siku hiyo.'
     + ' / A customer at <b>DC 2 and above</b> on that day\'s morning file, spoken to from a lawyer\'s phone (their own number, the guarantor\'s, or one under "Ana namba nyingine") for longer than the minimum call length; recovered is that morning\'s arrears less the later file\'s, that day.'
     + ' Mteja mwenye notisi yumo pia kwenye kadi ya notisi; kadi ya jumla mwishoni mwa safu inamhesabu mara moja, kwenye notisi. / A noticed customer is on the notices card too; the grand card at the end of the row counts them once, under notices.'
@@ -6427,11 +6484,8 @@ function lgPhoneList_(d, title, when, focusArrow){
   var host = document.getElementById('lgPhBoard');
   function paint_(){
     var q = ($('#lgPhQ').value || '').trim().toUpperCase();
-    var rows = all.filter(function(r){
-      if (!q) return true;
-      return [r.officer, r.full_name, r.ref, r.team, r.phone, r.who, r.othersTxt, r.day].some(function(v){ return String(v || '').toUpperCase().indexOf(q) >= 0; });
-    });
-    host.innerHTML = board('lgPh', 'Urejeshaji kwa simu, wateja wa DC 2+ / Recovery by phone, customers at DC 2 and above · ' + d.from + ' → ' + d.to, sub(rows), rows, cols,
+    var rows = all.filter(function(r){ return lgPhoneHit_(r, q); });
+    host.innerHTML = board('lgPh', lgPhoneBoardTitle_(d), sub(rows), rows, cols,
       sumRow(rows, ['calls', 'secs', 'initial', 'recovered']));
     var root = document.getElementById('drawer');
     Array.prototype.forEach.call(root.querySelectorAll('[data-jpg]'), function(el){
