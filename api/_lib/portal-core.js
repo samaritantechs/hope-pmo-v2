@@ -14570,6 +14570,18 @@ export function phoneRoleRead(phoneUser, codeRows) {
   const ofCode = same.length === 1 ? same[0].role : null;
   return ofCode != null ? String(ofCode) : (phoneUser && phoneUser.role != null ? String(phoneUser.role) : '');
 }
+/** RECOVERY BY PHONE ADDED UP PER LAWYER, in ONE place: one object a name { officer, t: today's, w: the week's, n: the customers
+    spoken to }, from the Legal tab's own lines. The dashboard's two lawyers' boards and the Presentation's legal calls slide both
+    read this map, so a lawyer's phone figure cannot be one sum on a board and another on the slide. */
+function legalPhoneByOfficer_(lines, today) {
+  const by = new Map();
+  for (const l of lines || []) {
+    const k = K(l.officer); let o = by.get(k);
+    if (!o) by.set(k, o = { officer: l.officer, t: 0, w: 0, n: 0 });
+    o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;
+  }
+  return by;
+}
 /** THE LEGAL OFFICERS' PHONES, ONE ROW EACH (handbook Part 141) -- "I'VE BEEN SHOCKED BY LEGAL CALLS at presentation: i need
     their calls slide too, that is the one that should include calls recovery daily and weeekly. leaving the demand recovery slide
     as it was" (the owner, 24 Nov 2026, after a read-only look showed two legal phones doing the ringing, nine conversations in
@@ -14580,18 +14592,13 @@ export function phoneRoleRead(phoneUser, codeRows) {
     a phone-recovery line names who is not among them (a phone switched off since), so that the rows always add up to the card.
     WHAT: today's and the week's call figures are the call boards' own rows for that name (callBoard: one counting rule, Ripoti's);
     the customers at D.C 2 and above spoken to this week and what they recovered today and this week are the Legal tab's own
-    lines (legalPhoneLines_: the lawyer who spoke longest is credited, the day's recovery once). Null, not nought, where recovery
+    lines (legalPhoneLines_: the lawyer who spoke longest is credited, the day's recovery once), added up per lawyer by
+    legalPhoneByOfficer_, the boards' own sum (`rec`). Null, not nought, where recovery
     by phone cannot be read (db/RUN-ME-089 not run): a dash on the slide.
     Arithmetic over what the boards already hold: no read. */
-function legalCallRows_(phoneUsers, codeRows, legalRoleName, callToday, callWeek, phoneCard, phoneLines, today) {
+function legalCallRows_(phoneUsers, codeRows, legalRoleName, callToday, callWeek, phoneCard, rec) {
   const on = !!phoneCard && phoneCard.on === true;
   const tBy = new Map((callToday || []).map(r => [K(r.agent), r])), wBy = new Map((callWeek || []).map(r => [K(r.agent), r]));
-  const rec = new Map();
-  for (const l of phoneLines || []) {
-    const k = K(l.officer); let o = rec.get(k);
-    if (!o) rec.set(k, o = { officer: l.officer, t: 0, w: 0, n: 0 });
-    o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;
-  }
   const names = new Map();
   for (const u of phoneUsers || []) {
     if (u.active === false) continue;
@@ -14970,13 +14977,10 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
   const legalPhoneLines = legalPhoneSrc.on === true
     ? legalPhoneLines_(legalPhoneSrc.rows, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT), legalNoticeDays_(scoped(user, notices))) : [];
   const legalPhone = legalPhoneCard_(legalPhoneSrc, legalPhoneLines, today, mon, sun);
+  // One sum per lawyer (legalPhoneByOfficer_), read by the boards just below and by the legal calls slide's rows (Part 141).
+  const legalPhoneBy = legalPhoneByOfficer_(legalPhoneLines, today);
   {
-    const byOfficer = new Map();
-    for (const l of legalPhoneLines) {
-      const k = K(l.officer); let o = byOfficer.get(k);
-      if (!o) byOfficer.set(k, o = { officer: l.officer, t: 0, w: 0, n: 0 });
-      o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;
-    }
+    const byOfficer = new Map(legalPhoneBy);     // a copy: a lawyer who has a row is taken out of it, and what is left is `others`
     for (const row of legal.rows) {
       const o = legalPhone.on === true ? byOfficer.get(K(row.officer)) : null;
       row.phToday = legalPhone.on === true ? (o ? o.t : 0) : null;
@@ -15416,7 +15420,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      disagree about the same week would be worse than no board at all. */
   const callWeekWorst = callWeek.slice().reverse();
   // The legal officers' phones for their own slide (Part 141): the call boards' rows and the phone-recovery lines, by name. No read.
-  const legalCalls = legalCallRows_(myPhoneUsers, codeRows, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT), callToday, callWeek, legalPhone, legalPhoneLines, today);
+  const legalCalls = legalCallRows_(myPhoneUsers, codeRows, cfgS.get(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT), callToday, callWeek, legalPhone, legalPhoneBy);
 
   /* ---- PMO COLLECTION OFFICERS ----
 

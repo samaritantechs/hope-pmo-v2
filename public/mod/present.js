@@ -329,8 +329,8 @@ function presSlides(){
        24 Nov 2026; handbook Part 141), said over a read-only look that showed two legal phones doing the ringing, nine
        conversations in ten with numbers the system holds for no customer, and three legal phones that had sent no call at all.
        One row for each legal phone -- the ones that sent no call this week too, marked red: they are the names the meeting most
-       needs. Today's figures first, in the HOPE Calls slide's own words (numbers rung, dials, reached, the customers of their own
-       teams, the talk with them), then the week's calls, then what the customers at D.C 2 and above they spoke to recovered:
+       needs. Today's figures first, in the HOPE Calls slide's own words (numbers rung, reached, the customers of their own
+       teams), then the week's calls, then how many customers at D.C 2 and above they spoke to and what those recovered:
        today and this week. The rows are the server's (b.legalCalls: the call boards' own rows and the Legal tab's own phone
        lines, by name); nothing is worked out here. Under the three phone columns the cells are blank until db/RUN-ME-089 is run,
        and the caption names the file. Today's recovery shows once the day's later file is in (Part 140): the caption says how
@@ -338,7 +338,7 @@ function presSlides(){
     /* NINE COLUMNS, SHORT HEADERS, A WIDER NAME. The wall's figure columns do not wrap (a number must stay on one line) and the
        table's columns are equal shares, so a long header runs into its neighbour: the first cut of this slide had thirteen columns
        and its headers collided on the screen. Every header here fits inside its own column at any width (the browser check measures
-       it at three). A silent phone is marked in the officer's own cell, in red, so the mark costs no column; that cell may wrap and
+       it at five). A silent phone is marked in the officer's own cell, in red, so the mark costs no column; that cell may wrap and
        its column takes a double share (tcls 'pname2', styled in app.html). Dials are left to the HOPE Calls slide: this one counts
        numbers rung, as its caption says. */
     /* The mark's own words are held together by no-break spaces (written as escapes, never as the invisible character), so a
@@ -357,7 +357,9 @@ function presSlides(){
           + money(lcSilent) + ' legal phone' + (lcSilent === 1 ? ' has' : 's have') + ' sent no call through HOPE Calls this week</div>' : '');
     slides.push({ id:'legalcalls', kind:'table', tcls:'pname2',
       title:'Legal calls — simu za wanasheria / the legal officers\' phones · leo / today, then the week · marejesho kwa simu / recovery by phone',
-      caption: lcCap, rows: lcRows.slice(0, 14),
+      /* EVERY legal phone, never the first so many: the rows add up to the phone card, and a row cut off the end would be a lawyer
+         nobody sees. A long list is fitted to the screen by presFit_, as the HOPE Calls slide's is. */
+      caption: lcCap, rows: lcRows,
       cols:[{ key:'who', label:'Legal officer', cls:function(r){ return r.silent ? 'bad' : ''; } },
         col('calls','Calls today','num'), col('connectPct','Reached today','pct'), col('portfolio','Portfolio','num'),
         col('wCalls','Calls week','num'), {key:'wConnectPct', label:'Reached week', kind:'pct', from:['wConnected','wCalls']},

@@ -144,6 +144,8 @@ test('THE ROLE A PHONE IS READ AS is the sentence RUN-ME-089 stamps by: the one 
   assert.equal(phoneRoleRead({ name: 'wakili two', role: 'FIELD OFFICER' }, codes), 'Legal Officer', 'the code\'s role, found whatever the capitals of the name');
   assert.equal(phoneRoleRead({ name: '  Meneja M', role: 'LEGAL' }, codes), 'MANAGER', 'and whatever the blanks around it: the code says MANAGER, so this phone is not a lawyer\'s');
   assert.equal(phoneRoleRead({ name: 'TWIN NAME', role: 'LEGAL' }, codes), 'LEGAL', 'two codes of one name decide nothing: the registered role');
+  assert.equal(phoneRoleRead({ name: 'TWIN NAME', role: 'RECOVERY' }, codes), 'RECOVERY', 'whichever of the two comes first, and whatever it says: a phone of that name registered as recovery is not a lawyer\'s');
+  assert.equal(phoneRoleRead({ name: 'X', role: 'FIELD OFFICER' }, [{ name: 'X', role: 'LEGAL' }, { name: 'x ', role: 'LEGAL' }]), 'FIELD OFFICER', 'even two codes that agree: "having count(*) = 1"');
   assert.equal(phoneRoleRead({ name: 'NOBODY N', role: 'Legal Officer' }, codes), 'Legal Officer', 'no code of that name: the registered role');
   assert.equal(phoneRoleRead({ name: 'NOBODY N', role: null }, codes), '');
   assert.equal(phoneRoleRead({ name: 'NOBODY N' }, null), '');
@@ -254,7 +256,11 @@ test('IT COSTS THE DATABASE NOTHING: the rows are arithmetic over what the board
   const core = read('api/_lib/portal-core.js');
   const fn = core.slice(core.indexOf('function legalCallRows_('), core.indexOf('/** One line a customer a day, from the stamped rows'));
   assert.ok(fn.length > 500 && !/\bdb\b|await /.test(fn), 'the builder never touches the database');
-  assert.match(core, /const legalCalls = legalCallRows_\(myPhoneUsers, codeRows, cfgS\.get\(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT\), callToday, callWeek, legalPhone, legalPhoneLines, today\);/);
+  assert.match(core, /const legalCalls = legalCallRows_\(myPhoneUsers, codeRows, cfgS\.get\(LEGAL_ROLE_KEY, LEGAL_ROLE_DEFAULT\), callToday, callWeek, legalPhone, legalPhoneBy\);/);
+  // ONE sum per lawyer for the boards and the slide: the line that adds a phone line up exists once, and both read its map.
+  assert.equal(core.split('o.w += l.recovered; o.n += 1; if (l.day === today) o.t += l.recovered;').length - 1, 1, 'the per-lawyer sum is written once');
+  assert.match(core, /const legalPhoneBy = legalPhoneByOfficer_\(legalPhoneLines, today\);/);
+  assert.match(core, /const byOfficer = new Map\(legalPhoneBy\);/, 'the boards take a COPY: they empty theirs as they go');
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.doesNotMatch(read(f), /legalCalls|phoneRoleRead|legalCallRows_/, f + ' knows nothing of it');
 });
 
@@ -275,11 +281,14 @@ test('THE PRESENTATION: the demand-recovery slide is as it was, and the legal of
   assert.match(slide, /col\('calls','Calls today','num'\), col\('connectPct','Reached today','pct'\), col\('portfolio','Portfolio','num'\),/);
   assert.match(slide, /col\('wCalls','Calls week','num'\), \{key:'wConnectPct', label:'Reached week', kind:'pct', from:\['wConnected','wCalls'\]\},/, 'the week\'s Reached % total is the totals\' ratio');
   assert.match(slide, /col\('spoken','DC 2\+ spoken','num'\), col\('phToday','By phone today','money'\), col\('phWeek','By phone week','money'\)\] \}\);/);
+  assert.match(slide, /caption: lcCap, rows: lcRows,\n/, 'every legal phone is a row: no cap, so the rows add up to the card');
   // Nine columns and short headers: the wall's figure columns do not wrap, and thirteen collided on the screen.
   const cols = slide.slice(slide.indexOf("cols:[{ key:'who'"), slide.indexOf("] });", slide.indexOf("cols:[{ key:'who'")));
   const labels = [...cols.matchAll(/(?:col\('[^']+','([^']+)'|label:'([^']+)')/g)].map(m => m[1] || m[2]);
   assert.equal(labels.length, 9, 'nine columns: ' + labels.join(' | '));
   assert.ok(labels.every(l => l.length <= 14), 'no header longer than fourteen characters: ' + labels.filter(l => l.length > 14).join(' | '));
+  // The wall draws a column's own mark (it never did: the HOPE Calls slide's "Least active" was not red on the TV either).
+  assert.ok(pres.includes("return '<td class=\"'+(isNum(c)?'r':'')+(c.cls?(' '+c.cls(r)):'')+(k?' '+k:'')+'\">'+cellHtml(r,c)+'</td>';"), 'presDraw applies a column\'s cls() to its cell');
   // The name column is wider and may wrap, on this slide only: the table takes the slide's own class, and the three rules name it.
   assert.match(slide, /slides\.push\(\{ id:'legalcalls', kind:'table', tcls:'pname2',/, 'the slide asks for the wider name column');
   assert.match(pres, /<table class="ptable'\+\(s\.tcls\?\(' '\+s\.tcls\):''\)\+'">/, 'and the wall gives a table its slide\'s class');

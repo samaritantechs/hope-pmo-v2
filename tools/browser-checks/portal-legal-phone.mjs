@@ -332,6 +332,8 @@ const readSlide = (pg, id) => pg.evaluate(id => {
   return { at: i, title: s.title, caption: s.caption || '', head: t ? [...t.querySelectorAll('thead th')].map(th => th.textContent.trim()) : [],
     cells: t ? [...t.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent.trim())) : [],
     red: t ? [...t.querySelectorAll('tbody tr')].map(tr => { const td = tr.children[1]; return !!td && /(^| )bad( |$)/.test(td.className); }) : [],
+    // the first column after the row number, with the class the wall gave it (a column's own mark: red or green)
+    marks: t ? [...t.querySelectorAll('tbody tr')].map(tr => { const td = tr.children[1]; return { text: td ? td.textContent.trim() : '', cls: td ? td.className.trim() : '' }; }) : [],
     body: document.body.textContent };
 }, id);
 /* THE LAYOUT, MEASURED. The wall's figure columns never wrap, so a header or a figure that is wider than its column runs into the
@@ -418,6 +420,14 @@ if (lc) {
   check('9 the total row adds the phone columns up to the card: 46,000', tot[iT] === '46,000' && tot[iW] === '46,000', JSON.stringify(tot));
   check('9 the caption carries the phone line, with nobody "without a row"', /By phone:/.test(lc.caption) && /TZS 46,000/.test(lc.caption) && !/with no row here/.test(lc.caption), lc.caption.slice(0, 260));
   check('9 it says one customer waits for the later file and one legal phone is silent', /waiting for the later file/.test(lc.caption) && /1 legal phone has sent no call through HOPE Calls this week/.test(lc.caption), lc.caption.slice(-330));
+}
+// The wall draws a column's own mark on every slide that has one: the HOPE Calls slide's "Busiest" is green and "Least active" red
+// ("format red the least actives"), which the wall never drew before this change.
+{
+  const hc = await readSlide(page, 'calls');
+  const marked = hc ? hc.marks.filter(m => m.text === 'Busiest' || m.text === 'Least active') : [];
+  check('9 the HOPE Calls slide\'s own marks are coloured on the wall too: every "Least active" red, every "Busiest" green',
+    marked.length > 0 && marked.every(m => (m.text === 'Busiest' ? /(^| )good( |$)/ : /(^| )bad( |$)/).test(m.cls)), JSON.stringify(hc ? hc.marks : null));
 }
 await page.close();
 // and on a database where the file was not run: the phones and their calls are shown, the three phone columns are blank, the file is named
