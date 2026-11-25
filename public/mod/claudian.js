@@ -32,6 +32,8 @@
   var MAX_Q = 400;               // the server cuts a question here too
   var MAX_MSGS = 40;             // the panel keeps the last forty lines
   var STATUS_FRESH_MS = 60000;   // the ready questions and the switch are asked again when the panel is opened after this long
+  var TAIL_MS = 450;             // after a touch tap toggles the panel, the mouse events and the click that follow it are swallowed for this long ...
+  var TAIL_PX = 24;              // ... if they are aimed this near the place of the tap
 
   /* THE WORDS. Swahili first; the panel follows the page's own language (and the SW / EN button in its header changes it for this sitting). */
   var T = {
@@ -53,6 +55,7 @@
       thinking: 'Inafikiri…',
       loading: 'Inapakia…',
       net: 'Hakuna mtandao. Jaribu tena baadaye.',
+      srv: 'Msaidizi ana hitilafu kwa sasa. Jaribu tena baadaye.',
       gone: 'Msaidizi hapatikani kwa akaunti hii.',
       lang: 'EN'
     },
@@ -74,6 +77,7 @@
       thinking: 'Thinking…',
       loading: 'Loading…',
       net: 'No connection. Try again later.',
+      srv: 'The helper has a fault right now. Try again later.',
       gone: 'The helper is not available for this account.',
       lang: 'SW'
     }
@@ -107,7 +111,8 @@
     '.root.dark{--card:#131C2E;--ink:#E5EAF2;--mut:#8B9AB3;--line:#22304A;--chip:#10244A;--chipink:#93C5FD;--ua:#2563EB;--aa:#1B2740;--hint:#3A2F10;--hintink:#FCD34D;--bad:#3B1515;--badink:#FCA5A5}',
     '.bub{position:absolute;left:0;top:0;width:56px;height:56px;margin:0;padding:0;border:0;border-radius:14px;background:none;cursor:grab;pointer-events:auto;',
     'touch-action:none;display:block;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}',
-    '.bub:focus-visible{outline:3px solid #93C5FD;outline-offset:2px}',
+    '.bub:focus-visible{outline:3px solid #1D4ED8;outline-offset:2px}',
+    '.root.dark .bub:focus-visible{outline-color:#93C5FD}',
     '.bub.drag{cursor:grabbing;transform:scale(1.07)}',
     '.bub.away{visibility:hidden}',
     '.bub svg{width:100%;height:100%;display:block;pointer-events:none;filter:drop-shadow(0 4px 5px rgba(8,28,74,.5))}',
@@ -172,7 +177,7 @@
   /* ---------------- the state ---------------- */
   var st = {
     mounted: false, opts: null, host: null, root: null, e: {}, pos: null, frac: null, open: false, busy: false,
-    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, ticket: 0, pulsed: false
+    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, ticket: 0, sess: 0, pulsed: false
   };
 
   function posKey() { return 'claudianPos.' + ((st.opts && st.opts.host) || 'portal'); }
@@ -239,6 +244,30 @@
     st.e.body.insertBefore(st.e.think, st.e.faq);
     st.e.body.scrollTop = st.e.body.scrollHeight;
   }
+  /** Everything of one person's conversation, forgotten: the lines, what the server last said (the list of ready questions, the questions left), the last exchange that rides with the
+      next question, an answer still on its way (its callbacks see a new session and stay out of the panel). Signing out of HOPE Calls runs it: the handset is shared, and the next
+      officer must not meet the last one's questions and answers, or send them to the model as the PREVIOUS EXCHANGE (the second reader of Part 163). */
+  function forget() {
+    st.sess++; st.ticket++;
+    st.hist = null; st.status = null; st.statusAt = 0;
+    if (!st.mounted) return;
+    if (st.open) closePanel();
+    var all = lines(), i; for (i = 0; i < all.length; i++) if (all[i] !== st.e.welcome) st.e.body.removeChild(all[i]);
+    thinking(false); setBusy(false);
+    st.e.ta.value = ''; fitBox();
+    paintMode();
+  }
+  /** After an answer, a person who works the keyboard is where they were: a chip is disabled while the question is on its way, and a disabled button drops the focus. A touch screen is left
+      alone (focusing the box would raise the keyboard by itself), and so is anybody who has already gone somewhere else. */
+  function regainFocus() {
+    try {
+      if (!st.open) return;
+      var sr = st.e.root.getRootNode ? st.e.root.getRootNode() : null, ae = sr && sr.activeElement;
+      if (ae && ae !== st.e.bub && ae !== st.e.body) return;
+      if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) return;
+      st.e.ta.focus();
+    } catch (e) { /* focus is a nicety */ }
+  }
   function setBusy(b) {
     st.busy = b;
     st.e.send.disabled = b;
@@ -287,32 +316,41 @@
     drawChips(st.status ? st.status.faq : []);
   }
   function showFailure(e) {
-    var gone = e && (e.status === 401 || e.status === 403);
-    addMsg(gone ? 'e' : 'h', gone ? tr('gone') : tr('net'));
+    var gone = e && (e.status === 401 || e.status === 403), srv = e && e.status >= 500;
+    addMsg(gone ? 'e' : 'h', gone ? tr('gone') : srv ? tr('srv') : tr('net'));
   }
+  /** A question that was not answered goes back into the box, if the person has not typed something else: on a phone a Swahili question of 400 characters is not retyped for a failed network. */
+  function restoreQ(q) { if (q && !st.e.ta.value) { st.e.ta.value = q; fitBox(); } }
 
   /* ---------------- what a tap does ---------------- */
   function loadStatus(force) {
     if (!force && st.status && st.statusLang === lang() && Date.now() - st.statusAt < STATUS_FRESH_MS) { paintMode(); return Promise.resolve(); }
     if (st.busy) return Promise.resolve();
     setBusy(true); thinking(true, tr('loading'));
-    var mine = ++st.ticket;
+    var mine = ++st.ticket, sess = st.sess, asked = lang();
     return api('status').then(function (r) {
-      st.status = r; st.statusAt = Date.now(); st.statusLang = lang();
+      if (sess !== st.sess) return;
+      st.status = r; st.statusAt = Date.now(); st.statusLang = asked;   // the language it was ASKED in: SW / EN may have been pressed while it was on its way
     }, function (e) {
+      if (sess !== st.sess) return;
       st.status = null; if (mine === st.ticket) showFailure(e);
-    }).then(function () { thinking(false); setBusy(false); paintMode(); });
+    }).then(function () { if (sess !== st.sess) return; thinking(false); setBusy(false); paintMode(); catchUpLang(); });
   }
+  /** SW / EN pressed while something was on its way: loadStatus returns at once while busy, so the ready questions stayed in the old language until the panel was closed and opened a minute later
+      (the second reader of Part 163). When nothing is on its way any more, the list is asked for again in the language now on the button. Bounded by the person's own presses. */
+  function catchUpLang() { if (st.open && st.status && st.statusLang !== lang()) loadStatus(true); }
   function askFaq(c) {
     if (st.busy) return;
     addMsg('u', c.q);
     setBusy(true); thinking(true);
+    var sess = st.sess, asked = lang();
     api('faq', { id: c.id }).then(function (r) {
+      if (sess !== st.sess) return;
       thinking(false);
       addMsg(r && r.mode === 'faq' && r.id ? 'a' : 'h', r && r.answer ? String(r.answer) : tr('net'));
       followSwitch(r);
-      if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; drawChips(r.faq); }
-    }, function (e) { thinking(false); showFailure(e); }).then(function () { setBusy(false); });
+      if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
+    }, function (e) { if (sess !== st.sess) return; thinking(false); showFailure(e); }).then(function () { if (sess !== st.sess) return; setBusy(false); regainFocus(); catchUpLang(); });
   }
   function ask() {
     if (st.busy) return;
@@ -321,20 +359,23 @@
     st.e.ta.value = ''; fitBox();
     addMsg('u', q);
     setBusy(true); thinking(true);
+    var sess = st.sess, asked = lang();
     api('ask', { q: q, hist: st.hist ? [st.hist] : [] }).then(function (r) {
+      if (sess !== st.sess) return;
       thinking(false);
       var text = r && r.answer ? String(r.answer) : tr('net');
       var ok = r && (r.mode === 'ai' || r.mode === 'canned' || r.mode === 'match');
       // a ready answer found for what was typed says which ready question it answers, so a wrong guess is seen for what it is
       var top = r && r.mode === 'match' && r.q ? addMsg('w', tr('matched') + ' ' + String(r.q)) : null;
       addMsg(ok ? 'a' : 'h', text);
+      if (r && (r.mode === 'busy' || r.mode === 'limit')) restoreQ(q);
       if (top) st.e.body.scrollTop = Math.max(0, top.offsetTop - 12);
       if (r && r.near && r.near.length) addNear(r.near);
       if (r && r.mode === 'ai') st.hist = { q: q, a: text.slice(0, 240) }; else if (r && r.mode !== 'canned') st.hist = null;
       followSwitch(r);
       if (r && r.left != null && st.status) { st.status.left = r.left; paintMode(); }
-      if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; drawChips(r.faq); }
-    }, function (e) { thinking(false); showFailure(e); }).then(function () { setBusy(false); });
+      if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
+    }, function (e) { if (sess !== st.sess) return; thinking(false); showFailure(e); restoreQ(q); }).then(function () { if (sess !== st.sess) return; setBusy(false); regainFocus(); catchUpLang(); });
   }
   /** Every answer says whether the AI is ON (the switch on Settings): when the owner turns it off while a panel is open, the box goes away with the next answer, not a minute later. */
   function followSwitch(r) {
@@ -354,13 +395,19 @@
       p.style.height = Math.max(240, Math.min(Math.round((vh - kb) * 0.78), 600)) + 'px';
       st.e.bub.className = st.e.bub.className.replace(/ ?away/, '') + ' away';
     } else {
-      var w = 380, h = Math.min(540, vh - 2 * EDGE - 12);
+      var vhe = vh - kb;                         // the window less what the keyboard covers
+      var w = 380, h = Math.min(540, vhe - 2 * EDGE - 12);
       p.className = 'panel' + (st.open ? ' open' : '');
       p.style.height = h + 'px'; p.style.right = 'auto'; p.style.bottom = 'auto';
-      var left = st.pos.x + SIZE / 2 > vw / 2 ? st.pos.x + SIZE - w : st.pos.x;
-      var top = st.pos.y + SIZE / 2 > vh / 2 ? st.pos.y - h - 10 : st.pos.y + SIZE + 10;
-      p.style.left = clamp(left, EDGE, Math.max(EDGE, vw - w - EDGE)) + 'px';
-      p.style.top = clamp(top, EDGE, Math.max(EDGE, vh - h - EDGE)) + 'px';
+      var onRight = st.pos.x + SIZE / 2 > vw / 2;
+      var left = clamp(onRight ? st.pos.x + SIZE - w : st.pos.x, EDGE, Math.max(EDGE, vw - w - EDGE));
+      var top = clamp(st.pos.y + SIZE / 2 > vhe / 2 ? st.pos.y - h - 10 : st.pos.y + SIZE + 10, EDGE, Math.max(EDGE, vhe - h - EDGE));
+      // On a short window there is no room above or below the bubble: the panel would be drawn over it, and a bubble that cannot be seen cannot be dragged or told apart. It goes BESIDE it.
+      if (left < st.pos.x + SIZE && left + w > st.pos.x && top < st.pos.y + SIZE && top + h > st.pos.y) {
+        left = clamp(onRight ? st.pos.x - w - 10 : st.pos.x + SIZE + 10, EDGE, Math.max(EDGE, vw - w - EDGE));
+      }
+      p.style.left = left + 'px';
+      p.style.top = top + 'px';
       st.e.bub.className = st.e.bub.className.replace(/ ?away/, '');
     }
   }
@@ -377,6 +424,9 @@
     paintMode();
     loadStatus(false).then(function () {
       try {
+        // A person who taps the box while the list is still on its way has the focus already (and, on a phone, the keyboard up): it is theirs, never moved.
+        var sr = st.e.root.getRootNode ? st.e.root.getRootNode() : null, ae = sr && sr.activeElement;
+        if (ae && ae !== st.e.bub) return;
         if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) st.e.ta.focus();
         else st.e.x.focus();
       } catch (e) { /* focus is a nicety */ }
@@ -392,6 +442,16 @@
   }
   function toggle() { if (st.open) closePanel(); else openPanel(); }
 
+  /** THE TAIL OF A TOUCH. A browser follows a touch with the mouse events and a click of the same tap, aimed at whatever is under the finger THEN. A tap that opens the panel moves the
+      bubble away (on a phone the sheet covers the screen), so the click that follows landed on the page's own control under it (HOPE Calls' log-out question, a header button) or on the
+      sheet's buttons (the one that puts the bubble back in its corner): the second reader of Part 163 found it. For a moment after a touch or pen tap has toggled the panel, the mouse
+      events and the click AT THE PLACE OF THAT TAP are swallowed before any page control sees them: a deliberate tap somewhere else (the box, a choice) is a tap and goes through. */
+  function swallowTail(x, y) {
+    var types = ['mousedown', 'mouseup', 'click'], i;
+    var stop = function (ev) { if (Math.abs(ev.clientX - x) <= TAIL_PX && Math.abs(ev.clientY - y) <= TAIL_PX) { ev.stopPropagation(); ev.preventDefault(); } };
+    for (i = 0; i < types.length; i++) document.addEventListener(types[i], stop, true);
+    setTimeout(function () { for (var j = 0; j < types.length; j++) document.removeEventListener(types[j], stop, true); }, TAIL_MS);
+  }
   function wireDrag(btn) {
     var down = null, moved = false, suppress = false, lastToggle = 0;
     if (window.PointerEvent) {
@@ -418,7 +478,7 @@
         if (was) { suppress = true; setTimeout(function () { suppress = false; }, 0); saveFrac(); }
         // A TAP opens it from the finger's own release: a browser is not obliged to follow a touch with a click (some WebViews do not, and this
         // one's test browser did not), so the release is what counts, and the click that may follow it is ignored below.
-        else if (e.type === 'pointerup') { lastToggle = Date.now(); toggle(); }
+        else if (e.type === 'pointerup') { lastToggle = Date.now(); if (e.pointerType && e.pointerType !== 'mouse') swallowTail(e.clientX, e.clientY); toggle(); }
       };
       btn.addEventListener('pointerup', end);
       btn.addEventListener('pointercancel', end);
@@ -492,7 +552,7 @@
     panel.addEventListener('keydown', function (ev) { if (ev.key === 'Escape') { ev.stopPropagation(); closePanel(); } });
     window.addEventListener('resize', onResize);
     window.addEventListener('orientationchange', onResize);
-    try { if (window.visualViewport) { window.visualViewport.addEventListener('resize', function () { if (st.open) layoutPanel(); }); } } catch (x) { /* no visual viewport */ }
+    try { if (window.visualViewport) { var vv = function () { if (st.open) layoutPanel(); }; window.visualViewport.addEventListener('resize', vv); window.visualViewport.addEventListener('scroll', vv); } } catch (x) { /* no visual viewport */ }
 
     st.mounted = true;
     paintTheme();
@@ -503,7 +563,7 @@
 
   window.ClaudianPMO = {
     mount: mount,
-    hide: function () { if (st.host) st.host.style.display = 'none'; },
+    hide: function () { forget(); if (st.host) st.host.style.display = 'none'; },
     show: function () { if (st.host) st.host.style.display = ''; },
     open: function () { if (st.mounted) openPanel(); },
     close: function () { if (st.mounted) closePanel(); },

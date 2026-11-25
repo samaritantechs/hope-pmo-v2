@@ -230,8 +230,23 @@ test('ONE CHAT IN FULL: tapping a row asks for that thread; the drawer shows who
   assert.ok(h.includes('NYUMA / BEHIND') && h.includes('SHUGHULI / BUSY') && h.includes('KAWAIDA / READY'));
   const b = win.BOARDS.haThread;
   assert.equal(b.title, 'Hope-Ai-JUMA G-2026-11-25'); assert.equal(b.rows.length, 3);
-  deq(b.cols.map(c => c.key), ['at', 'mode', 'q', 'a', 'tokensIn', 'tokensOut', 'ms', 'behind', 'note']);
+  // the ready answer a question was answered with has its own column in the chat's Excel (handbook Part 163, addendum 1): the question's words alone said nothing of which one it was
+  deq(b.cols.map(c => c.key), ['at', 'mode', 'q', 'a', 'tokensIn', 'tokensOut', 'ms', 'behind', 'ready', 'note']);
+  assert.equal(b.cols.find(c => c.key === 'ready').label, 'Jibu la kawaida kwa / Ready answer to');
   assert.equal(b.rows[0].a, 'Piga simu.\nAngalia malengo.'); assert.equal(b.rows[1].a, '(jibu la kawaida / ready answer)'); assert.equal(b.rows[0].mode, 'AI');
+  assert.equal(b.rows[1].ready, 'Nifanye nini ili kufikia malengo? / What should I do to reach the targets?', 'the ready question, in both languages');
+  assert.equal(b.rows[0].ready, '', 'a model answer names no ready question'); assert.equal(b.rows[2].ready, '');
+});
+
+/* WHAT THE TAB SAYS ABOUT NAMES IS TRUE (handbook Part 163, addendum 1): only numbers of seven digits or more are replaced before a question is kept, so the foot says that a
+   customer's name or a short reference typed into a question stays as it was typed, in both languages, and still says the tab is readable by everybody it is ticked for. */
+test('THE FOOT SAYS WHAT IS AND IS NOT TAKEN OUT OF A QUESTION: long numbers are replaced, a customer\'s name or a short reference is not', async () => {
+  const { win } = load({ claudianChats: ANSWER() });
+  await win.VIEWS.hopeai();
+  const f = win.S.foot;
+  assert.ok(f.includes('[namba]') && f.includes('tarakimu 7 au zaidi'), 'long numbers are replaced (Swahili)');
+  assert.ok(/a customer's name or a short reference/i.test(f) && /jina la mteja/i.test(f), 'and the rest is kept as typed, said in both languages');
+  assert.ok(f.includes('everybody\'s chats') || f.includes('kusoma mazungumzo ya kila mtu'), 'the reading of everybody\'s chats is still said');
 });
 
 test('THE CARDS AN ANSWER STOOD ON ARE SHOWN IN GREY, NOT IN THE RED OF A PROBLEM (handbook Part 159): "cards: a, b" beside a stop reason keeps its own colours, and both are text', async () => {

@@ -12,8 +12,9 @@
 -- WHAT IS IN A ROW: the day, where it was asked (portal or call), a one-way fingerprint of WHO (never
 -- an access code, never a device id), their name, role, teams and zone as the system knows them, the
 -- question (every number of seven digits or more already replaced by [namba]) and the answer,
--- what kind of answer it was (ai = the model answered; faq = a ready answer; canned = a greeting
--- answered with a word; limit = a limit was reached; busy = the model could not answer), the tokens
+-- what kind of answer it was (ai = the model answered; faq = a ready answer tapped; canned = a greeting
+-- answered with a word; limit = a limit was reached; busy = the model could not answer; match = a typed
+-- question answered from the nearest ready answer; nomatch = a typed question no ready answer fitted), the tokens
 -- the model used, and whether the person's teams were behind the company standards last week.
 --
 -- WHO MAY READ IT: nobody through the public API. Row security is on and no policy is made, so only
@@ -50,7 +51,7 @@ ms integer,
 behind boolean,
 note text
 );
-comment on table public.claudian_chats is 'Claudian-PMO: one row per question. user_key is a one-way fingerprint, question is masked, mode is ai|faq|canned|limit|busy.';
+comment on table public.claudian_chats is 'Claudian-PMO: one row per question. user_key is a one-way fingerprint, question is masked, mode is ai|faq|canned|limit|busy|match|nomatch.';
 
 create index if not exists idx_claudian_chats_day on public.claudian_chats (day desc, created_at desc);
 create index if not exists idx_claudian_chats_user on public.claudian_chats (user_key, day, mode);

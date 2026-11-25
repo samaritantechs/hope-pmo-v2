@@ -92,6 +92,9 @@ export const MAX_HISTORY_CHARS = 240;
 export const MAX_NOTES = 8;
 export const MIN_GAP_MS = 2000;
 export const MAX_INFLIGHT = 8;
+/** The most typed questions one person is answered WITHOUT the model (a ready answer, a greeting) in a day, counted in memory on this server so that counting costs no read: a ceiling against a
+    script that floods the log the owner reads, never a limit a person doing their work will meet. The first question over it writes one row that says so; the rest write none. */
+export const FREE_TYPED_DAILY = 300;
 export const REQUEST_TIMEOUT_MS = 25000;
 export const STANDING_BUDGET_MS = 1500;
 const CFG_TTL_MS = 20000, ROWS_TTL_MS = 60000, STANDING_TTL_MS = 600000;
@@ -156,8 +159,22 @@ export function maskNumbers(s) {
   return t.replace(/\d{7,}/g, '[namba]');
 }
 const squeeze = s => String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+/** The most raw text the cleaning below is ever handed. Its regular expressions run over EVERYTHING they are given, so a question of several megabytes (only a script sends one) held the
+    whole server process for up to 0.7 s and, from about 6 MB, threw a RangeError that became a 500 (the second reader of Part 163): the text is cut first, and cut again to the length asked for. */
+export const MAX_RAW_CHARS = 4000;
+/** Characters that are nothing to read but can split a number in two or hide it from the mask: the soft hyphen, zero-width spaces and joiners, direction marks, the word joiner and the byte-order
+    mark. Built from escapes, because the file tool turns an escape typed in a regex into the invisible character itself. */
+const INVISIBLE = new RegExp('[\\u00AD\\u200B-\\u200F\\u2060\\uFEFF]', 'g');
+const ARABIC_DIGITS = new RegExp('[\\u0660-\\u0669\\u06F0-\\u06F9]', 'g');
+/** Text as it is used and logged: cut, look-alike characters made plain (full-width digits become 0-9 by NFKC, Arabic-Indic digits are turned by hand, invisible characters go), blanks run
+    together, numbers masked, at most `max` characters. A loan number written in full-width digits or with a zero-width space inside is a loan number: it is masked before it is matched, logged or sent. */
+function plainText(t, max) {
+  let x = typeof t === 'string' ? t.slice(0, MAX_RAW_CHARS) : '';
+  x = x.normalize('NFKC').replace(INVISIBLE, '').replace(ARABIC_DIGITS, d => String(d.charCodeAt(0) & 15));
+  return maskNumbers(squeeze(x)).slice(0, max);
+}
 /** A question as it is used and logged: text, blanks run together, numbers masked, at most MAX_QUESTION_CHARS. */
-export function cleanQuestion(q) { return maskNumbers(squeeze(typeof q === 'string' ? q : '')).slice(0, MAX_QUESTION_CHARS); }
+export function cleanQuestion(q) { return plainText(q, MAX_QUESTION_CHARS); }
 
 /* ---------- small talk: a word back, no model ---------- */
 const GREET = /^(hi|hello|hey|habari|hujambo|mambo|vipi|niaje|poa|salaam|shikamoo|marahaba|good (morning|afternoon|evening)|asubuhi njema|habari za (asubuhi|mchana|jioni)|mambo vipi)$/i;
@@ -364,7 +381,7 @@ export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, 
 export function buildUserMessage(context, q, hist) {
   const h = Array.isArray(hist) && hist.length ? hist[hist.length - 1] : null;
   const prev = h && typeof h === 'object' && (h.q || h.a)
-    ? CTX.previous(cleanQuestion(h.q).slice(0, MAX_HISTORY_CHARS), maskNumbers(squeeze(typeof h.a === 'string' ? h.a : '')).slice(0, MAX_HISTORY_CHARS))
+    ? CTX.previous(cleanQuestion(h.q).slice(0, MAX_HISTORY_CHARS), plainText(h.a, MAX_HISTORY_CHARS))
     : '';
   return context + prev + CTX.question(q);
 }
@@ -390,7 +407,7 @@ async function defaultClient() {
   }
   return clientPromise;
 }
-export function resetClaudianForTests() { resetClaudianDataForTests(); clientPromise = null; inflight = 0; lastAsk.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; }
+export function resetClaudianForTests() { resetClaudianDataForTests(); clientPromise = null; inflight = 0; lastAsk.clear(); memFree.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; }
 
 /** What went wrong with the provider, in one of three kinds: the person's limit ("too many", billing), a busy provider, a setting wrong
     here (key). By status, never by words (a typed error class would need the SDK imported). */
@@ -403,8 +420,25 @@ export function classifyFailure(e) {
 }
 
 /* ---------- the counts that limit a person, and the log ---------- */
+/** One more typed question answered without the model, for this person and day: the count after it. */
+function bumpFree(subject, nowMs) {
+  const day = todayKey(nowMs), k = day + '|' + subject.key;
+  const n = (memFree.get(k) || 0) + 1;
+  memFree.set(k, n);
+  if (memFree.size > 5000) { for (const key of memFree.keys()) if (!key.startsWith(day + '|')) memFree.delete(key); if (memFree.size > 5000) memFree.clear(); }
+  return n;
+}
+/** The ceiling on what is answered without the model (a typed question, a greeting, a tap on a ready question): null while the person is under it; over it, the answer to give. The first
+    one over writes ONE row that says the ceiling was met, and the rest write none. `what` says which door it was ('typed' or 'tap'). */
+async function freeCeiling(db, subject, base, lang, nowMs, what, q) {
+  const n = bumpFree(subject, nowMs);
+  if (n <= FREE_TYPED_DAILY) return null;
+  if (n === FREE_TYPED_DAILY + 1) await logChat(db, { ...baseRow(subject, '', lang, nowMs), mode: 'limit', question: q, answer: null, note: what + ' ceiling (' + FREE_TYPED_DAILY + ' a day without the model)' });
+  return { ...base, mode: 'limit', answer: hardHint(lang, nowMs), left: 0 };
+}
 let inflight = 0;
 const lastAsk = new Map();           // user key -> ms of the last question
+const memFree = new Map();           // day|user key -> typed questions answered WITHOUT the model today (this server)
 const memUser = new Map();           // day|user key -> questions answered by the model today (this server)
 const memAll = new Map();            // day -> the same, for everybody
 const countMissingUntil = new WeakMap();
@@ -478,6 +512,8 @@ export async function claudianHandle(db, subject, body, deps = {}) {
   if (op === 'faq') {
     const a = faqAnswer(String(b.id || ''), subject, lang, cfg.vars);
     if (!a) return { ...base, mode: 'faq', answer: FIXED.refused[lang], faq: choices() };
+    const over = await freeCeiling(db, subject, base, lang, nowMs, 'tap', a.q.slice(0, MAX_QUESTION_CHARS));
+    if (over) return over;
     const zone = zoneText(subject, await teamRowsOf(db, nowMs));
     await logChat(db, { ...baseRow(subject, zone, lang, nowMs), mode: 'faq', faq_id: a.id, question: a.q.slice(0, MAX_QUESTION_CHARS), answer: null });
     return { ...base, mode: 'faq', id: a.id, q: a.q, answer: a.a };
@@ -486,11 +522,21 @@ export async function claudianHandle(db, subject, body, deps = {}) {
   // ---- op === 'ask' ----
   const q = cleanQuestion(b.q);
   if (!q) return { ...base, mode: 'faq', answer: FIXED.empty[lang], faq: choices() };
+  // THE PERSON'S OWN PACE, whether the AI is answering or not: the page waits for each answer, so only a script asks twice in two seconds. (It used to be asked only of a question the model
+  // answered, so a typed question with the AI off wrote a log row as fast as it was sent: the second reader of Part 163.)
+  const last = lastAsk.get(subject.key) || 0;
+  if (nowMs - last < MIN_GAP_MS && !deps.noGap) return { ...base, mode: 'busy', answer: FIXED.slow[lang] };
+  lastAsk.set(subject.key, nowMs);
+  if (lastAsk.size > 5000) lastAsk.clear();
+  const talk = smallTalk(q, lang);
+  if (talk || !aiOn) {
+    const over = await freeCeiling(db, subject, base, lang, nowMs, 'typed', q);
+    if (over) return over;
+  }
   const rows = await teamRowsOf(db, nowMs);
   const zone = zoneText(subject, rows);
   const row = baseRow(subject, zone, lang, nowMs);
 
-  const talk = smallTalk(q, lang);
   if (talk) {
     await logChat(db, { ...row, mode: 'canned', question: q, answer: talk, tokens_in: 0, tokens_out: 0 });
     return { ...base, mode: 'canned', answer: talk };
@@ -511,9 +557,7 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     return { ...base, mode: 'nomatch', answer: (m.figure ? FIXED.noFigure : FIXED.noMatch)[lang], near };
   }
 
-  // the person's own pace, then the day's limits
-  const last = lastAsk.get(subject.key) || 0;
-  if (nowMs - last < MIN_GAP_MS && !deps.noGap) return { ...base, mode: 'busy', answer: FIXED.slow[lang] };
+  // the day's limits (the person's own pace was asked above, for every typed question)
   const used = await usageToday(db, subject, nowMs);
   if (used.mine >= cfg.userDaily || used.all >= cfg.allDaily) {
     const why = used.mine >= cfg.userDaily ? 'person limit' : 'company limit';
@@ -534,8 +578,6 @@ export async function claudianHandle(db, subject, body, deps = {}) {
       try { data = await readViews(db, subject, wanted, nowMs, { std: cfg.std, names: ts => registrySpellings(ts, rows) }); } catch (e) { data = null; }
     }
     const req = buildRequest(buildUserMessage(buildContext(subject, q, lang, cfg, zone, standing, nowMs, cards, data), q, b.hist));
-    lastAsk.set(subject.key, nowMs);
-    if (lastAsk.size > 5000) lastAsk.clear();
     const t0 = Date.now();
     let res = null, fail = null;
     try {
