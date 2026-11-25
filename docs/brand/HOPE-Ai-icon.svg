@@ -32,14 +32,13 @@
   <ellipse cx="204" cy="206" rx="17" ry="24" fill="#FFFFFF"/>
   <ellipse cx="308" cy="206" rx="17" ry="24" fill="#FFFFFF"/>
 
-  <!-- HOPE Ai, drawn as strokes so that it never depends on a font -->
-  <g transform="translate(178 314) scale(.95)" fill="none" stroke="#FFFFFF" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M0 0V30M22 0V30M0 15H22"/>
-    <ellipse cx="42" cy="15" rx="11" ry="15"/>
-    <path d="M62 30V0H75A9 9 0 0 1 75 18H62"/>
-    <path d="M115 0H93V30H115M93 15H110"/>
-    <path d="M133 30L144 0L155 30M137.5 19H150.5"/>
-    <path d="M164 11V30"/>
-    <circle cx="164" cy="2" r="3.4" fill="#93C5FD" stroke="none"/>
+  <!-- HOPE Ai, drawn as strokes so that it never depends on a font, and bent along the face: each letter stays whole and stands upright toward the centre of a circle of radius 150, the ends rising and tilting, the middle lowest (the face is round, the text follows it) -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(190.8 320.1) rotate(25.8) scale(.95) translate(-11 -15)"><path d="M0 0V30M22 0V30M0 15H22"/></g>
+    <g transform="translate(218.4 330.2) rotate(14.5) scale(.95) translate(-42 -15)"><ellipse cx="42" cy="15" rx="11" ry="15"/></g>
+    <g transform="translate(247.5 334.8) rotate(3.3) scale(.95) translate(-73 -15)"><path d="M62 30V0H75A9 9 0 0 1 75 18H62"/></g>
+    <g transform="translate(276.8 333.5) rotate(-8) scale(.95) translate(-104 -15)"><path d="M115 0H93V30H115M93 15H110"/></g>
+    <g transform="translate(313.4 323.6) rotate(-22.5) scale(.95) translate(-144 -15)"><path d="M133 30L144 0L155 30M137.5 19H150.5"/></g>
+    <g transform="translate(330.4 315.2) rotate(-29.8) scale(.95) translate(-164 -15)"><path d="M164 11V30"/><circle cx="164" cy="2" r="3.4" fill="#93C5FD" stroke="none"/></g>
   </g>
 </svg>

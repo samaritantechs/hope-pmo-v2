@@ -75,7 +75,8 @@
     }
   };
 
-  /* The HOPE Ai icon (docs/brand/HOPE-Ai-icon.svg), drawn once for the bubble and once, with another id, for the header. */
+  /* The HOPE Ai icon (docs/brand/HOPE-Ai-icon.svg: the same drawing, held equal to it by a test), drawn once for the bubble and once, with another id, for the header.
+     The letters of HOPE Ai are bent along the round face: each stays whole and stands upright toward the centre of a circle. */
   var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">'
     + '<defs><clipPath id="HEADID"><path d="M256 64C334 64 388 124 388 208C388 262 366 308 348 336C340 356 334 368 322 378C304 392 280 394 256 394C232 394 208 392 190 378C178 368 172 356 164 336C146 308 124 262 124 208C124 124 178 64 256 64Z"/></clipPath></defs>'
     + '<rect x="88" y="188" width="28" height="100" rx="14" fill="#0B2A6B"/><rect x="95" y="200" width="9" height="62" rx="4.5" fill="#93C5FD"/>'
@@ -85,9 +86,14 @@
     + '<g clip-path="url(#HEADID)"><path d="M110 250Q256 326 402 250V400H110Z" fill="#0B2A6B"/><path d="M110 250Q256 326 402 250" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/></g>'
     + '<path d="M178 108C158 124 146 150 142 182" fill="none" stroke="#FFFFFF" stroke-opacity=".85" stroke-width="6" stroke-linecap="round"/>'
     + '<ellipse cx="204" cy="206" rx="17" ry="24" fill="#FFFFFF"/><ellipse cx="308" cy="206" rx="17" ry="24" fill="#FFFFFF"/>'
-    + '<g transform="translate(178 314) scale(.95)" fill="none" stroke="#FFFFFF" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round">'
-    + '<path d="M0 0V30M22 0V30M0 15H22"/><ellipse cx="42" cy="15" rx="11" ry="15"/><path d="M62 30V0H75A9 9 0 0 1 75 18H62"/><path d="M115 0H93V30H115M93 15H110"/>'
-    + '<path d="M133 30L144 0L155 30M137.5 19H150.5"/><path d="M164 11V30"/><circle cx="164" cy="2" r="3.4" fill="#93C5FD" stroke="none"/></g></svg>';
+    + '<g fill="none" stroke="#FFFFFF" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round">'
+    + '<g transform="translate(190.8 320.1) rotate(25.8) scale(.95) translate(-11 -15)"><path d="M0 0V30M22 0V30M0 15H22"/></g>'
+    + '<g transform="translate(218.4 330.2) rotate(14.5) scale(.95) translate(-42 -15)"><ellipse cx="42" cy="15" rx="11" ry="15"/></g>'
+    + '<g transform="translate(247.5 334.8) rotate(3.3) scale(.95) translate(-73 -15)"><path d="M62 30V0H75A9 9 0 0 1 75 18H62"/></g>'
+    + '<g transform="translate(276.8 333.5) rotate(-8) scale(.95) translate(-104 -15)"><path d="M115 0H93V30H115M93 15H110"/></g>'
+    + '<g transform="translate(313.4 323.6) rotate(-22.5) scale(.95) translate(-144 -15)"><path d="M133 30L144 0L155 30M137.5 19H150.5"/></g>'
+    + '<g transform="translate(330.4 315.2) rotate(-29.8) scale(.95) translate(-164 -15)"><path d="M164 11V30"/><circle cx="164" cy="2" r="3.4" fill="#93C5FD" stroke="none"/></g>'
+    + '</g></svg>';
 
   var CSS = [
     ':host{all:initial;position:fixed;left:0;top:0;right:0;bottom:0;pointer-events:none;font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif}',
@@ -286,6 +292,7 @@
     api('faq', { id: c.id }).then(function (r) {
       thinking(false);
       addMsg(r && r.mode === 'faq' && r.id ? 'a' : 'h', r && r.answer ? String(r.answer) : tr('net'));
+      followSwitch(r);
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; drawChips(r.faq); }
     }, function (e) { thinking(false); showFailure(e); }).then(function () { setBusy(false); });
   }
@@ -302,9 +309,14 @@
       var ok = r && (r.mode === 'ai' || r.mode === 'canned');
       addMsg(ok ? 'a' : 'h', text);
       if (r && r.mode === 'ai') st.hist = { q: q, a: text.slice(0, 240) }; else if (r && r.mode !== 'canned') st.hist = null;
+      followSwitch(r);
       if (r && r.left != null && st.status) { st.status.left = r.left; paintMode(); }
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; drawChips(r.faq); }
     }, function (e) { thinking(false); showFailure(e); }).then(function () { setBusy(false); });
+  }
+  /** Every answer says whether the AI is ON (the switch on Settings): when the owner turns it off while a panel is open, the box goes away with the next answer, not a minute later. */
+  function followSwitch(r) {
+    if (r && typeof r.ai === 'boolean' && st.status && !!st.status.ai !== r.ai) { st.status.ai = r.ai; if (!r.ai) st.hist = null; paintMode(); }
   }
   function fitBox() { var t = st.e.ta; t.style.height = 'auto'; t.style.height = Math.min(96, t.scrollHeight) + 'px'; }
 
@@ -472,6 +484,6 @@
     close: function () { if (st.mounted) closePanel(); },
     mounted: function () { return st.mounted; },
     /* the pure parts, for the tests (test/claudian-ui.test.mjs): nothing here touches a page */
-    _t: { T: T, SIZE: SIZE, EDGE: EDGE, TAP_PX: TAP_PX, WIDE: WIDE, clampPos: clampPos, toFrac: toFrac, fromFrac: fromFrac, isTap: isTap, defaultPos: defaultPos, trimQ: trimQ, fillN: fillN }
+    _t: { T: T, ICON: ICON, SIZE: SIZE, EDGE: EDGE, TAP_PX: TAP_PX, WIDE: WIDE, clampPos: clampPos, toFrac: toFrac, fromFrac: fromFrac, isTap: isTap, defaultPos: defaultPos, trimQ: trimQ, fillN: fillN }
   };
 })();

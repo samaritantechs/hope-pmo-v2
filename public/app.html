@@ -1410,7 +1410,7 @@ function claudianLater_(){
   try {
     if (!S.code || window.ClaudianPMO) return;
     modLoad_('claudian').then(function(){
-      try { if (S.code && window.ClaudianPMO) ClaudianPMO.mount({ host: 'portal', z: 55, code: function(){ return S.code; }, lang: function(){ return S.lang; } }); } catch(e){}
+      try { if (S.code && window.ClaudianPMO) ClaudianPMO.mount({ host: 'portal', z: 38, code: function(){ return S.code; }, lang: function(){ return S.lang; } }); } catch(e){}
     }, function(){});
   } catch(e){}
 }

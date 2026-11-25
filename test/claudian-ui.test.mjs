@@ -126,7 +126,7 @@ test('a question is cut at what the server accepts, and whitespace is squeezed',
 test('the portal loads it late and only once, by BUILD, in a try, and nothing waits for it', () => {
   const fn = strip(APP.slice(APP.indexOf('function claudianLater_()'), APP.indexOf('/* WHERE TO LAND NEXT TIME')));
   assert.ok(/if \(!S\.code \|\| window\.ClaudianPMO\) return;/.test(fn), 'not signed in, or already there: nothing');
-  assert.ok(/modLoad_\('claudian'\)\.then\(function\(\)\{[\s\S]*ClaudianPMO\.mount\(\{ host: 'portal', z: 55, code: function\(\)\{ return S\.code; \}, lang: function\(\)\{ return S\.lang; \} \}\)/.test(fn), 'the portal mounts it as itself');
+  assert.ok(/modLoad_\('claudian'\)\.then\(function\(\)\{[\s\S]*ClaudianPMO\.mount\(\{ host: 'portal', z: 38, code: function\(\)\{ return S\.code; \}, lang: function\(\)\{ return S\.lang; \} \}\)/.test(fn), 'the portal mounts it as itself');
   assert.ok(/\}, function\(\)\{\}\);/.test(fn) && /^function claudianLater_\(\)\{\s*try \{/.test(fn.trim()), 'a module that cannot be fetched is ignored, and the whole thing is inside a try');
   assert.equal((strip(APP).match(/claudianLater_/g) || []).length, 2, 'the function and ONE call');
   assert.ok(/setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'the one call is a seven-second timer, after the first screen\'s own reads (2.5 s)');
@@ -170,3 +170,24 @@ test('the Settings card: the limits it offers are the limits the server accepts,
   assert.ok(!/Promise\.all\(\[[^\]]*claudianStatus/.test(view), 'and is not part of the screen\'s own wave of reads');
   assert.ok(/cpCard_\(S\.claudian\)/.test(ADMIN), 'the card is drawn into the screen');
 });
+
+test('the HOPE Ai icon in the bubble is the brand file\'s drawing, and its text is bent along the round face (the owner, 25 Nov: "the face is cycle but the text ain\'t")', () => {
+  const brand = fs.readFileSync(path.join(ROOT, 'docs/brand/HOPE-Ai-icon.svg'), 'utf8');
+  const norm = s => s.replace(/<!--[\s\S]*?-->/g, '').replace(/<title>[\s\S]*?<\/title>/, '').replace(/<svg[^>]*>/, '').replace(/<\/svg>/, '').replace(/HEADID/g, 'head').replace(/\s+/g, ' ').replace(/> </g, '><').trim();
+  assert.equal(norm(T.ICON), norm(brand), 'the bubble\'s inline icon and docs/brand/HOPE-Ai-icon.svg are two drawings: keep them one');
+  const gs = [...brand.matchAll(/<g transform="translate\(([\d.]+) ([\d.]+)\) rotate\((-?[\d.]+)\) scale\(\.95\) translate\(-(\d+) -15\)">/g)].map(m => ({ x: +m[1], y: +m[2], deg: +m[3] }));
+  assert.equal(gs.length, 6, 'H O P E A i: six letters, each its own turned group');
+  assert.ok(!/translate\(178 314\) scale\(\.95\)/.test(brand), 'the flat text is back');
+  for (let i = 1; i < gs.length; i++) { assert.ok(gs[i].x > gs[i - 1].x, 'the letters run left to right'); assert.ok(gs[i].deg < gs[i - 1].deg, 'each letter is turned less than the one before it: the left ones lean one way, the right ones the other'); }
+  assert.ok(gs[0].deg > 15 && gs[5].deg < -15, 'the ends lean by more than fifteen degrees');
+  const mid = Math.max(gs[2].y, gs[3].y);
+  assert.ok(mid - gs[0].y >= 12 && mid - gs[5].y >= 12, 'the ends rise at least twelve units above the middle: ' + JSON.stringify(gs.map(g => g.y)));
+  // on one circle: every letter is the same distance from a common centre (the middle of the text, 150 above its lowest point)
+  const cx = 256, bottom = 335, r = 150, cy = bottom - r;
+  for (const g of gs) assert.ok(Math.abs(Math.hypot(g.x - cx, g.y - cy) - r) < 0.35, 'a letter is off the circle: ' + JSON.stringify(g));
+  // and every letter stands upright toward the centre: its turn is minus the angle it sits at
+  for (const g of gs) assert.ok(Math.abs(g.deg - -Math.atan2(g.x - cx, g.y - cy) * 180 / Math.PI) < 0.35, 'a letter is not upright toward the centre: ' + JSON.stringify(g));
+  // all of it inside the navy mouth: below the white line (y 288 at its lowest) and above the chin (394)
+  for (const g of gs) assert.ok(g.y > 300 && g.y < 345, 'a letter left the mouth: ' + JSON.stringify(g));
+});
+

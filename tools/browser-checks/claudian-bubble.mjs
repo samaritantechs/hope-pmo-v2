@@ -232,7 +232,7 @@ await section('A (module, drag, keys, resize)', async () => {
   const s = await shape(page);
   check('A1 the bubble is a 56 pixel round button inside the screen, closed, with a name for a screen reader', s && s.bub.w === 56 && s.bub.h === 56 && inside(s) && s.expanded === 'false' && /Fungua msaidizi Claudian-PMO/.test(s.label), JSON.stringify(s && [s.bub, s.expanded, s.label]));
   check('A1 it starts near the bottom right, above the tip toast', s.bub.x > s.vw - 100 && s.bub.y > s.vh - 200 && s.bub.y < s.vh - 80, JSON.stringify(s.bub));
-  check('A1 it sits in the portal layer (55: under the drawers, over the page)', s.z === '55', s.z);
+  check('A1 it sits in the portal layer (38: over the page, under the phone menu, the drawers and the toasts)', s.z === '38', s.z);
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-bubble.png') });
 
   // ---- drag
@@ -391,6 +391,15 @@ await section('A9 (AI on)', async () => {
   check('A11 no connection at all says so, in the page\'s language, and the panel still works', last3.kind === 'h' && /No connection/.test(last3.text), JSON.stringify(last3));
   await page.unroute('**/api/claudian');
   check('A11 the send button is free again after a failure', !(await page.locator('.send').isDisabled()));
+  // the owner switches the AI off while the panel is open: the next answer takes the box away at once, and says ready questions only
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db);
+  await page.locator('textarea').fill('Is anybody there?');
+  await page.locator('.send').click();
+  await until(page, () => !document.getElementById('claudianPMO').shadowRoot.querySelector('.ft.on'));
+  s = await shape(page);
+  const lastOff = s.msgs[s.msgs.length - 1];
+  check('A11 the AI switched off while the panel is open: the next answer says ready questions only, and the box goes away at once', !s.inputOn && lastOff.kind === 'h' && /standard questions only/i.test(lastOff.text) && s.chips.length > 0 && /Ready questions only/.test(s.sub), JSON.stringify([s.inputOn, lastOff, s.sub]));
+  check('A11 and its ready questions are laid out in full again (no height limit)', s.faqOpen);
   await ctx.close();
 });
 
