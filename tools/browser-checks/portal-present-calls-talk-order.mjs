@@ -179,7 +179,7 @@ try {
       JSON.stringify(redIdx) === '[13,14,15,16,17,18,19]' && redIdx.every(i => /(^| )bad( |$)/.test(marks[i].cls)), JSON.stringify(marks.slice(11)));
     check(tag + ' that officer rang the most numbers of anybody on the slide (43) and talked to no portfolio customer: the first of the red', rows[13][iOff] === 'NEEMA Z' && rows[13][iCalls] === '43' && rows[13][iTalk] === '0:00' && Math.max(...call) === 43, JSON.stringify(rows[13]));
     check(tag + ' the ones between are not marked', marks.slice(6, 13).every(m => m.text === '' && !/good|bad/.test(m.cls)), JSON.stringify(marks.slice(6, 13)));
-    check(tag + ' the title says what the slide is ranked by', /busiest first by portfolio talk time/.test(s.title) && /not the number of calls/.test(s.title) && !/numbers rung, not dials/.test(s.title), s.title);
+    check(tag + ' the title says what the slide is ranked by', /busiest first by time talking to customers/.test(s.title) && /not by calls made/.test(s.title) && !/numbers rung, not dials/.test(s.title), s.title);
     check(tag + ' the page\'s own rows say the same (the model the wall draws)', JSON.stringify(s.model.map(m => m[0])) === JSON.stringify(WANT) && s.model[13][3] === 'Least active' && s.model[0][3] === 'Busiest', JSON.stringify(s.model.slice(11, 15)));
     check(tag + ' no cell runs past its own box, and the slide scrolls nowhere', s.over.length === 0 && !s.scrolls && !s.hscrolls, JSON.stringify({ over: s.over.slice(0, 4), scrolls: s.scrolls, hscrolls: s.hscrolls }));
     check(tag + ' the table ends inside the screen', s.tableBottom <= s.vh + 1, 'table bottom ' + Math.round(s.tableBottom) + ' of ' + s.vh);

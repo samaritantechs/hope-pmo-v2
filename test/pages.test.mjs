@@ -638,7 +638,7 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   // the page reads the server's order down and never sorts the pool again: a second sort is a second answer to who is busiest
   const pool = code_(view.slice(view.indexOf('var PMO_UNITS'), view.indexOf("id:'credit'")));
   assert.ok(pool.includes('callPool') && !/\.sort\(/.test(pool), 'no sort between the server\'s list and the slide');
-  assert.ok(/title:'HOPE Calls — busiest first by portfolio talk time \(muda wa maongezi ya portfolio, si idadi ya simu \/ talk time, not the number of calls\)'/.test(calls), 'the slide\'s title says what the rank is');
+  assert.ok(/title:'HOPE Calls — busiest first by time talking to customers \(muda wa maongezi na wateja, si idadi ya simu \/ not by calls made\)'/.test(calls), 'the slide\'s title says what the rank is');
 });
 
 /* A DECK LEFT PLAYING RELOADS ITSELF FOR A NEW VERSION AND COMES BACK ON THE SAME SLIDE.

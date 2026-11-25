@@ -647,7 +647,7 @@ function presSlides(){
     /* Under the call counting rule (call-core.js): Calls are numbers rung, once per day; the
        dials sit beside them so a redialler is visible; talk time is portfolio talk time. */
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — busiest first by portfolio talk time (muda wa maongezi ya portfolio, si idadi ya simu / talk time, not the number of calls)'
+      title:'HOPE Calls — busiest first by time talking to customers (muda wa maongezi na wateja, si idadi ya simu / not by calls made)'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set')
         /* REACHED % = the numbers really spoken to (a call longer than the minimum seconds) out of the numbers rung, not every
            number dialled. The server says which minimum it counted by (callsReachMin); where the database is still behind the rule

@@ -173,13 +173,13 @@ test('only the three units are on the slide, in the server\'s order; a book wher
 
 test('THE SLIDE\'S TWO WORDS ABOUT ITSELF: its title says what it is ranked by, and its nine columns are as they were (Calls and Dials still there, Portfolio talk now the ranked one)', () => {
   const s = callsSlide({ callToday: inTalkOrder(8), callsReachMin: 5 });
-  assert.equal(s.title, 'HOPE Calls — busiest first by portfolio talk time (muda wa maongezi ya portfolio, si idadi ya simu / talk time, not the number of calls) · Expected · Collection · Recovery · Reached = waliongea zaidi ya sek 5 / spoken to for over 5 s');
+  assert.equal(s.title, 'HOPE Calls — busiest first by time talking to customers (muda wa maongezi na wateja, si idadi ya simu / not by calls made) · Expected · Collection · Recovery · Reached = waliongea zaidi ya sek 5 / spoken to for over 5 s');
   assert.deepEqual(s.cols.map(c => c.key), ['end', 'agent', 'unit', 'team', 'calls', 'dials', 'duration', 'portfolio', 'connectPct']);
   assert.deepEqual(s.cols.map(c => c.label).slice(1), ['Officer', 'Unit', 'Team', 'Calls', 'Dials', 'Portfolio talk', 'Portfolio', 'Reached %']);
   assert.equal(s.cols.find(c => c.key === 'duration').kind, 'dur', 'the ranked column is printed as minutes and seconds, as before');
   assert.ok(!/numbers rung, not dials/.test(s.title), 'the title no longer claims the ranking is by numbers rung');
   // and with Reached % waiting for its file the title still says so, after the new words
-  assert.match(callsSlide({ callToday: inTalkOrder(8), callsReachNote: 'x' }).title, /talk time, not the number of calls\) · Expected · Collection · Recovery · Reached % inasubiri \/ waits for db\/RUN-ME-088$/);
+  assert.match(callsSlide({ callToday: inTalkOrder(8), callsReachNote: 'x' }).title, /not by calls made\) · Expected · Collection · Recovery · Reached % inasubiri \/ waits for db\/RUN-ME-088$/);
 });
 
 test('the slide is built from the SERVER\'S OWN ANSWER, end to end: the officers of the three units, the busiest in talk first, the one who rang nine numbers and talked to nobody about the portfolio near the bottom', async () => {
@@ -197,4 +197,6 @@ test('the payload doc says the order, and the handbook and CHAT.md carry the own
   assert.match(doc, /`callToday\[\{agent, team, calls, duration, portfolio, customers, unit, connectPct, portfolioPct\}\]`[^\n]*ranked by portfolio talk time/i, 'callToday is documented as ranked by portfolio talk time');
   assert.ok(/Sort busiest and least active officers slide by portifolio talk time brother not calls/.test(read('docs/HANDOFF.md')), 'the handbook has the owner\'s words');
   assert.ok(/Sort busiest and least active officers slide by portifolio talk time brother not calls/.test(read('CHAT.md')), 'and so has CHAT.md');
+  // the owner's second message, which says the same in plainer words and is what the title says
+  for (const f of ['docs/HANDOFF.md', 'CHAT.md']) assert.ok(/i meant busiest are those talking to customers - not just making calls/.test(read(f)), f + ' has the owner\'s second message');
 });
