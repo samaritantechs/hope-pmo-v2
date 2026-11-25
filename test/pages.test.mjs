@@ -32,7 +32,7 @@ const PUBLIC = new URL('../public/', import.meta.url).pathname;
    core first, so every slice that starts and ends inside one module still works; a slice that
    starts in a module and ends in the core bounds itself with page('name') instead. */
 const appCore = () => readFileSync(join(PUBLIC, 'app.html'), 'utf-8');
-const MODS = ['deduct', 'advance', 'leave', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud', 'checklist', 'annual'];
+const MODS = ['deduct', 'advance', 'leave', 'legal', 'adjust', 'imprest', 'devices', 'admin', 'bonusplan', 'present', 'loan', 'reports', 'fraud', 'checklist', 'annual', 'hopeai'];
 const page = name => readFileSync(join(PUBLIC, 'mod', name + '.js'), 'utf-8');
 const appSrc = () => appCore() + '\n' + MODS.map(page).join('\n');
 const scratch = mkdtempSync(join(tmpdir(), 'pages-'));
@@ -1233,7 +1233,7 @@ test('the sidebar has three divisions: HOPE Loan, HOPE PMO and HOPE Management, 
   const nav = JSON.parse(JSON.stringify(ctx.NAV)), order = JSON.parse(JSON.stringify(ctx.MGMT_ORDER));
   const mgmt = nav.filter(n => n.div === 'mgmt').map(n => n.id);
   const expected = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leavereq', 'leaveappr', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
-    'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
+    'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'hopeai', 'settings'];
   assert.deepEqual(order, expected, 'the management division, in its own order');
   for (const id of expected) assert.ok(mgmt.includes(id), id + ' is flagged div:mgmt');
   for (const id of mgmt) assert.ok(order.includes(id) || nav.find(n => n.id === id).hidden, id + ' is flagged but not placed (hidden ones ride on their screen)');
@@ -2446,7 +2446,8 @@ test('advance routing: Roles & access takes the approver role, the code form the
   assert.ok(/\.btn\.good\{background:var\(--ok\)/.test(appSrc()), 'the green button style');
   assert.ok(/Read-only list of your zones\\' staff/.test(staffV) && /full name \(as at the bank\) · role · team · phone · bank \+ account · TIN/.test(staffV), 'a reader is told what to send for a change');
   assert.ok(/S\.foldDot=''; S\.tail=''; S\.fit=false;/.test(appSrc()), 'go() clears it (and what a screen draws under its list, Part 152), so no other tab inherits the wrap');
-  assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class');
+  assert.ok(/'<div class="scroll'\+\(S\.fit\?' fit':''\)\+\(S\.fit==='words'\?' fitw':''\)\+'"><table>/.test(appSrc()), 'the main list carries the class, and fitw only for S.fit = words (the Hope Ai list, Part 158: a true S.fit is exactly what it was)');
+  assert.ok(/\.scroll\.fit\.fitw th,\.scroll\.fit\.fitw td\{overflow-wrap:break-word\}/.test(appSrc()), 'fitw breaks at spaces only; every other fit list keeps `anywhere`');
   assert.ok(/@media \(min-width:900px\)\{\s*\.scroll\.fit th,\.scroll\.fit td\{white-space:normal;overflow-wrap:anywhere/.test(appSrc()), 'cells wrap on a laptop; a phone keeps the sideways scroll');
   const sql = readFileSync(join(PUBLIC, '..', 'db', 'RUN-ME-045-advance-approvers.sql'), 'utf8');
   for (const col of ['roles            add column if not exists approver_role', 'access_codes     add column if not exists supervisor', 'add column if not exists req_role', 'add column if not exists req_code']) {

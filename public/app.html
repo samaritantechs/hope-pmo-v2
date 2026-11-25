@@ -188,6 +188,10 @@
   @media (min-width:900px){
     .scroll.fit th,.scroll.fit td{white-space:normal;overflow-wrap:anywhere;padding:7px 8px}
     .scroll.fit th{line-height:1.2}
+    /* S.fit = 'words' (the Hope Ai list, Part 158: a long question beside twelve short columns): break at spaces and nowhere else.
+       `anywhere` lets a column shrink to one letter, and the table then squeezes every short column in proportion to the long one
+       ("PORTA L", "MANAG ER"); `break-word` keeps each column as wide as its longest word. Any other S.fit is unchanged. */
+    .scroll.fit.fitw th,.scroll.fit.fitw td{overflow-wrap:break-word}
   }
   table{width:100%;border-collapse:collapse;font-size:12.5px}
   th{text-align:left;padding:8px 12px;color:var(--mut);font-size:10.5px;text-transform:uppercase;letter-spacing:.03em;
@@ -810,7 +814,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
   legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1, fraudFind:1,
-  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1, claudianStatus:1,
+  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1, claudianStatus:1, claudianChats:1, claudianThread:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -830,7 +834,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-25-d';
+var BUILD = '2026-11-25-e';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -1146,6 +1150,10 @@ var NAV = [
      point is that these figures are not re-derived from a teams table that has since changed. */
   { id:'perf',        div:'mgmt', label:'Best of / Rekodi', ic:'<path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M6 4h12v5a6 6 0 0 1-12 0V4z"/><path d="M9 21h6M12 15v6"/>' },
   { id:'audit',       div:'mgmt', label:'Audit log', ic:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>' },
+  /* "Have a new tab called Hope Ai in the system with rows of user chats that I could open and see what the user is chatting.. like reports of
+     the helper's chats per user roles, teams and dates" (the owner, 25 Nov 2026; handbook Part 158). Granted like the audit log: the admin
+     holds it from the start, a role when it is ticked. Its screen is the module public/mod/hopeai.js. */
+  { id:'hopeai',      div:'mgmt', label:'Hope Ai', ic:'<rect x="4" y="6" width="16" height="12" rx="4"/><path d="M9 11v1.5M15 11v1.5M9.5 15.5c1.5 1 3.5 1 5 0M12 6V3M3 11h1M20 11h1"/>' },
   /* "they aint seen anywhere even in my admin user yet they are in the uploaded file"
      The findcust VIEW lives on -- reached by the magnifier in the top bar -- but its sidenav
      entry was removed on request. `hidden` keeps it out of the drawn nav while go() and the
@@ -1218,7 +1226,7 @@ var HIDDEN_VIEWS = ['findcust', 'monthreport', 'cmmonth', 'teamtrend'];
    same ticks on Roles & access (in their own list there too), same gate, same screens. A tab
    that is not here is HOPE PMO's. To move one, flag it and place it here. */
 var MGMT_ORDER = ['teams', 'advstaff', 'advreq', 'advappr', 'advrep', 'leavereq', 'leaveappr', 'leaverep', 'impreq', 'impappr', 'imprep', 'deduct',
-  'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'settings'];
+  'commission', 'bonusplan', 'checklist', 'devlock', 'devunlock', 'perf', 'audit', 'hopeai', 'settings'];
 function isMgmtId_(id){ var n = NAV.filter(function(x){ return x.id===id; })[0]; return !!(n && n.div === 'mgmt'); }
 
 /* =====================================================================================
@@ -1381,7 +1389,7 @@ var MOD_OF = { deduct:'deduct', advreq:'advance', advappr:'advance', advrep:'adv
      promises, the weekly book, complaints, restructuring -- stay in the page. */
   teamtrend:'reports', monthreport:'reports', par:'reports', auditrep:'reports', reports:'reports',
   commission:'reports', cmmonth:'reports', calls:'reports', credit:'reports', creditinfo:'reports',
-  perf:'reports', audit:'reports', officerloc:'reports',
+  perf:'reports', audit:'reports', officerloc:'reports', hopeai:'hopeai',
   /* THE ANNUAL REPORT -- a year per team per month, three report types and a leader card; a
      module of its own, since it carries a year of every team and is read, never worked. */
   annual:'annual' };
@@ -2409,7 +2417,7 @@ function tableHtml(rows, cols, onRow){
     + cols.map(function(c, i){
     return '<td class="'+(isNum(c)?'r':'')+'">'+(i===0?'JUMLA / TOTAL':cellHtml(tot,c))+'</td>'; }).join('') + '</tr>';
   // S.fit: the list wraps to the card's width on a laptop instead of scrolling sideways (see the .scroll.fit rule).
-  return '<div class="scroll'+(S.fit?' fit':'')+'"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
+  return '<div class="scroll'+(S.fit?' fit':'')+(S.fit==='words'?' fitw':'')+'"><table><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>';
 }
 function wireTable(rows, onRow){
   Array.prototype.forEach.call(document.querySelectorAll('th[data-sort]'), function(th){

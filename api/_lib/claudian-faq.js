@@ -107,6 +107,9 @@ export const FAQ = [
   { id: 'settings-claudian', tabs: ['settings'],
     sw: { q: 'Nawashaje Claudian-PMO?', a: 'Kwenye Settings, kadi ya Claudian-PMO: bonyeza swichi iwe ON. Inahitaji ufunguo wa API kwenye mipangilio ya seva; kikomo cha maswali kwa siku kinawekwa hapohapo. Ikiwa OFF, watu wanaona maswali ya kawaida tu.' },
     en: { q: 'How do I switch Claudian-PMO on?', a: 'In Settings, on the Claudian-PMO card, press the switch to ON. It needs the API key in the server\'s settings; the questions-a-day limits are set there too. When OFF, people see only the standard questions.' } },
+  { id: 'hopeai-read', tabs: ['hopeai'],
+    sw: { q: 'Nasomaje mazungumzo ya Claudian-PMO?', a: 'Fungua kichupo cha Hope Ai: kila mstari ni mazungumzo ya mtu mmoja kwa siku moja, yenye cheo, timu na idadi ya maswali. Gusa mstari kusoma maswali na majibu yote; chini ya orodha kuna ripoti kwa cheo, timu na siku.' },
+    en: { q: 'How do I read what people asked Claudian-PMO?', a: 'Open the Hope Ai tab: each row is one person\'s chat for one day, with role, teams and the number of questions. Tap a row to read every question and answer; under the list are boards by role, team and day.' } },
 ];
 
 const langOf = l => (String(l || '').toLowerCase().startsWith('en') ? 'en' : 'sw');

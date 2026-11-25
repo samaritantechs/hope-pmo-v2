@@ -156,6 +156,7 @@ export const TAB_NOTES = {
   settings: ['Settings', 'Settings, roles and access, access codes, and the Claudian-PMO switch.'],
   perf: ['Best of / Rekodi', 'Best teams and leaders by week, month and year.'],
   audit: ['Audit log', 'Who changed what, and when.'],
+  hopeai: ['Hope Ai', 'What people asked Claudian-PMO: a row for each chat (one person, one day) with role, zone, teams, questions by kind and tokens; open a row to read it; boards by role, team and day. For the admin or a ticked role.'],
 };
 
 /** HOPE Calls: what each of its screens is. Told to every person in the phone app. */

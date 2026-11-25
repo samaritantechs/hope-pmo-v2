@@ -8387,6 +8387,18 @@ async function claudianSet(db, user, p) {
   C.noteClaudianSettingsWritten(db);          // the helper's own memo of these rows: the next question sees the new switch, not the old one
   return { saved: rows.map(r => r.key), state: await C.claudianState(db) };
 }
+/* THE HOPE AI TAB (handbook Part 158) -- "Have a new tab called Hope Ai in the system with rows of user chats that I could open and see what the user
+   is chatting.. like reports of Claudian-PMO chats per user roles, teams and dates" (the owner, 25 Nov 2026). Two reads, gated on the tab `hopeai` (FN_TAB):
+   the list of chats of a window, and one chat in full. Their code lives in api/_lib/claudian-chats.js and is loaded when one of them is CALLED, never
+   before (this file is imported by api/upload.js: CLAUDE.md section 1). */
+async function claudianChats(db, user, a, nowMs) {
+  const M = await import('./claudian-chats.js');
+  return M.claudianChatsList(db, a || {}, nowMs);
+}
+async function claudianThread(db, user, a) {
+  const M = await import('./claudian-chats.js');
+  return M.claudianChatThread(db, a || {});
+}
 /* EVERY ROLE THAT EXISTS, NOT ONLY THE ONES SOMEBODY HAS ALREADY WRITTEN A ROW FOR.
  *
  *   "Nafasi na ruhusa / Roles & access showed only collection and pmo collection"
@@ -11104,7 +11116,7 @@ const FN = {
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
-  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet,
+  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet, claudianChats, claudianThread,
   accessCodes, saveAccessCode, deleteAccessCode, leadersCheck, leadersSync, leadersSyncUndo, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */
@@ -11555,6 +11567,8 @@ const FN_TAB = {
   pushPolicy: ['impappr'], pushPolicySave: ['impappr'],
   // The Fraud Detector (fraud.js): every approved loan's parties against every other's and the defaults sheet.
   fraudCases: ['fraud'], fraudFind: ['fraud'],
+  // The Hope Ai tab (claudian-chats.js): what people asked Claudian-PMO. Granted like the audit log: admin from the start, a role when ticked.
+  claudianChats: ['hopeai'], claudianThread: ['hopeai'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the
