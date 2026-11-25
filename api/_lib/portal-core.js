@@ -1731,6 +1731,9 @@ function dedWho_(reporter, deptHint, codes, teamRows) {
   return { role, zone, who: role || zone ? (role || '—') + '.' + (zone || '—') : '—' };
 }
 const dedMoney_ = v => (v == null || v === '' ? null : Math.max(0, Math.round(num(v) * 100) / 100));
+/** A CASE: the lines of one submission share a `case_id`; a line that has none (a register file's) is its own case. ONE definition: the tab's cases, its team
+    summary and its earners, and the Presentation's weekly count per team (deductionsWeek, below), all read a line's case through it. */
+const dedCaseKey_ = r => r.case_id || r.id;
 /** The table read, null when RUN-ME-043 has not been run -- the tab says so, nothing fails. */
 async function dedRead_(q) {
   try { return await fetchAll(q); } catch (e) {
@@ -1765,7 +1768,7 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   // The cases: to_pay once per case; everything else is per staff line. A case's day is the day it was reported.
   const cases = new Map();
   for (const r of rows) {
-    const k = r.case_id || r.id;
+    const k = dedCaseKey_(r);
     if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay), day: dayOf(r.submitted_at),
       dept: String(r.dept || '').trim(), at: String(r.submitted_at || '') });
   }
@@ -1773,7 +1776,7 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   for (const r of rows) {
     const t = r.team || '—';
     const s = byTeam.get(t) || { team: t, cases: new Set(), entries: 0, amountTaken: 0, deduction: 0, toPay: 0, deducted: 0, remaining: 0 };
-    s.cases.add(r.case_id || r.id); s.entries++;
+    s.cases.add(dedCaseKey_(r)); s.entries++;
     s.amountTaken += num(r.amount_taken); s.deduction += num(r.deduction);
     s.deducted += num(r.deducted); s.remaining += num(r.remaining);
     byTeam.set(t, s);
@@ -1814,6 +1817,36 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
     canHr: dedCanHr_(user, cfg), hrRoles: cfg.get(DED_HR_ROLES_KEY, DED_HR_ROLES_DEFAULT),
     staffList: [...new Set(rows.map(r => r.staff).filter(Boolean))].sort(),
     teams: teamRows.map(t => t.team).filter(t => teamAllowed(user, t)).sort() };
+}
+/* THE WEEK'S DEDUCTION CASES, PER TEAM -- what the Presentation's Abnormal card shows beside the abnormal payments (handbook Part 164, addendum 6).
+     "at abnormal card in presentation - show weekly deduction case counts per team counts too. so that i get the impact from that view"
+                                                                                                           -- the owner, 25 Nov 2026
+   The abnormal payments are the cause and the PMO deduction cases are what they cost the staff, so the wall puts the two side by side, team by team.
+   THE SAME CASES THE TAB COUNTS: this reads the table the way `deductions` does (the window is the day a case was reported, `dayOf`; a case is
+   `dedCaseKey_`, once however many staff lines it carries; scoped to the viewer's teams at the database), so the card, the per-team slide and the
+   tab's own summary can never say two different things (a test holds the three equal). It is a SEPARATE, lean read on purpose and not a field of the
+   dashboard's answer: that answer is cached for every person who holds the same teams, whatever tabs they hold (answer-cache.js scopeKey), so a
+   deduction count inside it would reach people who do not hold this tab; here the one door's gate (FN_TAB: `deduct`) runs before any of it, and the
+   dashboard, which three hundred people open, pays nothing. Four narrow columns of one week's lines (a few dozen rows), no settings, no codes, no
+   teams table; nothing on /api/upload or /api/call. Without RUN-ME-043 the answer says so (`on: false`) and nothing fails. */
+async function deductionsWeek(db, user, args, nowMs = Date.now()) {
+  // The week is the dashboard's: any day of it names it, blank is this week, and the Presentation hands the same `weekOf` to every call it makes.
+  const asOf = asOfWeek(nowMs, args && args.weekOf);
+  const mon = weekMondayKey(asOf.ms), sun = addDaysKey(mon, 6);
+  const rows0 = await dedRead_(() => onTeams(db.from('pmo_deductions').select('case_id, id, team, submitted_at')
+    .gte('submitted_at', mon).lte('submitted_at', sun + 'T23:59:59.999Z'), user.teams));
+  const on = Array.isArray(rows0);
+  const rows = scoped(user, rows0 || []).filter(r => { const d = dayOf(r.submitted_at); return d >= mon && d <= sun; });
+  const all = new Set(), byTeam = new Map();
+  for (const r of rows) {
+    const k = dedCaseKey_(r), t = r.team || '—';
+    all.add(k);
+    if (!byTeam.has(t)) byTeam.set(t, new Set());
+    byTeam.get(t).add(k);
+  }
+  const teams = [...byTeam.entries()].map(([team, set]) => ({ team, cases: set.size }))
+    .sort((a, b) => b.cases - a.cases || a.team.localeCompare(b.team));
+  return { on, note: on ? null : DED_NOTE, weekOf: mon, weekEnd: sun, cases: all.size, teams };
 }
 /** SETTING THE EARNERS' AMOUNT PER CASE (handbook Part 152): admin only, on the Makato ya PMO tab. An amount (whole TZS, zero or more) from a
     date (today when none is given; a past date is allowed and rewrites what cases reported from then earn, which the tab says): a case earns the
@@ -11189,7 +11222,7 @@ const FN = {
   complaints, addComplaint, saveComplaint, complaintLog, resolveComplaint, deleteComplaint,
   restructures, addRestructure, decideRestructure, restructureEligible, restructureContract,
   demandNotices, addDemandNotice, demandNoticePrint, demandMessage, legalPreview, legalFind, legalRecoveries, abnormal, received, findCustomer, rebuildFollowup,
-  deductions, addDeduction, hrDeduction, dedRateSet, dedRateDelete,
+  deductions, deductionsWeek, addDeduction, hrDeduction, dedRateSet, dedRateDelete,
   advStaff, advStaffSave, advStaffStatus, advRequestPage, advRequest, advQueue, advDecide, advReport, advFinalize, advReopen,
   leaveRequestPage, leaveRequest, leaveQueue, leaveDecide, leaveReport, leaveSetAnnualDays,
   par, auditReport, weekly, teamProgress, leaderReports, commission, commissionSave, assignments, credit, creditInfo,
@@ -11590,6 +11623,8 @@ const FN_TAB = {
   // PMO Deduction: the form, the register and HR's column, one tab. Who may record a
   // deduction is narrowed further inside hrDeduction (DEDUCTION_HR_ROLES).
   deductions: ['deduct'], addDeduction: ['deduct'], hrDeduction: ['deduct'], dedRateSet: ['deduct'], dedRateDelete: ['deduct'],
+  // The week's deduction cases per team, for the Presentation's Abnormal card: the same tab as the register it counts (handbook Part 164, addendum 6).
+  deductionsWeek: ['deduct'],
   // Salary advance: four panes, four authorities.
   advStaff: ['advstaff'], advStaffSave: ['advstaff'], advStaffStatus: ['advstaff'],
   advRequestPage: ['advreq'], advRequest: ['advreq'],

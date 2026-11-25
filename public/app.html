@@ -387,6 +387,14 @@
   #pres .ptable.pcolearly th:nth-child(7), #pres .ptable.pcolearly th:nth-child(9), #pres .ptable.pcolearly th:nth-child(11){width:8%}
   #pres .ptable.pcolearly th:nth-child(8), #pres .ptable.pcolearly th:nth-child(10){width:13%}
   #pres .ptable.pcolpmo td:nth-child(2), #pres .ptable.pcolearly td:nth-child(2){white-space:normal}
+  /* THE ABNORMAL CARD'S PER-TEAM SLIDE (handbook Part 164, addendum 6): the two figures are what the slide is FOR, and a table that spans the whole width runs under the
+     two navigation arrows (they sit 74 pixels in from each edge, at the middle of the screen: the very rows of a long list), so it keeps 44 pixels clear on each side as the
+     day slide's grid does, and gives the team name the room and the row number almost none, so the figures stand near the name they belong to. Only a slide that asks (tcls). */
+  #pres .ptable.pcolabn{width:calc(100% - 88px);margin:0 44px}
+  #pres .ptable.pcolabn th:nth-child(1){width:6%}
+  #pres .ptable.pcolabn th:nth-child(2){width:44%}
+  #pres .ptable.pcolabn th:nth-child(3), #pres .ptable.pcolabn th:nth-child(4){width:25%}
+  #pres .ptable.pcolabn td:nth-child(2), #pres .ptable.pcolabn th.r{white-space:normal}
   /* A header of several words ("Coll % (week)", "Wamebaki / Left") may stand on two lines, as the name column's always could: the figures under it still never wrap */
   #pres .ptable.pcolpmo th.r, #pres .ptable.pcolearly th.r{white-space:normal}
   /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
@@ -849,7 +857,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   expectedDefaulters:1, assignments:1, followup:1, followupReport:1, promises:1, par:1,
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
-  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1, fraudFind:1,
+  legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, deductionsWeek:1, fraudCases:1, fraudFind:1,
   advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1, claudianStatus:1, claudianChats:1, claudianThread:1, claudianChatsExport:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
@@ -870,7 +878,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-25-p';
+var BUILD = '2026-11-25-q';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -3343,6 +3351,8 @@ function wireBar(){
   if (ps) ps.onclick = function(){ S.presSecs = Number(document.getElementById('presSecs').value) || PRES_SECS_DEFAULT; presStart(0); };
   var pbr = document.getElementById('presBoardsRetry');
   if (pbr) pbr.onclick = function(){ presBoards_(S.presWk || { weekOf: S.args.weekOf || '' }); presRedraw_(); };
+  var pdr = document.getElementById('presDedRetry');
+  if (pdr) pdr.onclick = function(){ presDed_(S.presWk || { weekOf: S.args.weekOf || '' }); presRedraw_(); };
   // Segment and team choices persist -- the same meeting runs every week and nobody wants to
   // re-tick nine boxes each Monday.
   /* TICKING A BOX MUST NOT REBUILD THE SCREEN. render() here re-ran the whole view, and this

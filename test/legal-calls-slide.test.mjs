@@ -299,7 +299,7 @@ test('THE PRESENTATION: the demand-recovery slide is as it was, and the legal of
   assert.match(pres, /<table class="ptable'\+\(s\.tcls\?\(' '\+s\.tcls\):''\)\+'">/, 'and the wall gives a table its slide\'s class');
   assert.equal((pres.match(/tcls:'pname2'/g) || []).length, 1, 'no other slide asks for the wider name column');
   // (25 Nov 2026, handbook Part 164, addendum 4: the two collection slides ask for column widths of their own, under classes of their own)
-  assert.deepEqual([...pres.matchAll(/tcls:'(\w+)'/g)].map(m => m[1]).sort(), ['pcolearly', 'pcolpmo', 'pname2'], 'the slides that ask for a class: this one, and the two collection slides under theirs');
+  assert.deepEqual([...pres.matchAll(/tcls:'(\w+)'/g)].map(m => m[1]).sort(), ['pcolabn', 'pcolearly', 'pcolpmo', 'pname2'], 'the slides that ask for a class: this one, the two collection slides under theirs, and the Abnormal card\'s per-team slide (addendum 6 of Part 164)');
   const css = read('public/app.html');
   assert.match(css, /#pres \.ptable\.pname2 th:first-child\{width:4%\}\n\s*#pres \.ptable\.pname2 th:nth-child\(2\)\{width:18%\}\n\s*#pres \.ptable\.pname2 td:nth-child\(2\)\{white-space:normal\}/, 'the three rules, all under the slide\'s class');
   assert.equal((css.match(/\.pname2/g) || []).length, 3, 'and nothing else is styled by it');

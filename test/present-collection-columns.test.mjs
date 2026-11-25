@@ -70,7 +70,7 @@ test('a header of several words may stand on two lines on these two slides, the 
   assert.match(css, /#pres \.ptable\.pcolpmo td:nth-child\(2\), #pres \.ptable\.pcolearly td:nth-child\(2\)\{white-space:normal\}/, 'a long officer name wraps');
   // every rule that gives a column a width on the wall is scoped to one of the slide classes (the shared base rule gives the first column none but auto)
   const wallWidths = [...css.matchAll(/#pres \.ptable([^{}]*)\{width:[\d.]+%\}/g)].map(m => m[1]);
-  assert.ok(wallWidths.length > 0 && wallWidths.every(sel => /\.(pname2|pcolpmo|pcolearly)\b/.test(sel)), 'only the slides that ask for widths get them: ' + JSON.stringify(wallWidths.filter(sel => !/\.(pname2|pcolpmo|pcolearly)\b/.test(sel))));
+  assert.ok(wallWidths.length > 0 && wallWidths.every(sel => /\.(pname2|pcolpmo|pcolearly|pcolabn)\b/.test(sel)), 'only the slides that ask for widths get them: ' + JSON.stringify(wallWidths.filter(sel => !/\.(pname2|pcolpmo|pcolearly|pcolabn)\b/.test(sel))));
   assert.match(css, /#pres \.ptable th:first-child, #pres \.ptable td:first-child\{width:auto\}/, 'the base rule is as it was');
   assert.match(css, /#pres \.ptable \.r\{text-align:right;white-space:nowrap\}/, 'and so is the figure rule: a figure never wraps');
 });

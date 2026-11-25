@@ -456,6 +456,11 @@ const BUDGETS = [
   /* PMO deductions: the window's rows, the balances outstanding before it, the teams and
      the two settings (reporter rate, HR roles) -- one journey each, scoped at the database. */
   ['PMO deductions',          'deductions',          {}, ADMIN,  5,   800,  5,  800],
+  /* THE WEEK'S DEDUCTION CASES PER TEAM (25 Nov 2026, handbook Part 164, addendum 6): the Presentation's Abnormal card -- "show weekly deduction case counts per
+     team counts too". ONE read of one week's lines, four narrow columns, scoped at the database; no settings, no codes, no teams table (the tab's own read above
+     makes five). Called by the Presentation only, after its two heavy reads, never by the dashboard (whose cached answer is shared by people who do not hold the tab:
+     test/deductions-week.test.mjs holds that). Nothing on /api/upload or /api/call. */
+  ['PMO deductions, the week per team', 'deductionsWeek', {}, ADMIN, 1, 400, 1, 400],
   /* SALARY ADVANCE: the registry, the ask, the GMO's queue, the report -- the teams read (two
      trips: the teams and the codes laid over them), the amounts setting where the form needs
      it, and one or two reads of the two RUN-ME-044 tables, each zone-scoped at the database. */
