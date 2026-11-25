@@ -15,7 +15,10 @@
         to defaulters, add another meaningful widget" / "col% and uncollected today also in a single widget. add another meaningful one": Cleared
         today is a line under Defaulters and Collection % a line under Uncollected today, and the two tiles left free are the week's Loan
         applications (the count, the amount asked under it) and the week's Legal recovery (notices and calls together; a dash while either side
-        cannot be read);
+        cannot be read); and then (addendum 5) "combine recovered today and this week, add another meaningful widget" / "show collection today% at
+        uncollected today" / "ealry col% and col% week on their own widget": Recovered (today's) and Recovered this week are ONE tile (the week's
+        figure, its percentage and then today's amount: TWO lines under the figure), the freed tile is Sales today, Uncollected today carries today's
+        collection % (not the week's) and the Early col % and Col % (week) stand side by side on a tile of their own;
      2. on a TV-sized screen they stand FOUR in a row and THREE in a column, every tile the same size, the grid reaching the bottom of the
         screen (it FILLS the TV: no band of empty wall under it) and the slide never scrolls;
      3. no figure runs past its tile, however long (a billion-shilling arrears at the smallest laptop), and every tile's figure has one size;
@@ -49,10 +52,16 @@ let EDRTOT = { initial: 120000000, current: 116400000, recovered: 3600000, pct: 
 let LEGAL = { grand: { on: true, nOn: true, pOn: true, rows: [], total: { owed: 52000000, recovered: 41000000, pct: 78.8, nRec: 30000000, cRec: 11000000 } } };
 let EDRDAYS = [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }];
 let EDRNOTE = null;
+// the dashboard's two per-day cards, with TODAY (Wednesday 25 Nov, the dashboard's own clock: asOfDate) among their days
+let COLTREND = [{ weekday: 'MON', date: '2026-11-23', expected: 9000000, collected: 8289000, uncollected: 711000, uploaded: true, pct: 92.1 },
+  { weekday: 'TUE', date: '2026-11-24', expected: 9500000, collected: 8550000, uncollected: 950000, uploaded: true, pct: 90 },
+  { weekday: 'WED', date: '2026-11-25', expected: 10000000, collected: 8660000, uncollected: 1340000, uploaded: true, pct: 86.6 }];
+let SALESTREND = [{ weekday: 'MON', date: '2026-11-23', amount: 1000, loans: 1, pct: 5 }, { weekday: 'TUE', date: '2026-11-24', amount: 3000000, loans: 3, pct: 60 },
+  { weekday: 'WED', date: '2026-11-25', amount: 4200000, loans: 5, pct: 84.4 }];
 const DASH = () => ({ ok: true, weekday: 'WED', weekOf: '2026-11-23', weekEnd: '2026-11-29', pastWeek: false, asOfDate: '2026-11-25', cards: CARDS, perf: PERF, recTrendTotal: RECTOT,
   edrTrendTotal: EDRTOT, edrTrend: EDRDAYS, edrNote: EDRNOTE, legal: LEGAL,
   teamPerf: [{ branch: 'DAR', team: 'KONGOWE', salesMonth: 1000, curArrears: 5000, defaulters: 3, uncollected: 100, collPct: 90, recPctMon: 80, recPctYest: 70, recPctWeek: 60, basis: 'today' }],
-  colTrend: [], workspace: 'hopepmo' });
+  colTrend: COLTREND, salesTrend: SALESTREND, workspace: 'hopepmo' });
 const warn = console.warn; console.warn = () => {};
 
 const srv = http.createServer((req, res) => {
@@ -110,8 +119,13 @@ const geo = page => page.evaluate(() => {
     sameW: uniq(tiles.map(r => r.width)) === 1, sameH: uniq(tiles.map(r => r.height)) === 1,
     bottom: Math.max(...tiles.map(r => r.bottom)), top: Math.min(...tiles.map(r => r.top)), right: Math.max(...tiles.map(r => r.right)), left: Math.min(...tiles.map(r => r.left)),
     vals, vw: innerWidth, vh: innerHeight, scrolls: pres.scrollHeight > pres.clientHeight + 1, hscrolls: pres.scrollWidth > pres.clientWidth + 1,
-    tiles: [...g.querySelectorAll('.pkpi')].map(el => { const pv = el.querySelector('.pv'), ps = pv.querySelector('.ps');
-      return [t(el.querySelector('.pl')), [...pv.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').replace(/\s+/g, ' ').trim(), ps ? t(ps) : '']; }),
+    // [label, the figure, the lines under it joined with " | "] -- a tile may carry two
+    tiles: [...g.querySelectorAll('.pkpi')].map(el => { const pv = el.querySelector('.pv');
+      return [t(el.querySelector('.pl')), [...pv.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').replace(/\s+/g, ' ').trim(), [...pv.querySelectorAll('.ps')].map(t).filter(Boolean).join(' | ')]; }),
+    // how many lines each tile has drawn (a reserved empty one is a line too: every tile has the same number)
+    lineCounts: [...g.querySelectorAll('.pkpi')].map(el => el.querySelectorAll('.pv .ps').length),
+    // the label's top and the last line's bottom, as a distance from the tile's own edges (the fit keeps them 8 pixels in, or the tile's padding if that is less)
+    margins: [...g.querySelectorAll('.pkpi')].map(el => { const r = el.getBoundingClientRect(), a = el.firstElementChild.getBoundingClientRect(), z = el.lastElementChild.getBoundingClientRect(); return [Math.round(a.top - r.top), Math.round(r.bottom - z.bottom)]; }),
     // nothing of a tile (label, figure, the line under it) runs past the tile, either way
     tileOverflow: [...g.querySelectorAll('.pkpi')].some(el => el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1),
     subs: [...g.querySelectorAll('.pv .ps')].filter(ps => ps.textContent.trim()).map(ps => { const r = document.createRange(); r.selectNodeContents(ps); const b = r.getBoundingClientRect(), tr = ps.closest('.pkpi').getBoundingClientRect(); return b.right <= tr.right && b.left >= tr.left && b.bottom <= tr.bottom && b.top >= tr.top; }) };
@@ -135,37 +149,57 @@ for (const [w, h] of SIZES) {
   check(tag + ' the slide does not scroll', !G.scrolls && !G.hscrolls);
   check(tag + ' no figure runs past its tile, and every tile\'s figure has one size', G.vals.every(v => !v.over) && new Set(G.vals.map(v => v.fs)).size === 1, JSON.stringify(G.vals.map(v => v.fs)));
   check(tag + ' the figures of a row stand level whether the tile has a line under its figure or not (among tiles whose label is one line: a label that wraps is a taller label, as it always was)', await page.evaluate(() => { const rows = {}; [...document.querySelectorAll('#pres .pkpi')].forEach(t => { const pl = t.querySelector('.pl'), one = pl.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(pl).fontSize); if (!one) return; const k = Math.round(t.getBoundingClientRect().top); (rows[k] = rows[k] || []).push(Math.round(t.querySelector('.pv').getBoundingClientRect().top - t.getBoundingClientRect().top)); }); const L = Object.values(rows); return L.length >= 2 && L.every(r => Math.max(...r) - Math.min(...r) <= 2); }));
-  check(tag + ' nothing of a tile (its label, its figure, the line under it) runs past the tile, and each of the eight lines under a figure lies inside its tile', !G.tileOverflow && G.subs.length === 8 && G.subs.every(Boolean), JSON.stringify({ over: G.tileOverflow, subs: G.subs }));
+  check(tag + ' nothing of a tile (its label, its figure, the lines under it) runs past the tile, and each of the eleven lines under a figure lies inside its tile', !G.tileOverflow && G.subs.length === 11 && G.subs.every(Boolean), JSON.stringify({ over: G.tileOverflow, subs: G.subs }));
+  check(tag + ' every tile has the same number of lines under its figure (two: the combined Recovered tile has two, the others reserve the second), so a row stands level', new Set(G.lineCounts).size === 1 && G.lineCounts[0] === 2, JSON.stringify(G.lineCounts));
   if (process.env.SHOTS && (w === 1920 || w === 1366)) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.SHOTS, 'present-day-' + tag + '.png') }); }
   await page.close();
 }
 // ---- 1. what the twelve say
 const T = first.tiles, L = T.map(x => x[0]), V = Object.fromEntries(T.map(x => [x[0], x[1]])), SUB = Object.fromEntries(T.map(x => [x[0], x[2]]));
-check('1 the twelve, in their places: the first six and the seventh (the week\'s recovery) as they were, then the loan applications, Early Collection, the week\'s Legal recovery, the Expected Defaulters recovery and the Performance average',
-  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Loan applications (week)',
-    'Early Collection % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (average)']), JSON.stringify(L));
-check('1 the first six read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Recovered'] === 'TZS 1,234,567,890' && V['Defaulters'] === '10,372'
+check('1 the twelve, in their places: ONE Recovered tile (the week\'s, with today\'s under it) second, Sales today seventh, then the loan applications, the Early col and Col % pair, the week\'s Legal recovery, the Expected Defaulters recovery and the Performance average',
+  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered this week', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Sales today', 'Loan applications (week)',
+    'Early col · Col % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (average)']), JSON.stringify(L));
+check('1 the figures that did not change read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Defaulters'] === '10,372'
   && V['Sales this week'] === 'TZS 987,654,321' && V['Uncollected today'] === 'TZS 456,789,012' && V['Abnormal'] === '37', JSON.stringify(V));
 check('1 the week\'s recovery is the weekly recovery trend\'s own total', V['Recovered this week'] === 'TZS 94,338,048', JSON.stringify(V));
-check('1 none of Initial arrears, Sales %, Recovery %, Cleared today or Collection % is a tile of its own: each is printed with its amount',
-  !('Initial arrears' in V) && !('Sales % (week)' in V) && !('Recovery % (week)' in V) && !('Cleared today' in V) && !('Collection % (week)' in V) && CARDS.initArrears > 0, JSON.stringify(L));
-check('1 Early Collection stands alone, in whole numbers (91.2 reads 91)', V['Early Collection % (week)'] === '91%', JSON.stringify(V));
-check('1 CLEARED TODAY IS UNDER THE DEFAULTERS, SALES % UNDER THE SALES, COLLECTION % UNDER THE DAY\'S UNCOLLECTED, RECOVERY % UNDER THE WEEK\'S RECOVERY, each a line under its figure on the same tile',
-  SUB['Defaulters'] === '4,321 cleared today' && SUB['Sales this week'] === '84% of target' && SUB['Uncollected today'] === '97% collected this week' && SUB['Recovered this week'] === '118% of uncollected', JSON.stringify(SUB));
+check('1 none of Initial arrears, Sales %, Recovery %, Cleared today, Collection % or a separate Recovered (today\'s) is a tile of its own: each is printed with its amount',
+  !('Initial arrears' in V) && !('Sales % (week)' in V) && !('Recovery % (week)' in V) && !('Cleared today' in V) && !('Collection % (week)' in V) && !('Recovered' in V) && !('Early Collection % (week)' in V) && CARDS.initArrears > 0, JSON.stringify(L));
+check('1 the Early col % and the Collection % (week) are ONE tile, side by side, the early one first, in whole numbers (91.2 and 96.7 read 91% and 97%), with nothing under it', V['Early col · Col % (week)'] === '91% · 97%' && SUB['Early col · Col % (week)'] === '', JSON.stringify([V['Early col · Col % (week)'], SUB['Early col · Col % (week)']]));
+check('1 CLEARED TODAY IS UNDER THE DEFAULTERS, SALES % UNDER THE SALES, TODAY\'S COLLECTION % UNDER THE DAY\'S UNCOLLECTED (86.6 reads 87%, not the week\'s 97%), THE RECOVERY % AND THEN TODAY\'S RECOVERY UNDER THE WEEK\'S RECOVERY (two lines on one tile)',
+  SUB['Defaulters'] === '4,321 cleared today' && SUB['Sales this week'] === '84% of target' && SUB['Uncollected today'] === '87% collected today' && SUB['Recovered this week'] === '118% of uncollected | TZS 1,234,567,890 today', JSON.stringify(SUB));
+check('1 SALES TODAY is the Sales trend card\'s tile for today: the approved principal, the loans and the percentage of the daily target', V['Sales today'] === 'TZS 4,200,000' && SUB['Sales today'] === '5 loans · 84% of target', JSON.stringify([V['Sales today'], SUB['Sales today']]));
 check('1 the week\'s loan applications are the strip\'s count with the amount asked under it', V['Loan applications (week)'] === '486' && SUB['Loan applications (week)'] === 'TZS 1,234,000,000 requested', JSON.stringify([V['Loan applications (week)'], SUB['Loan applications (week)']]));
-check('1 the week\'s Legal recovery is the dashboard card\'s notices and calls together, the percentage of what they were owed under it', V['Legal recovery (week)'] === 'TZS 41,000,000' && SUB['Legal recovery (week)'] === '79% of owed', JSON.stringify([V['Legal recovery (week)'], SUB['Legal recovery (week)']]));
+check('1 the week\'s Legal recovery is the dashboard card\'s notices and calls together, the percentage of what they were owed under it and then how much of it came BY PHONE (the calls side of the same total)', V['Legal recovery (week)'] === 'TZS 41,000,000' && SUB['Legal recovery (week)'] === '79% of owed | by phone TZS 11,000,000', JSON.stringify([V['Legal recovery (week)'], SUB['Legal recovery (week)']]));
 check('1 the week\'s Expected Defaulters recovery is the dashboard card\'s own total, its percentage to one decimal under it', V['Exp.Def recovery (week)'] === 'TZS 3,600,000' && SUB['Exp.Def recovery (week)'] === '3.0% of their arrears', JSON.stringify([V['Exp.Def recovery (week)'], SUB['Exp.Def recovery (week)']]));
 check('1 the Performance average is the strip\'s (99.8 reads 100) and says what it is the average of', V['Performance (average)'] === '100%' && SUB['Performance (average)'] === 'sales · collection · recovery', JSON.stringify([V['Performance (average)'], SUB['Performance (average)']]));
-check('1 exactly the eight tiles that carry a percentage or a meaning under the figure have the line, and no tile has an empty one', T.filter(x => x[2]).map(x => x[0]).join('|') === 'Defaulters|Sales this week|Uncollected today|Recovered this week|Loan applications (week)|Legal recovery (week)|Exp.Def recovery (week)|Performance (average)', JSON.stringify(T.filter(x => x[2]).map(x => x[0])));
+check('1 exactly the nine tiles that carry a percentage or a meaning under the figure have the line, and no tile has an empty one', T.filter(x => x[2]).map(x => x[0]).join('|') === 'Recovered this week|Defaulters|Sales this week|Uncollected today|Sales today|Loan applications (week)|Legal recovery (week)|Exp.Def recovery (week)|Performance (average)', JSON.stringify(T.filter(x => x[2]).map(x => x[0])));
 // ---- a week with nothing to measure: a dash, never a nought
 PERF = { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null, appsCount: 0, appsAmount: 0 };
 let page = await openDeck({ width: 1920, height: 1080 });
 let G0 = await geo(page), N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]])), NS = Object.fromEntries(G0.tiles.map(x => [x[0], x[2]]));
-check('1 a percentage the week cannot measure is a dash, a real nought is a nought: Early Collection and the Performance average a dash; no application is a real 0, never a dash',
-  N['Early Collection % (week)'] === '—' && N['Performance (average)'] === '—' && N['Loan applications (week)'] === '0' && NS['Loan applications (week)'] === 'TZS 0 requested' && NS['Uncollected today'] === '100% collected this week', JSON.stringify([N, NS]));
-check('1 and under the amounts: Sales % has nothing to measure (a dash alone, never "— of target"), Recovery % is a real nought (0% of uncollected)', NS['Sales this week'] === '—' && NS['Recovered this week'] === '0% of uncollected', JSON.stringify(NS));
+check('1 a percentage the week cannot measure is a dash, a real nought is a nought: the early collection and the Performance average a dash (the week\'s collection beside the early one still reads its 100%); no application is a real 0, never a dash',
+  N['Early col · Col % (week)'] === '— · 100%' && N['Performance (average)'] === '—' && N['Loan applications (week)'] === '0' && NS['Loan applications (week)'] === 'TZS 0 requested', JSON.stringify([N, NS]));
+check('1 and under the amounts: Sales % has nothing to measure (a dash alone, never "— of target"), Recovery % is a real nought (0% of uncollected) and today\'s recovery is still there beside it; today\'s collection % is the day\'s own whatever the week did',
+  NS['Sales this week'] === '—' && NS['Recovered this week'] === '0% of uncollected | TZS 1,234,567,890 today' && NS['Uncollected today'] === '87% collected today', JSON.stringify(NS));
 await page.close();
+// ---- the day cards say nothing about today (a weekend: no collection sheet, no Sunday sales): a dash, never a nought, and the slide still has twelve tiles
+const COL0 = COLTREND, SAL0 = SALESTREND;
+COLTREND = [COL0[0], COL0[1]]; SALESTREND = [SAL0[0], SAL0[1]];
+page = await openDeck({ width: 1920, height: 1080 });
+G0 = await geo(page); N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]])); NS = Object.fromEntries(G0.tiles.map(x => [x[0], x[2]]));
+check('1 with no day card for today the Uncollected today line is a dash alone and Sales today a dash with no line (never a nought), and the slide still has twelve tiles', NS['Uncollected today'] === '—' && N['Sales today'] === '—' && NS['Sales today'] === '' && G0.n === 12, JSON.stringify([NS['Uncollected today'], N['Sales today'], NS['Sales today'], G0.n]));
+await page.close();
+COLTREND = COL0; SALESTREND = SAL0;
 PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };
+// ---- a wide and SHORT window: three rows of tiles with two lines under a figure must still fit their height (the fit shrinks the figures until the content fits)
+page = await openDeck({ width: 1920, height: 640 });
+{
+  const GS = await geo(page);
+  check('3 on a wide and short window (1920x640) every tile\'s content still lies inside its tile (the fit shrinks for the height as well as the width), twelve tiles, one value size', !GS.tileOverflow && GS.subs.every(Boolean) && GS.n === 12 && new Set(GS.vals.map(v => v.fs)).size === 1 && GS.vals.every(v => !v.over), JSON.stringify({ over: GS.tileOverflow, fs: GS.vals.map(v => v.fs), subs: GS.subs }));
+  check('3 and no tile\'s label or last line touches its border there: at least 7 pixels of room above the label and below the last line, in every tile', GS.margins.every(m => m[0] >= 7 && m[1] >= 7), JSON.stringify(GS.margins));
+  if (process.env.SHOTS) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.SHOTS, 'present-day-1920x640.png') }); }
+}
+await page.close();
 // ---- the week's Expected Defaulters recovery when the database has NOT answered it (the dashboard says so in a note), and when no day of the week has its files
 EDRNOTE = 'Kadi ya Expected Defaulters haijajibiwa / The Expected Defaulters card got no answer from the database';
 page = await openDeck({ width: 1920, height: 1080 });

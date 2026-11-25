@@ -108,7 +108,7 @@ function presSlides(){
        are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). Every figure is one the dashboard's own
        answer already carries, worked out by the server and only printed here, so the wall and the dashboard can never say two different
        things. Nothing is read for them: the answer is the one this slide already stood on.
-       THE OWNER HAS CHANGED THE SLIDE FOUR TIMES THE SAME DAY, AND LEFT US THE CHOICE EACH TIME (handbook Part 164, addenda 1 to 3):
+       THE OWNER HAS CHANGED THE SLIDE FIVE TIMES THE SAME DAY, AND LEFT US THE CHOICE EACH TIME (handbook Part 164, addenda 1 to 3 and 5):
          "replace initial arreas widget with anything else thats crucial in the presentation hope pmo day slide summary": Initial arrears went;
          the week's recovery in shillings took its place (the Weekly recovery trend's own TOTAL, d.recTrendTotal, added up from its days the
          way the dashboard does when the server did not send it).
@@ -121,6 +121,13 @@ function presSlides(){
          Uncollected today ("97% collected this week"); the two tiles left free became the week's Loan applications (d.perf.appsCount, with
          the amount asked, d.perf.appsAmount) and the week's Legal recovery (d.legal.grand.total: notices and calls together, the
          dashboard's own Legal card figure, a dash while either side cannot be read).
+         "combine recovered today and this week, add another meaningful widget" · "show collection today% at uncollected today" · "ealry
+         col% and col% week on their own widget" (addendum 5): Recovered (today's) and Recovered this week are ONE tile, the week's figure with
+         its percentage and then today's amount under it (two lines: a tile's `s` may be an array); the freed tile is Sales today (the Sales
+         trend card's tile for today: the approved principal, the loans, the percentage of the daily target); Uncollected today carries
+         today's collection % (the Weekly expected trend card's tile for today) where the week's was; and the week's Collection % leaves
+         it to stand beside the Early collection % on a tile of their own; and the Legal recovery tile says how much of its figure came BY PHONE
+         ("legal recovery widget on presentation, have their phone recovery in the same widget"), a second line under it.
        A percentage the week cannot measure is a dash, never a nought. The owner can name other widgets and each is one line here. The grid
        is `grid:'4x3'` (a class and a fit in presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
     var pf = d.perf || {};
@@ -128,6 +135,14 @@ function presSlides(){
     var DASH_ = '—';
     /* a percentage written under its amount ("84% of target"); a dash alone when there is nothing to measure (fmt is pct or pct1, which say so) */
     var under = function(fmt, p, words){ var t = fmt(p); return t === DASH_ ? t : t + ' ' + words; };
+    /* TODAY'S OWN ENTRY of a per-day card of the dashboard (the Weekly expected trend, the Sales trend): the day the dashboard's own clock says it
+       is (asOfDate), found by its date -- or by its weekday when an answer carries no date. Null when the card has no such day (a weekend has no
+       collection sheet; Sunday has no sales day): the tile then prints a dash, never a nought. */
+    var dayNow = function(list){
+      var a = d.asOfDate;
+      return (list || []).filter(function(x){ return !!x && (a ? x.date === a : x.weekday === d.weekday); })[0] || null;
+    };
+    var colNow = dayNow(d.colTrend), salesNow = dayNow(d.salesTrend);
     /* the week's Expected Defaulters recovery: the dashboard's own total, and only when the database answered it (edrNote says it did not)
        and at least one day of the week has its two files (a week with none reads "not uploaded yet" on the dashboard, never a nought) */
     var edr = d.edrTrendTotal, edrOn = !!edr && !d.edrNote && (d.edrTrend || []).some(function(x){ return !!(x && x.uploaded); });
@@ -137,17 +152,35 @@ function presSlides(){
     var lg = d.legal && d.legal.grand, lgOn = !!lg && lg.on === true && !!lg.total && lg.total.recovered != null;
     /* the week's loan applications: the strip's own count (every application that ARRIVED this week, whatever stage it is at now) */
     var appsOn = pf.appsCount != null;
+    /* TODAY'S SALES: the Sales trend card's own tile for today (what the dashboard prints for the day: the approved principal, the loans, the
+       percentage of the daily target), so the wall and the dashboard cannot say two different things */
+    var loansTxt = function(n){ n = Number(n) || 0; return n === 1 ? '1 loan' : money(n) + ' loans'; };
+    var salesTodayLine = function(){
+      if (!salesNow) return '';
+      var p = pct(salesNow.pct);
+      return loansTxt(salesNow.loans) + (p === DASH_ ? '' : ' · ' + p + ' of target');
+    };
     slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
-      { l:'Recovered', v:'TZS '+money(c.recovered) },
+      /* RECOVERED, TODAY'S AND THE WEEK'S IN ONE TILE ("combine recovered today and this week"): the week's money is the figure, and under it the
+         percentage that belongs to it, then today's -- two lines, which a tile may carry (`s` as an array) */
+      { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:[under(pct, pf.recPct, 'of uncollected'), 'TZS '+money(c.recovered)+' today'] },
       { l:'Defaulters', v:money(c.defaulters), s:money(c.cleared)+' cleared today' },
       { l:'Sales this week', v:'TZS '+money(c.salesWeek), s:under(pct, pf.salesPct, 'of target') },
-      { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday), s:under(pct, pf.colPct, 'collected this week') },
+      /* COLLECTION TODAY % AT UNCOLLECTED TODAY ("show collection today% at uncollected today"): the Weekly expected trend card's own percentage
+         for today (collected over expected, the day's sheet), where the week's used to be */
+      { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday), s:under(pct, colNow ? colNow.pct : null, 'collected today') },
       { l:'Abnormal', v:money(c.abnormal) },
-      { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:under(pct, pf.recPct, 'of uncollected') },
+      { l:'Sales today', v:salesNow ? 'TZS '+money(salesNow.amount) : DASH_, s:salesTodayLine() },
       { l:'Loan applications (week)', v:appsOn ? money(pf.appsCount) : DASH_, s:appsOn ? 'TZS '+money(pf.appsAmount)+' requested' : '' },
-      { l:'Early Collection % (week)', v:pct(pf.ecolPct) },
-      { l:'Legal recovery (week)', v:lgOn ? 'TZS '+money(lg.total.recovered) : DASH_, s:lgOn ? under(pct, lg.total.pct, 'of owed') : '' },
+      /* EARLY COL % AND COL % (WEEK) ON THEIR OWN WIDGET ("ealry col% and col% week on their own widget"): the strip's two collection percentages
+         side by side, the early one first as the owner wrote it, each a dash when the week cannot measure it */
+      { l:'Early col · Col % (week)', v:pct(pf.ecolPct)+' · '+pct(pf.colPct) },
+      /* THE PHONE'S SHARE IS SAID ON THE SAME TILE ("legal recovery widget on presentation, have their phone recovery in the same widget", the
+         owner, 25 Nov 2026, addendum 5): the figure was always notices and calls TOGETHER (the grand total), but nothing on the tile said so. Under
+         it: the percentage of what the two were owed, then the part that came by phone (the calls side of the grand total, `cRec`: a customer
+         served a notice and phoned counts once, under notices). A dash for it if an answer has the total and not its parts. */
+      { l:'Legal recovery (week)', v:lgOn ? 'TZS '+money(lg.total.recovered) : DASH_, s:lgOn ? [under(pct, lg.total.pct, 'of owed'), 'by phone ' + (lg.total.cRec != null ? 'TZS '+money(lg.total.cRec) : DASH_)] : '' },
       { l:'Exp.Def recovery (week)', v:edrOn ? 'TZS '+money(edr.recovered) : DASH_, s:edrOn ? under(pct1, edr.pct, 'of their arrears') : '' },
       { l:'Performance (average)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
     /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
@@ -632,11 +665,15 @@ function presDraw(){
   var s = S.slides[S.presI], body;
   if (s.kind === 'kpi'){
     /* `s` is a line UNDER the figure, inside it (so the fit that sizes the figure sizes the line with it): the percentage that belongs to an amount.
-       When any tile of the slide has one, EVERY tile reserves the line (an empty one, invisible to a reader), so that the labels and the figures of
-       a row stand level whether a tile has a line under it or not. */
-    var anySub = s.items.some(function(it){ return !!it.s; });
+       A tile may carry SEVERAL (`s` an array: the combined Recovered tile has the percentage and then today's amount); an empty one is no line.
+       The slide's most-lined tile sets how many lines EVERY tile reserves (empty ones, invisible to a reader), so that the labels and the figures of
+       a row stand level whether a tile has lines under it or not. */
+    var linesOf = function(it){ return [].concat(it.s || []).filter(function(x){ return !!x; }); };
+    var most = 0; s.items.forEach(function(it){ most = Math.max(most, linesOf(it).length); });
     body = '<div class="pkpis' + (s.grid === '4x3' ? ' p12' : '') + '">' + s.items.map(function(it){
-      return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+(it.s ? '<span class="ps">'+esc(it.s)+'</span>' : anySub ? '<span class="ps" aria-hidden="true">&nbsp;</span>' : '')+'</div></div>'; }).join('') + '</div>';
+      var ls = linesOf(it), subs = ls.map(function(x){ return '<span class="ps">'+esc(x)+'</span>'; }).join('');
+      for (var i = ls.length; i < most; i++) subs += '<span class="ps" aria-hidden="true">&nbsp;</span>';
+      return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+subs+'</div></div>'; }).join('') + '</div>';
   } else if (s.kind === 'progress'){
     body = '<div class="pprog">' + s.units.map(presProgGroup_).join('') + '</div>';
   } else if (s.kind === 'note'){
@@ -740,11 +777,17 @@ function presFit_(){
      screen the grid is two columns and the zoom below fits it as it does any other body. */
   var kg = pres.querySelector('.pkpis.p12');
   if (kg){
-    var vals = Array.prototype.slice.call(kg.querySelectorAll('.pv'));
+    var vals = Array.prototype.slice.call(kg.querySelectorAll('.pv')), tiles = Array.prototype.slice.call(kg.querySelectorAll('.pkpi'));
     kg.style.height = ''; vals.forEach(function(v){ v.style.fontSize = ''; });
     if (window.innerWidth > 900){
       kg.style.height = Math.max(240, Math.floor(avail)) + 'px';
-      var over = function(){ return vals.some(function(v){ return v.scrollWidth > v.clientWidth + 1; }); };
+      /* A TILE'S CONTENT MUST FIT ITS HEIGHT TOO (addendum 5): a tile may carry two lines under its figure, and on a wide and short window the three rows
+         are short. Besides a figure running past its tile's width, the signal to shrink is the tile's label above, or its last line below, coming within
+         8 pixels of the tile's edge (never more than its own padding): a tile's text is not to touch its border. */
+      var overH = function(){ return tiles.some(function(t){
+        var r = t.getBoundingClientRect(), a = t.firstElementChild, z = t.lastElementChild, m = Math.min(8, parseFloat(getComputedStyle(t).paddingTop) || 0);
+        return !!a && !!z && (a.getBoundingClientRect().top < r.top + m || z.getBoundingClientRect().bottom > r.bottom - m); }); };
+      var over = function(){ return vals.some(function(v){ return v.scrollWidth > v.clientWidth + 1; }) || overH(); };
       var sz = vals.length ? (parseFloat(getComputedStyle(vals[0]).fontSize) || 40) : 40, guard = 40;
       while (over() && sz > 12 && guard-- > 0){ sz = Math.max(12, Math.floor(sz * 0.93)); vals.forEach(function(v){ v.style.fontSize = sz + 'px'; }); }
       return;
