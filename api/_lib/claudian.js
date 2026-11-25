@@ -18,7 +18,7 @@
    WHAT IT IS, IN ONE PARAGRAPH. A person taps the bubble; if the agent is OFF in Settings they get
    a list of ready questions with their answers (claudian-faq.js: no model, no tokens); if it is ON
    they may also type a question, which goes to the cheapest Claude model there is, with the
-   glossary at the front, a line about each screen THEY may open, the company standards and (when it
+   glossary at the front, a line about each screen THEY may open, the company's targets for each team and (when it
    is known) how their teams did last week, and comes back as two to four short sentences, with no
    closing offer and no question. Everything it says is logged for the owner's Hope Ai tab. It can
    change nothing: it has no tools, and nothing it writes is ever run.
@@ -39,15 +39,18 @@
        number or a phone typed into a question never reaches Anthropic or the owner's tab.
      * READ-ONLY -- no tools are offered, no output is parsed into an action.
      * USERS WHO ARE BEHIND ARE TOLD, EVERY TIME -- `standing` reads how the person's teams did LAST
-       FULL WEEK against the company standards (a complete week, so a Monday morning is never
-       "behind" for having had one day); a team short of any standard is BEHIND, and the model is
-       told to finish every answer to such a person with one sentence on portfolio calls and the
-       standards. Unknown standing is said to the model as unknown, never guessed.
+       FULL WEEK against the company's targets (a complete week, so a Monday morning is never
+       "behind" for having had one day); a team short of any of the three it measures (sales %,
+       collection %, recovery %: the weekly record keeps no more) is BEHIND, and the model is told
+       to finish every answer to such a person with one sentence on portfolio calls and the targets.
+       The owner's other targets (customers and amount sold a day, early collection, the recovery
+       amount, calls a day) are quoted, never judged. Unknown standing is said to the model as
+       unknown, never guessed (handbook Part 157).
      * LIMITS THAT SPEAK -- a person's questions a day (CLAUDIAN_USER_DAILY), everybody's (CLAUDIAN_ALL_DAILY),
        a gap of two seconds between questions, eight questions in flight at once, a request that is
        given 25 seconds; and whenever the provider says "too many", "credit", "overloaded" or does
        not answer, the person is given a "working hard, try later" line with advice that is useful
-       meanwhile (call your lists, look at the standards), never an error.
+       meanwhile (call your lists, look at the targets), never an error.
 
    CLAUDIAN IS ITS OWN FUNCTION (api/claudian.js). It adds nothing to /api/upload or /api/call
    (CLAUDE.md section 1: those two never go down and never slow down), reads nothing of the call
@@ -64,7 +67,7 @@ import { zoneAnswer, ZONE_ROLE_COLS } from './zone.js';
 import { todayKey, weekMondayKey, addDaysKey } from './time.js';
 import { registrySpellings } from './snapshots.js';
 import { wholePct } from './recovery.js';
-import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, STANDARDS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
+import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
 import { faqChoices, faqAnswer } from './claudian-faq.js';
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
@@ -88,14 +91,26 @@ export const REQUEST_TIMEOUT_MS = 25000;
 export const STANDING_BUDGET_MS = 1500;
 const CFG_TTL_MS = 20000, ROWS_TTL_MS = 60000, STANDING_TTL_MS = 600000;
 
+/** The Settings rows that hold THE COMPANY'S TARGETS (handbook Part 157). The first three are the percentage targets every table already colours
+    itself by (PCT_TARGET_KEYS in portal-core.js; a test holds the two lists equal, since this file may not import the portal's core); the four
+    others are the owner's own numbers (TARGETS_DEFAULT in claudian-knowledge.js) and are read by nothing else. */
+export const TARGET_PCT_KEYS = { ecol: 'TARGET_EARLY_COL_PCT', col: 'TARGET_COL_PCT', rec: 'TARGET_REC_PCT' };
+export const TARGET_COUNT_KEYS = { salesCustomers: 'TARGET_SALES_CUSTOMERS_DAILY', salesAmount: 'TARGET_SALES_AMOUNT_DAILY', recAmount: 'TARGET_REC_AMOUNT', callsDay: 'TARGET_CALLS_DAILY' };
 const SETTING_KEYS = [SETTING_AI, SETTING_USER_DAILY, SETTING_ALL_DAILY, 'CALL_MIN_SECS', 'SALES_TARGET_WEEKLY', 'SALES_TARGET',
-  'BONUS_SALES_PCT', 'BONUS_COL_PCT', 'BONUS_REC_PCT', 'RECOVERY_TARGET_MONTHLY', 'ADVANCE_AMOUNTS'];
+  ...Object.values(TARGET_PCT_KEYS), ...Object.values(TARGET_COUNT_KEYS), 'RECOVERY_TARGET_MONTHLY', 'ADVANCE_AMOUNTS'];
 export const ADVANCE_AMOUNTS_DEFAULT = '50,000, 100,000, 150,000, 200,000';
 
 const langOf = l => (String(l || '').toLowerCase().startsWith('en') ? 'en' : 'sw');
 const digitsInt = (v, dflt, lo, hi) => {
   const n = parseInt(String(v == null ? '' : v).replace(/[^0-9]/g, ''), 10);
   return (isNaN(n) || n < lo) ? dflt : Math.min(hi, n);
+};
+/** A percentage target as the Settings screen's own reader takes it (pctTargets in portal-core.js): "90", "90%", " 90 " and "90.5" are numbers,
+    blank or words are not and the owner's number stands. */
+const pctTarget = (v, dflt) => {
+  const raw = String(v == null ? '' : v).replace(/[%\s,]/g, '');
+  const n = raw === '' ? NaN : Number(raw);
+  return isFinite(n) && n > 0 && n <= 1000 ? n : dflt;
 };
 const money = n => Math.round(Number(n) || 0).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const hash = s => crypto.createHash('sha256').update(String(s == null ? '' : s)).digest('hex').slice(0, 16);
@@ -113,12 +128,12 @@ const FIXED = {
 const HARD = {
   sw: [
     'Claudian-PMO ana kazi nyingi sasa hivi. Jaribu tena baadaye kidogo. Wakati huo piga simu za portfolio kwa wateja wa orodha yako ya leo.',
-    'Claudian-PMO amefikia kikomo chake cha sasa. Jaribu tena baadaye. Wakati huo angalia viwango vya kampuni kwenye Dashibodi na piga wateja wa orodha yako.',
+    'Claudian-PMO amefikia kikomo chake cha sasa. Jaribu tena baadaye. Wakati huo angalia malengo ya kampuni kwenye Dashibodi na piga wateja wa orodha yako.',
     'Claudian-PMO anapumzika kidogo. Jaribu tena baadaye. Wakati huo fuatilia ahadi za kulipa za leo na piga simu za portfolio.',
   ],
   en: [
     'Claudian-PMO is working hard right now. Try again a little later. Meanwhile, make your portfolio calls to today\'s customers.',
-    'Claudian-PMO has reached its limit for now. Try again later. Meanwhile, check the company standards on the Dashboard and call the customers on your list.',
+    'Claudian-PMO has reached its limit for now. Try again later. Meanwhile, check the company targets on the Dashboard and call the customers on your list.',
     'Claudian-PMO is taking a short rest. Try again later. Meanwhile, follow up today\'s promises to pay and make your portfolio calls.',
   ],
 };
@@ -202,16 +217,28 @@ export async function loadCfg(db, nowMs = Date.now()) {
   try { const { data } = await db.from('settings').select('key, value').in('key', SETTING_KEYS); rows = data || []; } catch (e) { rows = []; }
   const by = {};
   for (const r of rows) by[String(r.key)] = r.value;
-  const pct = (k, d) => digitsInt(by[k], d, 1, 1000);
   const target = digitsInt(by.SALES_TARGET_WEEKLY, digitsInt(by.SALES_TARGET, SALES_TARGET_DEFAULT, 1, 1e13), 1, 1e13);
-  const std = { sales: pct('BONUS_SALES_PCT', STANDARDS_DEFAULT.sales), col: pct('BONUS_COL_PCT', STANDARDS_DEFAULT.col), rec: pct('BONUS_REC_PCT', STANDARDS_DEFAULT.rec) };
+  const T = TARGETS_DEFAULT;
+  const targets = {
+    salesPct: T.salesPct,
+    salesCustomers: digitsInt(by[TARGET_COUNT_KEYS.salesCustomers], T.salesCustomers, 1, 1000000),
+    salesAmount: digitsInt(by[TARGET_COUNT_KEYS.salesAmount], T.salesAmount, 1, 1e13),
+    ecolPct: pctTarget(by[TARGET_PCT_KEYS.ecol], T.ecolPct),
+    colPct: pctTarget(by[TARGET_PCT_KEYS.col], T.colPct),
+    recPct: pctTarget(by[TARGET_PCT_KEYS.rec], T.recPct),
+    recAmount: digitsInt(by[TARGET_COUNT_KEYS.recAmount], T.recAmount, 1, 1e13),
+    callsDay: digitsInt(by[TARGET_COUNT_KEYS.callsDay], T.callsDay, 1, 1000000),
+  };
+  // What "behind" is measured against: the three figures the weekly record keeps (sales % of the weekly target, collection %, recovery %).
+  const std = { sales: targets.salesPct, col: targets.colPct, rec: targets.recPct };
   const minSecs = digitsInt(by.CALL_MIN_SECS, 5, 0, 2000000000);
   const cfg = {
     on: /^(ON|YES|TRUE|1)$/i.test(String(by[SETTING_AI] == null ? '' : by[SETTING_AI]).trim()),
     userDaily: digitsInt(by[SETTING_USER_DAILY], DEFAULT_USER_DAILY, 1, 10000),
     allDaily: digitsInt(by[SETTING_ALL_DAILY], DEFAULT_ALL_DAILY, 1, 1000000),
-    std, target, minSecs, recTarget: digitsInt(by.RECOVERY_TARGET_MONTHLY, 0, 0, 1e13),
-    vars: { minSecs: String(minSecs), salesPct: String(std.sales), colPct: String(std.col), recPct: String(std.rec), salesTarget: money(target),
+    targets, std, target, minSecs, recTarget: digitsInt(by.RECOVERY_TARGET_MONTHLY, 0, 0, 1e13),
+    vars: { minSecs: String(minSecs), salesCust: String(targets.salesCustomers), salesAmt: money(targets.salesAmount), ecolPct: String(targets.ecolPct),
+      colPct: String(targets.colPct), recPct: String(targets.recPct), recAmt: money(targets.recAmount), callsDay: String(targets.callsDay),
       advAmounts: String(by.ADVANCE_AMOUNTS == null || !String(by.ADVANCE_AMOUNTS).trim() ? ADVANCE_AMOUNTS_DEFAULT : by.ADVANCE_AMOUNTS).trim() },
   };
   cfgCache.set(db, { at: nowMs, cfg });
@@ -241,7 +268,7 @@ const withBudget = (p, ms) => new Promise(resolve => {
   Promise.resolve(p).then(v => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(null); });
 });
 
-/** How the person's teams did in the LAST FULL WEEK against the company standards, from the performance record the weekly report keeps
+/** How the person's teams did in the LAST FULL WEEK against the company's targets, from the performance record the weekly report keeps
     (api/_lib/performance.js). null when it is not known (an all-teams person, no record, no table, too slow): never guessed. A complete week,
     so that a Monday morning is not "behind" for having had one working day. */
 const standingCache = new Map();
@@ -298,7 +325,7 @@ export function screensOf(subject, question) {
   const scored = ids.map(id => [id, noteScore(question, id)]).filter(x => x[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, MAX_NOTES);
   return { labels, notes: scored.map(([id]) => '- ' + TAB_NOTES[id][0] + ': ' + TAB_NOTES[id][1]) };
 }
-/** What is said about the person, after the cached front: their role, zone, teams, screens, the standards and how they did. The sentences are
+/** What is said about the person, after the cached front: their role, zone, teams, screens, the targets and how they did. The sentences are
     CTX's (claudian-knowledge.js: text for the model, never shown to a person); this function only chooses and fills them. */
 export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs) {
   const L = [];
@@ -313,7 +340,8 @@ export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs) 
     L.push(CTX.screens(sc.labels));
     if (sc.notes.length) L.push(CTX.notes(sc.notes));
   }
-  L.push(CTX.standards(cfg.std, money(cfg.target), cfg.recTarget ? money(cfg.recTarget) : '', cfg.minSecs));
+  L.push(CTX.targets({ ...cfg.targets, salesAmount: money(cfg.targets.salesAmount), recAmount: money(cfg.targets.recAmount) }, money(cfg.target),
+    cfg.recTarget ? money(cfg.recTarget) : '', cfg.minSecs));
   L.push(standing ? CTX.standing(standing, v => (v == null ? CTX.unknown : v + '%')) : CTX.standingUnknown);
   return L.join('\n');
 }
@@ -512,5 +540,5 @@ export async function claudianState(db, nowMs = Date.now()) {
   const day = todayKey(nowMs);
   const all = (await countRows(db, day, null)) || memAll.get(day) || 0;
   return { on: cfg.on, keyPresent: keyPresent(), model: CLAUDIAN_MODEL, name: CLAUDIAN_NAME, userDaily: cfg.userDaily, allDaily: cfg.allDaily, today: all,
-    standards: cfg.std, lastProblem: lastNote.text ? { at: lastNote.at, text: lastNote.text } : null };
+    targets: cfg.targets, lastProblem: lastNote.text ? { at: lastNote.at, text: lastNote.text } : null };
 }

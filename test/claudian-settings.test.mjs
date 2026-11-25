@@ -40,6 +40,7 @@ test('the card reads the helper\'s state: off by default, the model, the limits,
   assert.equal(st.userDaily, 20);
   assert.equal(st.allDaily, 2000);
   assert.equal(st.today, 0);
+  assert.deepEqual(st.targets, { salesPct: 100, salesCustomers: 7, salesAmount: 5000000, ecolPct: 90, colPct: 100, recPct: 120, recAmount: 700000, callsDay: 300 }, 'the owner\'s targets for each team, as the card shows them (Part 157)');
   process.env.ANTHROPIC_API_KEY = 'sk-test-must-never-appear-0123456789';
   try {
     C.resetClaudianForTests();
@@ -123,6 +124,14 @@ test('a person\'s next question follows the switch: ON with a key and a fake pro
   await portalApi(db, ADMIN, 'claudianSet', { on: false }, NOW);
   const off2 = await C.claudianHandle(db, subject, { op: 'ask', q: 'What should I do today?', lang: 'en' }, { client, noGap: true, nowMs: NOW + 2000 });
   assert.equal(off2.mode, 'faq'); assert.equal(calls, 1, 'switched off again: the provider is not called');
+});
+
+test('THE PERCENTAGE TARGETS ARE THE ROWS EVERY TABLE ALREADY COLOURS ITSELF BY: the helper reads the same three Settings rows as the portal (PCT_TARGET_KEYS), so one definition of which row is which', async () => {
+  const { PCT_TARGET_KEYS } = await import('../api/_lib/portal-core.js');
+  assert.deepEqual(C.TARGET_PCT_KEYS, PCT_TARGET_KEYS);
+  assert.deepEqual(Object.values(C.TARGET_COUNT_KEYS).sort(), ['TARGET_CALLS_DAILY', 'TARGET_REC_AMOUNT', 'TARGET_SALES_AMOUNT_DAILY', 'TARGET_SALES_CUSTOMERS_DAILY'], 'the four rows of the owner\'s own, read by nothing else');
+  const core = fs.readFileSync(path.join(ROOT, 'api/_lib/portal-core.js'), 'utf8');
+  for (const k of Object.values(C.TARGET_COUNT_KEYS)) assert.ok(!core.includes("'" + k + "'"), k + ' is read by Claudian-PMO only: the portal\'s core does not know it');
 });
 
 test('the upload function never loads the helper: portal-core reaches it only by an import made when the two functions are CALLED', () => {

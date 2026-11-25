@@ -487,7 +487,8 @@ await section('B (settings)', async () => {
   check('B1 Settings has the helper\'s card, filled with the server\'s own reading', card);
   const text = () => page.evaluate(() => (document.getElementById('cpCard') || {}).textContent || '');
   let t = await text();
-  check('B1 it says: ready questions only, no key, the model, the standards (80 / 96 / 120)', /READY QUESTIONS ONLY/.test(t) && /No key/.test(t) && /claude-haiku-5-5/.test(t) && /80% . 96% . 120%/.test(t), t.slice(0, 400));
+  check('B1 it says: ready questions only, no key, the model, the owner\'s targets for each team (7+ customers, TZS 5,000,000+, Early Col 90%, Col 100%, Rec 120%, TZS 700,000+, 300+ calls)', /READY QUESTIONS ONLY/.test(t) && /No key/.test(t) && /claude-haiku-5-5/.test(t)
+  && /Targets in use \(each team\)/.test(t) && /sales 7\+/.test(t) && /TZS 5,000,000\+/.test(t) && /Early Col 90%/.test(t) && /Col 100%/.test(t) && /Rec 120%/.test(t) && /TZS 700,000\+/.test(t) && /calls 300\+/.test(t), t.slice(0, 600));
   check('B1 the limits boxes hold the server\'s reading (20 and 2,000) and the buttons are enabled', (await page.evaluate(() => [document.getElementById('cpUser').value, document.getElementById('cpAll').value, document.getElementById('cpToggle').disabled])).join() === '20,2000,false');
   await page.click('#cpToggle');
   await until(page, () => /AI ON/.test(document.getElementById('cpState').textContent));
