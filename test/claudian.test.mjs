@@ -19,7 +19,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const C = await import('../api/_lib/claudian.js');
 const { FAQ, faqChoices, faqAnswer, faqAllowed, fill } = await import('../api/_lib/claudian-faq.js');
-const { TAB_NOTES, GLOSSARY, TARGETS_DEFAULT } = await import('../api/_lib/claudian-knowledge.js');
+const { TAB_NOTES, GLOSSARY, TARGETS_DEFAULT, CALL_NOTES } = await import('../api/_lib/claudian-knowledge.js');
 const { ADMIN_TABS } = await import('../api/_lib/auth.js');
 const { callMinSecsOf } = await import('../api/_lib/call-core.js');
 
@@ -246,7 +246,7 @@ test('THE FAQ ANSWERS QUOTE THE SETTINGS: the company\'s targets, the minimum se
   const t1 = await C.claudianHandle(db, all, { op: 'faq', id: 'targets', lang: 'en' }, { nowMs: NOW });
   assert.equal(t1.answer, 'Each team\'s targets: sales 9+ customers and TZS 6,500,000+ a day; early collection 85%+ a day; collection 97%; recovery 130.5% with amounts from TZS 800,000; portfolio calls 350+ a day. The way to reach them is portfolio calls every day to every customer on your list.');
   assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'improve', lang: 'en' }, { nowMs: NOW })).answer, /The aim is 350\+ calls a day, collection 97% and recovery 130\.5%\./);
-  assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'portfolio-call', lang: 'sw' }, { nowMs: NOW })).answer, /iliyozidi sekunde 8\./);
+  assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'portfolio-call', lang: 'sw' }, { nowMs: NOW })).answer, /ikizidi sekunde 8\./, 'the minimum seconds of the tick follow Settings (a portfolio call itself has no length: Part 159)');
   assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'advance-ask', lang: 'en' }, { nowMs: NOW })).answer, /\(60000, 90000\)/);
   const plain = await C.claudianHandle(fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] })), all, { op: 'faq', id: 'targets', lang: 'sw' }, { nowMs: NOW });
   assert.match(plain.answer, /Malengo ya kila timu: mauzo wateja 7\+ na TZS 5,000,000\+ kwa siku; makusanyo ya awali \(Early Col\) 90%\+ kwa siku; makusanyo 100%; urejeshaji 120% kwa kiasi cha TZS 700,000\+; simu za portfolio 300\+ kwa siku\./, 'no setting: the owner\'s own numbers');
@@ -452,4 +452,124 @@ test('A BROKEN LOG NEVER BREAKS AN ANSWER: no table, a refusing database, a thro
     const r = await ask(mk(), me, 'What is a portfolio call?', { client: client(text('Ni simu.')) });
     assert.equal(r.mode, 'ai', why); assert.equal(r.answer, 'Ni simu.');
   }
+});
+
+/* =====================================================================================================================================
+   HOW HOPE WORKS -- THE KNOWLEDGE CARDS IN THE REQUEST (handbook Part 159)
+
+     "So I believe Claudian-PMO has both knowledge from this chat and db to know how we really deal with everything well"   -- the owner, 25 Nov 2026
+
+   The cards are tested on their own in test/claudian-cards.test.mjs. Here is what reaches the MODEL: the cards a question touches, only the ones this person
+   may be told, under the heading the system prompt names, and written into the chat log so that the owner can read which rules an answer was built on.
+   ===================================================================================================================================== */
+const KC = await import('../api/_lib/claudian-cards.js');
+const sentTo = async (subject, q, deps = {}) => {
+  const calls = [], db = fakeDb(book());
+  const r = await ask(db, subject, q, { client: client(text('Ni hivi.'), calls), ...deps });
+  return { r, msg: calls[0] ? calls[0].messages[0].content : '', db, calls };
+};
+const holding = (tabs, over = {}) => C.portalSubject({ code: 'CODE-' + tabs.join('-'), name: 'T', role: 'MANAGER', teams: ['KONGOWE'], tabs, ...over });
+const askText = c => c.keys.join(' ');
+
+test('HOW HOPE WORKS: the cards a question touches go to the model under one heading, are the cards the engine picks for that person, and are logged by id', async () => {
+  const card = KC.CARDS.find(c => c.id === 'hr-leave-balance');
+  assert.ok(card, 'a card about the leave balance exists');
+  const subject = holding(['leavereq', 'dashboard']);
+  const q = askText(card);
+  const picked = KC.pickCards(subject, q);
+  assert.ok(picked.length >= 1 && picked.some(p => p.id === card.id), 'the question made of its own keys finds it: ' + picked.map(p => p.id));
+  const { r, msg, db } = await sentTo(subject, q);
+  assert.equal(r.mode, 'ai');
+  assert.match(msg, /\nHOW HOPE WORKS \(the system's own rules that match this question; use them exactly\):\n- /);
+  for (const p of picked) assert.ok(msg.includes('- ' + p.text), 'the text of ' + p.id + ' is in the request');
+  assert.ok(msg.indexOf('HOW HOPE WORKS') > msg.indexOf('SCREENS this person may open') && msg.indexOf('HOW HOPE WORKS') < msg.indexOf('Company targets for EACH team'), 'after the screens, before the targets');
+  const log = db._dump('claudian_chats')[0];
+  assert.equal(log.note, 'cards: ' + picked.map(p => p.id).join(', '), 'the owner reads which rules the answer stood on');
+  assert.ok(C.SYSTEM_PROMPT.includes('HOW HOPE WORKS') && /use them exactly and add no rule, number, step or screen they do not give/.test(C.SYSTEM_PROMPT), 'the instruction names the heading and forbids adding to the rules');
+  assert.match(C.SYSTEM_PROMPT, /If none of them answers it, say in one sentence that you do not know that rule/);
+});
+
+test('HOW HOPE WORKS: a question no card touches sends no heading and logs no cards; a stop reason and the cards share the note', async () => {
+  const { msg, db } = await sentTo(holding(['dashboard']), 'Habari za asubuhi, umeamkaje?');
+  assert.ok(!msg.includes('HOW HOPE WORKS'), 'nothing matched, nothing added');
+  assert.equal(db._dump('claudian_chats')[0].note, null);
+  const card = KC.CARDS.find(c => c.id === 'hr-leave-balance');
+  const db2 = fakeDb(book());
+  await ask(db2, holding(['leavereq']), askText(card), { client: client({ ...text('Kata'), stop_reason: 'max_tokens' }) });
+  assert.match(db2._dump('claudian_chats')[0].note, /^max_tokens · cards: .*hr-leave-balance/);
+});
+
+test('NO PERSON IS SENT A CARD ABOUT A SCREEN THEY DO NOT HOLD: every card bound to screens, asked with its own keys by a person who holds every OTHER screen, never reaches the model', async () => {
+  let asked = 0;
+  for (const c of KC.CARDS.filter(x => x.tabs.length)) {
+    const others = ADMIN_TABS.filter(t => !c.tabs.includes(t));
+    const { msg, r } = await sentTo(holding(others, { role: 'MANAGER' }), askText(c));
+    assert.equal(r.mode, 'ai', c.id);
+    assert.ok(!msg.includes(c.text), c.id + ' (' + c.tabs.join(', ') + ') reached a person who does not hold it');
+    asked++;
+  }
+  assert.ok(asked >= 50, 'asked for ' + asked + ' cards');
+  // and the admin, who holds all of them, is sent it
+  const some = KC.CARDS.find(c => c.id === 'legal-fine');
+  const admin = C.portalSubject({ code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
+  assert.ok(KC.pickCards(admin, askText(some)).some(p => p.id === some.id));
+});
+
+test('NO PHONE IS SENT A CARD ABOUT THE PORTAL: every card that is not written for the phone, asked with its own keys on an officer\'s and a leader\'s phone, stays out of the request', async () => {
+  let asked = 0;
+  const officer = C.callSubject({ name: 'A', role: 'OFFICER', is_leader: false }, { teams: ['KONGOWE'] }, 'dev-card-test-1');
+  const leader = C.callSubject({ name: 'L', role: 'GMO', is_leader: true }, { teams: ['KONGOWE'] }, 'dev-card-test-2');
+  for (const c of KC.CARDS) {
+    const phoneOk = c.where !== 'web' && c.tabs.every(t => KC.PHONE_TABS.has(t));
+    for (const [who, subject] of [['an officer', officer], ['a leader', leader]]) {
+      const { msg } = await sentTo(subject, askText(c));
+      if (phoneOk && !(c.leader && who === 'an officer')) continue;           // these may go (and are checked by the engine's own tests)
+      assert.ok(!msg.includes(c.text), c.id + ' reached ' + who + '\'s phone');
+      asked++;
+    }
+  }
+  assert.ok(asked >= 80, 'asked ' + asked);
+});
+
+test('A QUESTION IN SWAHILI FINDS THE SCREEN\'S NOTE TOO: before, only English words matched a screen\'s note', () => {
+  const sc = C.screensOf(holding(['leavereq', 'dashboard']), 'Nataka kuomba likizo, nifanyeje?');
+  assert.ok(sc.notes.some(n => n.startsWith('- Leave request: ')), JSON.stringify(sc.notes));
+  assert.ok(!sc.notes.some(n => n.startsWith('- Dashboard: ')), 'and only the screen it is about');
+  const none = C.screensOf(holding(['dashboard']), 'Nataka kuomba likizo, nifanyeje?');
+  assert.deepEqual(none.notes, [], 'a person who may not open the leave screens is told nothing of them');
+  assert.ok(!none.labels.includes('Leave request'));
+  const en = C.screensOf(holding(['legal']), 'when can a demand notice be issued?');
+  assert.ok(en.notes.some(n => n.startsWith('- Legal / Demand Notices: ')), 'the English match is as it was');
+});
+
+test('WHAT THE CARDS COST IS CAPPED: at most three cards and 1,100 characters of them go with a question, whatever the question touches', async () => {
+  const everything = KC.CARDS.flatMap(c => c.keys).join(' ');
+  const admin = C.portalSubject({ code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
+  const picked = KC.pickCards(admin, everything);
+  assert.ok(picked.length <= KC.MAX_CARDS, 'cards: ' + picked.length);
+  assert.ok(picked.reduce((n, p) => n + p.text.length, 0) <= KC.MAX_CARDS_CHARS);
+  const { msg } = await sentTo(admin, everything.slice(0, 380));
+  const rules = msg.split('HOW HOPE WORKS')[1] || '';
+  assert.ok(rules.slice(0, rules.indexOf('Company targets for EACH team')).length <= KC.MAX_CARDS_CHARS + 160, 'the heading and the cards stay under about 1,260 characters');
+  assert.equal(KC.MAX_CARDS, 3); assert.equal(KC.MAX_CARDS_CHARS, 1100); assert.equal(KC.MAX_CARD_CHARS, 380);
+});
+
+test('THE READY ANSWERS THE OWNER READS AGREE WITH THE CARDS ON THE RULES THEY BOTH STATE (the portfolio call, the tick, the lists, the leave allowance and the earners\' column were written wrong once)', () => {
+  const faqText = (id, lang) => faqAnswer(id, C.callSubject({ name: 'A', role: 'OFFICER', is_leader: false }, { teams: ['T'] }, 'd'), lang, { minSecs: 5 });
+  const pf = faqText('portfolio-call', 'en').a;
+  assert.ok(!/lasts longer than 5 seconds\. Once synced|on your own lists/.test(pf), 'a portfolio call has no length: the minimum seconds belong to the tick and to Reached');
+  assert.match(pf, /answered or not/); assert.match(pf, /customer of your teams/);
+  const tick = faqText('call-not-ticked', 'en').a;
+  assert.match(tick, /by anyone today/); assert.match(tick, /does not tick the customer/);
+  const lists = faqText('call-lists', 'en').a;
+  assert.match(lists, /Exp: expired loans/); assert.ok(!/expected to pay\. Chr|Exp: expected/.test(lists)); assert.match(lists, /every officer has it/);
+  assert.match(CALL_NOTES, /Exp \(expired loans\)/); assert.match(CALL_NOTES, /every officer has it/);
+  assert.ok(/Exp \(expired loans\)/.test(GLOSSARY) && !/Exp \(expected to pay\)/.test(GLOSSARY));
+  assert.match(GLOSSARY, /A PORTFOLIO CALL is a call, answered or not/); assert.ok(!/A PORTFOLIO CALL is a call, longer than the minimum seconds/.test(GLOSSARY));
+  assert.match(GLOSSARY, /any synced call to their own number or the guarantor's lasted longer than the minimum seconds today/);
+  assert.match(GLOSSARY, /26 days unless the admin changed it on the Leave report/);
+  assert.match(TAB_NOTES.deduct[1], /role and zone/); assert.ok(!/role and branch/.test(TAB_NOTES.deduct[1]));
+  assert.match(TAB_NOTES.bonusplan[1], /proposal/); assert.ok(!/set in Settings/.test(TAB_NOTES.bonusplan[1]));
+  const earners = faqAnswer('deduct-earners', C.portalSubject({ code: 'A', name: 'A', role: 'ADMIN', teams: null, tabs: ADMIN_TABS }), 'en', {}).a;
+  assert.match(earners, /role and zone/);
 });
