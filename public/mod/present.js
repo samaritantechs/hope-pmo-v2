@@ -105,36 +105,41 @@ function presSlides(){
     var d = S.presData.d, b = S.presData.b, c = d.cards;
     var slides = [];
     /* THE DAY'S TWELVE: FOUR ACROSS, THREE DOWN, FILLING THE TV -- "Add 6 widgets to hope pmo overall slide at presentation so that they
-       are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). The six that were here keep their
-       places (row one and the first two of row two); the six that join them are figures the dashboard's own answer already carries,
-       worked out by the server and only printed here, so the wall and the dashboard can never say two different things:
-         Recovered this week and Cleared today   the week's recovery in shillings (the Weekly recovery trend's own TOTAL, d.recTrendTotal,
-         added up from its days the way the dashboard does when the server did not send it) and the card beside Defaulters (d.cards);
-         Sales %, Early Collection %, Collection %, Recovery %   the four strip tiles of the dashboard (d.perf), this week's, in the strip's
-         own order -- whole numbers, as everywhere (pct), a dash where the week has nothing to measure.
-       THE SEVENTH TILE WAS INITIAL ARREARS, AND THE OWNER REPLACED IT -- "replace initial arreas widget with anything else thats crucial in
-       the presentation hope pmo day slide summary" (25 Nov 2026, handbook Part 164, addendum 1). The choice of what is crucial was left to
-       us: the week's recovery in shillings, because the slide held it only as a percentage (Recovery % (week)) and as the day's figure
-       (Recovered), never the money that percentage is a percentage OF, and because the morning's total arrears is, once the day's two
-       files are in, Current arrears plus Recovered: the tile said nothing the two before it did not. The owner can name another and it
-       is one line here.
-       Nothing is read for them: the answer is the one this slide already stood on. The grid is `grid:'4x3'` (a class and a fit in
-       presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
+       are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). Every figure is one the dashboard's own
+       answer already carries, worked out by the server and only printed here, so the wall and the dashboard can never say two different
+       things. Nothing is read for them: the answer is the one this slide already stood on.
+       THE OWNER HAS CHANGED THREE OF THE TWELVE, AND LEFT US THE CHOICE EACH TIME (handbook Part 164, addenda 1 and 2):
+         "replace initial arreas widget with anything else thats crucial in the presentation hope pmo day slide summary" (25 Nov): Initial
+         arrears went; the week's recovery in shillings took its place (the Weekly recovery trend's own TOTAL, d.recTrendTotal, added up from
+         its days the way the dashboard does when the server did not send it).
+         "combine % of sales, and of recovered at their amounts and replace with any other meaningful widgets" (25 Nov): the strip's Sales %
+         is printed UNDER Sales this week and Recovery % UNDER Recovered this week (the week's, which is the percentage's own week), each as a
+         line `s` beneath the figure; the two tiles that were left free became the week's Expected Defaulters recovery (d.edrTrendTotal: the
+         dashboard's own card, a dash while the database has not answered it, and on no other slide of the deck) and the strip's Performance
+         average (d.perf.avgPct: sales, collection and recovery together).
+       A percentage the week cannot measure is a dash, never a nought. The owner can name other widgets and each is one line here. The grid
+       is `grid:'4x3'` (a class and a fit in presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
     var pf = d.perf || {};
     var weekRecovered = d.recTrendTotal ? d.recTrendTotal.recovered : (d.recTrend || []).reduce(function(s, x){ return s + (Number(x && x.recovered) || 0); }, 0);
+    var DASH_ = '—';
+    /* a percentage written under its amount ("84% of target"); a dash alone when there is nothing to measure (fmt is pct or pct1, which say so) */
+    var under = function(fmt, p, words){ var t = fmt(p); return t === DASH_ ? t : t + ' ' + words; };
+    /* the week's Expected Defaulters recovery: the dashboard's own total, and only when the database answered it (edrNote says it did not)
+       and at least one day of the week has its two files (a week with none reads "not uploaded yet" on the dashboard, never a nought) */
+    var edr = d.edrTrendTotal, edrOn = !!edr && !d.edrNote && (d.edrTrend || []).some(function(x){ return !!(x && x.uploaded); });
     slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
       { l:'Recovered', v:'TZS '+money(c.recovered) },
       { l:'Defaulters', v:money(c.defaulters) },
-      { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
+      { l:'Sales this week', v:'TZS '+money(c.salesWeek), s:under(pct, pf.salesPct, 'of target') },
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
       { l:'Abnormal', v:money(c.abnormal) },
-      { l:'Recovered this week', v:'TZS '+money(weekRecovered) },
+      { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:under(pct, pf.recPct, 'of uncollected') },
       { l:'Cleared today', v:money(c.cleared) },
-      { l:'Sales % (week)', v:pct(pf.salesPct) },
       { l:'Early Collection % (week)', v:pct(pf.ecolPct) },
       { l:'Collection % (week)', v:pct(pf.colPct) },
-      { l:'Recovery % (week)', v:pct(pf.recPct) }]});
+      { l:'Exp.Def recovery (week)', v:edrOn ? 'TZS '+money(edr.recovered) : DASH_, s:edrOn ? under(pct1, edr.pct, 'of their arrears') : '' },
+      { l:'Performance (average)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
     /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
        that sells well and collects badly is not a good team, and neither is the reverse.
 
@@ -593,8 +598,12 @@ function presStop(){
 function presDraw(){
   var s = S.slides[S.presI], body;
   if (s.kind === 'kpi'){
+    /* `s` is a line UNDER the figure, inside it (so the fit that sizes the figure sizes the line with it): the percentage that belongs to an amount.
+       When any tile of the slide has one, EVERY tile reserves the line (an empty one, invisible to a reader), so that the labels and the figures of
+       a row stand level whether a tile has a line under it or not. */
+    var anySub = s.items.some(function(it){ return !!it.s; });
     body = '<div class="pkpis' + (s.grid === '4x3' ? ' p12' : '') + '">' + s.items.map(function(it){
-      return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
+      return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+(it.s ? '<span class="ps">'+esc(it.s)+'</span>' : anySub ? '<span class="ps" aria-hidden="true">&nbsp;</span>' : '')+'</div></div>'; }).join('') + '</div>';
   } else if (s.kind === 'progress'){
     body = '<div class="pprog">' + s.units.map(presProgGroup_).join('') + '</div>';
   } else if (s.kind === 'note'){
