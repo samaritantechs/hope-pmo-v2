@@ -421,8 +421,8 @@ if (lc) {
     check('9 at ' + w + ' px wide nothing on the slide leaves its own column and neighbouring texts stay 6 px apart or more', !!L && L.cols === 10 && L.spill === 0 && L.minGap >= 6, JSON.stringify(L));
     if (w === 1500) check('9 the silent phone\'s name and its mark wrap inside their own cell (two lines at most), the mark kept whole on its line', !!L && L.lines <= 2 && L.markWhole === true, JSON.stringify(L));
   }
-  // every other table slide is laid out as before: none of them carries the class
-  const other = await page.evaluate(() => S.slides.filter(s => s.tcls).map(s => s.id));
+  // every other table slide is laid out as before: none of them carries THIS class (the two collection slides ask for column widths of their own, under classes of their own: Part 164, addendum 4)
+  const other = await page.evaluate(() => S.slides.filter(s => s.tcls === 'pname2').map(s => s.id));
   check('9 no other slide asks for the wider name column', JSON.stringify(other) === JSON.stringify(['legalcalls']), JSON.stringify(other));
   await page.setViewportSize({ width: 1500, height: 950 });
   const rows = lc.cells.filter(r => !/JUMLA/.test(r.join(' ')));

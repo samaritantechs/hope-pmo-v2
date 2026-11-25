@@ -17,7 +17,7 @@ import { cachedAnswer, noteAnswersChanged } from './answer-cache.js';
 import { recoveryStanding, standingWithAdj, standingSum, standingKey, recoveryRuleNote, defaulterDeckDays } from './snapshot-totals.js';
 import { pmoBoard, pmoPublicRow, isPmoRole, PMO_BANDS, PMO_BELOW, PMO_ROLE_KEY, PMO_ROLE_DEFAULT,
   PMO_BONUS_KEY, PMO_BONUS_ON_KEY, bonusOn, hasCollectionWord, pmoBand,
-  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf,
+  PMO_BAND_TZS_KEY, parsePmoBandTzs, pmoLadder, pmoBelowOf, collectionOf, countCollectionPct,
   EARLY_BANDS, EARLY_BELOW, EARLY_BAND_TZS_KEY, EARLY_MODE_KEY, EARLY_BONUS_KEY, EARLY_BONUS_ON_KEY,
   parseEarlyBandTzs, earlyLadder, earlyBelowOf, earlyModeOf } from './pmo.js';
 import { RECOVERY_BANDS, RECOVERY_BELOW, recoveryWeek, recPct, recoveryLadder, recoveryBelowOf,
@@ -15420,6 +15420,9 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
       /* WHO IS STILL TO PAY -- unpaid and underpaid, as a count: "put nos of remaining ... so
          that we always know progress of each like 300 where ... paid+overpaid 600 of 900". */
       remaining: Math.max(0, b.customers - b.paidOver),
+      /* AND THE SHARE WHO HAVE PAID, CC% -- "we can add CC% (Count collection) to see percentage of paid customers (paid among total)" (the
+         owner, 25 Nov 2026, handbook Part 164, addendum 4): the same definition today's PMO slide uses (countCollectionPct, pmo.js). */
+      ccPct: countCollectionPct(b.paidOver, b.customers),
       count1: b.count1Known ? b.count1 : null, count1Missing: Object.values(b.count1Missing).sort(),
       expected: b.expected, collected: b.collected, pct: pctOf(b.collected, b.expected) }))
       .sort((a, b) => (b.pct == null ? -1 : b.pct) - (a.pct == null ? -1 : a.pct))

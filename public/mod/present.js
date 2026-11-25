@@ -269,7 +269,7 @@ function presSlides(){
       var w = earlyW[x.officer] || {};
       // The week's two amounts ride along so the JUMLA cell is their ratio (PCT_FROM.wPct).
       return { ...x, wUncollected: w.uncollected, wPct: w.pct, wCollected: w.collected, wExpected: w.expected }; });
-    slides.push({ id:'early', kind:'table',
+    slides.push({ id:'early', kind:'table', tcls:'pcolearly',
       /* "today means of tomorrow": the first pair is the list for the day AHEAD (its date in
          the title), the second the week's initial sheets -- each day's latest upload, the
          ratio of their sums. */
@@ -285,8 +285,15 @@ function presSlides(){
          count, so the JUMLA row adds it like the other two. Null until db/RUN-ME-039 is run
          and the sheet uploaded again, and the caption below says so rather than the column
          reading nought. */
+      /* AND SHORT NAMES, AND THE SHARE WHO HAVE PAID -- "having the columns short in both early and today col slides, we can add CC% (Count
+         collection) to see percentage of paid customers (paid among total)" (the owner, 25 Nov 2026, handbook Part 164, addendum 4): this
+         list is KESHO's, so its two counts read C1 KESHO and TC KESHO beside today's slide's C1 LEO and TC LEO; and CC% KESHO is the customers
+         who have PAID (paid + overpaid) among the total count, worked out by the server (countCollectionPct) and, in the JUMLA row, from the
+         totals' own two parts (`from`), never as an average of the officers' percentages. No colour target (nobody has set one for a
+         headcount ratio): like every percentage on the wall it goes red only under the JUMLA row's own figure. */
       cols:[col('officer','Officer'), col('teams','Teams','num'),
-        col('remaining','Wamebaki / Left','num'), col('count1','Count 1 (NC 1)','num'), col('customers','Wateja / Customers','num'),
+        col('remaining','Wamebaki / Left','num'), col('count1','C1 KESHO','num'), col('customers','TC KESHO','num'),
+        {key:'ccPct', label:'CC% KESHO', kind:'pct', from:['paidOver','customers']},
         col('uncollected','Uncollected (kesho)','money'), {key:'pct', label:'Coll % (kesho)', kind:'pct', target:'ecol'},
         col('wUncollected','Uncollected (week)','money'), {key:'wPct', label:'Coll % (week)', kind:'pct', target:'ecol'}],
       /* WHICH SHEET, BY NAME. This slide reads the INITIAL (kesho / next list) sheet, not the
@@ -298,7 +305,10 @@ function presSlides(){
         + (function(){
             var n = count1Note_(!!(earlyRows.length && earlyRows.every(function(x){ return x.count1 == null; })),
               b.earlyCount1Missing, 'Expected — Initial / kesho (next list' + (b.earlyDate ? ', ' + b.earlyDate : '') + ')');
-            return n ? '<div>' + n + '</div>' : ''; })() });
+            return n ? '<div>' + n + '</div>' : ''; })()
+        // What the short names are, said on the slide
+        + '<div>C1 KESHO = wateja wa N.C 1 wanaodaiwa kwenye orodha ya kesho · TC KESHO = jumla ya wateja wa orodha hiyo · CC% KESHO = wateja waliolipa (wamelipa + wamezidisha) kati ya jumla'
+        + ' / C1 KESHO = N.C 1 customers still owing on the next list · TC KESHO = all customers on it (total count) · CC% KESHO = customers who have paid (paid + overpaid) among the total</div>' });
     /* TWO DIFFERENT ROOMS, and this deck used to show one under the other's name.
 
        "Call agents" means the CUSTOMER CARE agents: the people named as CREATED BY on the
@@ -325,19 +335,32 @@ function presSlides(){
          "todays collection is so essential so i always need to see the alert from there ...
           add a caption below of unassigned teams, ill need to always notice them from there"
        The early and recovery lines sit under their own slides now. */
-    slides.push({ id:'pmo', kind:'table', title:'PMO Collection — kila siku / each day, then the week',
+    slides.push({ id:'pmo', kind:'table', tcls:'pcolpmo', title:'PMO Collection — kila siku / each day, then the week',
       caption: uaCap('Col', ua.col)
         // Count 1 here is today's DAY sheet; its gaps, by team, said the same way as the early slide's.
         + (function(){
             var n = count1Note_(!!((b.pmo || []).length && (b.pmo || []).every(function(x){ return x.count1 == null; })),
               b.pmoCount1Missing, 'Expected ya leo / today\'s day sheet' + (b.today ? ' (' + b.today + ')' : ''));
-            return n ? '<div>' + n + '</div>' : ''; })(),
+            return n ? '<div>' + n + '</div>' : ''; })()
+        // What the two short names are, said on the slide (the owner's own words for them: C1 LEO, TC LEO)
+        + '<div>C1 LEO = wateja wa N.C 1 wanaodaiwa leo · TC LEO = jumla ya wateja wa leo (total count) · CC% LEO = wateja waliolipa (wamelipa + wamezidisha) kati ya jumla'
+        + ' / C1 LEO = today\'s N.C 1 customers still owing · TC LEO = all of today\'s customers (total count) · CC% LEO = customers who have paid (paid + overpaid) among the total</div>',
       rows:(b.pmo||[]).slice(0,12),
       /* COUNT 1 BETWEEN TEAMS AND J3 -- "add count 1 column too", then "sum of nc 1 of
          underpaid and unpaid per pmo": today's sheet, the officer's teams, the customers whose
          N.C column is 1 and who are UNDERPAID or UNPAID, added up. Null until db/RUN-ME-039 is
-         run and the sheet uploaded again; the early slide's caption says so. */
-      cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','Count 1 (NC 1 leo)','num'),
+         run and the sheet uploaded again; the early slide's caption says so.
+         AND THE TOTAL COUNT RIGHT AFTER IT, BOTH WITH SHORT NAMES -- "Add Tt Count (total count) column after count 1 column just rename the
+         columns into C1 LEO and TC LEO, for space purposes so that i see right away its count 1s among which total in the expected collection of
+         today officers today as that of early col does" (the owner, 25 Nov 2026, handbook Part 164, addendum 4). C1 LEO is the Count 1 this slide
+         always had (it read "Count 1 (NC 1 leo)"); TC LEO is every customer on today's sheet over the officer's teams (the early slide's
+         "Wateja / Customers", from the same board row: `customers`). Two counts, so the JUMLA row adds each up. The caption says what the
+         two short names are. THEN CC% LEO, the same hour: "having the columns short in both early and today col slides, we can add CC% (Count
+         collection) to see percentage of paid customers (paid among total)": the customers who have PAID (paid + overpaid) among TC LEO, from
+         the board row's own `ccPct` (countCollectionPct, pmo.js: the definition the early slide uses too); in the JUMLA row the ratio of the
+         totals' two parts (`from`), never an average of the officers' percentages. */
+      cols:[col('officer','PMO'), col('teams','Teams','num'), col('count1','C1 LEO','num'), col('customers','TC LEO','num'),
+        {key:'ccPct', label:'CC% LEO', kind:'pct', from:['paidOver','customers']},
         {key:'pctJ3', label:'J3', kind:'pct', target:'col'}, {key:'pctJ4', label:'J4', kind:'pct', target:'col'},
         {key:'pctJ5', label:'J5', kind:'pct', target:'col'}, {key:'pctAL', label:'AL', kind:'pct', target:'col'},
         {key:'pctIJ', label:'IJ', kind:'pct', target:'col'},

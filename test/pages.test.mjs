@@ -550,8 +550,19 @@ test('each unit slide carries its own unassigned-teams line, drawn under its tot
   assert.ok(!/ua\.early|ua\.rec/.test(pmo) && !/ua\.col|ua\.rec/.test(early) && !/ua\.early|ua\.col/.test(rec), 'no slide carries another unit\'s line');
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table at
      presentation, add count 1 column too (always the count 1 left of the current day)" */
-  assert.ok(/col\('teams','Teams','num'\), col\('count1','Count 1 \(NC 1 leo\)','num'\),\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmo),
-    'Count 1 (NC 1 leo) sits between Teams and J3 on the PMO collection slide');
+  /* "Add Tt Count (total count) column after count 1 column just rename the columns into C1 LEO and TC LEO, for space purposes" (25 Nov 2026,
+     Part 164, addendum 4): the Count 1 is C1 LEO and the total count TC LEO, in that order, still between Teams and J3. */
+  // (the code only: a comment that tells the story names the old header, and a pin that a comment can satisfy or trip is no pin)
+  const pmoCode = pmo.replace(/\/\*[\s\S]*?\*\//g, ''), earlyCode = early.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(/col\('teams','Teams','num'\), col\('count1','C1 LEO','num'\), col\('customers','TC LEO','num'\),\s*\n?\s*\{key:'ccPct', label:'CC% LEO', kind:'pct', from:\['paidOver','customers'\]\},\s*\n?\s*\{key:'pctJ3', label:'J3'/.test(pmoCode),
+    'C1 LEO, TC LEO and CC% LEO sit between Teams and J3 on the PMO collection slide');
+  assert.ok(!/Count 1 \(NC 1 leo\)/.test(pmoCode), 'the long name is gone from the slide');
+  // and the caption says what the three short names are
+  assert.ok(/C1 LEO = wateja wa N\.C 1 wanaodaiwa leo · TC LEO = jumla ya wateja wa leo \(total count\) · CC% LEO = wateja waliolipa \(wamelipa \+ wamezidisha\) kati ya jumla/.test(pmoCode)
+    && /C1 LEO = today\\'s N\.C 1 customers still owing · TC LEO = all of today\\'s customers \(total count\) · CC% LEO = customers who have paid \(paid \+ overpaid\) among the total/.test(pmoCode),
+    'the caption says what C1 LEO, TC LEO and CC% LEO are');
+  // CC% is a headcount ratio with no colour target (nobody has set one): it is never banded green or red
+  assert.ok(!/key:'ccPct'[^}]*target:/.test(pmoCode) && !/key:'ccPct'[^}]*target:/.test(earlyCode), 'CC% carries no colour target');
   assert.ok(/b\.unassignedTeams/.test(view), 'fed by officerBoards');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/<\/tbody><\/table><\/div>';\s*\n\s*\/\/[^\n]*\n\s*if \(s\.caption\) body \+= '<div class="pcap">'/.test(draw),
@@ -595,8 +606,16 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   const early = view.slice(view.indexOf("id:'early'"), view.indexOf("id:'pmo'"));
   /* And Count 1 between the two -- "Btn remaining and customers columns in early collection pmo
      slide add Count1 (to show the remaining count DS 1 among the all left ones)". */
-  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','Count 1 \(NC 1\)','num'\), col\('customers','Wateja \/ Customers','num'\),\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(early),
-    'remaining, Count 1 and customers sit between Teams and Uncollected on the early slide');
+  /* "having the columns short in both early and today col slides, we can add CC% (Count collection) to see percentage of paid customers (paid among
+     total)" (25 Nov 2026, Part 164, addendum 4): the early slide's two counts are C1 KESHO and TC KESHO now (its list is tomorrow's), and CC% KESHO
+     follows them, worked out in the total row from its own two parts. (Code only: the comment above them tells the old names.) */
+  const earlyCode = early.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(/col\('teams','Teams','num'\),\s*\n?\s*col\('remaining','Wamebaki \/ Left','num'\), col\('count1','C1 KESHO','num'\), col\('customers','TC KESHO','num'\),\s*\n?\s*\{key:'ccPct', label:'CC% KESHO', kind:'pct', from:\['paidOver','customers'\]\},\s*\n?\s*col\('uncollected','Uncollected \(kesho\)','money'\)/.test(earlyCode),
+    'remaining, C1 KESHO, TC KESHO and CC% KESHO sit between Teams and Uncollected on the early slide');
+  assert.ok(!/Count 1 \(NC 1\)|Wateja \/ Customers/.test(earlyCode), 'the long names are gone from the early slide');
+  assert.ok(/C1 KESHO = wateja wa N\.C 1 wanaodaiwa kwenye orodha ya kesho · TC KESHO = jumla ya wateja wa orodha hiyo · CC% KESHO = wateja waliolipa \(wamelipa \+ wamezidisha\) kati ya jumla/.test(earlyCode)
+    && /C1 KESHO = N\.C 1 customers still owing on the next list · TC KESHO = all customers on it \(total count\) · CC% KESHO = customers who have paid \(paid \+ overpaid\) among the total/.test(earlyCode),
+    'the early slide\'s caption says what its three short names are');
   assert.ok(/x\.count1 == null/.test(early) && /RUN-ME-039/.test(early),
     'a slide with no Count 1 figure says which file to run, rather than printing nought');
   const rec = view.slice(view.indexOf("id:'recovery'"), view.indexOf("id:'early'"));

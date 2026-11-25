@@ -195,20 +195,33 @@ export function isPmoRole(role, want) {
   return norm(role) === norm(want || PMO_ROLE_DEFAULT) || hasCollectionWord(role);
 }
 
+/** COUNT COLLECTION, "CC%" -- "we can add CC% (Count collection) to see percentage of paid customers (paid among total)" (the owner, 25 Nov 2026,
+    handbook Part 164, addendum 4). The share of the customers on a list who have PAID -- PAID or OVERPAID, as paid_n and over_n count them (an
+    UNDERPAID customer has not paid) -- among every customer on it: a headcount ratio, never the money (that is Coll %). ONE definition, for the
+    early collection slide (earlyBoard, portal-core.js) and today's PMO collection slide (collectionOf, below). Null, not a nought, when nobody is
+    on the list: "no percentage" and "nought per cent" are very different things to put in front of somebody. */
+export function countCollectionPct(paidOver, customers) {
+  const n = Number(customers) || 0;
+  return n > 0 ? Math.round(((Number(paidOver) || 0) / n) * 1000) / 10 : null;
+}
+
 /** One officer's collection over one set of already-resolved TEAM-DAY TOTALS -- the rows
     api/_lib/snapshot-totals.js produces, one per team per day rather than one per customer.
     Uncollected was clamped per customer before it was ever summed, so the total still cannot go
     negative however the day went — the same rule the dashboard's Uncollected KPI uses, applied
     where the summing happens. */
 export function collectionOf(rows) {
-  let expected = 0, collected = 0, uncollected = 0, customers = 0;
+  let expected = 0, collected = 0, uncollected = 0, customers = 0, paidOver = 0;
   for (const r of rows) {
     expected += num(r.expected_amt);
     collected += num(r.collected_amt);
     uncollected += num(r.uncollected_amt);
     customers += num(r.customers);
+    paidOver += num(r.paid_n) + num(r.over_n);
   }
   return { expected, collected, uncollected, customers,
+    // Who has paid, and their share of everyone on the list (CC%): see countCollectionPct.
+    paidOver, ccPct: countCollectionPct(paidOver, customers),
     // Null, not zero, when nothing was expected. "No percentage" and "nought per cent" are
     // very different things to put in front of somebody whose pay depends on it.
     pct: expected > 0 ? Math.round((collected / expected) * 1000) / 10 : null };
@@ -280,6 +293,7 @@ export function pmoBoard(roster, byDay, today, days, bands, below) {
       teams: (p.teams || []).length,
       teamList: (p.teams || []).slice().sort(),
       customers: day.customers,
+      paidOver: day.paidOver, ccPct: day.ccPct,
       count1: count1Known ? count1 : null, count1Missing: [...count1Missing].sort(),
       // Today
       expected: day.expected, collected: day.collected, uncollected: day.uncollected, pct: day.pct,
@@ -324,6 +338,17 @@ export function pmoPublicRow(r, i) {
     // Today's N.C 1 customers still owing (UNDERPAID or UNPAID), over the officer's teams: a
     // headcount, not money.
     count1: r.count1 == null ? null : r.count1,
+    /* THE TOTAL COUNT BESIDE IT -- "Add Tt Count (total count) column after count 1 column ... so that i see right away its count 1s among
+       which total in the expected collection of today officers today as that of early col does" (the owner, 25 Nov 2026, handbook Part 164,
+       addendum 4). Every customer on today's sheet over the officer's teams: the list the Count 1 is a part of, and the number the early
+       collection slide already prints as "Wateja / Customers". A headcount, not money, like the Count 1 beside it. Never null: a day with no
+       sheet has nobody on it, and the slide's total row adds it up like every other count. */
+    customers: Number(r.customers) || 0,
+    /* AND WHO OF THEM HAS PAID, with the share ("we can add CC% (Count collection) to see percentage of paid customers (paid among total)", the
+       owner, 25 Nov 2026, addendum 4): PAID or OVERPAID customers, and their percentage of the total count (countCollectionPct). Headcounts, not
+       money -- the early slide's rows have always carried the same two -- and the count is the part the slide's total row works the percentage out
+       from (the ratio of the totals, never an average of the officers' percentages). */
+    paidOver: Number(r.paidOver) || 0, ccPct: r.ccPct == null ? null : r.ccPct,
     uncollected: r.uncollected, pct: r.pct,
     /* THE FIVE DAYS, because the daily percentage is what the pay is worked out from.
        Pay follows EACH DAY'S OWN band, added up -- a good Ijumaa is worth something after a
