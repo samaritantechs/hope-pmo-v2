@@ -108,14 +108,20 @@ function dedRateNote_(d){
   if (st.length === 1) return 'TZS ' + money(st[0].tzs) + ' kwa kila kesi / per unique case';
   return st.map(function(x){ return 'TZS ' + money(x.tzs) + ' kuanzia / from ' + x.from; }).join(' · ') + ' kwa kila kesi / per unique case';
 }
+/* THE EARNERS' COLUMNS, ONE LIST for the table under the cases and for the report's section 2 (they are the same rows). Between the reporter
+   and the cases sits ROLE.BRANCH ("In pmo deductions at Wapataji wa malipo / Earners ... add branch and role column between aliyereport and
+   kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c", the owner, 25 Nov 2026; handbook Part 154): the server works it out (`who`);
+   nothing here decides it. */
+function dedEarnCols_(){
+  return [col('reporter','Aliyeripoti / Reporter'), col('who','Cheo.Tawi / Role.Branch'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')];
+}
 /* THE EARNERS' TABLE: who reported the cases of the window, how many unique cases, and what that earned at the amount in force on the day
    each case was reported. The same rows as the report's section 2, with their own Excel, JPG and CSV. */
 function dedEarnBoard_(d, reps){
   if (d.on === false) return '';
   if (!reps.length) return '<div class="note">Hakuna kesi katika kipindi hiki, kwa hiyo hakuna malipo ya walioripoti. / No cases in this window, so no reporter earnings.</div>';
   return board('dedEarn', 'Wapataji wa malipo / Earners — malipo ya walioripoti / reporter earnings · ' + d.from + ' → ' + d.to, dedRateNote_(d), reps,
-    [col('reporter','Aliyeripoti / Reporter'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')],
-    sumRow(reps, ['cases','earnings']));
+    dedEarnCols_(), sumRow(reps, ['cases','earnings']));
 }
 /* THE COMMISSION SETTINGS, FOR THE ADMIN ALONE: the earners' amount per case, from a date. A case earns the amount in force on the day it
    was reported, so raising it to boost follow-up never rewrites what earlier cases earned; a PAST date does, and the form says so. The base
@@ -257,8 +263,7 @@ function dedReport(){
      col('toPay','To pay','money'), col('deducted','Deducted','money'), col('remaining','Remaining','money')],
     sumRow(d.summary || [], ['cases','entries','amountTaken','deduction','toPay','deducted','remaining']));
   $('#dedRep2').innerHTML = board('dedRep', '2. Malipo ya walioripoti / Reporter earnings', dedRateNote_(d), d.reporters || [],
-    [col('reporter','Aliyeripoti / Reporter'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')],
-    sumRow(d.reporters || [], ['cases','earnings']));
+    dedEarnCols_(), sumRow(d.reporters || [], ['cases','earnings']));
   $('#dedRep3').innerHTML = (d.prevBalances && d.prevBalances.length)
     ? board('dedPrev', '3. Salio la kabla ya ' + esc(d.from) + ' / Balances outstanding before ' + esc(d.from), 'kwa staff / per staff, remaining > 0', d.prevBalances,
         [col('staff','Staff'), col('remaining','Salio / Remaining','money')], sumRow(d.prevBalances, ['remaining']))

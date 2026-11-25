@@ -3461,7 +3461,9 @@ test('a PMO deduction case is one submission with a row per accused staff, scope
   assert.deepEqual(g.rows.map(r => r.team), ['KONGOWE', 'KONGOWE'], 'MBAGALA\'s case is not theirs');
   assert.equal(g.canHr, false, 'a GMO does not record deductions');
   assert.deepEqual(g.summary.map(s => [s.team, s.cases, s.entries, s.toPay]), [['KONGOWE', 1, 2, 100000]]);
-  assert.deepEqual(g.reporters, [{ reporter: 'JUMA G', cases: 1, earnings: 5000 }], 'TZS 5,000 per unique case');
+  // (Part 154: each reporter also carries ROLE.BRANCH. No access code here carries JUMA G's name, so the role is the one the case was filed under
+  // and the branch is a dash: nothing is guessed.)
+  assert.deepEqual(g.reporters, [{ reporter: 'JUMA G', role: 'GMO', branch: '', who: 'GMO.—', cases: 1, earnings: 5000 }], 'TZS 5,000 per unique case');
   assert.deepEqual(g.prevBalances, [{ staff: 'STAFF A', remaining: 20000 }], 'outstanding from before the window');
   assert.deepEqual(g.staffList, ['JUMA G', 'PILI P']);
   // The admin sees every team, and may record HR's deduction.
@@ -3632,6 +3634,69 @@ test('the earners\' amount costs the upload and the call app nothing: neither fi
   // opening the tab as the admin makes no query the GMO's does not.
   const count = async user => { let n = 0; const db = fakeDb(dedBook()); const f = db.from.bind(db); db.from = t => { n++; return f(t); }; await portalApi(db, user, 'deductions', {}, NOW); return n; };
   assert.equal(await count(DED_ADM), await count(DED_GMO), 'the admin\'s settings card costs the tab no extra read');
+});
+
+/* THE EARNERS' ROLE.BRANCH (handbook Part 154) -- "add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ
+   GMO.Dar Center e t c" (the owner, 25 Nov 2026). The role is the one on the reporter's access code; the branch is the zone by the portal's one
+   zone rule (zone.js), HQ for a code over every team that no team names; a name no code carries keeps the case's own role and a dash. */
+test('the earners\' ROLE.BRANCH: the access code\'s role and the portal\'s own zone rule, HQ for the head office, a team code by its team, and a dash where nothing is known (Part 154)', async () => {
+  const t = tables();
+  t.teams = [
+    { team: 'KONGOWE', zone: 'DAR CENTER', gmo: 'GMO ONE', manager: 'MANAGER ONE', credit: null, opm: null, recovery: null, expected: null, bike: null },
+    { team: 'ILEMELA', zone: 'MWANZA', gmo: 'GMO TWO', manager: null, credit: null, opm: null, recovery: null, expected: null, bike: null },
+    { team: 'BUNDA', zone: 'MARA', gmo: 'GMO TWO', manager: null, credit: null, opm: null, recovery: null, expected: null, bike: null },
+    { team: 'SHINYANGA', zone: 'LAKE', gmo: 'GMO TWO', manager: null, credit: null, opm: null, recovery: null, expected: null, bike: null },
+    { team: 'NOZONE', zone: '', gmo: null, manager: 'NO ZONE MGR', credit: null, opm: null, recovery: null, expected: null, bike: null },
+  ];
+  t.access_codes = [
+    { code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['deduct'] },
+    { code: 'P1', name: 'PMO ONE', role: 'PMO', teams: null, tabs: [] },                       // every team, named on none: the head office
+    { code: 'G1', name: 'GMO ONE', role: 'GMO', teams: null, tabs: [] },                        // every team, but named as GMO on one zone's team
+    { code: 'M1', name: 'MANAGER ONE', role: 'MANAGER', teams: ['KONGOWE'], tabs: [] },
+    { code: 'M2', name: 'NO ZONE MGR', role: 'MANAGER', teams: ['NOZONE'], tabs: [] },        // teams known, none carries a zone
+    { code: 'C1', name: 'CREDIT ONE', role: 'CREDIT ANALYST', teams: ['ILEMELA', 'BUNDA', 'SHINYANGA'], tabs: [] },   // three zones
+    { code: 'D1', name: 'TWO HATS', role: 'MANAGER', teams: ['KONGOWE'], tabs: [] },           // one name, two codes with different roles
+    { code: 'D2', name: 'TWO HATS', role: 'LEGAL', teams: ['KONGOWE'], tabs: [] },
+  ];
+  const C = (id, reporter, dept, at = '2026-07-10T08:00:00Z') => ({ id, case_id: id, submitted_at: at, dept, reporter, team: 'KONGOWE', customer: 'C ' + id, ref: id,
+    staff: 'S', amount_taken: 1, deduction: 1, to_pay: 1 });
+  t.pmo_deductions = [
+    C('k1', 'PMO ONE', 'pmo collection'), C('k2', 'GMO ONE', 'GMO'), C('k3', 'MANAGER ONE', 'Manager'), C('k4', 'NO ZONE MGR', 'MANAGER'),
+    C('k5', 'CREDIT ONE', 'CREDIT ANALYST'),
+    C('k6', 'KONGOWE · F.O', 'FIELD OFFICER'),                            // a team's own code: signed in as the team
+    C('k7', 'OLD REPORTER', 'recovery'),                                 // a name no code carries (imported, or somebody who left)
+    C('k8', 'TWO HATS', 'LEGAL'), C('k9', 'GONE', ''), C('k10', 'HR PERSON', 'hr   officer'),
+    // the same unknown name twice: the role of the LATEST case wins
+    C('k11', 'DRIFTER', 'old role', '2026-07-02T08:00:00Z'), C('k12', 'DRIFTER', 'new role', '2026-07-20T08:00:00Z'),
+  ];
+  const db = fakeDb(t);
+  const a = await portalApi(db, { ...ADMIN, tabs: ['upload', 'settings', 'deduct'] }, 'deductions', {}, NOW);
+  const by = Object.fromEntries(a.reporters.map(r => [r.reporter, r]));
+  assert.equal(by['PMO ONE'].who, 'PMO.HQ', 'a code over every team that no team names: HQ; PMO stays in capitals');
+  assert.equal(by['GMO ONE'].who, 'GMO.Dar Center', 'the GMO over every team is in the zone of the team that names them, not in HQ');
+  assert.equal(by['MANAGER ONE'].who, 'Manager.Dar Center', 'the manager\'s own team\'s zone');
+  assert.equal(by['NO ZONE MGR'].who, 'Manager.—', 'teams known and none carries a zone: a dash, never a guessed branch');
+  assert.equal(by['CREDIT ONE'].who, 'Credit Analyst.Lake, Mara +1', 'several zones: listed in order, then counted (ZONE_SHOWN)');
+  assert.equal(by['KONGOWE · F.O'].who, 'Field Officer.Dar Center', 'a field officer\'s team code: the team\'s zone');
+  assert.equal(by['OLD REPORTER'].who, 'Recovery.—', 'no code carries the name: the role the case was filed under, and no branch');
+  assert.equal(by['TWO HATS'].role, 'Legal', 'two codes of one name that disagree: the role the case was filed under decides');
+  assert.equal(by['GONE'].who, '—', 'nothing known at all');
+  assert.equal(by['HR PERSON'].who, 'HR Officer.—', 'Title Case, runs of blanks as one, and a short form stays in capitals only when it is a known one (HR, not "Hr")');
+  assert.equal(by['DRIFTER'].role, 'New Role', 'the role of the reporter\'s latest case in the window');
+  assert.deepEqual(Object.keys(by['PMO ONE']), ['reporter', 'role', 'branch', 'who', 'cases', 'earnings'], 'the answer\'s own order');
+  // A GMO sees only their own teams' cases; the column is the same for the reporters they do see.
+  const g = await portalApi(db, { code: 'G1', name: 'GMO ONE', role: 'GMO', teams: ['KONGOWE'], tabs: ['deduct'] }, 'deductions', {}, NOW);
+  assert.equal(Object.fromEntries(g.reporters.map(r => [r.reporter, r.who]))['PMO ONE'], 'PMO.HQ');
+  // THE COST: the access codes ride the read readTeamsAll already makes, so the tab makes no query it did not make before (the earners'
+  // column is in the answer, not in the trips).
+  const count = async () => { let n = 0; const d = fakeDb(t); const f = d.from.bind(d); d.from = tbl => { n++; return f(tbl); }; await portalApi(d, ADMIN, 'deductions', {}, NOW); return n; };
+  const withCodes = await count();
+  const codes = t.access_codes; t.access_codes = [{ code: 'A', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['deduct'] }];
+  assert.equal(withCodes, await count(), 'the number of reads does not depend on how many codes there are, and the codes are read once');
+  t.access_codes = codes;
+  let codeReads = 0; const d2 = fakeDb(t); const f2 = d2.from.bind(d2); d2.from = tbl => { if (tbl === 'access_codes') codeReads++; return f2(tbl); };
+  await portalApi(d2, ADMIN, 'deductions', {}, NOW);
+  assert.equal(codeReads, 1, 'the access codes are read ONCE for the tab (the memoised read the teams table already lays over itself)');
 });
 
 test('the earners\' amount is written from a FRESH read: another instance\'s change is kept, not written over from a stale memo', async () => {

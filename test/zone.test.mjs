@@ -291,7 +291,8 @@ test('the name line follows it: the team\'s officers, its manager and its GMO se
 
 test('the advance desk reads the teams through the same rule, before it filters by team, and it costs no read', async () => {
   const core = read('api/_lib/portal-core.js');
-  assert.ok(/import \{ zonesOfTeams, teamsZoned \} from '\.\/zone\.js';/.test(core));
+  // (Part 154 imports zoneAnswer and zoneLabel beside them, for the earners' ROLE.BRANCH column: the same rule, never a second one.)
+  assert.ok(/import \{ zonesOfTeams, teamsZoned(, zoneAnswer, zoneLabel)? \} from '\.\/zone\.js';/.test(core));
   assert.ok(/function advZones_\(user, teamRows\) \{[\s\S]{0,560}const mine = teamsZoned\(teamRows\)\.filter\(t => teamAllowed\(user, t\.team\)\);\s*\n\s*const zones = zonesOfTeams\(mine\);/.test(core),
     'advZones_ no longer reads the teams through teamsZoned BEFORE filtering by team: a team with an empty ZONE cell would hold no zone on the '
     + 'advance desk while the name line shows its GMO\'s, and its officers could not find their own names');

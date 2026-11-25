@@ -15,7 +15,11 @@
      4. an amount from a date changes what cases reported on and after that date earn and leaves earlier ones where they were; a PAST date
         rewrites from then (the card says so); taking an entry out puts the cases back; with none, the base applies to every case;
      5. a view-only admin sees the card and is refused on Save, said as NOT saved; a hand-damaged setting never stops the tab opening;
-     6. the earners' board survives a table search, and no page error in any world.
+     6. the earners' board survives a table search, and no page error in any world;
+     7. ROLE.BRANCH ("add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza ... GMO.Dar Center", the owner, 25 Nov
+        2026; handbook Part 154): the column sits between the reporter and the cases on the table under the list AND in the report's section 2,
+        reads PMO.HQ for the head office and Manager.<zone> for a manager, is in the Excel, and reads Recovery.— (the role the case was
+        filed under, a dash for the branch) where no access code carries the reporter's name.
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -47,9 +51,11 @@ const TODAY = eat(Date.now()), W1 = add(TODAY, -6), D1 = add(TODAY, -5), D2 = ad
    amount is the Settings row the system always had: 10,000 per case. */
 const CASE = (id, reporter, day, ref) => ({ id: 'r' + id, case_id: 'k' + id, submitted_at: day + 'T06:00:00Z', dept: 'RECOVERY', reporter, team: 'KONGOWE', customer: 'MTEJA ' + id,
   ref, staff: 'STAFF ' + id, amount_taken: 10000, received_date: day, discovery_date: day, decision: 'Akatwe', deduction: 10000, to_pay: 10000, hr_notes: null, deducted: 0, remaining: 0 });
-const tables = (extraSettings = []) => ({
+const tables = (extraSettings = [], codes = true) => ({
   teams: [{ team: 'KONGOWE', team_code: 'C-K', branch: null, zone: 'DAR', opm: null, recovery: null, gmo: null, manager: null, credit: null, expected: null, bike: null }],
-  access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['deduct', 'settings'] }],
+  access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['deduct', 'settings'] },
+    ...(codes ? [{ code: 'AC1', name: 'MTOA A', role: 'PMO', teams: null, tabs: [] },                                  // every team, named on none: the head office
+      { code: 'AC2', name: 'MTOA B', role: 'MANAGER', teams: ['KONGOWE'], tabs: [] }] : [])],                            // a manager: their team's zone
   settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }, { key: 'DEDUCTION_REPORTER_TZS', value: '10000' }, ...extraSettings],
   roles: [], audit_log: [],
   pmo_deductions: [CASE(1, 'MTOA A', D1, '9900000001'), CASE(2, 'MTOA A', D2, '9900000002'), CASE(3, 'MTOA B', TODAY, '9900000003')],
@@ -116,7 +122,7 @@ const settle = ms => new Promise(r => setTimeout(r, ms));
 const waitEarn = (pg, rowsJson) => pg.waitForFunction(j => { const c = document.getElementById('dedEarn'); if (!c) return false; const t = e => (e.textContent || '').replace(/\s+/g, ' ').trim();
   return JSON.stringify([...c.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(t))) === j; }, rowsJson, { timeout: 7000 }).then(() => true, () => false);
 const fmt = n => Math.round(n).toLocaleString('en-US');
-const rowsOf = (a, b, atot) => [['1', 'MTOA A', '2', fmt(a)], ['2', 'MTOA B', '1', fmt(b)], ['', 'JUMLA / TOTAL', '3', fmt(atot)]];
+const rowsOf = (a, b, atot, wa = 'PMO.HQ', wb = 'Manager.Dar') => [['1', 'MTOA A', wa, '2', fmt(a)], ['2', 'MTOA B', wb, '1', fmt(b)], ['', 'JUMLA / TOTAL', '', '3', fmt(atot)]];
 
 try {
 // ---- the admin
@@ -128,6 +134,8 @@ let E = await earnOf(page);
 check('2 the earners\' table is under the cases list', await page.evaluate(() => { const m = document.getElementById('mainCard'), e = document.getElementById('dedEarn'); return !!m && !!e && m.nextElementSibling === e; }));
 check('2 it names its window and the amount per case', !!E && /Wapataji wa malipo/.test(E.title) && E.title.includes(W1 + ' → ' + TODAY) && /TZS 10,000 kwa kila kesi/.test(E.title), JSON.stringify(E && E.title));
 check('2 a row for each reporter with their unique cases and earnings at 10,000 a case, then the total', JSON.stringify(E && E.rows) === JSON.stringify(rowsOf(20000, 10000, 30000)), JSON.stringify(E && E.rows));
+check('7 the column sits between the reporter and the cases: Aliyeripoti, Cheo.Tawi / Role.Branch, Kesi, Malipo', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#dedEarn thead th')].map(th => (th.textContent || '').replace(/\s+/g, ' ').trim()))) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']));
+check('7 the head office reads PMO.HQ and a manager Manager.<their team\'s zone>', !!E && E.rows[0][2] === 'PMO.HQ' && E.rows[1][2] === 'Manager.Dar', JSON.stringify(E && E.rows.map(r => r[2])));
 // a card narrows the cases list and leaves the earners where they are
 await page.click('[data-arg="show"][data-val="taken"]'); await page.waitForTimeout(400);
 check('2 tapping a card narrows the cases list and the earners\' table stays, the same', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000)) && (await page.evaluate(() => !!document.querySelector('#mainCard'))));
@@ -137,6 +145,7 @@ await page.fill('#tblQ', 'MTEJA 1'); await page.waitForTimeout(400);
 check('6 a table search keeps the earners\' table (the buttons in it still work)', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000)));
 const x1 = await sheet(await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#dedEarn [data-xls]')]).then(r => r[0]));
 check('2 its Excel, like every board\'s: the reporters, their unique cases and what they earned', /Wapataji/.test(x1.name) && /MTOA A/.test(x1.text) && /MTOA B/.test(x1.text) && />20000</.test(x1.text) && />10000</.test(x1.text) && /<td x:num>2<\/td>/.test(x1.text), x1.name);
+check('7 and its Excel carries the column too: PMO.HQ, Manager.Dar, between the reporter and the cases', /Cheo\.Tawi \/ Role\.Branch/.test(x1.text) && />PMO\.HQ</.test(x1.text) && />Manager\.Dar</.test(x1.text) && x1.text.indexOf('PMO.HQ') > x1.text.indexOf('MTOA A') && x1.text.indexOf('PMO.HQ') < x1.text.indexOf('>20000<'), x1.text.slice(0, 200));
 await page.fill('#tblQ', ''); await page.waitForTimeout(300);
 
 // the commission settings
@@ -167,6 +176,16 @@ check('4 taking the last one out: the base applies to every case again', await w
 await page.fill('#dedRateTzs', ''); await page.click('#dedRateSave'); await page.waitForTimeout(300);
 check('4 an empty amount is refused on the page and nothing is stored', (await page.evaluate(() => (document.getElementById('toast') || {}).textContent || '')).includes('Enter the amount per case') && !db._dump('settings').some(r => r.key === 'DEDUCTION_REPORTER_RATES' && r.value !== '[]'));
 check('4 the base setting itself was never touched by any of it', db._dump('settings').find(r => r.key === 'DEDUCTION_REPORTER_TZS').value === '10000');
+// the report's section 2 is the same table, with the same column
+await page.click('#dedReport'); await page.waitForSelector('#dedRep');
+const rep2 = await page.evaluate(() => { const c = document.getElementById('dedRep'); const t = e => (e.textContent || '').replace(/\s+/g, ' ').trim();
+  return { heads: [...c.querySelectorAll('thead th')].map(t), rows: [...c.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(t)) }; });
+check('7 the report\'s section 2 has the same column in the same place', JSON.stringify(rep2.heads) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']) && rep2.rows[0][2] === 'PMO.HQ' && rep2.rows[1][2] === 'Manager.Dar', JSON.stringify(rep2));
+await page.close();
+
+// ---- no access code carries the reporters' names (a sheet-imported case, somebody who left): the case's own role, a dash for the branch
+page = await open(fakeDb(tables([], false)), ADMIN);
+check('7 no code carries the name: the role the case was filed under and a dash, never a guessed branch', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000, 'Recovery.—', 'Recovery.—')), JSON.stringify((await earnOf(page) || {}).rows));
 await page.close();
 
 // ---- not an admin
