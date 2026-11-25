@@ -15796,6 +15796,16 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
      call is one kind here (Ripoti splits it into EXPECTED, DEFAULTER and UNCATEGORIZED). Noted in
      handbook Part 116; not changed. */
   const CALL_ZERO = { dials: 0, calls: 0, duration: 0, otherDuration: 0, portfolio: 0, nonPortfolio: 0, connected: 0, customers: 0 };
+  /* THE RANK OF THE BOARD, in ONE place: PORTFOLIO TALK TIME first, calls second.
+       "Sort busiest and least active officers slide by portifolio talk time brother not calls" -- the owner, 25 Nov 2026
+       (handbook Part 164, addendum 7).
+     The Presentation's HOPE Calls slide reads this list from the top (the busiest) to the bottom (the least active) and marks the
+     two ends, so the order of the list IS the slide's ranking: nothing else sorts it. `duration` is PORTFOLIO talk time (the seconds
+     spent on numbers that belong to a customer of the officer's own teams: callTotals); an officer who dialled all day and never
+     spoke to a portfolio customer is at nought here however many numbers they rang. Calls only settle a tie in talk time (nought
+     above all: the officer who rang nobody comes after the one who rang and was not answered), and a tie in both keeps the order
+     the officers first appear in, as ties always did. callWeekWorst is this list the other way up. */
+  const callBoardOrder = (a, b) => (Number(b.duration) || 0) - (Number(a.duration) || 0) || (Number(b.calls) || 0) - (Number(a.calls) || 0);
   // Reached is the rule's only when the source says which minimum it was counted by; otherwise it is not shown (null), never the old figure.
   const reach = callBoardReach_(callSrc), reachKnown = reach.known;
   function callBoard(rows) {
@@ -15826,7 +15836,7 @@ async function officerBoardsUncached(db, user, _args, nowMs) {
            a recovery officer" is a second answer that can disagree with the boards above. */
         unit: unitOf(b.key),
         connectPct: reachKnown ? pctOf(t.connected, t.calls) : null, portfolioPct: pctOf(t.portfolio, t.calls) };
-    }).sort((a, b) => b.calls - a.calls);
+    }).sort(callBoardOrder);
   }
   const callToday = callBoard(callSrc.t);
   const callWeek = callBoard(callSrc.w);

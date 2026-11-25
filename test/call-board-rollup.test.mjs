@@ -518,8 +518,14 @@ test('a function that answers a figure that is not a number (null, a string, or 
    boardRowsFromLogs (call-core.js), and it is live the moment this deploys, before anybody has run RUN-ME-078: every board a person is
    judged on is now made by the new path. So the code it replaced is kept here, word for word as it stood in api/_lib/portal-core.js
    before this change, and the two are compared on random books: the same lines, the same figures, the same ORDER (ties included), for
-   the admin and for a viewer with teams. A difference here is a figure that changed for somebody for no reason they can know. */
+   the admin and for a viewer with teams. A difference here is a figure that changed for somebody for no reason they can know.
+   ONE THING IS CHANGED ON PURPOSE, AND IS WRITTEN OUT AGAIN HERE ON ITS OWN: the RANK. The old code sorted by calls; since 25 Nov 2026 the board is ranked
+   by PORTFOLIO TALK TIME, calls only where that ties ("Sort busiest and least active officers slide by portifolio talk time brother not calls": the owner;
+   handbook Part 164, addendum 7). So the yardstick below is still the old code word for word (its own sort included: it is the LINES and the FIGURES it
+   vouches for), and `talkFirst` puts the owner's rule on top of its list: the sort is stable, so officers that tie in both keys keep the order they first
+   appear in, as ties always did. test/present-calls-talk-order.test.mjs holds the new rank on its own, through the real dispatch. */
 const { callRollupRows, callTotals } = await import('../api/_lib/call-core.js');
+const talkFirst = rows => rows.slice().sort((a, b) => (b.duration || 0) - (a.duration || 0) || b.calls - a.calls);
 const { teamAllowed } = await import('../api/_lib/auth.js');
 function oldBucket(map, key, init) { if (!map[key]) map[key] = Object.assign({ key }, init); return map[key]; }
 function oldPctOf(n, d) { return d > 0 ? Math.round((n / d) * 1000) / 10 : null; }
@@ -566,7 +572,7 @@ function randomBook(seed) {
 const byId = (x, y) => (String(x.id) < String(y.id) ? -1 : String(x.id) > String(y.id) ? 1 : 0);
 
 test('THE OLD CODE AS YARDSTICK: the boards the new path makes equal the boards the old code made, on 250 random books, for the admin and for a viewer with teams', async () => {
-  let compared = 0, nonEmpty = 0, ties = 0;
+  let compared = 0, nonEmpty = 0, ties = 0, moved = 0;
   for (let seed = 1; seed <= 250; seed++) {
     const { rows, users } = randomBook(seed);
     for (const [label, user, teams] of [['admin', ADMIN, null], ['viewer', viewer(['KONGOWE', 'Mbagala']), ['KONGOWE', 'Mbagala']]]) {
@@ -579,18 +585,21 @@ test('THE OLD CODE AS YARDSTICK: the boards the new path makes equal the boards 
           .filter(r => teamAllowed(user, r.team));
         // the phone users are read the same way: the DB's exact .in() on the viewer's team spellings, then the screen's own teamAllowed
         const myUsers = users.filter(u => !teams || teamMatchList(teams).includes(u.team)).filter(u => teamAllowed(user, u.team));
-        const wantWeek = oldCallBoard(mine, myUsers, MON, SUN), wantToday = oldCallBoard(mine, myUsers, TODAY, TODAY);
+        const oldWeek = oldCallBoard(mine, myUsers, MON, SUN), oldToday = oldCallBoard(mine, myUsers, TODAY, TODAY);
+        const wantWeek = talkFirst(oldWeek), wantToday = talkFirst(oldToday);
         const tag = 'seed ' + seed + ' ' + label + (opts.rpc ? ' with the function' : ' from the rows');
         assert.deepEqual(b.callWeek, wantWeek, tag + ': the week');
         assert.deepEqual(b.callToday, wantToday, tag + ': today');
         compared += 2; if (wantWeek.length) nonEmpty++;
-        for (let i = 1; i < wantWeek.length; i++) if (wantWeek[i].calls === wantWeek[i - 1].calls) { ties++; break; }
+        for (let i = 1; i < wantWeek.length; i++) if (wantWeek[i].calls === wantWeek[i - 1].calls && wantWeek[i].duration === wantWeek[i - 1].duration) { ties++; break; }
+        if (wantWeek.map(r => r.agent).join('\u0001') !== oldWeek.map(r => r.agent).join('\u0001')) moved++;
       }
     }
   }
   assert.ok(compared >= 2000, 'boards compared: ' + compared);
   assert.ok(nonEmpty >= 600, 'books with a real week: ' + nonEmpty);
-  assert.ok(ties >= 100, 'books where officers tie on calls (so the order of ties was compared): ' + ties);
+  assert.ok(ties >= 100, 'books where officers tie in BOTH keys, talk time and calls (so the order of ties was compared): ' + ties);
+  assert.ok(moved >= 100, 'books where ranking by portfolio talk time puts the officers in another order than ranking by calls did (so the new key was really compared): ' + moved);
 });
 
 /* ---- the file, the wiring and the docs, held together ---- */
