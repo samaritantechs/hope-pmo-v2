@@ -3990,8 +3990,9 @@ test('the earners\' table and the commission settings are drawn from the server\
   const html = m.dedEarnBoard_(d, reps), b = JSON.parse(html.slice('[board '.length, -1));
   assert.equal(b.id, 'dedEarn'); assert.ok(b.title.includes('Wapataji wa malipo / Earners') && b.title.includes('2026-07-01') && b.title.includes('2026-07-24'));
   assert.equal(b.sub, m.dedRateNote_(d)); assert.equal(b.rows, 2);
-  // Part 154: ROLE.BRANCH sits between the reporter and the cases ("add branch and role column between aliyereport and kesi").
-  assert.deepEqual(b.cols, ['Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']);
+  // Part 154: ROLE.ZONE sits between the reporter and the cases ("add branch and role column between aliyereport and kesi", then "it's zone not branch").
+  assert.deepEqual(b.cols, ['Aliyeripoti / Reporter', 'Cheo.Zone / Role.Zone', 'Kesi / Unique cases', 'Malipo / Earnings']);
+  assert.doesNotMatch(page('deduct'), /Role\.Branch|Cheo\.Tawi/, 'the column is ROLE.ZONE: its first name is nowhere in the module');
   assert.deepEqual(m.dedEarnCols_().map(c => [c.key, c.kind]), [['reporter', undefined], ['who', undefined], ['cases', 'num'], ['earnings', 'money']], 'the columns, by their answer\'s own keys: the page never works the role or the branch out');
   assert.deepEqual(b.total.sum, [4, 50000], 'the total row adds the cases and the earnings');
   assert.equal(m.dedEarnBoard_({ ...d, on: false }, reps), '', 'the deductions table is not there (RUN-ME-043): nothing drawn');
@@ -4069,7 +4070,7 @@ test('the earners\' table is drawn under the list by BOTH painters and kept with
   assert.match(view, /S\.tail = dedEarnBoard_\(d, reps\) \+ \(d\.canRates \? dedRatesPanel_\(d\) : ''\);/, 'the board always; the settings card only where the server says the person is the admin');
   assert.match(view, /board\('dedRep', '2\. Malipo ya walioripoti \/ Reporter earnings', dedRateNote_\(d\)/, 'the report\'s section 2 says the amount the same way');
   assert.match(view, /dedRateNote_\(d\), d\.reporters \|\| \[\],\s*dedEarnCols_\(\), sumRow\(d\.reporters \|\| \[\], \['cases','earnings'\]\)\);/, 'and has the same columns as the table under the cases: ONE list (dedEarnCols_), role and branch included');
-  assert.equal((view.match(/col\('who'/g) || []).length, 1, 'the ROLE.BRANCH column is defined once');
+  assert.equal((view.match(/col\('who'/g) || []).length, 1, 'the ROLE.ZONE column is defined once');
   assert.doesNotMatch(view, /TZS ' \+ money\(d\.rate\) \+ ' kwa kila kesi \/ per unique case \(DEDUCTION_REPORTER_TZS\)/, 'no amount typed into a title: the one note says it');
   assert.equal((app.match(/dedRateSave_\(\)/g) || []).length, 1, 'wired once, in wireForms, never inline');
 });

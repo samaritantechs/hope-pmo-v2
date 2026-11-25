@@ -3463,7 +3463,7 @@ test('a PMO deduction case is one submission with a row per accused staff, scope
   assert.deepEqual(g.summary.map(s => [s.team, s.cases, s.entries, s.toPay]), [['KONGOWE', 1, 2, 100000]]);
   // (Part 154: each reporter also carries ROLE.BRANCH. No access code here carries JUMA G's name, so the role is the one the case was filed under
   // and the branch is a dash: nothing is guessed.)
-  assert.deepEqual(g.reporters, [{ reporter: 'JUMA G', role: 'GMO', branch: '', who: 'GMO.—', cases: 1, earnings: 5000 }], 'TZS 5,000 per unique case');
+  assert.deepEqual(g.reporters, [{ reporter: 'JUMA G', role: 'GMO', zone: '', who: 'GMO.—', cases: 1, earnings: 5000 }], 'TZS 5,000 per unique case');
   assert.deepEqual(g.prevBalances, [{ staff: 'STAFF A', remaining: 20000 }], 'outstanding from before the window');
   assert.deepEqual(g.staffList, ['JUMA G', 'PILI P']);
   // The admin sees every team, and may record HR's deduction.
@@ -3636,10 +3636,11 @@ test('the earners\' amount costs the upload and the call app nothing: neither fi
   assert.equal(await count(DED_ADM), await count(DED_GMO), 'the admin\'s settings card costs the tab no extra read');
 });
 
-/* THE EARNERS' ROLE.BRANCH (handbook Part 154) -- "add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ
-   GMO.Dar Center e t c" (the owner, 25 Nov 2026). The role is the one on the reporter's access code; the branch is the zone by the portal's one
-   zone rule (zone.js), HQ for a code over every team that no team names; a name no code carries keeps the case's own role and a dash. */
-test('the earners\' ROLE.BRANCH: the access code\'s role and the portal\'s own zone rule, HQ for the head office, a team code by its team, and a dash where nothing is known (Part 154)', async () => {
+/* THE EARNERS' ROLE.ZONE (handbook Part 154) -- "add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ
+   GMO.Dar Center e t c" and then "Sorry it's zone not branch" · "For the role.zone" (the owner, 25 Nov 2026). The role is the one on the
+   reporter's access code; the zone is the portal's one zone rule (zone.js), HQ for a code over every team that no team names; a name no code
+   carries keeps the case's own role and a dash. The answer's field is `zone` (it was `branch` for a few hours). */
+test('the earners\' ROLE.ZONE: the access code\'s role and the portal\'s own zone rule, HQ for the head office, a team code by its team, and a dash where nothing is known (Part 154)', async () => {
   const t = tables();
   t.teams = [
     { team: 'KONGOWE', zone: 'DAR CENTER', gmo: 'GMO ONE', manager: 'MANAGER ONE', credit: null, opm: null, recovery: null, expected: null, bike: null },
@@ -3675,15 +3676,15 @@ test('the earners\' ROLE.BRANCH: the access code\'s role and the portal\'s own z
   assert.equal(by['PMO ONE'].who, 'PMO.HQ', 'a code over every team that no team names: HQ; PMO stays in capitals');
   assert.equal(by['GMO ONE'].who, 'GMO.Dar Center', 'the GMO over every team is in the zone of the team that names them, not in HQ');
   assert.equal(by['MANAGER ONE'].who, 'Manager.Dar Center', 'the manager\'s own team\'s zone');
-  assert.equal(by['NO ZONE MGR'].who, 'Manager.—', 'teams known and none carries a zone: a dash, never a guessed branch');
+  assert.equal(by['NO ZONE MGR'].who, 'Manager.—', 'teams known and none carries a zone: a dash, never a guessed zone');
   assert.equal(by['CREDIT ONE'].who, 'Credit Analyst.Lake, Mara +1', 'several zones: listed in order, then counted (ZONE_SHOWN)');
   assert.equal(by['KONGOWE · F.O'].who, 'Field Officer.Dar Center', 'a field officer\'s team code: the team\'s zone');
-  assert.equal(by['OLD REPORTER'].who, 'Recovery.—', 'no code carries the name: the role the case was filed under, and no branch');
+  assert.equal(by['OLD REPORTER'].who, 'Recovery.—', 'no code carries the name: the role the case was filed under, and no zone');
   assert.equal(by['TWO HATS'].role, 'Legal', 'two codes of one name that disagree: the role the case was filed under decides');
   assert.equal(by['GONE'].who, '—', 'nothing known at all');
   assert.equal(by['HR PERSON'].who, 'HR Officer.—', 'Title Case, runs of blanks as one, and a short form stays in capitals only when it is a known one (HR, not "Hr")');
   assert.equal(by['DRIFTER'].role, 'New Role', 'the role of the reporter\'s latest case in the window');
-  assert.deepEqual(Object.keys(by['PMO ONE']), ['reporter', 'role', 'branch', 'who', 'cases', 'earnings'], 'the answer\'s own order');
+  assert.deepEqual(Object.keys(by['PMO ONE']), ['reporter', 'role', 'zone', 'who', 'cases', 'earnings'], 'the answer\'s own order, the zone under its own name (never `branch`)');
   // A GMO sees only their own teams' cases; the column is the same for the reporters they do see.
   const g = await portalApi(db, { code: 'G1', name: 'GMO ONE', role: 'GMO', teams: ['KONGOWE'], tabs: ['deduct'] }, 'deductions', {}, NOW);
   assert.equal(Object.fromEntries(g.reporters.map(r => [r.reporter, r.who]))['PMO ONE'], 'PMO.HQ');

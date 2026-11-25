@@ -109,11 +109,11 @@ function dedRateNote_(d){
   return st.map(function(x){ return 'TZS ' + money(x.tzs) + ' kuanzia / from ' + x.from; }).join(' · ') + ' kwa kila kesi / per unique case';
 }
 /* THE EARNERS' COLUMNS, ONE LIST for the table under the cases and for the report's section 2 (they are the same rows). Between the reporter
-   and the cases sits ROLE.BRANCH ("In pmo deductions at Wapataji wa malipo / Earners ... add branch and role column between aliyereport and
-   kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c", the owner, 25 Nov 2026; handbook Part 154): the server works it out (`who`);
-   nothing here decides it. */
+   and the cases sits ROLE.ZONE ("In pmo deductions at Wapataji wa malipo / Earners ... add branch and role column between aliyereport and
+   kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c", then "Sorry it's zone not branch" · "For the role.zone", the owner, 25 Nov 2026;
+   handbook Part 154): the server works it out (`who`); nothing here decides it. */
 function dedEarnCols_(){
-  return [col('reporter','Aliyeripoti / Reporter'), col('who','Cheo.Tawi / Role.Branch'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')];
+  return [col('reporter','Aliyeripoti / Reporter'), col('who','Cheo.Zone / Role.Zone'), col('cases','Kesi / Unique cases','num'), col('earnings','Malipo / Earnings','money')];
 }
 /* THE EARNERS' TABLE: who reported the cases of the window, how many unique cases, and what that earned at the amount in force on the day
    each case was reported. The same rows as the report's section 2, with their own Excel, JPG and CSV. */
