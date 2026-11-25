@@ -128,7 +128,8 @@ App Runner → Create service:
 - Environment variables -- copy every one from Vercel → Settings → Environment Variables:
   `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`
   (**the same pair**, or every push subscription stops working), `RESEND_API_KEY`,
-  `DEVICE_SHIFT_SECRET`, `IMPREST_LINK_SECRET`, and the `HOPELOAN_*` ones if set.
+  `DEVICE_SHIFT_SECRET`, `IMPREST_LINK_SECRET`, `ANTHROPIC_API_KEY` (Claudian-PMO's key: optional, see below),
+  and the `HOPELOAN_*` ones if set.
   Put the keys in Secrets Manager and reference them, rather than pasting them in plain.
 - Auto scaling: **minimum 2 instances**, so one instance being replaced never leaves the call
   app with nothing.
@@ -183,7 +184,7 @@ cd /srv/hope-pmo && sudo -u deploy npm ci --omit=dev
 **2. The keys, outside the repository.** `/etc/hope-pmo.env`, owned by root, mode `600` —
 the same variables as Vercel (see 3d): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the
 **same** `VAPID_*` pair, `RESEND_API_KEY`, `DEVICE_SHIFT_SECRET`, `IMPREST_LINK_SECRET`,
-`HOPELOAN_*`, and `PORT=8080`.
+`ANTHROPIC_API_KEY` (optional: Claudian-PMO answers from its ready questions only without it), `HOPELOAN_*`, and `PORT=8080`.
 
 **3. The service.** `/etc/systemd/system/hope-pmo.service`:
 ```ini
@@ -321,7 +322,8 @@ A proxy that also compresses (Caddy `encode`) leaves an already-compressed answe
   browser's storage, so a registered phone stays registered when the address changes.
 - **Variables the code reads**: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `HOPELOAN_ENABLED`,
   `HOPELOAN_SUPABASE_URL`, `HOPELOAN_SERVICE_ROLE_KEY`, `RESEND_API_KEY`, `DEVICE_SHIFT_SECRET`,
-  `IMPREST_LINK_SECRET`, and the optional budgets `UPLOAD_BUDGET_MS`, `DASH_PREV_BUDGET_MS`,
+  `IMPREST_LINK_SECRET`, `ANTHROPIC_API_KEY` (the helper in the corner, Claudian-PMO; optional, handbook Part 155),
+  and the optional budgets `UPLOAD_BUDGET_MS`, `DASH_PREV_BUDGET_MS`,
   `DASH_MONTH_BUDGET_MS`, `DASH_FLOORS_BUDGET_MS`, `CALL_SUMMARY_MAX_INFLIGHT`. Nothing else.
 
 ### To confirm on the server before anyone works on it
@@ -452,3 +454,16 @@ the server is down, or the handset is too old for its certificate (section 6, it
 while Vercel answers the same `book`. The update check asks the reserve too, so a handset can
 always be reached with a newer app. It is not built yet: which way the reserve points depends on
 the choice above.
+
+---
+
+## Claudian-PMO's key (optional; handbook Part 155)
+
+The helper in the corner of HOPE PMO and HOPE Calls asks the cheapest Claude model (Claude Haiku 5.5) through Anthropic's API. **Your Claude chat plan cannot pay for this** (Anthropic bills the API apart from a plan): it needs its own key from the Anthropic Console, with prepaid credit and a monthly spend limit.
+
+1. In the Anthropic Console create an API key, put some credit on the account and set a monthly spend limit.
+2. Put the key in the host's own settings **as `ANTHROPIC_API_KEY`**: Vercel (Project Settings, Environment Variables, Production), and `/etc/hope-pmo.env` on our own server (then restart the service), and AWS if it is used. **Never** in the repository, in Settings of the portal, in a table or in a chat.
+3. Run `db/RUN-ME-090-claudian-chats.sql` once in the SQL editor (the chat log and the daily counts; the helper works without it, smaller).
+4. In Settings, on the Claudian-PMO card, switch it ON. Off, people see ready questions and answers only and no token is spent.
+
+Without the key, or with the switch off, nothing is called and nothing is billed. The model's name is fixed in the code and cannot be chosen by a user. Rough cost: about US$0.0004 a question (about 3,000 tokens in and 200 out at Haiku 5.5's US$0.10 and US$0.50 a million), so 2,000 questions a day (the default company ceiling) is about US$0.80.

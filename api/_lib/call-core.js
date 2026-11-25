@@ -154,7 +154,7 @@ async function settingsMany(db, keys) {
 /** Every request resolves the device to an account here, so this is the one place that has
     to honour deactivation. Checking `active` only at registration would mean a revoked
     officer kept working until they happened to sign out -- which they never do. */
-async function userByDevice(db, dev) {
+export async function userByDevice(db, dev) {
   dev = String(dev == null ? '' : dev).trim();
   if (!dev) return null;
   const { data, error } = await db.from('call_users').select('*').eq('device_id', dev).limit(1);
