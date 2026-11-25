@@ -130,7 +130,7 @@ export const USER_TABS = ['dashboard', 'apps', 'followup', 'assignments', 'promi
    list (ADMIN_TABS derived from this, not duplicated beside it) is what stops the two drifting
    apart the way they did until this same change: a tab added to one and not the other. */
 export const EXTRA_TABS = ['upload', 'settings', 'audit', 'adjust', 'bonusplan', 'auditrep', 'deduct',
-  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leavereq', 'leaveappr', 'leaverep', 'fraud', 'checklist', 'annual'];
+  'advreq', 'advappr', 'advrep', 'advstaff', 'advfinal', 'leavereq', 'leaveappr', 'leaverep', 'fraud', 'checklist', 'annual', 'hopeai'];
 export const ADMIN_TABS = USER_TABS.concat(EXTRA_TABS);
 
 /* HOPE LOAN'S OWN SEVEN, alongside HOPE PMO's -- named here, once, rather than typed by hand
