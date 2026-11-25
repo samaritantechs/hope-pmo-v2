@@ -459,9 +459,9 @@ the choice above.
 
 ## Claudian-PMO's key (optional; handbook Part 155)
 
-The helper in the corner of HOPE PMO and HOPE Calls asks the cheapest Claude model (Claude Haiku 5.5) through Anthropic's API. **Your Claude chat plan cannot pay for this** (Anthropic bills the API apart from a plan): it needs its own key from the Anthropic Console, with prepaid credit and a monthly spend limit.
+The helper in the corner of HOPE PMO and HOPE Calls asks the cheapest Claude model (Claude Haiku 5.5) through Anthropic's API. It needs its own key from the Anthropic Console (a Claude chat plan's own usage is not the API). **The owner's Max plan adds $100 of API credits to that account every month while the plan is active** (the Console says so; the owner pasted it on 25 Nov 2026: "Credits cover the Claude API, Claude Managed Agents, the Claude Agent SDK, and the Playground"), so the helper's questions are paid from them; a card is needed only to buy MORE credit, and a monthly spend limit is a second guard. (This section first said the plan could not pay for the key's use: wrong for that plan.)
 
-1. In the Anthropic Console create an API key, put some credit on the account and set a monthly spend limit.
+1. In the Anthropic Console create an API key; see under Billing that the plan's monthly credits are on the account, and set a monthly spend limit if you want a second guard.
 2. Put the key in the host's own settings **as `ANTHROPIC_API_KEY`**: Vercel (Project Settings, Environment Variables, Production), and `/etc/hope-pmo.env` on our own server (then restart the service), and AWS if it is used. **Never** in the repository, in Settings of the portal, in a table or in a chat.
 3. Run `db/RUN-ME-090-claudian-chats.sql` once in the SQL editor (the chat log and the daily counts; the helper works without it, smaller).
 4. In Settings, on the Claudian-PMO card, switch it ON. Off, people see ready questions and answers only and no token is spent.
