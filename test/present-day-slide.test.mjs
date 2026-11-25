@@ -6,6 +6,8 @@
      "also cleared today to defaulters, add another meaningful widget" · "col% and uncollected today also in a single widget. add another meaningful one"   -- the owner, 25 Nov 2026 (addendum 3)
      "combine recovered today and this week, add another meaningful widget" · "show collection today% at uncollected today" · "ealry col% and col% week on their own widget"   -- the owner, 25 Nov 2026 (addendum 5)
      "legal recovery widget on presentation, have their phone recovery in the same widget"                                                        -- the owner, 25 Nov 2026 (addendum 5)
+     "Performance card is not showing if today's or weekly at presentation" · "Recovered this week should go with uncol week" · "Going with uncol today on the same widget
+      on the presentation slide doesn't make sense. Better kill the loan app request widget and differentiate today from weekly recovery vs uncollected"  -- the owner, 25 Nov 2026 (addendum 8)
 
    What is held here (the picture and the geometry at TV sizes are in tools/browser-checks/portal-present-day-slide.mjs, a real browser):
      * the slide builds TWELVE tiles, every one read from the dashboard's own answer (d.cards, d.perf, d.recTrendTotal, d.edrTrendTotal) and only printed here (a percentage in whole
@@ -19,6 +21,10 @@
      * then Recovered (today's) and Recovered this week are ONE tile (the week's figure, its percentage, and today's amount: two lines under the figure), the freed tile is SALES TODAY (the
        Sales trend card's own tile for today), Uncollected today carries TODAY'S collection % (the Weekly expected trend card's tile for today), the week's Collection % stands beside
        the Early collection % on a tile of their own, and the Legal recovery tile says how much of its figure came BY PHONE (a second line: the calls side of the grand total);
+     * then (addendum 8) the Loan applications widget is GONE; Performance says it is the WEEK's ("Performance (week avg)"); Recovered this week carries the WEEK's uncollected under it and
+       nothing of today's; TODAY has a Recovered tile of its own (the dashboard's Recovered card over the Uncollected today card, "not uploaded yet" where no deck was filed today, "no
+       collection sheet today" where there is no uncollected to divide by); and the tiles stand in the order the story is told in: the book and the sales, today's uncollected and
+       recovery, the week's recovery, the Abnormal count, then the week's measures;
      * the line (or lines) under a figure is part of the figure's own box (so the fit that sizes the figure sizes them with it), every tile of the slide reserves as many as the most-lined
        tile has (so a row stands level), and a slide with no such line is drawn exactly as it was;
      * the slide declares its grid (`grid: '4x3'`), presDraw gives the tile grid the class the CSS and the fit look for, and a slide that asks for nothing is drawn as before;
@@ -50,8 +56,8 @@ const slideOf = (c, perf, weekday = 'WED', extra = {}, dedLine = '') => {
   assert.equal(slides.length, 1, 'it builds one slide');
   return slides[0];
 };
-const CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321, uncollectedToday: 456789012, abnormal: 37 };
-const PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };
+const CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 123456789, defaulters: 10372, cleared: 4321, salesWeek: 987654321, uncollectedToday: 456789012, abnormal: 37 };
+const PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 78.6, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };   // the strip still answers the applications (the dashboard draws them); the slide does not read them
 // the dashboard's two per-day cards, with TODAY (Wednesday 25 Nov) among their days: today's collection % and today's sales are read off them
 const DAYS = {
   asOfDate: '2026-11-25',
@@ -68,44 +74,50 @@ const WEEK = {
   edrTrend: [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }],
   legal: { grand: { on: true, nOn: true, pOn: true, rows: [], total: { nOwed: 40000000, nRec: 30000000, nPct: 75, cOwed: 12000000, cRec: 11000000, cPct: 91.7, owed: 52000000, recovered: 41000000, pct: 78.8, tRecovered: 2000000 } } } };
 const tiles = s => ({ v: Object.fromEntries(s.items.map(i => [i.l, i.v])), s: Object.fromEntries(s.items.map(i => [i.l, i.s || ''])) });
-const LABELS = ['Current arrears', 'Recovered this week', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Sales today', 'Loan applications (week)',
-  'Early col · Col % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (average)'];
+const LABELS = ['Current arrears', 'Defaulters', 'Sales this week', 'Sales today', 'Uncollected today', 'Recovered today', 'Recovered this week', 'Abnormal',
+  'Early col · Col % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (week avg)'];
 
-test('the day slide has TWELVE tiles in their places: ONE Recovered tile (the week\'s, with today\'s under it) second, Sales today seventh, the loan applications, the Early col and Col % pair, the Legal recovery, the Expected Defaulters recovery and the Performance average', () => {
+test('the day slide has TWELVE tiles in their places: the book and the sales, then what was left to collect today, what came back today and what came back this week, the Abnormal count, and last the week\'s measures; the Loan applications widget is gone', () => {
   const s = slideOf(CARDS, PERF, 'WED', WEEK);
   assert.equal(s.id, 'kpi'); assert.equal(s.kind, 'kpi'); assert.equal(s.title, 'HOPE PMO — WED');
   assert.deepEqual(s.items.map(i => i.l), LABELS);
   assert.equal(s.items.length, 12, 'four across and three down is twelve');
+  assert.ok(!s.items.some(i => /loan app/i.test(i.l)), 'the owner killed the Loan applications widget (25 Nov, addendum 8)');
   assert.ok(!s.items.some(i => /Initial arrears/.test(i.l)), 'the owner replaced the Initial arrears tile (25 Nov): it is not on the slide');
   assert.ok(!s.items.some(i => /^Sales %|^Recovery %|^Cleared today|^Collection %/.test(i.l)), 'Sales %, Recovery %, Cleared today and Collection % are printed under their amounts and Defaulters (25 Nov): they are not tiles of their own');
-  assert.ok(!s.items.some(i => i.l === 'Recovered' || /^Early Collection %/.test(i.l)), 'Recovered (today\'s) is one tile with Recovered this week, and the Early Collection % is on a tile with the Collection % (25 Nov, addendum 5)');
-  assert.equal(s.items.filter(i => /Recovered/.test(i.l)).length, 1, 'one tile says Recovered');
+  assert.ok(!s.items.some(i => i.l === 'Recovered' || /^Early Collection %/.test(i.l)), 'no tile is called plain "Recovered" (each says today or this week), and the Early Collection % is on a tile with the Collection %');
+  assert.deepEqual(s.items.filter(i => /Recovered/.test(i.l)).map(i => i.l), ['Recovered today', 'Recovered this week'], 'two Recovered tiles, one for each period (addendum 8: "differentiate today from weekly"), never one tile with both');
+  assert.deepEqual(s.items.filter(i => /Performance/.test(i.l)).map(i => i.l), ['Performance (week avg)'], 'the Performance tile says it is the week\'s (addendum 8)');
+  // the order is the story: today's uncollected, today's recovery, the week's recovery side by side in the middle row; the last row is all weekly
+  assert.deepEqual(s.items.slice(4, 7).map(i => i.l), ['Uncollected today', 'Recovered today', 'Recovered this week']);
+  assert.ok(s.items.slice(8).every(i => /\(week/.test(i.l)), 'the whole last row is the week\'s measures, and every label says so');
 });
 
-test('every figure is the dashboard\'s own, and what belongs to an amount is printed UNDER it: sales % under sales, TODAY\'S collection % under the day\'s uncollected, cleared customers under the defaulters, the recovery % and today\'s recovery under the week\'s recovery, a percentage under each of the Expected Defaulters, Legal and applications figures', () => {
+test('every figure is the dashboard\'s own, and what belongs to an amount is printed UNDER it: sales % under sales, TODAY\'S collection % under the day\'s uncollected, cleared customers under the defaulters, each period\'s recovery with its own uncollected and its own percentage, a percentage under each of the Expected Defaulters and Legal figures', () => {
   const { v, s } = tiles(slideOf(CARDS, PERF, 'WED', WEEK));
   assert.deepEqual(v, {
-    'Current arrears': 'TZS 3,412,547,121', 'Recovered this week': 'TZS 94,338,048', 'Defaulters': '10,372', 'Sales this week': 'TZS 987,654,321', 'Uncollected today': 'TZS 456,789,012', 'Abnormal': '37',
-    'Sales today': 'TZS 4,200,000', 'Loan applications (week)': '486',
-    'Early col · Col % (week)': '91% · 97%', 'Legal recovery (week)': 'TZS 41,000,000', 'Exp.Def recovery (week)': 'TZS 3,600,000', 'Performance (average)': '100%' });
+    'Current arrears': 'TZS 3,412,547,121', 'Defaulters': '10,372', 'Sales this week': 'TZS 987,654,321', 'Sales today': 'TZS 4,200,000', 'Uncollected today': 'TZS 456,789,012',
+    'Recovered today': 'TZS 123,456,789', 'Recovered this week': 'TZS 94,338,048', 'Abnormal': '37',
+    'Early col · Col % (week)': '91% · 97%', 'Legal recovery (week)': 'TZS 41,000,000', 'Exp.Def recovery (week)': 'TZS 3,600,000', 'Performance (week avg)': '100%' });
   assert.deepEqual(s, {
-    'Current arrears': '', 'Recovered this week': ['118% of uncollected', 'TZS 1,234,567,890 today'], 'Defaulters': '4,321 cleared today', 'Sales this week': '84% of target',
-    'Uncollected today': '87% collected today', 'Abnormal': '',
-    'Sales today': '5 loans · 84% of target', 'Loan applications (week)': 'TZS 1,234,000,000 requested',
-    'Early col · Col % (week)': '', 'Legal recovery (week)': ['79% of owed', 'by phone TZS 11,000,000'], 'Exp.Def recovery (week)': '3.0% of their arrears', 'Performance (average)': 'sales · collection · recovery' });
+    'Current arrears': '', 'Defaulters': '4,321 cleared today', 'Sales this week': '84% of target', 'Sales today': '5 loans · 84% of target',
+    'Uncollected today': '87% collected today', 'Recovered today': ['of TZS 456,789,012 uncollected', '27% recovered'],
+    'Recovered this week': ['of TZS 120,000,000 uncollected', '79% recovered'], 'Abnormal': '',
+    'Early col · Col % (week)': '', 'Legal recovery (week)': ['79% of owed', 'by phone TZS 11,000,000'], 'Exp.Def recovery (week)': '3.0% of their arrears', 'Performance (week avg)': 'sales · collection · recovery' });
 });
 
 test('a percentage the week cannot measure is a dash, never a nought; a real nought is a nought; a dash stands alone under an amount (never "— of target"); a dashboard with no strip at all still draws twelve tiles', () => {
-  const { v, s } = tiles(slideOf(CARDS, { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null, appsCount: 0, appsAmount: 0 }, 'WED', WEEK));
-  assert.equal(v['Early col · Col % (week)'], '— · 100%', 'the early collection cannot be measured (a dash) while the week\'s collection reads its real 100%'); assert.equal(v['Performance (average)'], '—');
+  const { v, s } = tiles(slideOf(CARDS, { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null }, 'WED', WEEK));
+  assert.equal(v['Early col · Col % (week)'], '— · 100%', 'the early collection cannot be measured (a dash) while the week\'s collection reads its real 100%'); assert.equal(v['Performance (week avg)'], '—');
   assert.equal(s['Sales this week'], '—', 'nothing to measure: a dash alone');
-  assert.deepEqual(s['Recovered this week'], ['0% of uncollected', 'TZS 1,234,567,890 today'], 'a real nought is a nought, with its words; today\'s amount is still there');
-  assert.equal(v['Loan applications (week)'], '0', 'no application this week is a real nought: a count, never a dash'); assert.equal(s['Loan applications (week)'], 'TZS 0 requested');
+  assert.deepEqual(s['Recovered this week'], ['of TZS 120,000,000 uncollected', '0% recovered'], 'a real nought is a nought, with its words; the week\'s uncollected is still there');
   const bare = tiles(slideOf(CARDS, undefined));
   assert.equal(Object.keys(bare.v).length, 12);
-  assert.deepEqual([bare.v['Early col · Col % (week)'], bare.v['Legal recovery (week)'], bare.v['Exp.Def recovery (week)'], bare.v['Performance (average)'], bare.v['Loan applications (week)'], bare.v['Sales today']], ['— · —', '—', '—', '—', '—', '—'], 'no strip, no Expected Defaulters answer, no Legal card, no applications count, no day cards: six dashes');
-  assert.equal(bare.s['Sales this week'], '—'); assert.deepEqual(bare.s['Recovered this week'], ['—', 'TZS 1,234,567,890 today']); assert.equal(bare.s['Uncollected today'], '—');
-  assert.equal(bare.s['Legal recovery (week)'], ''); assert.equal(bare.s['Loan applications (week)'], ''); assert.equal(bare.s['Sales today'], '');
+  assert.deepEqual([bare.v['Early col · Col % (week)'], bare.v['Legal recovery (week)'], bare.v['Exp.Def recovery (week)'], bare.v['Performance (week avg)'], bare.v['Sales today']], ['— · —', '—', '—', '—', '—'], 'no strip, no Expected Defaulters answer, no Legal card, no day cards: five dashes');
+  assert.equal(bare.s['Sales this week'], '—'); assert.equal(bare.s['Uncollected today'], '—');
+  assert.equal(bare.s['Recovered this week'], 'no collection sheet yet', 'no sheet in the answer: no uncollected to show, and the tile says so (never "of TZS 0 uncollected")');
+  assert.equal(bare.s['Recovered today'], 'no collection sheet today'); assert.equal(bare.v['Recovered today'], 'TZS 123,456,789', 'the card\'s own recovery is still there');
+  assert.equal(bare.s['Legal recovery (week)'], ''); assert.equal(bare.s['Sales today'], '');
 });
 
 test('THE WEEK\'S RECOVERY: the server\'s own total when it sent one, else the days added up exactly as the dashboard adds them, else nought; a damaged day counts nothing and never breaks the slide', () => {
@@ -146,8 +158,8 @@ test('THE WEEK\'S EXPECTED DEFAULTERS RECOVERY is the dashboard card\'s own TOTA
   assert.deepEqual(tile({ ...WEEK, edrTrend: [null, undefined, {}] }), ['—', '']);
 });
 
-test('THE PERFORMANCE AVERAGE is the strip\'s own (the average of sales %, collection % and recovery %, to a whole number), says what it is the average of, and is a dash when nothing was measured', () => {
-  const tile = (perf) => { const t = tiles(slideOf(CARDS, perf, 'WED', WEEK)); return [t.v['Performance (average)'], t.s['Performance (average)']]; };
+test('THE PERFORMANCE AVERAGE is the strip\'s own (the average of the WEEK\'S sales %, collection % and recovery %, to a whole number), says it is the week\'s and what it is the average of, and is a dash when nothing was measured', () => {
+  const tile = (perf) => { const t = tiles(slideOf(CARDS, perf, 'WED', WEEK)); return [t.v['Performance (week avg)'], t.s['Performance (week avg)']]; };
   assert.deepEqual(tile(PERF), ['100%', 'sales · collection · recovery']);
   assert.deepEqual(tile({ ...PERF, avgPct: 84.4 }), ['84%', 'sales · collection · recovery']);
   assert.deepEqual(tile({ ...PERF, avgPct: 0 }), ['0%', 'sales · collection · recovery'], 'a real nought is a nought');
@@ -162,14 +174,15 @@ test('CLEARED TODAY is the line under the Defaulters: the dashboard card\'s own 
   assert.equal(tiles(slideOf({ ...CARDS, cleared: 7 }, PERF, 'WED', WEEK)).v['Defaulters'], '10,372', 'the figure itself is the defaulters');
 });
 
-test('THE WEEK\'S LOAN APPLICATIONS are the strip\'s own count with the amount asked under it; a count is a count (no application is a nought, never a dash) and an answer with no count at all is a dash', () => {
-  const tile = (perf) => { const t = tiles(slideOf(CARDS, perf, 'WED', WEEK)); return [t.v['Loan applications (week)'], t.s['Loan applications (week)']]; };
-  assert.deepEqual(tile(PERF), ['486', 'TZS 1,234,000,000 requested']);
-  assert.deepEqual(tile({ ...PERF, appsCount: 0, appsAmount: 0 }), ['0', 'TZS 0 requested']);
-  assert.deepEqual(tile({ ...PERF, appsCount: 12345, appsAmount: 98765432109 }), ['12,345', 'TZS 98,765,432,109 requested']);
-  assert.deepEqual(tile({ ...PERF, appsCount: undefined }), ['—', ''], 'an older answer with no count');
-  assert.deepEqual(tile({ ...PERF, appsCount: null }), ['—', '']);
-  assert.deepEqual(tile({ ...PERF, appsAmount: undefined }), ['486', 'TZS 0 requested'], 'a count with no amount: the amount reads nought, as the dashboard\'s own money does');
+test('THE LOAN APPLICATIONS WIDGET IS GONE ("Better kill the loan app request widget", the owner, 25 Nov 2026, addendum 8): no tile, whatever the strip answers, and the slide\'s code no longer reads the strip\'s application count or amount (the dashboard\'s own strip still answers them: it draws them)', () => {
+  const code = PRESENT.slice(PRESENT.indexOf("var pf = d.perf || {};"), PRESENT.indexOf(DAY_END)).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/appsCount|appsAmount|appsOn|Loan applications/.test(code), 'nothing of the applications is read or named by the slide');
+  for (const perf of [PERF, { ...PERF, appsCount: 0, appsAmount: 0 }, { ...PERF, appsCount: 12345, appsAmount: 98765432109 }, { ...PERF, appsCount: undefined }]) {
+    const t = slideOf(CARDS, perf, 'WED', WEEK);
+    assert.equal(t.items.length, 12); assert.ok(!t.items.some(i => /loan app/i.test(i.l)));
+    assert.ok(!JSON.stringify(t.items).match(/requested|486|12,345/), 'and no tile carries a number of applications or an amount asked');
+  }
+  assert.match(read('api/_lib/portal-core.js'), /appsCount: wkNow\.appsCount, appsAmount: wkNow\.appsAmount, appsPrevCount/, 'the dashboard\'s strip still answers the week\'s applications');
 });
 
 test('THE WEEK\'S LEGAL RECOVERY is the dashboard\'s Legal card figure, notices and calls TOGETHER with the percentage of what the two were owed under it, and then how much of it came BY PHONE; a dash, and no line, while either side cannot be read; a damaged answer never breaks the slide', () => {
@@ -194,20 +207,58 @@ test('THE WEEK\'S LEGAL RECOVERY is the dashboard\'s Legal card figure, notices 
   assert.deepEqual(tile(g({ total: { recovered: 0, pct: 0, cRec: 0 } })), ['TZS 0', ['0% of owed', 'by phone TZS 0']]);
 });
 
-test('RECOVERED TODAY AND THIS WEEK ARE ONE TILE: the week\'s money is the figure, under it the percentage that belongs to it, then today\'s amount; a dash for a percentage the week cannot measure never hides today\'s amount; there is no second Recovered tile', () => {
-  const tile = (c, perf, extra = WEEK) => { const t = tiles(slideOf(c, perf, 'WED', extra)); return [t.v['Recovered this week'], t.s['Recovered this week']]; };
-  assert.deepEqual(tile(CARDS, PERF), ['TZS 94,338,048', ['118% of uncollected', 'TZS 1,234,567,890 today']]);
-  // today's amount is the dashboard card's own `recovered`, in full, whatever it is: a real nought reads "TZS 0 today"
-  assert.deepEqual(tile({ ...CARDS, recovered: 0 }, PERF), ['TZS 94,338,048', ['118% of uncollected', 'TZS 0 today']]);
-  assert.deepEqual(tile({ ...CARDS, recovered: 98765432109 }, PERF)[1][1], 'TZS 98,765,432,109 today');
-  // the week's percentage cannot be measured: a dash alone (never "— of uncollected"), and today's amount is still there
-  assert.deepEqual(tile(CARDS, { ...PERF, recPct: null }), ['TZS 94,338,048', ['—', 'TZS 1,234,567,890 today']]);
-  assert.deepEqual(tile(CARDS, { ...PERF, recPct: 0 }), ['TZS 94,338,048', ['0% of uncollected', 'TZS 1,234,567,890 today']]);
-  // an answer with no weekly total falls back to the days, as before; the tile never loses today's amount
-  assert.deepEqual(tile(CARDS, PERF, { recTrend: [{ recovered: 1000 }, { recovered: 2500 }] }), ['TZS 3,500', ['118% of uncollected', 'TZS 1,234,567,890 today']]);
-  // one tile, two lines, in that order: the percentage belongs to the week's amount, so it sits right under it
+test('RECOVERED THIS WEEK GOES WITH THE WEEK\'S UNCOLLECTED ("Recovered this week should go with uncol week"): the week\'s recovery, under it the week\'s uncollected (the Weekly recovery trend\'s own TOTAL, else the Weekly expected trend\'s days added up) and then the percentage; nothing of today\'s is on the tile', () => {
+  const tile = (perf, extra = WEEK) => { const t = tiles(slideOf(CARDS, perf, 'WED', extra)); return [t.v['Recovered this week'], t.s['Recovered this week']]; };
+  assert.deepEqual(tile(PERF), ['TZS 94,338,048', ['of TZS 120,000,000 uncollected', '79% recovered']], 'recovered, the uncollected it is measured against, the percentage: in that order');
+  assert.ok(!/today|456,789,012|123,456,789/.test(JSON.stringify(tile(PERF))), 'nothing of today\'s is on the week\'s tile: not the recovered, not the uncollected (addendum 8: "going with uncol today on the same widget doesn\'t make sense")');
+  // the server's total wins over the days; a total with no uncollected falls back to the Weekly expected trend\'s days (711,000 + 950,000 + 1,340,000)
+  assert.deepEqual(tile(PERF, { ...WEEK, recTrendTotal: { ...WEEK.recTrendTotal, uncollected: 5000000 } })[1][0], 'of TZS 5,000,000 uncollected');
+  assert.deepEqual(tile(PERF, { ...WEEK, recTrendTotal: { recovered: 94338048 } })[1][0], 'of TZS 3,001,000 uncollected', 'a total with no uncollected: the days');
+  assert.deepEqual(tile(PERF, { ...WEEK, recTrendTotal: { recovered: 94338048, uncollected: 'x' } })[1][0], 'of TZS 3,001,000 uncollected', 'a damaged one too');
+  assert.deepEqual(tile(PERF, { colTrend: DAYS.colTrend, recTrend: [{ recovered: 1000 }] }), ['TZS 1,000', ['of TZS 3,001,000 uncollected', '79% recovered']], 'an older answer with no total at all: the days, both of them');
+  assert.deepEqual(tile(PERF, { ...WEEK, recTrendTotal: { recovered: 94338048, uncollected: 0 } })[1][0], 'of TZS 0 uncollected', 'a real nought from the server is a nought (the week has its sheets)');
+  // the week\'s percentage cannot be measured: a dash alone (never "— recovered"); a real nought is a nought
+  assert.deepEqual(tile({ ...PERF, recPct: null })[1], ['of TZS 120,000,000 uncollected', '—']);
+  assert.deepEqual(tile({ ...PERF, recPct: 0 })[1], ['of TZS 120,000,000 uncollected', '0% recovered']);
+  assert.deepEqual(tile({ ...PERF, recPct: 118.4 })[1], ['of TZS 120,000,000 uncollected', '118% recovered'], 'more than the week left behind: above 100, as the dashboard\'s strip prints it');
+  // no collection sheet behind the week (a Monday morning, no card, an older answer): no uncollected to show, and the tile says so; "not uploaded" is the dashboard\'s own flag
+  const none = { uploaded: false, uncollected: 0 };
+  for (const extra of [{ ...WEEK, colTrend: [{ ...none, weekday: 'MON' }, { ...none, weekday: 'TUE' }] }, { ...WEEK, colTrend: [] }, { ...WEEK, colTrend: undefined }, { ...WEEK, colTrend: [null, undefined] }])
+    assert.deepEqual(tile(PERF, extra), ['TZS 94,338,048', 'no collection sheet yet'], JSON.stringify(extra.colTrend));
+  // ONE day with a sheet is enough (an entry that carries no flag counts as uploaded, as the dashboard\'s own card reads it)
+  assert.deepEqual(tile(PERF, { ...WEEK, colTrend: [{ ...none, weekday: 'MON' }, { weekday: 'TUE', uncollected: 5 }] })[1][0], 'of TZS 120,000,000 uncollected');
+  // the lines are the strings the dashboard\'s own words end in, and only this tile and the Legal tile and the today tile carry two
   const items = slideOf(CARDS, PERF, 'WED', WEEK).items;
-  assert.deepEqual(items.filter(i => Array.isArray(i.s)).map(i => i.l), ['Recovered this week', 'Legal recovery (week)'], 'two tiles carry two lines: the combined Recovered tile and the Legal recovery tile (its phone line)');
+  assert.deepEqual(items.filter(i => Array.isArray(i.s)).map(i => i.l), ['Recovered today', 'Recovered this week', 'Legal recovery (week)'], 'three tiles carry two lines: the two Recovered tiles and the Legal recovery tile (its phone line)');
+});
+
+test('RECOVERED TODAY IS A TILE OF ITS OWN, WITH TODAY\'S UNCOLLECTED ("differentiate today from weekly recovery vs uncollected"): the dashboard\'s Recovered card over the Uncollected today card and the percentage that ratio is; "not uploaded yet" where no defaulter deck was filed today; "no collection sheet today" where there is no uncollected to divide by', () => {
+  const tile = (c, extra = {}) => { const t = tiles(slideOf(c, PERF, 'WED', { ...WEEK, ...extra })); return [t.v['Recovered today'], t.s['Recovered today']]; };
+  assert.deepEqual(tile(CARDS), ['TZS 123,456,789', ['of TZS 456,789,012 uncollected', '27% recovered']], 'recovered, the uncollected it is measured against, the percentage: in that order');
+  assert.ok(!/week|94,338,048|120,000,000/.test(JSON.stringify(tile(CARDS))), 'nothing of the week\'s is on the day\'s tile');
+  // the ratio the Weekly recovery trend\'s tile for today prints (recovered over the day\'s own uncollected), in whole numbers
+  assert.equal(tile({ ...CARDS, recovered: 456789012 })[1][1], '100% recovered'); assert.equal(tile({ ...CARDS, recovered: 455000000 })[1][1], '100% recovered', '99.6 reads 100');
+  assert.equal(tile({ ...CARDS, recovered: 228394506 })[1][1], '50% recovered');
+  // a real nought is a nought, with its words (the day\'s later file is not in yet: the dashboard\'s own card reads nought too)
+  assert.deepEqual(tile({ ...CARDS, recovered: 0 }), ['TZS 0', ['of TZS 456,789,012 uncollected', '0% recovered']]);
+  // more than the day left behind: above 100, as the dashboard\'s tile prints it
+  assert.deepEqual(tile({ ...CARDS, recovered: 912000000 }), ['TZS 912,000,000', ['of TZS 456,789,012 uncollected', '200% recovered']]);
+  // nothing was uncollected today (the day\'s sheet is in and everything was collected): the money and a dash, never a division by nought
+  assert.deepEqual(tile({ ...CARDS, uncollectedToday: 0 }), ['TZS 123,456,789', ['of TZS 0 uncollected', '—']]);
+  // NO DEFAULTER DECK TODAY: the dashboard\'s own "not uploaded yet", a dash, never a nought that reads as "nothing came back" (VIEWS.dashboard, deckToday)
+  assert.deepEqual(tile(CARDS, { deckToday: false }), ['—', 'not uploaded yet']);
+  assert.deepEqual(tile({ ...CARDS, recovered: 0, uncollectedToday: 0 }, { deckToday: false }), ['—', 'not uploaded yet'], 'a zero because nothing was filed is not a result');
+  assert.deepEqual(tile(CARDS, { deckToday: true }), ['TZS 123,456,789', ['of TZS 456,789,012 uncollected', '27% recovered']]); assert.equal(tile(CARDS, { deckToday: undefined })[0], 'TZS 123,456,789', 'an answer that does not say is read as filed');
+  // NO COLLECTION SHEET FOR TODAY (a weekend, a morning before the upload, a card without the day): there is no uncollected to divide by; the recovered amount is still shown
+  for (const extra of [{ colTrend: [DAYS.colTrend[0], DAYS.colTrend[1]] }, { colTrend: [{ ...DAYS.colTrend[2], uploaded: false }] }, { colTrend: [] }, { colTrend: undefined }, { asOfDate: '2026-11-28' }])
+    assert.deepEqual(tile(CARDS, extra), ['TZS 123,456,789', 'no collection sheet today'], JSON.stringify(extra).slice(0, 90));
+  // a damaged answer never breaks the slide: text and nothing read as nought
+  assert.deepEqual(tile({ ...CARDS, recovered: undefined, uncollectedToday: null }), ['TZS 0', ['of TZS 0 uncollected', '—']]);
+  assert.equal(tile({ ...CARDS, recovered: 'x' })[0], 'TZS 0');
+  assert.deepEqual(tile({ ...CARDS, recovered: 98765432109, uncollectedToday: 98765432109 }), ['TZS 98,765,432,109', ['of TZS 98,765,432,109 uncollected', '100% recovered']]);
+  // it sits beside the Uncollected today tile, which is as the owner left it (its figure and TODAY\'S collection %)
+  const t = tiles(slideOf(CARDS, PERF, 'WED', WEEK));
+  assert.equal(t.v['Uncollected today'], 'TZS 456,789,012'); assert.equal(t.s['Uncollected today'], '87% collected today');
 });
 
 test('COLLECTION TODAY % IS UNDER UNCOLLECTED TODAY: the Weekly expected trend card\'s own percentage for the day the dashboard\'s clock names (found by its DATE), never the week\'s; a day with no figure is a dash alone', () => {
@@ -276,7 +327,8 @@ test('the tiles come from the answer the slide already has: no read of its own, 
   assert.match(core, /return \{ weekday: wd, date: d, initial, current, recovered, customers, undated, uploaded, pct, dEdr, lwEdr:/, 'and each of its days says whether it was uploaded');
   for (const f of ['cleared', 'curArrears', 'recovered', 'defaulters', 'salesWeek', 'uncollectedToday', 'abnormal']) assert.ok(new RegExp('\\b' + f + ': ').test(core.slice(core.indexOf('cards: {\n      curArrears'), core.indexOf('cards: {\n      curArrears') + 2600)), 'dashboardFull answers cards.' + f);
   for (const f of ['salesPct', 'ecolPct', 'colPct', 'recPct', 'avgPct']) assert.ok(core.includes('perf.' + f) || new RegExp('\\b' + f + ': wkNow\\.' + f).test(core), 'dashboardFull answers perf.' + f);
-  assert.match(core, /appsCount: wkNow\.appsCount, appsAmount: wkNow\.appsAmount, appsPrevCount/, 'the strip answers the week\'s applications: the count and the amount asked');
+  assert.match(core, /honest zeros\.\n\s+deckToday,/, 'dashboardFull answers whether a defaulter deck was filed today (the Recovered today tile says "not uploaded yet" by it, as the dashboard\'s own card does)');
+  assert.match(code, /d\.deckToday === false/, 'and the slide reads it');
   // the two per-day cards today's tiles are read from, and the clock that says which day today is
   assert.match(core, /asOfDate: today, pastWeek: asOf\.past,/, 'dashboardFull says which day its own clock calls today');
   assert.match(core, /return \{ weekday: wd, date: d, amount: amt, loans: on\.length, pct, dSales,/, 'each day of the Sales trend carries its date, the approved principal, the loans and the percentage of the daily target');

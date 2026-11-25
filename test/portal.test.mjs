@@ -7621,6 +7621,40 @@ test('the recovery tiles divide by leo -- the day\'s own uncollected -- and say 
 });
 
 
+/* THE PRESENTATION'S DAY SLIDE READS ONE FIGURE FOR EACH OF ITS RECOVERY TILES, AND EACH IS THE DASHBOARD'S OWN (handbook Part 164, addendum 8):
+     "Recovered this week should go with uncol week ... differentiate today from weekly recovery vs uncollected" -- the owner, 25 Nov 2026
+   The wall prints today's Recovered card over the Uncollected today card (and the percentage that ratio is), and the week's Recovered over the week's uncollected with the
+   strip's Recovery %. The page does no sum of its own beyond that ratio, so these are the facts it stands on: the cards ARE the Weekly recovery trend's tile for today, the strip's
+   Recovery % IS the TOTAL tile's, and the week's uncollected (which the wall falls back to the Weekly expected trend's days for, in an answer with no total) IS those days added up. */
+test('the day slide\'s recovery tiles stand on one figure each: the cards are the Weekly recovery trend\'s tile for today, the strip\'s Recovery % is the total\'s, and the week\'s uncollected is the Weekly expected trend\'s days added up', async () => {
+  const t = tables();
+  t.repayment_snapshots = [
+    E('111', 'KONGOWE', 1000, 'UNPAID', 0, MON),
+    E('222', 'KONGOWE', 400, 'UNPAID', 0, YEST),
+    E('333', 'KONGOWE', 600, 'UNPAID', 0, TODAY),
+  ];
+  const d = await run('dashboardFull', {}, ADMIN, fakeDb(t));
+  const today = d.recTrend.find(x => x.date === d.asOfDate);
+  assert.ok(today && today.uploaded === true && d.deckToday === true, 'today has its tile and a deck was filed today');
+  assert.equal(d.cards.recovered, today.recovered, 'the Recovered card is the trend\'s tile for today');
+  assert.ok(d.cards.recovered > 0, 'and it is a real figure in this book (so the equality is not 0 = 0)');
+  assert.equal(d.cards.uncollectedToday, today.uncollected, 'the Uncollected today card is the figure the tile divides by');
+  assert.equal(d.cards.uncollectedToday, 600);
+  assert.equal(today.pct, Math.round(d.cards.recovered / d.cards.uncollectedToday * 1000) / 10, 'the tile\'s percentage is the ratio the wall works out from the two cards');
+  assert.equal(d.perf.recPct, d.recTrendTotal.pct, 'the strip\'s Recovery % is the TOTAL tile\'s');
+  assert.ok(d.recTrendTotal.pct > 0);
+  assert.equal(d.recTrendTotal.uncollected, d.colTrend.reduce((s, x) => s + x.uncollected, 0), 'the week\'s uncollected is the Weekly expected trend\'s days added up');
+  assert.equal(d.recTrendTotal.uncollected, 2000);
+  assert.equal(d.recTrendTotal.recovered, d.recTrend.reduce((s, x) => s + x.recovered, 0), 'and the week\'s recovered is the seven tiles added');
+  // the tile is "not uploaded" where no defaulter deck was filed today, and the cards read an honest zero: the wall says "not uploaded yet" instead of printing it
+  const noDeck = await run('dashboardFull', {}, ADMIN, fakeDb({ ...t, defaulter_snapshots: [] }));
+  assert.equal(noDeck.deckToday, false, 'no deck today: the answer says so');
+  assert.equal(noDeck.cards.recovered, 0, 'and the card reads nought, which is what the wall must not print as a result');
+  const t2 = noDeck.recTrend.find(x => x.date === noDeck.asOfDate);
+  assert.equal(t2.uploaded, false, 'the trend\'s own tile for today says it was not uploaded');
+});
+
+
 /* EARLY COLLECTION IS WORKED FROM THE LIST OF WHO IS DUE NEXT.
  *
  * That used to mean the "Expected Tomorrow" report and nothing else -- and that report is not
