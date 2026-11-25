@@ -11,8 +11,11 @@
  * beside the tool: crawl.mjs.) */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { scanAll, listAll } from '../tools/language-audit/surfaces.mjs';
 import { buildVocabulary } from '../tools/language-audit/vocabulary.mjs';
@@ -118,4 +121,74 @@ test('a hand-written split still has a text to split', () => {
   const texts = new Set(V.recs.map((r) => r.t));
   const joined = [...texts].join('\u0000');
   for (const key of Object.keys(FIX)) assert.ok(texts.has(key) || joined.includes(key), 'overrides.mjs has a split for a text that no longer exists: ' + key.slice(0, 70));
+});
+
+/* ---- THE SUGGESTED SWAHILI (the owner's second request, 25 Nov 2026):
+ *   "On both sheets give your opinion column of the Sw version so that I don't take long on corrections brother" ... "Oh it's on the
+ *    English only that needs opinion the rest already have"
+ * tools/language-audit/data/suggested-swahili-*.json holds an opinion for each English-only row, by the row's ID. It is the owner's to
+ * correct and no screen reads it; these tests only keep it from rotting: it belongs to its English, it keeps every value the system
+ * fills in, it keeps what should stay, and it covers (all but a few of) the English-only phrases the code holds. */
+const SUG_DIR = path.join(ROOT, 'tools/language-audit/data');
+const SUG_FILE = fs.readdirSync(SUG_DIR).filter((f) => /^suggested-swahili-.*\.json$/.test(f)).sort().pop();
+const SUG = JSON.parse(fs.readFileSync(path.join(SUG_DIR, SUG_FILE), 'utf8')).rows;
+const hidOf = (t) => 'EN-' + crypto.createHash('sha1').update(t, 'utf8').digest('hex').slice(0, 6);
+const phsOf = (t) => t.match(/\{\d+\}/g) || [];
+
+test('every suggestion belongs to its English: its id is the hash of the text, it says something, its flag is one of the four', () => {
+  assert.ok(Object.keys(SUG).length > 2000, 'the suggestions are missing');
+  for (const [id, r] of Object.entries(SUG)) {
+    assert.equal(id, hidOf(r.en), 'the id of "' + r.en.slice(0, 50) + '" is not the hash of its text (a row was edited by hand, or the English changed)');
+    assert.ok(typeof r.sw === 'string' && r.sw.trim(), 'no Swahili for "' + r.en.slice(0, 50) + '"');
+    assert.ok(['', 'c', 'k', 'n'].includes(r.flag || ''), 'unknown flag on "' + r.en.slice(0, 50) + '"');
+    if (r.flag === 'c' || r.flag === 'n') assert.ok(r.note && r.note.trim(), 'a row flagged ' + r.flag + ' needs its note: ' + r.en.slice(0, 50));
+    // "keep as it is" means the English itself: a name, an abbreviation, a file column
+    if (r.flag === 'k') assert.equal(r.sw, r.en, 'a row marked keep must be the English itself: ' + r.en.slice(0, 50));
+  }
+});
+
+test('a suggestion keeps every value the system fills in ({1} {2} ...): dropped only where English builds a plural with it, never invented', () => {
+  const bad = [];
+  for (const r of Object.values(SUG)) {
+    const en = phsOf(r.en), sw = phsOf(r.sw);
+    const suffix = (p) => new RegExp('[A-Za-z]' + p.replace(/[{}]/g, '\\$&')).test(r.en); // month{2}, team{3}: the English plural's letter
+    const dropped = en.filter((p) => !sw.includes(p) && !suffix(p) && !/dropped/i.test(r.note || ''));
+    const invented = sw.filter((p) => !en.includes(p));
+    const more = [...new Set(sw)].filter((p) => sw.filter((x) => x === p).length > en.filter((x) => x === p).length);
+    if (dropped.length || invented.length || more.length) bad.push(r.en.slice(0, 60) + '  =>  ' + r.sw.slice(0, 60));
+  }
+  assert.deepEqual(bad, [], 'a suggestion lost or invented a value the system fills in');
+});
+
+test('the suggestions cover the English-only phrases the code holds (the owner corrects; he does not start from nothing)', () => {
+  const without = V.en.filter((e) => !SUG[hidOf(e.text)]);
+  // a few new strings may arrive between two runs; when more than two in a hundred have none, the data is stale
+  assert.ok(without.length <= Math.ceil(V.en.length * 0.02), without.length + ' of ' + V.en.length + ' English-only phrases have no suggested Swahili: run `node tools/language-audit/run.mjs --out DIR` (it writes rows-without-suggestion.json), write those suggestions into data/, and run it again. First ones: ' + without.slice(0, 5).map((e) => '"' + e.text.slice(0, 40) + '"').join(', '));
+});
+
+test('the runner and the workbook maker carry the suggestions to the first sheet', () => {
+  const maker = fs.readFileSync(path.join(ROOT, 'tools/language-audit/make_xlsx.py'), 'utf8');
+  const runner = fs.readFileSync(path.join(ROOT, 'tools/language-audit/run.mjs'), 'utf8');
+  assert.ok(maker.includes("'--suggest' in sys.argv") && maker.includes("sys.argv.index('--suggest')") && maker.includes("Suggested Swahili (Claude's opinion)") && maker.includes('Please check') && maker.includes('Keep as it is'), 'make_xlsx.py no longer writes the suggestion columns');
+  assert.ok(/'--suggest'/.test(runner) && runner.includes('suggested-swahili-') && runner.includes('rows-without-suggestion.json'), 'run.mjs no longer hands the suggestions to the maker');
+  // the owner's yellow columns come AFTER mine: "leave the yellow column empty where you agree"
+  assert.ok(/"Suggested Swahili \(Claude's opinion\)", "Claude's confidence", "Claude's note", 'Acceptable Swahili \(owner\)', 'Notes \(owner\)'/.test(maker), 'the owner columns must follow the suggestion columns, in this order');
+});
+
+test('the maker writes my suggestion beside its English and leaves the owner columns empty (needs python3 with openpyxl: skipped where it is not there)', (t) => {
+  if (spawnSync('python3', ['-c', 'import openpyxl'], { encoding: 'utf8' }).status !== 0) return t.skip('python3 with openpyxl is not installed here');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lang-sug-'));
+  const text = 'Save the {1} report';
+  const id = hidOf(text);
+  fs.writeFileSync(path.join(tmp, 'rows.json'), JSON.stringify({ pairs: [], sw: [], complex: [], en: [{ text, conf: 'en', why: 'single', count: 1, where: ['x.js:1'], areas: ['Portal core'], kinds: ['Screen text'], fulls: [], files: ['x.js'] }] }));
+  fs.writeFileSync(path.join(tmp, 'sug.json'), JSON.stringify({ rows: { [id]: { en: text, sw: 'Hifadhi ripoti ya {1}', flag: 'c', note: 'a note' } } }));
+  const made = spawnSync('python3', [path.join(ROOT, 'tools/language-audit/make_xlsx.py'), path.join(tmp, 'rows.json'), path.join(tmp, 'o.xlsx'), '--suggest', path.join(tmp, 'sug.json')], { encoding: 'utf8' });
+  assert.equal(made.status, 0, made.stderr);
+  const read = spawnSync('python3', ['-c', 'import json,sys\nfrom openpyxl import load_workbook\nws = load_workbook(sys.argv[1])["1 English only"]\nprint(json.dumps([[c.value for c in row] for row in ws.iter_rows(min_row=2)]))', path.join(tmp, 'o.xlsx')], { encoding: 'utf8' });
+  const sheet = JSON.parse(read.stdout);
+  assert.deepEqual(sheet[0].slice(0, 7), ['ID', 'English phrase (current)', "Suggested Swahili (Claude's opinion)", "Claude's confidence", "Claude's note", 'Acceptable Swahili (owner)', 'Notes (owner)']);
+  assert.deepEqual(sheet[1].slice(0, 7), [id, text, 'Hifadhi ripoti ya {1}', 'Please check', 'a note', null, null]);
+  // without --suggest the sheet is the one it always was
+  const plain = spawnSync('python3', [path.join(ROOT, 'tools/language-audit/make_xlsx.py'), path.join(tmp, 'rows.json'), path.join(tmp, 'p.xlsx')], { encoding: 'utf8' });
+  assert.equal(plain.status, 0, plain.stderr);
 });
