@@ -1,0 +1,3016 @@
+{
+ "note": "Questions for the knowledge cards (handbook Part 159, addendum 1). \"suite\" are 160 questions written by agents that had not seen a card, with the independent judges' label (best = the card that would answer it, null when none exists or the question is not about HOPE; gap = no card exists): the measure the keys are NOT tuned on. \"own\" are 864 questions (12 for each card) written by agents that saw only the cards: the keys were drawn from them, so they say whether the cards still find their own questions and whether another card is wrongly put first, never how well strangers are served. No personal name is in this file (test/claudian-cards-retrieval.test.mjs fails on one).",
+ "suite": [
+  {
+   "group": "officers",
+   "q": "simu ya sekunde 3 inahesabiwa?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-count-and-reached",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "What counts as a call?",
+   "lang": "en",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-count-and-reached",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "nmempigia mteja dk 10 zilizopita tick ya amepigiwa leo bado haijaja, nisubiri hadi lini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-tick-amepigiwa-leo",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "Mteja ameandikwa Amepigiwa leo ila mimi sijampigia hata mara moja, imekuaje?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-tick-amepigiwa-leo",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "I called the other number I saved under 'Ana namba nyingine' but the Amepigiwa leo tick still isn't showing on the list. Why?",
+   "lang": "en",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-tick-amepigiwa-leo",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "kwa nini Kesho aina wateja?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-lists-def-exp-chr",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Hizi Def, Exp na Chr: Exp ni Expired au Expected? Mteja anahama lini kutoka moja kwenda nyingine?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-lists-def-exp-chr",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "sync yangu ni red, nifanyeje?",
+   "lang": "mixed",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-sync-call-log",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Nimempigia mdhamini tu kwa sababu mteja hapokei, hiyo inahesabika kama nimempigia mteja?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-tick-amepigiwa-leo",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "T.Def ni nini?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Good morning. My Exp.Def list is empty today even though I know I have customers on it, and my colleague sitting next to me sees a full list. What could be the reason?",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": true,
+   "best": "defaulters-rotation-owner-role",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Simba na Yanga leo nani atashinda?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "Salaam, nina swali. Orodha yangu ya Leo inaonyesha wateja wachache sana lakini Def ni ndefu, na juu imeandikwa imechujwa 40/120. Kuna kitu kimefichwa au mfumo una hitilafu?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-lists-by-role",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "nikipiga namba ileile mara 4 kwenye ripoti inakuwa simu ngapi?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [
+    "calls"
+   ],
+   "phone": true,
+   "best": "calls-count-and-reached",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Please approve my salary advance request, I submitted it this morning.",
+   "lang": "en",
+   "area": "action",
+   "tabs": [
+    "advappr"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "Marejesho na Rec % vya Exp.Def vinaonyesha kistari tu (-) mpaka jioni, ni kosa au ni kawaida?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": true,
+   "best": "defaulters-later-file-not-in",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "Daily Bonus Plan ina percent tofauti na targets za company, kwa nini? Ipi ni sahihi?",
+   "lang": "mixed",
+   "area": "reports",
+   "tabs": [
+    "bonusplan"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Nipo nyuma ya malengo?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "On the dashboard, what is Early Collection, and is it the same as the Kesho % on my phone?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "natumia iphone, simu zangu hazihesabiwi kabisa, kwa nini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-sync-call-log",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "Mteja amelipa deni lote lkn bado yupo kwenye Exp.Def, kwanini hajatoka?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": true,
+   "best": "defaulters-cleared-stay-on-list",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "officers",
+   "q": "Can the office see where I am when I use HOPE Calls? Are they reading my messages too?",
+   "lang": "en",
+   "area": "other",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Zile Col leo, Kesho, Wiki na Sales za juu ni zangu au za timu nzima? Na kwa nini leo zimeandikwa Jana kwa rangi nyekundu?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "Niambie deni la mteja wa Mbagala, search haimpati",
+   "lang": "sw",
+   "area": "action",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-search-book",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Mimi ni bike officer, kwa nini Leo na Kesho hazipo kwenye app yangu? Naona Exp.Def, Def, Exp na Chr tu.",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-bike-officer-phone",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "What time do the morning and evening defaulter files come in? I want to know when the recovery figures update.",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "defexp",
+    "expdfrep"
+   ],
+   "phone": true,
+   "best": "defaulters-later-file-not-in",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "Mteja na mdhamini wote hawapokei simu, nichague hali gani ya ufuatiliaji?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "followup"
+   ],
+   "phone": true,
+   "best": "calls-followup-statuses",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "Bro can you give me a quick pilau recipe? njaa imenizidi kabisa",
+   "lang": "mixed",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "Lengo la simu 300 kwa siku ni la kila afisa au la timu nzima?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "How is my commission for the month calculated?",
+   "lang": "en",
+   "area": "other",
+   "tabs": [
+    "commission"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "nimeweka ahadi ya tar 30, kwenye Promise to Pay haionekani kwanini?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "promises",
+    "followup"
+   ],
+   "phone": false,
+   "best": "defaulters-followup-status-rules",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "officers",
+   "q": "The recovery target says 120% with amounts from 700k. What does that mean exactly?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Nimebakiza masaa 2 kazi iishe na nimepiga simu 150 tu, nipige nani kwanza?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "Tab ya Exp.Def siioni kwenye app yangu, wenzangu wanayo",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-leader-own-list-and-code",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Naomba ubadilishe minimum seconds za call ziwe 2, calls zangu nyingi ni fupi",
+   "lang": "mixed",
+   "area": "action",
+   "tabs": [
+    "settings"
+   ],
+   "phone": true,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "officers",
+   "q": "Mteja amekosa malipo mara tatu, naweza kumtolea notisi ya madai mimi mwenyewe?",
+   "lang": "sw",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "How many days of annual leave do I get, and do unused days carry over to next year?",
+   "lang": "en",
+   "area": "hr",
+   "tabs": [
+    "leavereq",
+    "leaverep"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "advance yangu imekataliwa naweza omba tena mwezi huu?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "I got a new phone. How do I sign in to HOPE Calls again, and why does it ask for a team code?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "officers",
+   "q": "Can you help me write a speech for my sister's wedding on Saturday?",
+   "lang": "en",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "ile nukta ya juu kulia imekuwa nyekundu, inamaanisha nini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-sync-call-log",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Does HOPE Calls inasoma WhatsApp messages au photos zangu? Kila nikiifungua inaomba battery permission",
+   "lang": "mixed",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "partly"
+  },
+  {
+   "group": "leaders",
+   "q": "kwenye Ripoti, Simu na Majaribio ni vitu tofauti? mfano simu 12 lakin majaribio 60",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [
+    "calls"
+   ],
+   "phone": true,
+   "best": "calls-count-and-reached",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "On the Daily Bonus Plan I see 80, 96 and 120 percent. Are those the company targets for each team?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "bonusplan"
+   ],
+   "phone": false,
+   "best": "reports-commission",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "leaders",
+   "q": "Afisa wangu amebonyeza pini ya eneo kwa mteja, sasa kadi inaonyesha 'Maeneo 2' na onyo jekundu kwamba yanatofautiana mita 300. Hii inamaanisha nini, na nani anaweza kubadilisha eneo lililohifadhiwa?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Why does Kesho show Monday's date when I open it on a Friday?",
+   "lang": "en",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-lists-def-exp-chr",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Mteja akiwekewa malalamiko, mimi na afisa wangu tutajuaje kabla ya kumpigia simu?",
+   "lang": "sw",
+   "area": "other",
+   "tabs": [
+    "complaints"
+   ],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "T.Def ni nini kwenye app?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "samahan nmefungua Exp.Def asubuhi naona wateja 38 ila Marejesho na Rec % ni mistari tu (—). Ni hitilafu au ni kawaida mpaka jioni? Na faili la jioni linapakiwa saa ngapi hasa?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": true,
+   "best": "defaulters-later-file-not-in",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Zangu na Timu yote tofauti?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-leader-own-list-and-code",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "mteja mmoja ana D3, mwingine E-W2, mwingine C-W1. hizo herufi zinamaanisha nin?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": false,
+   "best": "defaulters-rotation-owner-role",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Can I move a defaulter from the manager to a bike officer myself, or is the rotation automatic?",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "assignments"
+   ],
+   "phone": false,
+   "best": "defaulters-rotation-owner-role",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Hi, I look after three teams. My GMO seems to carry far more expected defaulters than I do on the very same teams, and some mornings I only see two or three on my own list. Is that normal, and where can I see how the whole week splits by role and by day?",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "defexp",
+    "assignments"
+   ],
+   "phone": false,
+   "best": "defaulters-rotation-owner-role",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "How does the weekly cycle work? I mean which two days a week is each defaulter due to be called?",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": false,
+   "best": "defaulters-cycle-days",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Nikichagua 'Rejesho limeliwa' kwa mteja, kwa nini mfumo unanilazimisha kuandika maoni?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "followup"
+   ],
+   "phone": true,
+   "best": "defaulters-followup-status-rules",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Mteja akinipa ahadi ya kulipa Ijumaa, nikichagua 'Ametoa ahadi' naombwa tarehe. Ijumaa ikipita bila kulipa naiona wapi?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "promises",
+    "followup"
+   ],
+   "phone": false,
+   "best": "calls-promise-to-pay",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "leaders",
+   "q": "Exp.Def haina wateja leo kwnn?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": true,
+   "best": "defaulters-cycle-days",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Followup Report na Defaulters Followup zinatofautiana vipi? Nataka kujua afisa gani hajaandika maoni wiki hii",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "fureport",
+    "followup"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "kwanin app inaonyesha Jana badala ya Leo kwenye takwimu za juu?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Sales % ya juu kwenye app ni tofauti na ya dashboard kwa timu ile ile, kwa nini?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "On Mondays my teams' Recovery % on the dashboard looks nothing like Tuesday to Friday. What is it divided by each day of the week, and why do Saturday and Sunday use the whole week?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": false,
+   "best": "reports-dash-collection",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "What does Early Col mean?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": false,
+   "best": "reports-dash-collection",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Kwa nini Sat na Sun hakuna Col kwenye dashboard? Is it a bug or by design?",
+   "lang": "mixed",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": false,
+   "best": "reports-dash-collection",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Kwenye Weekly Report kuna kiongozi mmoja anaonekana 'hakuna / nobody named'. Maana yake nini na nifanye nini?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "weekly"
+   ],
+   "phone": false,
+   "best": "defaulters-assignment-screen",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Meneja wa eneo ameniuliza kwa nini PAR ya timu yangu kwenye Portfolio at Risk ni 4% lakini PAR all-time ni 1.8%. Nimweleze vipi kwenye kikao, zinahesabiwa tofauti?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "par"
+   ],
+   "phone": false,
+   "best": "reports-par",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Habari, kwenye Exp.Def Report GMO mmoja ana calls 0 na comments 0, but I know he calls every day. Tatizo linaweza kuwa nini, na nikigusa jina lake naona nini?",
+   "lang": "mixed",
+   "area": "reports",
+   "tabs": [
+    "expdfrep"
+   ],
+   "phone": false,
+   "best": "defaulters-report-leader-boards",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "My teams are below target on recovery this week. Where do I start tomorrow morning to bring them up?",
+   "lang": "en",
+   "area": "defaulters",
+   "tabs": [
+    "defexp"
+   ],
+   "phone": false,
+   "best": "calls-promise-to-pay",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Faini ya notisi ya madai inahesabiwaje, na kuna siku za neema kabla ya faini kuanza?",
+   "lang": "sw",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "On the dashboard, does the Legal recovery card count money from phone calls or only from demand notices?",
+   "lang": "en",
+   "area": "legal",
+   "tabs": [
+    "legal",
+    "dashboard"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Advance yangu ilikataliwa jana, naweza kuomba tena mwezi huu? Na kwa nini sasa siwezi kuidhinisha maombi ya timu yangu, inasema mwezi umefungwa?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq",
+    "advappr",
+    "advfinal"
+   ],
+   "phone": false,
+   "best": "hr-advance-closed",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Imprest ya GMO wangu inapita kwangu kwanza kabla ya kwenda kwa GM? Naweza kupunguza kiasi nikithibitisha?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "impreq",
+    "impappr"
+   ],
+   "phone": false,
+   "best": "hr-imprest-approve",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Afisa ameacha kazi leo, nafungaje simu ya kampuni aliyokuwa nayo?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "devlock"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "kwenye Exp.Def naona ujumbe unasema jina langu liko kwenye timu ambazo code yangu haizioni. nifanyeje?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-leader-own-list-and-code",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "leaders",
+   "q": "Can I tick yesterday's task on the Daily Checklist, and what happens if I tick after the cut-off time?",
+   "lang": "en",
+   "area": "other",
+   "tabs": [
+    "checklist"
+   ],
+   "phone": false,
+   "best": "reports-daily-checklist",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "leaders",
+   "q": "Habari za asubuhi, umeamkaje leo?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "Mlima mrefu kuliko yote Afrika unaitwaje?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "tell me a joke please",
+   "lang": "en",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "Niangalizie mteja wa Kariakoo, nataka kujua deni lake na kama amelipa leo.",
+   "lang": "sw",
+   "area": "action",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "Please approve my GMO's advance request in the system, I have already checked it with him.",
+   "lang": "en",
+   "area": "action",
+   "tabs": [
+    "advappr"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "leaders",
+   "q": "Naomba ubadilishe minimum call seconds iwe 10 kwenye Settings, please.",
+   "lang": "mixed",
+   "area": "action",
+   "tabs": [
+    "settings"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "balance ya likizo naiona wapi",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "leavereq",
+    "leaverep"
+   ],
+   "phone": false,
+   "best": "hr-leave-rules",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "Hi, I'm the finance manager and we are about to pay November advances. If I press Finalize now, what happens to requests still pending, and can I reopen the month if someone was left out?",
+   "lang": "en",
+   "area": "hr",
+   "tabs": [
+    "advfinal",
+    "advappr"
+   ],
+   "phone": false,
+   "best": "hr-advance-closed",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "simu imeandikwa Imeagizwa kufungwa tangu jana bado haijafungwa, maana yake nini",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "devlock"
+   ],
+   "phone": false,
+   "best": "hr-device-lock",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "mteja amelipa lakini bado yupo kwenye Expected Defaulters, ni kosa?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp",
+    "expdfrep"
+   ],
+   "phone": false,
+   "best": "defaulters-cleared-stay-on-list",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "imprest request not submitting",
+   "lang": "en",
+   "area": "other",
+   "tabs": [
+    "impreq"
+   ],
+   "phone": false,
+   "best": "hr-imprest-request",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "Call Reports inaonyesha Reached % ndogo sana, what counts as reached exactly?",
+   "lang": "mixed",
+   "area": "calls",
+   "tabs": [
+    "calls"
+   ],
+   "phone": false,
+   "best": "calls-count-and-reached",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "advnce yangu ya mwezi uliopita inasema Expired nifanyeje sasa",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq"
+   ],
+   "phone": false,
+   "best": "hr-advance-closed",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "dola leo ngapi?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "PAR ya muda wote kwa timu inahesabiwaje?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "par"
+   ],
+   "phone": false,
+   "best": "reports-par",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "As the auditor, where do I see who changed a setting and when?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [
+    "audit"
+   ],
+   "phone": false,
+   "best": "admin-audit-log",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "kwanini siwezi kujaza retirement ya imprest, inasema niwasiliane na uhasibu?",
+   "lang": "sw",
+   "area": "other",
+   "tabs": [
+    "impreq",
+    "imprep"
+   ],
+   "phone": false,
+   "best": "hr-imprest-retire",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "T.Def kwenye simu ni nini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Please badilisha SALES_TARGET_WEEKLY iwe 25,000,000 per team sasa hivi, dashboard inaonyesha mauzo kidogo",
+   "lang": "mixed",
+   "area": "action",
+   "tabs": [
+    "settings",
+    "dashboard"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "salio kwenye makato ya pmo linatoka wapi",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "deduct"
+   ],
+   "phone": false,
+   "best": "deduct-cards-hr",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "How do I export the annual report as a PowerPoint deck for the board?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "annual"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Habari, nina mfanyakazi mpya ameanza wiki hii lakini jina lake halionekani kwenye orodha ya Omba advance. Nifanye nini ili aweze kuomba mwezi huu?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq",
+    "advstaff",
+    "teams"
+   ],
+   "phone": false,
+   "best": "hr-request-name-missing",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "marejesho ya Exp.Def yanaonyesha 0 mchana kutwa kwa nn? sijaelewa",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "defexp",
+    "expdfrep"
+   ],
+   "phone": false,
+   "best": "defaulters-later-file-not-in",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "On the phone's Exp.Def tab, what do the Zangu and Timu yote buttons do?",
+   "lang": "en",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-leader-own-list-and-code",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "naomba kufunga simu ya mfanyakazi aliyeacha kazi, nianzie wapi",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "devlock"
+   ],
+   "phone": false,
+   "best": "hr-device-lock",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "What does PAR > 30 days mean on the Audit report, and can I look at an older month?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "auditrep"
+   ],
+   "phone": false,
+   "best": "reports-par",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "kiasi kilicholipwa kwenye ripoti ya inprest anaweka nani",
+   "lang": "sw",
+   "area": "other",
+   "tabs": [
+    "imprep"
+   ],
+   "phone": false,
+   "best": "hr-imprest-retire",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Mambo Claudian, Simba jana wamefungwa au wameshinda?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "Early Collection kwenye Dashboard ni ya wiki au mwezi?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": false,
+   "best": "reports-dash-collection",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "Phone ya kampuni imerudishwa, nai-unlock vipi kwenye system?",
+   "lang": "mixed",
+   "area": "admin",
+   "tabs": [
+    "devunlock"
+   ],
+   "phone": false,
+   "best": "hr-device-lock",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "How is the fine on a demand notice worked out, and is there a grace period?",
+   "lang": "en",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-fine",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "kwa nini baadhi ya akaunti za benki kwenye Ripoti ya advance zipo tupu?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advrep",
+    "advstaff"
+   ],
+   "phone": false,
+   "best": "hr-advance-report",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "naomba deni la mteja wa Mbezi, ana kiasi gani leo?",
+   "lang": "sw",
+   "area": "action",
+   "tabs": [
+    "followup"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "slide za Presentation zinakaa sekunde ngapi",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "present"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Can someone be allowed to request advances but not approve them? How do I set that up?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [
+    "settings",
+    "advreq",
+    "advappr"
+   ],
+   "phone": false,
+   "best": "admin-roles-access",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "nmeomba likzo lakini mfumo unasema nina ombi lingine tarehe hizohizo, kwa nn?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "leavereq"
+   ],
+   "phone": false,
+   "best": "hr-leave-rules",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "GMO na Manager wakiomba imprest, inaenda kwa GM moja kwa moja au inapitia OPM kwanza?",
+   "lang": "sw",
+   "area": "other",
+   "tabs": [
+    "impappr",
+    "impreq"
+   ],
+   "phone": false,
+   "best": "hr-imprest-approve",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "Quick one before my meeting: what is the capital of Australia?",
+   "lang": "en",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "headoffice",
+   "q": "kengele kwenye Calls inaonyesha nini",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "advance ya laki tatu inawezekana?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "What makes an approved loan show up as a case on the Fraud Detector?",
+   "lang": "en",
+   "area": "legal",
+   "tabs": [
+    "fraud"
+   ],
+   "phone": false,
+   "best": "reports-fraud-detector",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "nimepkia faili la defaulters la asubuhi mara mbili, mfumo unahesabu lipi?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "upload"
+   ],
+   "phone": false,
+   "best": "admin-upload-redo",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Officer wangu says the sync dot juu ni nyekundu kwenye HOPE Calls, nifanyeje?",
+   "lang": "mixed",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-sync-call-log",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "headoffice",
+   "q": "Samahani, HR staff data naona kusoma tu, siwezi kuongeza staff mpya, kwa nini?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advstaff"
+   ],
+   "phone": false,
+   "best": "hr-staff-register",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "headoffice",
+   "q": "On PMO Deduction, what is the difference between Proposed and Deducted?",
+   "lang": "en",
+   "area": "hr",
+   "tabs": [
+    "deduct"
+   ],
+   "phone": false,
+   "best": "deduct-cards-hr",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "headoffice",
+   "q": "Hi Claudian, please approve her advance request for 150,000 today, she has been waiting since Monday and I am stuck in a meeting",
+   "lang": "en",
+   "area": "action",
+   "tabs": [
+    "advappr"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "kwanin sistem inakataa kutoa notis ya madai kwa mteja huyu?",
+   "lang": "sw",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-cannot-issue",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Kwa nini app ya simu inaniomba ruhusa ya beteri kila nikiifungua?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "uplod ya pili ya siku ileile inajumlisha au inabadilisha ya kwanza?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "upload"
+   ],
+   "phone": false,
+   "best": "admin-upload-redo",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Is there a way to check a phone number on the Fraud Detector before I approve a loan, even if the number has no case yet?",
+   "lang": "en",
+   "area": "other",
+   "tabs": [
+    "fraud"
+   ],
+   "phone": false,
+   "best": "reports-fraud-detector",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "habari za leo Claudian?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Habari, mimi ni afisa wa sheria. Mteja alipewa notisi mwezi uliopita, akalipa deni lote, kisha akakopa tena na kuchelewa tena. Naweza kumpa notisi mpya moja kwa moja au lazima nisubiri ile ya zamani ifutike kwanza?",
+   "lang": "sw",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-cannot-issue",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "What's the difference between the normal PAR and the all-time PAR on the Portfolio at Risk tab?",
+   "lang": "en",
+   "area": "reports",
+   "tabs": [
+    "par"
+   ],
+   "phone": false,
+   "best": "reports-par",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Exp kwenye app ni nini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-lists-def-exp-chr",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Who can see the Audit log, and does it keep what people write in comments?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [
+    "audit"
+   ],
+   "phone": false,
+   "best": "admin-audit-log",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Customer ameomba restrcture, minimum D.C inayotakiwa ni ngapi? And what's the longest new schedule allowed?",
+   "lang": "mixed",
+   "area": "defaulters",
+   "tabs": [
+    "restructure"
+   ],
+   "phone": false,
+   "best": "reports-restructuring",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Habari, mwezi uliopita niliomba advance lakini hakuna aliyeidhinisha, sasa mfumo unaonyesha Expired. Hii ina maana gani na naweza kuomba tena mwezi huu?",
+   "lang": "sw",
+   "area": "hr",
+   "tabs": [
+    "advreq"
+   ],
+   "phone": false,
+   "best": "hr-advance-closed",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "msimbo wa timu ukibadilishwa nini kinatokea kwa maafisa wa timu hiyo walio kwenye app?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "teams",
+    "settings"
+   ],
+   "phone": true,
+   "best": "admin-team-code-handsets",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "I printed a demand notice yesterday but the printer jammed halfway. If I press Issue again will it create a second notice with a new number, or can I just reprint the same one?",
+   "lang": "en",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-reprint-letter",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Angalia kama mteja wa timu ya Mbeya tayari ana notisi ya madai, nipe tarehe yake.",
+   "lang": "sw",
+   "area": "action",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Credit Analysts tab: sales % ya analyst mwenye teams 5 ina-compare na target gani? ni ya team moja au zote 5?",
+   "lang": "mixed",
+   "area": "other",
+   "tabs": [
+    "credit"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "upload inasema tarehe 7 hazikusomeka, zimehifadhiwa vipi na nifanyeje?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "upload"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "How does a new field officer sign in to HOPE Calls? It says the phone number must be the one the PMO officer registered.",
+   "lang": "en",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "admin-team-code-handsets",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Mteja jana alikuwa kwa GMO leo yuko kwa Bike, mgawanyo wa wadaiwa unabadilika kila baada ya siku ngapi?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [
+    "assignments"
+   ],
+   "phone": false,
+   "best": "defaulters-rotation-owner-role",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "legaladmin",
+   "q": "What is Tanzania's capital?",
+   "lang": "en",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "zone ya timu inatoka wapi kama sijaiandika kwenye teams & staff",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "teams"
+   ],
+   "phone": false,
+   "best": "admin-zone-name",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Legal tab: grand recovery per lawyer ni notice payments tu au inajumuisha na calls pia? Naweza ku-export kwa Excel?",
+   "lang": "mixed",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-phone-grand",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Mstari wa juu wa app wenye Col leo, Kesho, Wiki, Sales, Exp.Def na Rec unamaanisha nini?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": "calls-top-bar",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Best of / Rekodi inaandikwa lini? Ni lazima mtu afungue Weekly Report ndipo ihifadhi?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "perf",
+    "weekly"
+   ],
+   "phone": false,
+   "best": "reports-weekly-report",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "On Loan Applications, what do the stage cards count? We only upload the Approved report, so some stages stay empty. Is that normal?",
+   "lang": "en",
+   "area": "other",
+   "tabs": [
+    "apps"
+   ],
+   "phone": false,
+   "best": "reports-dash-applications",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "legaladmin",
+   "q": "weka CALL_MIN_SECS iwe 10",
+   "lang": "sw",
+   "area": "action",
+   "tabs": [
+    "settings"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "tofauti ya Kufunga simu na Kufungua simu ni nin? mtu mmoja anaweza kufanya yote mawili?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "devlock",
+    "devunlock"
+   ],
+   "phone": false,
+   "best": "hr-device-lock",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "When I upload received payments, what's the difference between Append and Replace all? And which report date do I pick if I'm uploading yesterday's file today?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [
+    "upload"
+   ],
+   "phone": false,
+   "best": "admin-upload-redo",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "legaladmin",
+   "q": "kwenye app Marejesho ya Exp.Def yanaonyesha dashi (-) badala ya 0 mchana, ni hitilafu?",
+   "lang": "sw",
+   "area": "defaulters",
+   "tabs": [],
+   "phone": true,
+   "best": "defaulters-later-file-not-in",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Mpokeaji mmoja wa pesa (momo) anaonekana kwenye wateja 3 tofauti. Fraud Detector inaiona kesi hii, na nifanye nini kabla sijaidhinisha mkopo?",
+   "lang": "sw",
+   "area": "other",
+   "tabs": [
+    "fraud"
+   ],
+   "phone": false,
+   "best": "reports-fraud-detector",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Simba au Yanga nani bora?",
+   "lang": "sw",
+   "area": "offtopic",
+   "tabs": [],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Nimebadilisha GMO name kwenye Teams & Staff lakini baadaye imerudi kwa jina la zamani. Why does it revert?",
+   "lang": "mixed",
+   "area": "admin",
+   "tabs": [
+    "teams",
+    "settings"
+   ],
+   "phone": false,
+   "best": "admin-leaders-sync",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Why does the system refuse my imprest retirement and say I have unfunded imprests?",
+   "lang": "en",
+   "area": "hr",
+   "tabs": [
+    "impreq"
+   ],
+   "phone": false,
+   "best": "hr-imprest-retire",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "sales % kwenye app ya simu na ile ya dashboard haziendani, kwa nini?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "dashboard"
+   ],
+   "phone": true,
+   "best": "reports-dash-sales",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Kwenye Hope Ai kuna 'tokens' na 'Behind?', maana yake ni nini?",
+   "lang": "sw",
+   "area": "admin",
+   "tabs": [
+    "hopeai"
+   ],
+   "phone": false,
+   "best": "admin-hopeai-tab",
+   "gap": false,
+   "answered": "partly"
+  },
+  {
+   "group": "legaladmin",
+   "q": "What does Kumb.Na. mean?",
+   "lang": "en",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "'Hifadhi nakala ya dharura' kwenye app ni ya nini? mbona maafisa wengine hawaioni?",
+   "lang": "sw",
+   "area": "calls",
+   "tabs": [],
+   "phone": true,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "How do I give the new legal assistant acess to only the Legal tab and the teams in his zone?",
+   "lang": "en",
+   "area": "admin",
+   "tabs": [
+    "settings",
+    "legal"
+   ],
+   "phone": false,
+   "best": "admin-access-codes",
+   "gap": false,
+   "answered": "no"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Faini kwenye demand notice inahesabiwaje? Kuna wateja wanaonyesha faini 0 hata kama wamechelewa kulipa.",
+   "lang": "sw",
+   "area": "legal",
+   "tabs": [
+    "legal"
+   ],
+   "phone": false,
+   "best": "legal-fine",
+   "gap": false,
+   "answered": "yes"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Please approve the three advance requests waiting for me, I'm in a meeting.",
+   "lang": "en",
+   "area": "action",
+   "tabs": [
+    "advappr"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": false,
+   "answered": "not-a-card-question"
+  },
+  {
+   "group": "legaladmin",
+   "q": "Presentation inabadilisha slide kila baada ya sekunde ngapi? Naweza kuweka timu moja tu ionekane?",
+   "lang": "sw",
+   "area": "reports",
+   "tabs": [
+    "present"
+   ],
+   "phone": false,
+   "best": null,
+   "gap": true,
+   "answered": "no"
+  }
+ ],
+ "own": {
+  "defaulters-cycle-days": [
+   "mteja wa deni anaonekana siku gani kwenye exp def",
+   "kwanini wadaiwa wanatokea mara mbili kwa wiki",
+   "mkopo ulitolewa jumatatu utaonekana tena siku gani",
+   "day 1 na day 2 maana yake nini kwenye orodha ya wadaiwa",
+   "mteja wa alhamisi anarudi jumapili au jumatano",
+   "mteja hana tarehe ya kutolewa mkopo anaonekana wapi",
+   "kwn mteja mwingine anakuja kila siku kwenye simu bila tarehe ya disbursement",
+   "On which days does a defaulter show on the Expected Defaulters list?",
+   "A loan disbursed on Thursday, when will it appear again?",
+   "What happens to defaulters with no disbursement date?",
+   "kwa nini customer wa Sunday loan anaonekana Wednesday pia",
+   "defaulter anaonekana twice a week, cycle day inahesabiwaje"
+  ],
+  "defaulters-later-file-not-in": [
+   "kwa nini marejesho yanaonyesha sifuri asubuhi",
+   "rec % ni 0 je hakuna aliyelipa leo",
+   "faili ya jioni inapakiwa saa ngapi",
+   "mbona hakuna mteja aliyeandikwa cleared bado",
+   "kuna mstari mwekundu juu ya exp def unamaanisha nini",
+   "kwenye simu rec % inaonyesha dash tu kwa nini",
+   "faili ya pili haijaingia nifanye nini kuona waliolipa",
+   "Why does Recovered show 0 on the defaulters list?",
+   "Does a zero Rec % mean nobody paid?",
+   "When is the later file uploaded and why is it not in yet?",
+   "recovered iko 0 kwa sababu file ya jioni bado haijaingia?",
+   "kwa nini hakuna anayeonekana CLEARED mpaka evening file ipakiwe?"
+  ],
+  "defaulters-cleared-stay-on-list": [
+   "mteja amelipa deni lote bado yupo kwenye orodha kwa nini",
+   "nn maana ya CLEARED kwenye exp def",
+   "aliyemaliza kulipa jana hayupo leo kwenye orodha",
+   "mbona wateja waliolipa wako chini ya orodha kwenye simu",
+   "mteja aliyeingia kwenye deni baada ya faili ya asubuhi hayupo kwenye ripoti lkn yupo kwenye tab",
+   "wakishalipa wanabaki au wanatoka kwenye orodha ya wadaiwa",
+   "mteja akilipa kiongozi wake na mzunguko wake vinabaki?",
+   "Why does a customer who paid in full still show on the list?",
+   "What does the CLEARED status mean?",
+   "A customer who fell into default after the morning file is missing from the report, why?",
+   "customer amelipa lakini bado yupo kwenye list, ni sawa?",
+   "kwa nini cleared customers wako last kwenye simu?"
+  ],
+  "defaulters-rotation-owner-role": [
+   "owner role ni nini kwenye wadaiwa",
+   "kwa nini mteja huyu amehamishwa kutoka GMO kwenda Manager",
+   "nani anahusika na mteja wa deni sasa, gmo au manager au bike",
+   "cycle D5 maana yake nini",
+   "mteja wa expired anabadilishiwa afisa kila wiki?",
+   "wadaiwa sugu wanazungushwa kila wiki kwanini",
+   "kiongozi wa recycling ni nani kwenye timu",
+   "What does the owner role mean for a defaulter?",
+   "How often does the owner role change?",
+   "What do E-W and C-W mean in the Cycle column?",
+   "role ya GMO inabadilika baada ya siku ngapi kwa defaulters",
+   "chronic customer anazungushwa kila wiki, nani anaweka order ya roles?"
+  ],
+  "defaulters-leader-own-list-and-code": [
+   "wangu na wote kwenye exp def ni nini",
+   "kwa nini naona wateja wachache kuliko timu yangu",
+   "zangu na timu yote tofauti yake nn",
+   "kuna mstari mwekundu unasema timu hazipo kwenye code yangu nifanyeje",
+   "mm ni manager lakini siioni orodha ya wateja wangu",
+   "naomba admin aongeze timu kwenye access code yangu",
+   "kwenye simu GMO anaona nini na afisa wa bike anaona nini kwenye wadaiwa",
+   "Why can I only see some teams on the defaulters list?",
+   "What does the red note about teams missing from my code mean?",
+   "What is Off code in the report?",
+   "My list na Everyone zinatofautiana vipi kwenye portal",
+   "admin anaweza kuongeza team kwenye access code yangu?"
+  ],
+  "defaulters-report-periods": [
+   "ripoti ya exp def ina leo wiki na mwezi, kila moja inamaanisha nini",
+   "ripoti ya wiki inajumlishwa vipi kuanzia jumatatu hadi jumapili",
+   "siku isiyo na faili zote mbili inaonyesha not filed kwa nini",
+   "rec % inahesabiwaje kwenye ripoti",
+   "mwezi inasoma faili ya kwanza dhidi ya ya mwisho maana yake nini",
+   "asilimia ya marejesho kwenye ripoti ya mwezi imetoka wapi",
+   "kwenye ripoti ya leo wateja gani wanaonekana",
+   "How is the weekly report on Exp.Def calculated?",
+   "What does the month view compare?",
+   "Why does a day show as not filed in the weekly report?",
+   "rec % ni recovered divided by initial au ni kinyume?",
+   "report ya leo inatumia faili gani ya asubuhi na jioni?"
+  ],
+  "defaulters-report-leader-boards": [
+   "boards za viongozi kwenye ripoti ya exp def zinaonyesha nini",
+   "calls kwenye ripoti zinahesabiwa vipi kwa kila kiongozi",
+   "simu za wadhamini zinahesabiwa kwenye calls za kiongozi?",
+   "kiongozi ambaye hajasajiliwa HOPE Calls anaonyesha 0 kwenye ripoti, kwa nini",
+   "comments kwenye ripoti ya viongozi ni zipi",
+   "calls za namba nyingine ya mteja zinahesabiwa mara ngapi kwa siku",
+   "OPM anaonekana wa kwanza kwenye board kwa nini",
+   "What do Calls and Comments mean on the leader boards?",
+   "Why does a leader show 0 calls?",
+   "Which phone calls are counted for each GMO, Manager or Bike on the report?",
+   "calls za mdhamini wa customer zinahesabiwa kwenye leaderboard?",
+   "nikibonyeza jina la leader naona nini kwenye ripoti ya exp def?"
+  ],
+  "defaulters-bike-officer-phone": [
+   "mm ni afisa wa bike naona nini kwenye simu ya wadaiwa",
+   "kwa nini sioni leo na kesho kwenye simu yangu ya bike",
+   "tabs nne za bike ni zipi exp def, def, exp na chr",
+   "chr ni nini kwenye simu",
+   "kwenye bar ya juu naona wateja deni marejesho na rec % inamaanisha nini",
+   "afisa wa bike anaonyeshwa wateja wa timu zake zote au wa bike tu",
+   "naweza kutafuta mteja yeyote wa timu yangu kwenye def exp chr",
+   "Who counts as a bike officer on the phone?",
+   "Why are Leo and Kesho hidden for me?",
+   "What lists does a bike officer have on HOPE Calls?",
+   "bike officer anaona role pills kwenye Exp.Def?",
+   "kwenye simu yangu ya bike hakuna role pills, why?"
+  ],
+  "defaulters-followup-status-rules": [
+   "nifuatilie vipi mteja wa deni kwenye mfumo",
+   "ametoa ahadi inahitaji nini tarehe na kiasi",
+   "siwezi kuhifadhi status ana namba nyingine bila namba, kwa nini",
+   "rejesho limeliwa lazima niandike comment?",
+   "nikibadilisha status ahadi ya zamani inafutwa?",
+   "nikiweka maoni tu status inabaki ile ile?",
+   "ametuma kwa afisa na others zinahitaji nini kabla ya kuhifadhi",
+   "How do I record a follow-up on a defaulter?",
+   "Which statuses need a promise date or a new number?",
+   "Can an admin add a new follow-up status?",
+   "ni lazima nitoe promise date kwa status ya Ametoa Ahadi?",
+   "nikichagua status mpya promise ya zamani inabaki au inaondoka?"
+  ],
+  "defaulters-assignment-screen": [
+   "defaulter assignment ni skrini ya nini",
+   "not touched maana yake nini kwenye mgawanyo wa wadaiwa",
+   "no leader named inamaanisha nini nifanyeje",
+   "mteja hana kiongozi kwenye timu yake nitaweka wapi",
+   "nani anamiliki mteja huyu sasa kwenye assignment",
+   "mstari wa rotation unaonyesha nini na unabadilishwa wapi",
+   "wateja ambao hawajaguswa bado ni wangapi kwenye assignment",
+   "What does Not touched mean on the Defaulter Assignment screen?",
+   "Where do I fix a team with no leader named?",
+   "Where is the rotation order and timing changed?",
+   "assignment inaonyesha nani ana-own kila defaulter?",
+   "customers wasio na follow-up status bado wanahesabiwa wapi kwenye assignment?"
+  ],
+  "defaulters-iliyonasia-entries": [
+   "iliyonasia ni nini kwenye miamala",
+   "nimesahau kuingiza malipo mteja alilipa lakini hayajaonekana nifanyeje",
+   "nirekebishe vipi malipo yaliyokosekana kwenye exp",
+   "kiasi cha kuongeza au kupunguza tunaweka plus au minus",
+   "naweza kufuta au kuhariri muamala niliyoweka?",
+   "iliyonasia kwenye defaulter initial inaongeza recovery vipi",
+   "faili haibadiliki baada ya kuweka iliyonasia kwa nini",
+   "What is an Iliyonasia entry and when do I use it?",
+   "Does a plus entry on a Defaulter file raise or lower recovery?",
+   "Can I edit or delete an Iliyonasia row?",
+   "kwanini entry ya Expected inahesabiwa kwenye expected zote mbili?",
+   "plus kwenye Current inapunguza recovery kwa sababu gani, missed payment ni minus?"
+  ],
+  "defaulters-expected-repayment-collected": [
+   "expected repayment ni nini na inaonyesha wateja gani",
+   "makusanyo yanahesabiwaje kwa mteja aliyelipa pungufu",
+   "mteja ambaye hajalipa kabisa anahesabiwa kwenye makusanyo?",
+   "kwa nini jumamosi naona orodha ya ijumaa",
+   "collection % inajumuisha iliyonasia kweli?",
+   "mstari mwekundu wa tarehe kwenye expected unamaanisha nini",
+   "aliyelipa zaidi ya rejesho anahesabiwaje kwenye collected",
+   "How is Collected calculated for an underpaid customer?",
+   "Why does the Expected Repayment list show Friday's customers on Saturday and Sunday?",
+   "What does the red date line mean on Expected Repayment?",
+   "paid customer anahesabiwa installment yake tu au pamoja na arrears?",
+   "collected inajumuisha entries za iliyonasia kwenye today sheet?"
+  ],
+  "calls-tick-amepigiwa-leo": [
+   "kwn nimempigia mteja lkn tick ya amepigiwa haijaonekana",
+   "alama ya amepigiwa inakuja baada ya sekunde ngapi za simu",
+   "nimempigia dhamini wake tiki itaonekana kwa mteja kweli",
+   "mteja amenipigia mwenyewe je anapata tiki ya amepigiwa leo",
+   "namba nyingine niliyoiweka nikimpigia haitiki amepigiwa kwn nn",
+   "tiki inachelewa kuonekana nikipiga mteja nisasishe orodha au nisubiri",
+   "afisa mwenzangu alimpigia mteja lkn mm naona hajapigiwa",
+   "why is there no tick on a customer I already called today",
+   "how many seconds must a call last to tick the customer as called",
+   "does an incoming or outgoing call give the called tick",
+   "nimecall mteja lkn tick bado haipo, do I need to sync or refresh",
+   "tick ya amepigwa inachelewa sana, simu fupi sana au ni sync issue"
+  ],
+  "calls-sync-call-log": [
+   "simu nilizopiga hazionekani kwenye system kwn nn tatizo",
+   "nukta ya sync ni nyekundu inamaanisha nini",
+   "nikigusa nukta ya sync inafanya nini",
+   "app inasink kila baada ya dakika ngapi nikiwa nimeifungua",
+   "nina iphone naweza kusoma historia ya simu kwenye app",
+   "nimefunga app nikapiga simu nyingi zitaingia baadae lkn",
+   "app inaomba ruhusa ya kusoma kumbukumbu za simu nimekataa sasa nifanyeje",
+   "why are my calls not showing in the system even though I made them",
+   "can I sync my call logs or history from a browser instead of the app",
+   "what do the green amber and red sync colours mean",
+   "calls zangu hazipo kwenye ripoti lkn nimepiga, sync ni lini",
+   "sync dot ni red, nimeruhusu permission lkn bado haifanyi kazi"
+  ],
+  "calls-portfolio-rule": [
+   "simu zisizo za portfolio ni zipi na za portfolio ni zipi",
+   "kwn simu niliyompigia mteja wangu imehesabiwa non portfolio",
+   "nikimpigia mdhamini wa mteja inahesabika kama portfolio",
+   "mteja asiye wa timu yangu nikimpigia simu inakuwa portifolio?",
+   "mteja aliyetoka kwenye defaulters bado yuko kwenye follow-up simu yake ni portfolio?",
+   "namba ya jirani au ndugu wa mteja nikipiga inakuwa portfolio?",
+   "simu imeshakuwa isiyo ya portfolio inaweza kubadilika baadae lkn",
+   "what makes a call count as portfolio",
+   "does a call to a garantor count as portfolio",
+   "why is my long call to a customer marked non-portfolio",
+   "kama leader simu za timu yangu zipi ni portfolio, access code inahusika?",
+   "customer yuko kwenye expected ya wiki mbili zilizopita, simu yake ni portfolio au la"
+  ],
+  "calls-lists-def-exp-chr": [
+   "tofauti ya def exp na chr ni nini kwenye app",
+   "leo na kesho ni orodha ya nini",
+   "kwn kesho inaonyesha wateja wa jumatatu leo ni ijumaa au wikendi",
+   "exp ni expire au expected nn maana",
+   "chr ni wateja gani wa chronic au kroniki",
+   "mstari wa tarehe juu ya orodha umekuwa nyekundu kwn",
+   "mteja amepotea kwenye def hayupo tena kwenye orodha ya wadaiwa nn kimetokea",
+   "what is the difference between Def Exp and Chr",
+   "why does the Kesho tab show Monday on Friday or at the weekend",
+   "the date line on top of my list is red what does it mean",
+   "list ya def exp chr inatoka kwenye defaulters file ya lini, latest?",
+   "weekend nikifungua kesho naona list ya monday, is it right?"
+  ],
+  "calls-followup-statuses": [
+   "nikichagua ametoa ahadi inataka tarehe tu au na kiasi pia",
+   "kwn siwezi kuhifadhi ufuatiliaji bila status au maoni",
+   "ana namba nyingine naiweka wapi na itaonekana wapi baadae",
+   "nikibadilisha status ahadi ya zamani inafutika au inabaki",
+   "nikiandika maelezo tu bila status, status ya zamani inabadilika?",
+   "rejesho limeliwa na ametuma kwa afisa zinataka nini ndio ziende",
+   "kiasi cha ahadi naweza kukiweka kwenye simu au ni web tu",
+   "what do I fill in when the customer promises to pay",
+   "why can't I save a follow-up on the phone",
+   "can I add just a note without choosing a status",
+   "nimeweka status mpya lkn promise ya zamani bado ipo, kwn",
+   "others status inataka comment, nimejaza lkn haikubali, nn tatizo"
+  ],
+  "calls-count-and-reached": [
+   "kwn simu ya mteja niliyempigia mara tano inahesabiwa moja tu kwenye ripoti",
+   "dials ni nini na kwn haziongezi alama kwenye ripoti",
+   "muda wa maongezi unahesabiwa kwa simu zipi tu",
+   "uwiano wa portfolio kwa simu zote unakokotolewaje",
+   "mteja amepatikana kwenye ripoti ni kwa kigezo gani cha sekunde",
+   "simu fupi nyingi zikijumlishwa zinakuwa reached au la",
+   "nimedial mteja mara nyingi ila score ni moja tu, kwa nini",
+   "why does my report show one call when I called the same number five times",
+   "how is talk time counted in the call report",
+   "what does reached mean in the call report",
+   "maongezi ya non portfolio yanaonekana wapi, talk time ni ya portfolio tu?",
+   "jaribio la pili la kupiga mteja yule yule linaongeza count au ni redial tu"
+  ],
+  "calls-search-book": [
+   "nikitafuta mteja kwa jina anaonekana hata kama hayuko kwenye orodha yangu",
+   "kwn nikitafuta mteja haonekani kwenye utafutaji",
+   "nikitafuta naona Si mdaiwa kwa sasa maana yake nn",
+   "mkopo wa mteja uko hatua gani naiona kwa kutafuta",
+   "ni herufi ngapi ndio search inaanza kuuliza system",
+   "kadi ya mteja niliyoipata kwa kutafuta haina tiki ya amepigiwa kwn",
+   "naweza kutafuta mteja wa timu nyingine au wangu tu",
+   "how do I search for a customer who is not on my phone list",
+   "how many characters must I type before search asks the system",
+   "why does a customer found by search show no tick",
+   "search ya customer inaonyesha deni lake na loan stage pia",
+   "nimetafuta mteja ila matokeo machache tu naona first matches only, kwn"
+  ],
+  "calls-lists-by-role": [
+   "mimi ni afisa wa pikipiki kwn sioni orodha ya leo na kesho",
+   "kwn wateja wengine wamefichwa kwenye orodha yangu siwaoni wote",
+   "orodha imechujwa maana yake nini mstari wa juu unasema wengine hawajaonyeshwa",
+   "credit analist anaona wateja gani kwenye app",
+   "colection officer anaona wateja walio nyuma kwa awamu ngapi",
+   "kwa nini top bar yangu ina wateja deni marejesho na rec tu",
+   "nikiwa gmo na pia afisa wa boda naziona tabs zote",
+   "why can't a bike officer see the Leo and Kesho tabs",
+   "why are some customers hidden or filtered out of my list",
+   "which customers does a credit analyst see on the phone",
+   "exp.def ni ya kwanza kwangu tu kwa sababu ya role, na def exp chr zinafuata",
+   "list yangu ime-filter, how many installments behind ndio naonekana kwa expected officer"
+  ],
+  "calls-top-bar": [
+   "upau wa juu unaonyesha nini col leo ni makusanyo ya leo",
+   "sales kwenye upau wa juu inapimwa na lengo gani",
+   "exp.def haina namba inaonyesha dash tu mpaka lini kwn",
+   "rec ni urejeshaji wa asilimia ngapi ya siku au ya wiki",
+   "t.def ni nini kwenye takwimu za juu",
+   "wikendi rec inakuwa ya wiki kwn nn",
+   "kama kiongozi takwimu za juu ni za timu yangu nzima au zangu tu",
+   "what does Col Leo mean in the top bar",
+   "why is Exp.Def showing a dash instead of a number",
+   "what is the sales target shown in the top bar",
+   "rec % kwenye top bar ni daily au weekly, weekend inakuwaje",
+   "col kesho percent ni ya siku gani, next working day?"
+  ],
+  "calls-report-reading": [
+   "mimi ni kiongozi kwn afisa wangu mmoja ana sifuri kwenye ripoti ya simu",
+   "ripoti ya simu ya mwezi uliopita inaonyesha kidogo sana kwn",
+   "ripoti za wiki mbili zilizopita tu ndio zinaonekana au zamani pia",
+   "kwenye web jedwali la maafisa liko tupu mpaka nitafute jina la afisa",
+   "no answer maana yake nini kwenye matokeo ya simu",
+   "no answer ni simu iliyoita bila kupokelewa au chini ya sekunde ngapi",
+   "ofisa ambaye si wa timu yangu haonekani kwenye ripoti ya simu",
+   "why does the call report show zero for one of my officers",
+   "why is the officer table empty on the web call reports",
+   "how far back can I see call reports, older dates are short",
+   "call reports za wiki iliopita zinaonyesha chache, kwa nini",
+   "niki-search afisa kwenye web ndio table inaonekana, why? na no answer ni nini"
+  ],
+  "calls-defaulters-followup": [
+   "recovered inakokotolewaje kwenye defaulters followup",
+   "kama kiongozi naona wateja wanatoweka kwenye followup ya timu yangu kwn",
+   "recovered ni sifuri wakati mteja amelipa kwn",
+   "mteja ameshalipa kwa nini anaonyesha PAID kwenye followup",
+   "faili mpya ikiingia maoni niliyoandika yanafutika au yanabaki",
+   "arrears ya mteja ni malimbikizo ya lini na recovered inatoka wapi",
+   "initial file ni ipi na inahusikaje na recovered",
+   "how is the recovered amount calculated on the followup tab",
+   "why did a customer disappear from Defaulters Followup",
+   "why does a customer show PAID when arrears are zero or less",
+   "recoverd ni zero ingawa customer amelipa, kwa nini",
+   "customer amepotea kwenye followup list baada ya new defaulters file"
+  ],
+  "calls-promise-to-pay": [
+   "ahadi ya mteja ilipita jana lakini bado ipo kwenye promise to pay",
+   "kwn mteja ametoweka kwenye ahadi baada ya kuweka status nyingine",
+   "overdue maana yake nini kwenye ahadi",
+   "ahadi zinapangwaje juu ni zipi na chini ni zipi",
+   "cleared kwenye arrears now inamaanisha nini",
+   "kuchuja kwa tarehe kwenye ahadi kunachuja tarehe gani",
+   "mteja amevunja ahadi au hajatimiza anaonekana wapi",
+   "what does overdue mean on the Promise to Pay tab",
+   "how are promises sorted, what is the order on that page",
+   "does adding a comment remove a customer from promise to pay",
+   "ahadi ilishapita ila haipo overdue kwn, mteja ametimiza?",
+   "arrears now inaonyesha CLEARED ingawa hajalipa, why"
+  ],
+  "legal-issue-steps": [
+   "naandikaje notisi ya madai kwa mteja",
+   "mm natoaje barua ya kudai kwa mteja wa timu yangu",
+   "nikitafuta mteja kwenye notisi mpya natumia ref jina au simu na inataka herufi ngapi",
+   "kwenye legal siku za notisi ni saba tu au naweza kuzibadili na tarehe pia",
+   "taarifa za mdhamini naziweka wapi nikitoa notisi",
+   "nimebonyeza issue kitufe kimezimika kwn kinakaa hivyo nisubiri au nibonyeze tena",
+   "pdf ya notisi inatoka na jina gani baada ya kutoa",
+   "How do I issue a demand notice to a customer",
+   "What do I have to fill in to create a new demand notice",
+   "I pressed Issue on the demand notice form and nothing happened do I press twice or wait",
+   "naweka wapi guarantor details nikiwa ku-issue demand notice kwa customer",
+   "kwenye new demand notice nikisearch customer kwa phone inataka digits ngapi na kwa jina characters ngapi"
+  ],
+  "legal-cannot-issue": [
+   "kwa nini siwezi kumtolea mteja huyu notisi hakuna kitufe cha issue",
+   "mteja wa timu yangu hayupo kweny defaulters naweza kumpa notisi",
+   "mkuu D.C ya mteja inatoka nyekundu na kitufe cha kutoa notisi hakipo ni hitilafu au ni sheria",
+   "mteja ana notisi ya zamani bado haijaclear kwa nn siwezi kumtolea nyingine",
+   "D.C chini ya 2 haipewi notisi isipokuwa D.S 11-12 lakini 10-11 haiwezi kwa nini",
+   "mteja ana notisi ya kwanza kwa nini mfumo unanizuia kumpa notisi nyingine",
+   "fomu inataja notisi ya mwisho ambayo haijaclear na kitufe cha kutoa mpya hakionekani ina maana gani",
+   "Why cant I issue a demand notice for this customer there is no Issue button",
+   "The form says the last notice has not been cleared and I cannot create a new one what does cleared mean",
+   "Can I serve a notice on a customer who is not on the defaulters list",
+   "customer ana D.C 1 ila D.S ni 11-12 je kuna exception ya kum-issue notice",
+   "siwezi kutoa notice mpya kwa sababu ya last notice inablock mpaka lini"
+  ],
+  "legal-fine": [
+   "faini kwenye notisi inahesabiwaje",
+   "kwn faini ni sifuri kwa mteja huyu",
+   "faini ni asilimia ngapi 2 au 5 na inategemea nini",
+   "faini inaanza kuhesabiwa baada ya siku ngapi za kuchelewa",
+   "faini inazungushwa hadi 500 ya juu kwa nini haiko kamili",
+   "mteja amebakiza rejesho moja tu faini inatozwa au la",
+   "fain ya mikopo ya zamani na ya sasa kwa nini asilimia hazilingani",
+   "How is the fine calculated on a demand notice",
+   "Why is the fine zero when the customer is only a few days late",
+   "What percent rate is used for older loans and newer loans on the penalty",
+   "fine ya notice inakuwa calculated vipi kwa late weeks x rate halafu rounded up",
+   "hii fine ina grace period ya siku 14 kweli au inaanza mara moja"
+  ],
+  "legal-total-demand": [
+   "jumla ya madai kwenye notisi inatoka wapi",
+   "principle left ni nini kwenye notisi na inatoka wapi",
+   "deni lililobaki kwenye barua linatokana na nini mkopo wote ukitoa alicholipa",
+   "total loan inapatikanaje rejesho la kwanza na mengine 11 yanajumlishwa",
+   "kwa nini notisi inasema rejesho 9 kati ya 12 wakati D.S ni tofauti",
+   "riba imo kwenye deni la msingi lililoandikwa kwenye notisi au haimo",
+   "madai yanazungushwa hadi 500 ya juu kwa nini na yanaundwa na deni gani",
+   "How is the total demand on the notice calculated",
+   "What does principal left mean and does it include interest",
+   "The notice says 5 of 12 installments but the D.S is different why",
+   "total demand ni principal left plus faini rounded up 500 au kuna kitu kingine",
+   "customer amelipa pesa nyingi lakini principal bado ipo juu kwa nini total loan inahesabiwa vipi"
+  ],
+  "legal-reprint-letter": [
+   "naweza kuchapa tena barua ya notisi niliyotoa jana",
+   "nawezaje kupakua nakala ya barua ya mteja baada ya kuitoa",
+   "head office wanaweka wapi nembo muhuri na saini ya barua ya notisi",
+   "namba ya simu inayotoka kwenye barua ya notisi ni ya nani",
+   "kwa nini barua ya notisi inaonyesha namba ya simu ya anayepakua na si ya aliyetoa",
+   "nimepakua barua ila inasema sina namba ya HOPE Calls nifanyeje",
+   "notisi ya zamani haina barua ndani nimeshindwa kuipata tena kwa nini",
+   "How do I dowload the letter of a notice I issued last week",
+   "Where do I set the logo stamp and signature that appear on the demand letter",
+   "Why does the demand letter show the phone number of whoever downloads it",
+   "nataka ku-print notice ya mteja tena ipo wapi kwenye list",
+   "letter ya notice inaonyesha namba yangu ya HOPE Calls lkn sina simu iliyosajiliwa nifanyeje"
+  ],
+  "legal-register-status": [
+   "status ya notisi ya mteja inaamuliwaje Cleared Paying au Reducing",
+   "kaka mteja ameandikwa No movement ni nn maana yake",
+   "mteja amelipa na deni limepungua pia status inaonyesha Paying au Reducing",
+   "Recovery kwenye register ni deni la mwanzo ukitoa la sasa au malipo",
+   "recovered since notice na recovery vinatofautiana vipi mbona namba mbili tofauti",
+   "mteja ameclear au ameondoka kwenye list ya defaulters status yake inakuwa nini",
+   "No movement kwenye register inamaanisha hajalipa kabisa tangu notisi au deni halijapungua",
+   "What does the Cleared status mean in the notices register",
+   "How are Recovery and Rec % calculated for a customer after the notice",
+   "Why does a customer show No deck in the register",
+   "kwa nini customer ana status Paying lakini recovery ni zero",
+   "difference kati ya Recovery na Recovered since notice ni nini"
+  ],
+  "legal-recovery-cards": [
+   "kadi ya Recovered today inaonyesha nini",
+   "Recovered this week inajumlisha malipo gani na je yanaweza kuhesabiwa double",
+   "mishale ya kadi ya wiki inanipeleka wapi",
+   "nikirudi wiki iliyopita Rec % inaonekana ndogo lkn malipo ni yaleyale kwa nini",
+   "nikibonyeza kadi ya recovered naona orodha ya wateja na wakili kila mstari",
+   "recovery ya leo ni malipo ya wateja waliopewa notisi tu au na wengine",
+   "Rec % inagawanywa na nini kwenye kadi ya recovered",
+   "What does the Recovered today card add up on the Legal screen",
+   "Why does Rec % for last week look lower now is it because the notices are read as of today",
+   "How far back can the week arrows go on the recovery card",
+   "kwenye Recovered this week card kila payment inahesabiwa once au twice",
+   "nikiclick card ya recovery naona list ya wateja na lawyer wa kila mmoja ni sahihi"
+  ],
+  "legal-lawyer-credit": [
+   "recovery ya notisi inaenda kwa wakili gani",
+   "credit ya recovery inaenda kwa aliyetoa notisi au kwa wakili mwenye timu",
+   "wakili ni nani kwenye mfumo wa legal na anawekwaje",
+   "kwanin nina tab ya legal lkn sipati credit ya recovery",
+   "unassigned inamaanisha nn kwenye ripoti ya mawakili",
+   "timu ikishikiliwa na mawakili wawili recovery inahesabiwa kwa nani",
+   "mwanasheria akipewa timu zote anapata credit au la",
+   "Which lawyer gets credit for the recovery on a customer who has a notice",
+   "Why is my code not credited when I hold the Legal tab",
+   "If two lawyers hold the same team is the recovery counted double",
+   "recovery ya team yetu ipo under unassigned kwa nini hakuna wakili aliyegawiwa team hii",
+   "lawyer akitoa notice kwa team ya mwenzake credit inaenda kwa nani"
+  ],
+  "legal-phone-grand": [
+   "recovery ya simu kwa mawakili inaamuliwaje",
+   "wakili akimpigia mteja simu recovery inahesabiwa lini",
+   "mteja akipewa notisi kisha akapigiwa simu na wakili anahesabiwa kwenye notisi au simu",
+   "wakili akizungumza na mteja kwa sekunde chache simu inahesabiwa recovery au lazima iwe na sekunde ngapi za chini",
+   "wakili amempigia mdhamini simu inahesabiwa kama recovery ya mteja",
+   "kadi ya grand inajumlisha nini notisi na simu kwa kila wakili",
+   "kwn recovery ya simu inaonyesha sifuri hadi faili la jioni liingie",
+   "How is recovery by phone counted for a legal officer and how many seconds must the call last",
+   "Does a call to the guarantor count as recovery by phone",
+   "What does the grand card add up for each lawyer",
+   "customer akiwa D.C 2 kwenye morning file na lawyer akampigia recovery inahesabiwa vipi",
+   "kwa nini call ya lawyer imeandikwa lakini recovery by phone ni zero"
+  ],
+  "deduct-new-case": [
+   "naomba kujua naanzaje kesi mpya ya makato kwenye PMO Deduction",
+   "ni vitu gani lazima nijaze kwenye kesi mpya ya makato timu jina la mteja REF na uamuzi",
+   "kesi moja inaweza kuwa na watuhumiwa wengi au mmoja tu",
+   "nimekosea kuingiza kesi nimeshaisave naweza kuibadilisha au kuifuta",
+   "mm ndo reporter wa kesi hii au HR",
+   "kiasi alichochukua mtuhumiwa na makato yanayopendekezwa lazima nijaze au ni hiari",
+   "baada ya kuingiza kesi HR anaweza kubadilisha mfanyakazi aliyehusika au anaongeza notes na makato tu",
+   "How do I report a new deduction case against a staff member",
+   "Can I edit or delete a deduction case after I saved it",
+   "Which fields are required on the New case form and which are optional",
+   "kwenye new case nikibonyeza Add another naweza kuongeza accused wengine bila kesi nyingine",
+   "REF NO na decision ni lazima kwenye kesi ya deduction au optional"
+  ],
+  "deduct-cards-hr": [
+   "kwa nini orodha inaonyesha kesi zilizoripotiwa mwezi huu tu naweza kuona za zamani",
+   "kiasi cha kumlipa mteja kinaonekana mara moja kwa kila kesi au kwa kila mtuhumiwa",
+   "Remaining inatoka wapi kwenye kesi ya makato",
+   "nani anaruhusiwa kuweka kiasi kilichokatwa HR au admin",
+   "nikibonyeza mstari naweza kuongeza notes na kiasi kilichokatwa",
+   "Taken na makato yanayopendekezwa na Deducted ni vya kila mtuhumiwa au vya kesi nzima",
+   "kadi za juu zinachuja orodha ya kesi au zinaonyesha jumla tu",
+   "Who can record the deducted amount on a case and what do they fill in",
+   "Why does the list only show cases from this month and how do I see older ones",
+   "What is the difference between Proposed Deducted To pay and Remaining",
+   "kwenye deduction list Remaining ni To pay minus Deducted kweli kwa kila line",
+   "ni roles gani kwenye Settings zinaweza kurekodi Deducted kwenye kesi au ni admin tu"
+  ],
+  "deduct-earners": [
+   "jedwali la Earners linaonyesha nini kwenye makato",
+   "kamishen ya kesi moja ni shilingi ngapi",
+   "wapataji wanaonekana kwa kesi ngapi za kipekee na wamepata kiasi gani",
+   "admin anawezaje kubadilisha kiasi cha kamisheni kuanzia tarehe fulani",
+   "admin akibackdate kamisheni kesi zilizoripotiwa zinabadilika bei",
+   "Role.Zone ni nini kwenye jedwali la walioripoti",
+   "kesi iliyoripotiwa jana inalipa kamisheni ya zamani au mpya",
+   "How much commission does a reporter earn for each deduction case",
+   "How does the admin change the comission amount and what does Remove do",
+   "Why does the Earners table only show cases from my teams",
+   "earners wanaonekana ni wa teams zangu tu au wote na commission yao inatoka wapi",
+   "base amount ya commission iko wapi na admin akiweka mpya kuanzia leo kesi zilizopita zinabadilika"
+  ],
+  "reports-dash-arrows": [
+   "mshale kwenye siku ya dashibodi unalinganisha na siku gani",
+   "hii namba iliyofifia baada ya mshale ni ya nini",
+   "kwn mshale wa mauzo unashuka mwanzo wa wiki lkn tumeuza vizuri",
+   "mshale ulio juu ya kadi unalinganisha wiki hii na nini",
+   "kwanini siku ambayo haijafika haina mshale kwenye maombi na mauzo",
+   "mishale ya makusanyo haipo kwa baadhi ya siku nn tatizo",
+   "kishale cha kijani kinapanda au kushuka kinategemea nini kwenye tile ya siku",
+   "what do the arrows on the dashboard day tiles compare",
+   "why does the sales arow fall early in the week",
+   "why is there no arrow when a day has no collection file",
+   "arrow ya applications inashuka mwanzo wa wiki ni kawaida",
+   "faint number baada ya arrow ni ya wiki gani na inalinganishwa vipi"
+  ],
+  "reports-dash-sales": [
+   "mkopo unahesabiwa kuwa umeuzwa lini ukishaidhinishwa au ukitolewa",
+   "mauzo yanahesabiwa kwa principle tu au na riba pamoja",
+   "sales % ya dashibodi inatumia lengo gani la wiki kutoka settings",
+   "kwn sales % ya siku haitumii lengo la kila siku la timu la kampuni",
+   "mauzo ya siku yanagawanywa na nini kupata asilimia ya tile",
+   "kama kiongozi wa timu mauzo ya wiki yanahesabiwa jumatatu mpaka siku gani",
+   "mkopo ukiwa pending disbursement au umefungwa bado unahesabiwa kwenye mauzo",
+   "how is the dashboard sales percentage worked out for one day",
+   "which loan stages count as a sale and on what date",
+   "why is the dashboard sales target not the company daily target",
+   "weekly target ya sales dashboard ni ipi na inatoka wapi",
+   "nikiona teams mbili tu sales % ya siku inahesabiwa vipi kwa target ya wiki"
+  ],
+  "reports-dash-collection": [
+   "makusanyo % ya siku inahesabiwaje kwenye dashibodi",
+   "kwanini urejeshaji wa jumamosi na jumapili unaonyesha kiasi tu bila asilimia",
+   "iliyonasia inahesabiwa kama imekusanywa au la",
+   "siku isiyo na faili inaonyesha 0% au haionyeshi kitu kwanini",
+   "makusanyo ya mapema % yanatoka kwenye ripoti ya awali au ya expected",
+   "recovery % ya dashibodi inagawanya kilichorejeshwa na nini",
+   "makao makuu tunataka kujua tofauti ya urejeshaji wa dashibodi na ule wa ripoti ya wiki",
+   "how is collection percentage worked out on the dashboard",
+   "why does a day show no figure instead of 0%",
+   "does a saturday or sunday get a recovery percentage",
+   "dashboard recovered amount inagawanywa na uncollected ya siku au ya wiki",
+   "collection % ya ijumaa inatumia expected report ya siku hiyo tu"
+  ],
+  "reports-dash-applications": [
+   "maombi ya mikopo yanafunguka na tarehe za leo tu kwanini",
+   "kadi za hatua kwenye maombi zinahesabu maombi ya mwezi huu au yote",
+   "kwn idadi ya maombi kwenye siku ya dashibodi inapungua kadri siku inavyoenda",
+   "maombi ambayo hayajashughulikiwa yanahesabiwa vipi kwenye dashibodi",
+   "maombi yaliyokabidhiwa kwa mchambuzi au kupangiwa bado yanahesabiwa kwenye siku",
+   "mshale wa maombi kwenye dashibodi unalinganisha maombi yaliyofika ya hatua zote",
+   "namba mbili kama 12→9 kando ya mshale wa maombi ni za wiki gani",
+   "why does the applications number on a day tile shrink during the day",
+   "what do the stage cards on loan applications count",
+   "which applications count as unworked and how many arrive each day",
+   "applications za dashibodi zinapungua kwa sababu zimeshughulikiwa au zimefutwa",
+   "loan applications inafunguka na dates za leo lakini stage cards zinaonyesha mwezi mzima kwa nini"
+  ],
+  "reports-weekly-report": [
+   "ripoti ya wiki ina sehemu ngapi kwa kila timu",
+   "ongezeko la deni ni nini kwenye ripoti",
+   "ongezeko la deni linalinganisha faili ya jumatatu na faili gani",
+   "kijani na minus kwenye ongezeko la deni inamaanisha nini",
+   "nyekundu na plus ina maana deni limepanda au kushuka",
+   "rekodi bora ya wiki mwezi na mwaka zinawekwa lini",
+   "majina ya viongozi kwenye rekodi bora yanabaki kama maandishi hata wakiondolewa",
+   "what are the five sections of the weekly report",
+   "what does green with a minus mean for the debt increase",
+   "when are the best of records for the week month and year saved",
+   "weekly report ya timu ina vipengele gani vitano",
+   "best of records zinabadilika nikifungua weekly report"
+  ],
+  "reports-count-1-6": [
+   "count 1-6 ni nini kwenye ripoti ya wiki",
+   "kama afisa wateja wa count 1-6 wanachaguliwaje walio lipa chini ya nusu ya awamu",
+   "cleared na reduced kwenye count maana yake nini",
+   "success % au mafanikio ya mchambuzi inahesabiwaje",
+   "mteja akiwa bad au static kwenye count malimbikizo yake yamefanyaje",
+   "overall % ya wachambuzi ni wastani wa nini na ranking inafanywaje",
+   "mauzo yanaenda kwa mchambuzi aliyeidhinisha mkopo au mwingine",
+   "what does count 1-6 mean in the weekly report",
+   "how is the analyst success percentage calculated",
+   "what is the difference between reduced and static in count 1-6",
+   "overall % ya analyst ni average ya success na sales ndio",
+   "count 1-6 inajumuisha customers wenye installments chini ya 6 kati ya 12"
+  ],
+  "reports-par": [
+   "portifolio at risk ni nini kwenye ripoti",
+   "par % ni malimbikizo gawanya oustanding balance ya wadaiwa ndio",
+   "par alltime maana yake nini na inatofautianaje na par ya kawaida",
+   "kwanini par ya timu yangu inaonyesha 0% wakati tumewakopesha wateja",
+   "kwanini par inaonyesha desimali moja tu",
+   "opm kwenye mstari wa kila timu kwenye par ni wa nini",
+   "par inasoma faili gani ya wadaiwa ya zamani au ya sasa",
+   "how is PAR percentage calculated",
+   "what is the difference between PAR and PAR all-time",
+   "is PAR split by loan size and days in arrears",
+   "par alltime inagawanya arrears na total loan ya sales zote za timu",
+   "par breakdown kwa loan size na status naiona wapi"
+  ],
+  "reports-commission": [
+   "kamisheni niliyopata naiona wapi",
+   "kwanini asilimia 89.7 inahesabiwa kama 90 kwenye kamisheni",
+   "nn maana ya band kwenye kamishen",
+   "nani anaweka kiasi cha komisheni na asilimia za kila band",
+   "komisheni ya makusanyo ya mapema inalipwa kiasi kimoja kwa kila mteja au kwa asilimia",
+   "mimi na mwenzangu tunalipwa kamisheni tofauti kwa cheo kwanini",
+   "ngazi za kamisheni ni ngapi na mapato yangu naona wapi",
+   "how are comission bands decided",
+   "why was my commission rounded to 90 when I got 89.7 percent",
+   "where can I see what I earned in commission",
+   "overpaid customer analipwa commission kama paid au tofauti",
+   "commision ya early collection ni flat rate au bands za asilimia"
+  ],
+  "reports-daily-checklist": [
+   "checklist ya kila siku inatoka wapi na nani anaiweka",
+   "nitaweka tiki vipi kwenye kazi ya leo",
+   "kwanini tiki yangu imeandikwa imechelewa",
+   "naweza kutiki majukumu ya jana au siku zilizopita",
+   "nikiondoa tiki picha inabaki au inafutwa",
+   "kamera inapiga picha ndani ya app na nikiangalia naona wapi",
+   "kikomo cha muda kikiwa 00:00 maana yake nini",
+   "what time is recorded when I tick a checklist task",
+   "why cant I tick yesterdays tasks",
+   "if I uncheck a task does the photo stay",
+   "task ina deadline saa tatu nikitick saa nne inakuwa late",
+   "cheklist inaonyesha tasks za role yangu tu au zote"
+  ],
+  "reports-complaints": [
+   "nawezaje kuongeza lalamiko jipya kwenye daftari la malalamiko",
+   "kwn siwezi kuhifadhi lalamiko mpaka niweke jina la mlalamikaji",
+   "nikitatua lalamiko linaonyesha nani alilifunga na lini",
+   "hali ya lalamiko ni ipi kwa kawaida na inabadilishwaje kuwa imetatuliwa",
+   "kwanini orodha ya malalamiko inaonyesha siku 30 zilizopita tu nataka za zamani",
+   "timu kwenye lalamiko naweza kuiacha wazi na kwanini naona timu zangu tu",
+   "kero za wateja nazisajili wapi na mabadiliko yote yanabaki kwenye historia",
+   "how do I record what a customer complained about",
+   "who closed this complaint and when",
+   "why does the list show only the last 30 days of complaints",
+   "complaint status ya in progress na resolved zinatofautiana vipi",
+   "team ya complaint ni lazima au naweza kuacha blank"
+  ],
+  "reports-restructuring": [
+   "mteja anastahili kurestructure mkopo akifikia masharti gani",
+   "kwn mteja huyu haonekani kwenye orodha ya restructuring",
+   "nawezaje kuomba kupanga upya mkopo wa mteja mwenye malimbikizo",
+   "awamu zinazungushwa kwenda 500 ya karibu na ya mwisho inachukua nini",
+   "kiasi kinachobaki kinahesabiwaje baada ya malipo ya kwanza kwenye restructure",
+   "nikikataa ombi la restructure mfumo unataka sababu kwanini",
+   "ombi la restructure likikataliwa inabidi niandike sababu au nikiacha wazi",
+   "who is eligible for loan restructuring",
+   "how is the remaining amount calculated when restructuring a customer",
+   "why must I give a reason when I reject a restructure request",
+   "restructure request inabaki pending mpaka lini na nani ni approver",
+   "nikifanya reshedule installments zinakuwa sawa au ya mwisho inatofautiana"
+  ],
+  "reports-fraud-detector": [
+   "fraud detector ni nini na inaonyesha mikopo gani",
+   "kwanini mteja wangu ameonekana kwenye fraud detector",
+   "namba ya simu inalinganishwa kwa tarakimu ngapi za mwisho",
+   "jina linalingana likiwa na maneno mawili na herufi sita ni nini",
+   "naweza kutafuta namba au jina kabla ya kuidhinisha mkopo na naona timu zangu tu",
+   "wadhamini wa wateja wawili ni mtu mmoja inaitwa ulaghai au shaka",
+   "mkopo wake wa zamani aliomaliza kulipa unahesabiwa kwenye utapeli",
+   "how many digits of a phone number does the fraud detector match",
+   "why is a customer flagged as a duplicate",
+   "what is a strong match and what is a weak match",
+   "guarantor wa mteja mwingine ni defaulter inakuwa flagged kwa nini",
+   "mteja amedanganya kwa double loan kwa kutumia namba ileile"
+  ],
+  "hr-advance-closed": [
+   "advance yangu inaonyesha Expired nn maana yake",
+   "ombi la advance halikuamuliwa mwezi ukaisha naweza kuomba tena",
+   "closed by finance maana yake nn kwenye advance",
+   "kwn siwezi kuidhinisha advance mwezi umefungwa na finance",
+   "finance wakifungua tena mwezi unafungwa tena baada ya masaa mangapi",
+   "ombi jipya la advance halikubaliki kwa sababu ya kufungwa kwa mwezi nifanyeje",
+   "advance ilikaa haijaamuliwa hadi mwezi ukaisha lkn sasa nifanyeje",
+   "why does my advance request say Expired",
+   "what happens to undecided advance requests when finance finalises the month",
+   "can finance reopen a finalized month and for how many hours",
+   "advance yangu imeexpire naweza kuomba tena this month",
+   "finance wame-finalize mwezi so siwezi ku-approve advance nifanye nini"
+  ],
+  "hr-request-name-missing": [
+   "jina langu halionekani kwenye orodha ya advance nifanyeje",
+   "kwn sioni majina ya wafanyakazi wangu kwenye ombi la likizo",
+   "mfanyakazi mpya hayupo kwenye list ya kuomba advance",
+   "jina la mtu lipo kwenye staff data lkn halitokei kwenye leave request kwn",
+   "timu yangu haina zone kwenye teams na staff ndio sababu majina hayaonekani",
+   "nimwambie gmo taarifa gani ili mtu aonekane jina kamili akaunti ya benki na tin",
+   "kwenye advance request naona wafanyakazi wa role yangu tu kwn",
+   "why can't I find a staff member's name in the advance request dropdown",
+   "who do I ask to add a person to the leave request list and what details do they need",
+   "does an inactive employee show on the advance request list",
+   "staff wangu hawaonekani kwenye leave request role yao ni tofauti na yangu",
+   "my team has no zone sasa majina hayaonekani kwenye advance request"
+  ],
+  "hr-request-route": [
+   "ombi langu la advance linaenda kwa nani kuidhinishwa kwenye approval",
+   "nani anaamua ombi la likizo yangu kabla sijatuma",
+   "kwn mfumo unasema hakuna msimamizi aliyewekwa kwenye ombi langu",
+   "nimetuma advance lkn hakuna anayeiona ni kwa sababu approver hajawekwa",
+   "msimamizi wa access code yangu hajawekwa ombi linaelekezwa wapi sasa",
+   "mm ni kiongozi wa timu naona maombi ya zone yangu tu kwn",
+   "nani mwenye uamuzi wa advance ya role yangu anawekwa wapi kwenye roles na access",
+   "how is an advance request routed and who will decide it before I send",
+   "who makes the decision on my request if no approver is set for my role",
+   "does the leave request go to the same approvers as advance",
+   "request yangu ya advance inaenda kwa supervisor gani",
+   "nimeomba leave lkn hakuna approver kwenye zone yangu admin tu ndio anaiona"
+  ],
+  "hr-request-decide": [
+   "nimekubali ombi kimakosa naweza kulibadilisha baadaye",
+   "kwn mfumo unadai maoni nikikataa ombi la advance",
+   "nimetick maombi mengi nikakubali yote lkn mengine yameruka kwn",
+   "inaandika NOT saved kwn baadhi hazijahifadhiwa",
+   "nikipitisha ombi la likizo halafu nikajuta naweza kulirudisha",
+   "nikikubali maombi mengi kwa pamoja yale yasiyoelekezwa kwangu yanaruka",
+   "ombi lililokataliwa linaweza kubadilishwa au kufutwa baadaye",
+   "can I undo an approval after I approved an advance request",
+   "why does the system ask me for a comment when I disapprove",
+   "I ticked many requests and clicked approve why does it say NOT saved for some",
+   "nimeapprove leave request kimakosa naweza ku-reverse au ku-change decision",
+   "bulk reject imeskip requests zingine kwn zimekuwa NOT saved"
+  ],
+  "hr-leave-balance": [
+   "nimebakiwa na siku ngapi za likizo mwaka huu",
+   "siku za likizo zinahesabiwa vipi wikendi zinahesabiwa",
+   "kwn salio la likizo linapungua wakati ombi bado pending",
+   "likizo yangu ikikataliwa siku zinakatwa",
+   "siku za likizo zinapunguzwa lini ombi likiwa pending au likishaidhinishwa",
+   "salio la likizo likiwa dogo siwezi kuomba mfumo utanizuia lkn",
+   "nani anaweka idadi ya siku za likizo ninazostahili kwa mwaka na wapi",
+   "how many leave days do I have left this year",
+   "are weekends counted as calendar days when I request leave",
+   "who sets the yearly leave allowance I am entitled to and where",
+   "leave balance yangu inaonyesha siku ngapi baada ya approved leave",
+   "nikiomba leave siku zaidi ya balance mfumo unazuia au approver anaamua"
+  ],
+  "hr-leave-rules": [
+   "kwn ombi langu la likizo limekataliwa na mfumo linasema linagongana",
+   "naweza kuomba likizo ya siku ngapi kwa mara moja kuna kikomo",
+   "likizo yangu imeandikwa expired nifanyeje",
+   "nina likizo iliyoidhinishwa tarehe 10 hadi 20 naweza kuomba nyingine tarehe 15",
+   "likizo haina finalize kama advance kwn",
+   "naomba likizo ya siku 100 mfumo unanizuia upeo ni siku ngapi",
+   "ombi la likizo halikuamuliwa hadi tarehe ya kuanza ikapita nifanye nini",
+   "what is the maximum number of days for one leave request",
+   "why was my leave request refused because of overlap",
+   "does leave need to be finalised like advances and who approves it",
+   "leave request yangu inasema expired naomba tena au nasubiri",
+   "siwezi kuomba leave nyingine kwa sababu ya overlap na pending leave yangu"
+  ],
+  "hr-imprest-request": [
+   "naweza kuomba imprest mpya wakati nyingine bado haijafanyiwa retirement",
+   "kwa nini siwezi kuomba imprest mpya nina iliyoidhinishwa bado haijafungwa",
+   "jumla ya imprest inahesabiwaje nauli mara safari na malazi",
+   "naweza kuweka gharama nyingine ngapi kama usafiri au hoteli kwenye imprest",
+   "posho ya malazi inahesabiwa kwa kiwango gani cha usiku nani anaweka rate",
+   "ombi langu la imprest linaenda kwa GM au kwa OPM kwanza",
+   "imprest kiasi chenye decimal au senti inakataa lazima iwe namba nzima",
+   "why can't I submit a new imprest request",
+   "how is the imprest total calculated from trips fare nightly rate and other costs",
+   "does a pending or rejected imprest block a new request",
+   "imprest request yangu inaenda kwa OPM kwanza kwn",
+   "nights rate haijawekwa so siwezi kuomba imprest ya safari nifanye nini"
+  ],
+  "hr-imprest-retire": [
+   "nawezaje kufanya retirement ya imprest yangu",
+   "napiga picha ngapi za resiti kwenye retirement ya imprest",
+   "mfumo unasema nikaulize accounts kwn siwezi kuweka retirement",
+   "mhasibu akiweka kiasi sifuri kwenye imprest report inahesabiwa kama imerekodiwa",
+   "imprest imeidhinishwa lkn pesa bado haijawekwa siwezi ku-retire kwn",
+   "retirement nikishaituma naweza kuibadilisha au ni mara moja tu na stakabadhi ngapi zinatakiwa",
+   "kwa nini siwezi kuomba imprest mpya mpaka nifanye retirement ya matumizi halisi",
+   "how do I retire an imprest and how many receipts do I need",
+   "why does it tell me to check with Accounts before I can file the retirement",
+   "who records the funded amount and does zero count as recorded",
+   "retirement yangu inahitaji picture ngapi za receipt",
+   "accountant hajaweka funded amount so siwezi kufile retirement nifanyeje"
+  ],
+  "hr-imprest-approve": [
+   "GM anaweza kuidhinisha imprest zaidi ya kiasi kilichoombwa",
+   "imprest ikikataliwa lazima niandike sababu na mwombaji anaarifiwa",
+   "kwenye Imprest approval role fulani inapitia kwa OPM kwanza kuthibitisha kiasi",
+   "OPM anaweza kupunguza kiasi cha imprest au kuongeza",
+   "imprest inasubiri OPM muda mrefu GM anaweza kuiachilia",
+   "kwn imprest yangu haijafika kwa GM bado iko kwa OPM",
+   "nimekubali imprest kimakosa naweza kuibadilisha",
+   "can the GM approve more than the amount requested on imprest",
+   "what does the OPM do on an imprest request before the GM sees it",
+   "how does the GM release a waiting imprest request",
+   "imprest yangu inasubiri OPM confirm what if hakuna OPM",
+   "OPM amepunguza amount ya imprest na comment naweza kuongeza"
+  ],
+  "hr-advance-report": [
+   "ripoti ya advance inaonyesha nini ikifunguliwa mwanzoni",
+   "kwn akaunti ya benki ya mtu inaonyesha N/A au junk kwenye ripoti ya advance",
+   "akaunti kwenye ripoti ya advance inatoka wapi iliyonakiliwa wakati wa ombi au ya staff data",
+   "nikibadilisha akaunti ya mfanyakazi kwenye HR staff data ripoti ya advance itabadilika",
+   "nataka kuona advance zote sio za mwezi huu tu naweza kubadilisha status au tarehe",
+   "nani anaweza kufinalize na kureopen advance report",
+   "akaunti inaonekana tupu kwenye ripoti ya advance nifanyeje",
+   "why does the salary advance report only show approved requests of this month",
+   "is the bank account on the advance report the copied one from request time or from HR staff data",
+   "who can finalize or reopen the advance report",
+   "advance report inaonyesha account ya zamani hata nimebadilisha kwenye staff data kwn",
+   "bank acount inaonyesha blank kwenye payroll ya advance nifanyeje"
+  ],
+  "hr-staff-register": [
+   "HR staff data ni nini ndio daftari la wafanyakazi",
+   "nawezaje kuongeza mfanyakazi mpya kwenye staff data",
+   "kwn naona orodha tu siwezi kurekebisha wala kuhariri wafanyakazi",
+   "nani anaruhusiwa kubadilisha mtu kuwa inactive",
+   "mfanyakazi akiwekwa inactive historia yake ya advance inabaki",
+   "naona wafanyakazi wa zone yangu tu wa zone nyingine siwezi kuwaona kwn",
+   "staff mpya akiongezwa namba ya utambulisho ID inatengenezwa yenyewe",
+   "who can add or edit people in HR staff data",
+   "why is my HR staff data read-only",
+   "what happens to an inactive employee's history and request lists",
+   "siwezi ku-edit staff details nimepewa read only tu kwn",
+   "nataka ku-deactivate mfanyakazi aliyeacha kazi anaondoka kwenye request list"
+  ],
+  "hr-device-lock": [
+   "simu ya kampuni imeibiwa au imepotea nawezaje kuifunga",
+   "naweza kuweka IMEI ngapi kwa mara moja kwenye kufunga simu",
+   "nimeagiza simu ifungwe lkn bado inafanya kazi kwn",
+   "tofauti ya kufunga simu na kuandika hasara ni nini",
+   "simu ikishaachiliwa kabisa naweza kuifunga tena inakataa",
+   "sababu inahitajika lini kwenye kufunga simu",
+   "naweza kubandika IMEI nyingi kila moja mstari wake au lazima nitiki moja moja",
+   "how do I lock a stolen company phone from HR PMO",
+   "what is the difference between device unlock and release a phone for good",
+   "why was my IMEI skipped when I pasted a list to lock",
+   "nataka ku-unlock simu ya kampuni ni permission tofauti na lock",
+   "lock order imetumwa lkn simu bado haijathibitisha itafungwa lini"
+  ],
+  "admin-roles-access": [
+   "nawezaje kumpa role fulani ruhusa ya kuona ukurasa wa Upload",
+   "kwn mtu haruhusiwi kuona skrini ya Audit nimeshamtiki kwenye nafasi na ruhusa",
+   "nn tofauti ya Auditor na Read only kwenye portal wanaona nini",
+   "nimebadili ruhsa za role lkn code ya mtu bado ina kurasa za zamani za ziada",
+   "role isiyo na tiki yoyote inaona nini mm",
+   "ADMIN anaona kurasa zote au kuna ambazo hawezi kuona",
+   "msimbo wa timu ukiingia portal unafunguka kama cheo gani na kurasa zipi",
+   "How do I give a role access to more screens in Settings?",
+   "Why can't my Auditor code see the Upload screen?",
+   "What happens to the extra screens a code already had when I save that code?",
+   "nataka ku-grant permision ya Audit tab kwa role ya Manager nifanyeje",
+   "role ya readonly inaona screens zipi na zipi hazionekani kabisa"
+  ],
+  "admin-access-codes": [
+   "nawezaje kutengeneza msimbo mpya wa kuingia kwa afisa mpya",
+   "mfanyakazi amesahau pass yake ya kuingia naweza kumwekea mpya wapi",
+   "kwn siwezi kufuta wala kubadili jina la msimbo niliouingia nao",
+   "nn maana ya Teams ALL kwenye misimbo ya kuingia inamfanya kiongozi",
+   "nikibadili msimbo wa mtu unaanza kufanya kazi mara moja au nisubiri",
+   "nikiandika herufi mbili za jina kwenye access code jina na cheo vinatoka wapi",
+   "nataka kubadili neno la siri langu iwe na herufi 6 au tarakimu",
+   "How do I add a new access code for a staff member in Settings?",
+   "Why can't I rename or delete the code I am signed in with?",
+   "What does it mean when the Teams box is left blank on an access code?",
+   "nataka ku-change code yangu mwenyewe lkn naona siwezi kui-delete ni sawa",
+   "role na teams za code mpya nazichagua wapi kwenye Settings"
+  ],
+  "admin-team-code-handsets": [
+   "nikibadilisha msimbo wa timu afisa wote wataondolewa kwenye simu zao",
+   "nawezaje kumzuia afisa mmoja tu kutumia HOPE Calls bila kuwatoa wenzake",
+   "afisa aliacha kazi mwezi uliopita lkn bado anaingia na handset yake nifanyeje",
+   "nn maana ya kuzima akaunti kwenye Field officer accounts",
+   "kwn viongozi hawatolewi nikibadili msimbo wa timu",
+   "afisa amejiuzulu nataka akaunti yake isifanye kazi tena nianzie wapi",
+   "msimbo wa timu uwe na herufi ngapi na timu mbili zinaweza kutumia msimbo mmoja",
+   "What do field officers use to sign in to HOPE Calls?",
+   "A staff member left the company, how do I stop them using the app?",
+   "Why were all officers on my team logged out after the team code was changed?",
+   "nataka ku-block account ya afisa mmoja tu bila ku-kick wenzake wa team yake",
+   "team nzima imekuwa logout ghafla baada ya kubadili team code kwa nini"
+  ],
+  "admin-leaders-sync": [
+   "kwn jina la kiongozi wa timu kwenye Teams & Staff linabadilika lenyewe",
+   "nimeandika kiongozi kwa mkono lkn limefutwa baada ya kusave code kwa nini",
+   "kitufe cha Sync now kinafanya nini na Undo ni ya nini",
+   "nawezaje kurudisha jina la kiongozi lililobadilishwa baada ya kusawazisha",
+   "timu yangu haina kiongosi kwenye Teams nimwandike wapi",
+   "code mbili za GMO zenye majina tofauti kwa timu moja zinafanya nini",
+   "nn maana ya uongozi wa timu kufuata misimbo ya kuingia",
+   "Why did the leader of my team change after I saved an access code?",
+   "How do I set a team's GMO by hand if no code names them?",
+   "Why do my hand edits in the leader cells get overwritten on Teams & Staff?",
+   "nikidelete code ya manager leader wa team anabadilika?",
+   "nimeandika GMO mpya kwenye Teams lkn Sync now imeibadilisha tena nifanyeje"
+  ],
+  "admin-zone-name": [
+   "kwn pembeni ya jina langu kwenye portal imeandikwa NO ZONE SET",
+   "nn maana ya ALL ZONES kwenye portal juu ya jina langu",
+   "kanda yangu inatoka wapi kwenye sidebar karibu na jina",
+   "nawezaje kufanya kanda yangu ionekane sahihi",
+   "kwa nini naona kanda ya mikoa mingine pembeni ya jina langu",
+   "timu yangu haina zoni nifanyeje ili ionekane",
+   "kanda ya timu inatokana na GMO wake au seli ya ZONE",
+   "Why does it say NO ZONE SET next to my name?",
+   "How does the portal decide which zone I belong to?",
+   "What does ALL ZONES mean beside my name?",
+   "zone yangu haionekani kwenye sidebar nimwambie nani aiset",
+   "team yangu haina ZONE cell lkn GMO wake ana teams zote kwenye zone moja itaonyesha nini"
+  ],
+  "admin-upload-files": [
+   "ni mafaili gani naruhusiwa kupakia kwenye Upload",
+   "nipakie wapi Defaulters Initial ya asubuhi na Current ya jioni",
+   "orodha ya kesho inapakiwa vipi na Kesho inasoma wapi",
+   "nn tofauti ya Initial na Current kwenye uplod ya defaulters",
+   "kwn nimeshindwa kuuplaod Received Payments napeleka wapi",
+   "nataka kupakia PMO Deductions au Staff registry nifanyeje",
+   "loan pipeline inapakiwa hadi hatua gani",
+   "Which files can I upload on the Upload screen?",
+   "How do I upload tomorrow's list so Kesho can read it?",
+   "Where do I upload the demand notices and the comments log?",
+   "Expected Today ya kesho ina-upload vipi na tarehe ipi iwe",
+   "nataka ku-apload Leaders / Teams file iko kwenye orodha ya Upload?"
+  ],
+  "admin-upload-not-here": [
+   "naweza kupakia faili la malalamiko kwenye Upload?",
+   "abnormal payments zinapakiwa wapi sioni sehemu ya kuzipakia",
+   "kwn sioni chaguo la kuuplod call logs",
+   "disbursment sheet napakia wapi kama pipeline inaishia Approved",
+   "restructure za mkopo naziweka vipi naweza kupakia faili?",
+   "kwa nini code yangu ya Auditor haiwezi kupakia chochote kwenye Upload",
+   "nn naweza kupakia faili la roles au misimbo kwenye Upload bila Settings",
+   "Why is there no upload option for disbursement sheets?",
+   "Can I upload call logs or a complaint from a file?",
+   "Who can upload files, and why does my view-only code not work on the Upload screen?",
+   "complaints ni-uplaod au ni-type kwenye app?",
+   "abnormal payments zinatoka wapi kama hakuna upload yake"
+  ],
+  "admin-upload-redo": [
+   "nimepakia faili mara mbili itahesabiwa mara mbili?",
+   "nimekosea faili nirudie kupakia nifanyeje litabadilisha la awali?",
+   "nn tofauti ya Append na Replace all kwenye Received Payments",
+   "kwa nini baadhi ya safu zimerukwa kwenye upload zina REF isiyosomeka",
+   "nikipakia Defaulters tena kwa tarehe ileile la zamani linaondoka?",
+   "naweza kuongeza malipo yaliyosahaulika bila kufuta yaliyopo?",
+   "nikipakia upya Demand Notices comments zilizoandikwa na watu zitafutwa?",
+   "If I upload the same file twice will payments be counted double?",
+   "I made a mistake in the file I uploaded, can I upload it again for the same date?",
+   "Why were some rows skipped and what does no readable REF mean?",
+   "nimeuplod Expected Today vibaya naweza kuu-replace na file jipya?",
+   "ni-append au ni-replace nikiwa na payments mpya nimeuplaod mara ya pili"
+  ],
+  "admin-audit-log": [
+   "nawezaje kuona nani amefuta au kubadilisha kitu kwenye portal",
+   "kumbukumbu za mabadiliko ziko wapi kwenye portal",
+   "kwn Audit inaonyesha REFUSED imekataliwa maana yake nini",
+   "nani aliyebadilisha role ya mtu na alifanya lini",
+   "Audit inaonyesha namba za simu na kiasi cha pesa pia?",
+   "nani alifuta msimbo wa kiongozi wetu naweza kujua wapi",
+   "nawezaje kuchuja kwa tarehe au mtu kwenye ukaguzi huu",
+   "Where can I see who changed something in the portal?",
+   "Does the audit log record changes only, or also when someone just looks at a screen?",
+   "Why do I see failed attempts listed in the audit log?",
+   "odit log inafunguka na data ya leo tu nawezaje kuona ya wiki iliyopita",
+   "role ya mtu ilibadilishwa na sijui nani nitaona kwenye audit?"
+  ],
+  "admin-hopeai-tab": [
+   "naweza kuona maswali yaliyoulizwa kwa Claudian na watu wote wapi",
+   "Hope Ai tab inaonyesha nini kwa kila mtu kwa siku",
+   "kwn naona maongezi ya timu yangu tu siwezi kuona ya wengine",
+   "nawezaje kusoma maswali na majibu yote ya mtu mmoja kwenye Claudian",
+   "Hope Ai inafunguka na siku ngapi naweza kuona zaidi ya wiki",
+   "nn maana ya timu zilizo nyuma kwenye orodha ya maswali ya Claudian",
+   "maswali ninayomuuliza Claudian ni faragha au viongozi wanaona",
+   "How can I see what questions people asked Claudian-PMO?",
+   "Why can I only see chats from my own teams on Hope Ai?",
+   "How many days back can I read in Hope Ai?",
+   "nataka kuona chat za afisa wangu na Klaudian ziko wapi",
+   "kama nimeandika namba ya simu ya mteja kwa Claudian inahifadhiwa na privacy ikoje"
+  ],
+  "admin-system-switch": [
+   "kwa nini portal imefungwa na naona HOPE Calls tu",
+   "nn maana ya mfumo umefungwa kwa watumiaji wote",
+   "nawezaje kufunga mfumo wakati wa matengenezo",
+   "naweza kuzima mfumo kwa wote nikiwa nafanya ukarabati wa data",
+   "mfumo ukizimwa HOPE Calls inaathirika?",
+   "nataka kufungulia watu mfumo baada ya kumaliza kupakia faili nifanyeje",
+   "nikibadilisha swichi inafika kwa watu wote baada ya muda gani",
+   "Why can everybody only see HOPE Calls and not the portal?",
+   "How do I close the system while we repair something?",
+   "How long does it take for the system switch to reach everyone?",
+   "system imefungwa kwa kila mtu nani anaweza kuiona bado only Settings?",
+   "nataka ku-switch off portal nikifanya re-upload ya data maintenance mode ipo?"
+  ],
+  "admin-clean-old-reports": [
+   "nifute vipi ripoti za zamani kwenye Settings",
+   "nn maana ya kubonyeza Check kwanza kabla ya Clean",
+   "nikisafisha ripoti za tarehe fulani comments walizoandika watu zinafutwa pia?",
+   "kwn Follow-up list ikisafishwa comments zote za wateja zinaondoka hata nilizoandika",
+   "nataka kufuta ripoti kongwe zote kabla ya tarehe fulani nifanyeje",
+   "nikisafisha Comments Log na Demand Notices inafuta nini na inabaki nini",
+   "disk inajaa na ripoti za zamani za upload nizifute vipi salama",
+   "How do I clean old reports from the system?",
+   "What does the tick for everything on or before that date do?",
+   "Will cleaning remove comments that staff typed by hand?",
+   "nataka ku-erase ripoti za mwaka jana zote naanzia wapi",
+   "Check first inaonyesha count tu au inafuta pia?"
+  ]
+ }
+}
