@@ -243,6 +243,22 @@ test('THE CARDS AN ANSWER STOOD ON ARE SHOWN IN GREY, NOT IN THE RED OF A PROBLE
   assert.ok(!/color:var\(--bad\)[^>]*>cards:/.test(h), 'a card list is never drawn as a problem');
 });
 
+test('THE REPORTS AN ANSWER READ ARE SHOWN TOO (handbook Part 160): "data: calls by team" in grey, and a report that was late or failed in red; both beside the cards, all as text', async () => {
+  const items = [
+    { at: '2026-11-25T05:50:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'team gani leo hawapigi simu kabisa', a: 'ALPHA.', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'cards: legal-phone-grand · data: calls by team, last week by team' },
+    { at: '2026-11-25T05:51:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: calls by team (late)' },
+    { at: '2026-11-25T05:52:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: last week by team (failed)' },
+    { at: '2026-11-25T05:53:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: <b>x</b>' },
+  ];
+  const { win, drawn } = load({ claudianThread: { on: true, note: null, thread: 'k-1:2026-11-25', day: '2026-11-25', who: { name: 'JUMA G', role: 'MANAGER', zone: 'DAR CENTER', teams: 'KONGOWE', source: 'portal', lang: 'sw' }, items } });
+  win.haOpen_('k-1:2026-11-25'); await new Promise(r => setImmediate(r));
+  const h = drawn[0].html;
+  assert.ok(/color:var\(--mut\)[^>]*>Kadi \/ Cards: legal-phone-grand</.test(h) && /color:var\(--mut\)[^>]*>Takwimu \/ Data: calls by team, last week by team</.test(h), 'the cards and the reports in grey, in both languages');
+  assert.ok(/color:var\(--bad\)[^>]*>data: calls by team \(late\)</.test(h), 'a report that was late is red');
+  assert.ok(/color:var\(--bad\)[^>]*>data: last week by team \(failed\)</.test(h), 'a report that failed is red');
+  assert.ok(h.includes('Takwimu / Data: &lt;b&gt;x&lt;/b&gt;') && !h.includes('<b>x</b>'), 'text, never markup');
+});
+
 test('A CHAT THAT CANNOT BE OPENED SAYS WHY: the table not made, an empty chat, a failure of the read', async () => {
   const { win, drawn, toasts } = load({ claudianThread: { on: false, note: 'run db/RUN-ME-090', thread: 'k:2026-11-25', who: null, items: [] } });
   win.haOpen_('k:2026-11-25'); await new Promise(r => setImmediate(r));

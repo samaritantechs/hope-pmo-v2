@@ -201,7 +201,7 @@ export function pseudoUser(cu) {
     strip, sync and the bell pay one small read a minute, written down in test/speed.test.mjs.
     A LEADER'S TEAMS ARE THE CODE'S, LIVE -- see leaderTeamsLive_ -- not the copy registration
     stored. */
-async function scopedUser(db, cu, nowMs) {
+export async function scopedUser(db, cu, nowMs) {
   if (!cu || !cu.is_leader) {
     const u = pseudoUser(cu);
     if (!u.teams) return u;

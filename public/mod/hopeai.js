@@ -179,12 +179,15 @@ VIEWS.hopeai = function(){
 };
 
 /* ONE CHAT, IN FULL -- who asked, and every question and tap in the order they happened, with what the person was answered. */
-/** A chat's note: what went wrong or was cut, in red (a stop, a failure), and in grey which knowledge cards the helper was given for the question
-    ("cards: a, b"; handbook Part 159). The parts of a note are joined with " · " by the server. */
+/** A chat's note: what went wrong or was cut, in red (a stop, a failure), and in grey what the helper was given for the question: the knowledge cards
+    ("cards: a, b"; handbook Part 159) and the reports it read ("data: calls by team"; Part 160, "(late)" or "(failed)" when the report did not come: that
+    one is red). The parts of a note are joined with " · " by the server. */
 function haNoteHtml_(note) {
   return String(note).split(' \u00b7 ').map(function(part){
-    var cards = part.indexOf('cards: ') === 0;
-    return '<div style="margin:2px 0;font-size:12px;color:' + (cards ? 'var(--mut)' : 'var(--bad)') + '">' + (cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : esc(part)) + '</div>';
+    var cards = part.indexOf('cards: ') === 0, data = part.indexOf('data: ') === 0 && !/\((late|failed)\)/.test(part);
+    var grey = cards || data;
+    return '<div style="margin:2px 0;font-size:12px;color:' + (grey ? 'var(--mut)' : 'var(--bad)') + '">'
+      + (cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : data ? 'Takwimu / Data: ' + esc(part.slice(6)) : esc(part)) + '</div>';
   }).join('');
 }
 
