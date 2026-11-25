@@ -7,8 +7,8 @@ export function listAll(root) {
   const files = [];
   const walk = (d, filt) => { if (!fs.existsSync(d)) return; for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (!/node_modules|\.git|^build$/.test(e.name)) walk(p, filt); } else if (filt(p)) files.push(p); } };
   walk(path.join(root, 'public'), (f) => /\.(html|js)$/.test(f) && !/pptxgen\.bundle\.js$|tz-regions\.js$/.test(f));
-  // left out: the manager names the annual deck keeps, and Claudian-PMO's own reading (its instructions, glossary, screen notes and knowledge cards: text for a model, never shown to a person)
-  walk(path.join(root, 'api'), (f) => /\.js$/.test(f) && !/annual-holders-data\.js$|claudian-knowledge\.js$|claudian-cards-data\.js$/.test(f));
+  // left out: the manager names the annual deck keeps, and Claudian-PMO's own reading (its instructions, glossary, screen notes, knowledge cards and the lines of the reports it reads: text for a model, never shown to a person)
+  walk(path.join(root, 'api'), (f) => /\.js$/.test(f) && !/annual-holders-data\.js$|claudian-knowledge\.js$|claudian-cards-data\.js$|claudian-data\.js$/.test(f));
   walk(path.join(root, 'android'), (f) => /\.java$|res[\\/]values[\\/]strings\.xml$/.test(f));
   walk(path.join(root, 'db'), (f) => /hint.*\.sql$/i.test(f));
   for (const f of ['server.js', 'app-version.json', 'public/live.webmanifest', 'docs/hints-v2.tsv']) if (fs.existsSync(path.join(root, f))) files.push(path.join(root, f));

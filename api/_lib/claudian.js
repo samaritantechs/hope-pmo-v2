@@ -70,6 +70,7 @@ import { wholePct } from './recovery.js';
 import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
 import { faqChoices, faqAnswer } from './claudian-faq.js';
 import { pickCards, tabKeyScore } from './claudian-cards.js';
+import { viewsFor, readViews, resetClaudianDataForTests } from './claudian-data.js';
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 
@@ -79,6 +80,8 @@ export const CLAUDIAN_MODEL = 'claude-haiku-5-5';
 export const SETTING_AI = 'CLAUDIAN_AI';
 export const SETTING_USER_DAILY = 'CLAUDIAN_USER_DAILY';
 export const SETTING_ALL_DAILY = 'CLAUDIAN_ALL_DAILY';
+/** A row that switches the helper's READING OF REPORTS off (handbook Part 160): OFF, NO, FALSE or 0. Absent or anything else, it reads them. */
+export const SETTING_DATA = 'CLAUDIAN_DATA';
 export const DEFAULT_USER_DAILY = 20;
 export const DEFAULT_ALL_DAILY = 2000;
 export const MAX_QUESTION_CHARS = 400;
@@ -97,7 +100,7 @@ const CFG_TTL_MS = 20000, ROWS_TTL_MS = 60000, STANDING_TTL_MS = 600000;
     others are the owner's own numbers (TARGETS_DEFAULT in claudian-knowledge.js) and are read by nothing else. */
 export const TARGET_PCT_KEYS = { ecol: 'TARGET_EARLY_COL_PCT', col: 'TARGET_COL_PCT', rec: 'TARGET_REC_PCT' };
 export const TARGET_COUNT_KEYS = { salesCustomers: 'TARGET_SALES_CUSTOMERS_DAILY', salesAmount: 'TARGET_SALES_AMOUNT_DAILY', recAmount: 'TARGET_REC_AMOUNT', callsDay: 'TARGET_CALLS_DAILY' };
-const SETTING_KEYS = [SETTING_AI, SETTING_USER_DAILY, SETTING_ALL_DAILY, 'CALL_MIN_SECS', 'SALES_TARGET_WEEKLY', 'SALES_TARGET',
+const SETTING_KEYS = [SETTING_AI, SETTING_USER_DAILY, SETTING_ALL_DAILY, SETTING_DATA, 'CALL_MIN_SECS', 'SALES_TARGET_WEEKLY', 'SALES_TARGET',
   ...Object.values(TARGET_PCT_KEYS), ...Object.values(TARGET_COUNT_KEYS), 'RECOVERY_TARGET_MONTHLY', 'ADVANCE_AMOUNTS'];
 export const ADVANCE_AMOUNTS_DEFAULT = '50,000, 100,000, 150,000, 200,000';
 
@@ -205,7 +208,9 @@ export function portalSubject(user) {
 /** A registered handset (HOPE Calls): `cu` is its call_users row, `pseudo` the scope call-core works out for it. */
 export function callSubject(cu, pseudo, device) {
   return { source: 'call', key: 'c:' + hash(device), name: (cu && cu.name) || '', role: (cu && cu.role) || '', teams: pseudo && pseudo.teams && pseudo.teams.length ? pseudo.teams : null,
-    tabs: [], allTabs: false, leader: !!(cu && cu.is_leader), readOnly: false };
+    tabs: [], allTabs: false, leader: !!(cu && cu.is_leader), readOnly: false,
+    // the call_users row: what the data views need to read a leader's teams as the code reads NOW (never logged: baseRow picks its own fields)
+    cu: cu || null };
 }
 
 /* ---------- the settings it reads (one small read, kept twenty seconds; a write drops it) ---------- */
@@ -235,6 +240,7 @@ export async function loadCfg(db, nowMs = Date.now()) {
   const minSecs = digitsInt(by.CALL_MIN_SECS, 5, 0, 2000000000);
   const cfg = {
     on: /^(ON|YES|TRUE|1)$/i.test(String(by[SETTING_AI] == null ? '' : by[SETTING_AI]).trim()),
+    data: !/^(OFF|NO|FALSE|0)$/i.test(String(by[SETTING_DATA] == null ? '' : by[SETTING_DATA]).trim()),
     userDaily: digitsInt(by[SETTING_USER_DAILY], DEFAULT_USER_DAILY, 1, 10000),
     allDaily: digitsInt(by[SETTING_ALL_DAILY], DEFAULT_ALL_DAILY, 1, 1000000),
     targets, std, target, minSecs, recTarget: digitsInt(by.RECOVERY_TARGET_MONTHLY, 0, 0, 1e13),
@@ -328,7 +334,7 @@ export function screensOf(subject, question) {
 }
 /** What is said about the person, after the cached front: their role, zone, teams, screens, the targets and how they did. The sentences are
     CTX's (claudian-knowledge.js: text for the model, never shown to a person); this function only chooses and fills them. */
-export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, cards) {
+export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, cards, data) {
   const L = [];
   L.push(CTX.head);
   L.push(CTX.date(todayKey(nowMs), lang));
@@ -343,6 +349,8 @@ export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, 
   }
   // how HOPE works, for the part of it the question touches: cards chosen in memory by claudian-cards.js, only those this person may be told
   if (cards && cards.length) L.push(CTX.rules(cards.map(c => '- ' + c.text)));
+  // the figures the question needs, read from the screens' own reports for this person's own teams (claudian-data.js); the lines say what they are
+  if (data && data.lines && data.lines.length) L.push(CTX.data(data.lines));
   L.push(CTX.targets({ ...cfg.targets, salesAmount: money(cfg.targets.salesAmount), recAmount: money(cfg.targets.recAmount) }, money(cfg.target),
     cfg.recTarget ? money(cfg.recTarget) : '', cfg.minSecs));
   L.push(standing ? CTX.standing(standing, v => (v == null ? CTX.unknown : v + '%')) : CTX.standingUnknown);
@@ -378,7 +386,7 @@ async function defaultClient() {
   }
   return clientPromise;
 }
-export function resetClaudianForTests() { clientPromise = null; inflight = 0; lastAsk.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; }
+export function resetClaudianForTests() { resetClaudianDataForTests(); clientPromise = null; inflight = 0; lastAsk.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; }
 
 /** What went wrong with the provider, in one of three kinds: the person's limit ("too many", billing), a busy provider, a setting wrong
     here (key). By status, never by words (a typed error class would need the SDK imported). */
@@ -504,7 +512,13 @@ export async function claudianHandle(db, subject, body, deps = {}) {
   try {
     const standing = await standingOf(db, subject, cfg, nowMs, rows);
     const cards = pickCards(subject, q);
-    const req = buildRequest(buildUserMessage(buildContext(subject, q, lang, cfg, zone, standing, nowMs, cards), q, b.hist));
+    // A question that needs figures ("which team has not called today?") has the reports read, for the teams this person holds and only if the screen is theirs.
+    let data = null;
+    const wanted = cfg.data ? viewsFor(subject, q) : [];
+    if (wanted.length) {
+      try { data = await readViews(db, subject, wanted, nowMs, { std: cfg.std, names: ts => registrySpellings(ts, rows) }); } catch (e) { data = null; }
+    }
+    const req = buildRequest(buildUserMessage(buildContext(subject, q, lang, cfg, zone, standing, nowMs, cards, data), q, b.hist));
     lastAsk.set(subject.key, nowMs);
     if (lastAsk.size > 5000) lastAsk.clear();
     const t0 = Date.now();
@@ -533,7 +547,8 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     const allc = allCache.get(db); if (allc) allc.n++;
     await logChat(db, { ...row, mode: 'ai', question: q, answer: answer.slice(0, 1200), tokens_in: (u.input_tokens | 0) + (u.cache_creation_input_tokens | 0) + (u.cache_read_input_tokens | 0),
       tokens_out: u.output_tokens | 0, cache_read: u.cache_read_input_tokens | 0, ms, behind: standing ? !!standing.behind : null,
-      note: [res && res.stop_reason && res.stop_reason !== 'end_turn' ? String(res.stop_reason).slice(0, 40) : '', cards.length ? 'cards: ' + cards.map(c => c.id).join(', ') : ''].filter(Boolean).join(' · ') || null });
+      note: [res && res.stop_reason && res.stop_reason !== 'end_turn' ? String(res.stop_reason).slice(0, 40) : '', cards.length ? 'cards: ' + cards.map(c => c.id).join(', ') : '',
+        data && data.notes && data.notes.length ? 'data: ' + data.notes.join(', ') : ''].filter(Boolean).join(' · ') || null });
     return { ...base, mode: 'ai', answer, left: Math.max(0, cfg.userDaily - used.mine - 1) };
   } finally { inflight--; }
 }
