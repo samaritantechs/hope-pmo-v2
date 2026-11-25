@@ -854,7 +854,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-24-a';
+var CALL_BUILD = '2026-11-25-a';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1043,6 +1043,7 @@ function boot(){
 }
 function doLogout(){
   try { localStorage.setItem('hcLoggedOut', '1'); } catch(e){}
+  try { if (window.ClaudianPMO) ClaudianPMO.hide(); } catch(e){}      // the helper belongs to the person who is in
   /* SIGNING OUT HERE SIGNS OUT OF THE PORTAL TOO -- "since we enabled single login but the logouts are still multiple":
      the portal signs in from hopeCode, so it goes with this (brand.js, HOPESession). */
   try { if (window.HOPESession) HOPESession.clearPortal(); else localStorage.removeItem('hopeCode'); } catch(e){}
@@ -1320,6 +1321,27 @@ function buildApply_(){
 document.addEventListener('visibilitychange', function(){
   if (document.hidden) setTimeout(buildApply_, 2000);        // put away, and still away two seconds later
 });
+/* CLAUDIAN-PMO, THE HELPER IN THE CORNER (handbook Part 156). Its file is fetched eight seconds after the officer is in -- never on the way
+   in, never before the first list has painted -- and a handset that cannot fetch it has no bubble and no complaint: nothing in this app waits
+   for it, and it asks the server for nothing until somebody taps the bubble (what it asks is /api/claudian, a function of its own). */
+var CLAUDIAN_ASKED_ = false;
+function claudianLater_(){
+  try {
+    if (window.ClaudianPMO && ClaudianPMO.mounted && ClaudianPMO.mounted()) { ClaudianPMO.show(); return; }
+    if (CLAUDIAN_ASKED_) return;
+    CLAUDIAN_ASKED_ = true;
+    setTimeout(function(){
+      try {
+        if (!S.entered) { CLAUDIAN_ASKED_ = false; return; }
+        var sc = document.createElement('script');
+        sc.src = (window.HC_API_BASE || '') + '/mod/claudian.js?v=' + encodeURIComponent(CALL_BUILD);
+        sc.onload = function(){ try { if (S.entered && window.ClaudianPMO) ClaudianPMO.mount({ host: 'call', z: 38, base: window.HC_API_BASE || '', device: function(){ return DEV; }, lang: function(){ return 'sw'; } }); } catch(e){} };
+        sc.onerror = function(){ CLAUDIAN_ASKED_ = false; };      // the next time the officer comes in, it asks again
+        document.head.appendChild(sc);
+      } catch(e){}
+    }, 8000);
+  } catch(e){}
+}
 function enterApp(d){
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
   S.locOn = d.locReport !== false;                          // Settings > CALL_LOCATION = OFF stops every handset
@@ -1466,6 +1488,7 @@ function enterApp(d){
     versionPing_();
     bellRefresh();           // and the count, at the moment the officer is looking again
   });
+  claudianLater_();          // the helper's bubble, eight seconds from now (see its function)
 }
 /** Top-of-app team % strip -- Col leo / Kesho / Col wiki / Sales (month-to-date) / Exp.Def / Rec
     for the officer's own team(s). Numbers come

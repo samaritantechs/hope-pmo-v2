@@ -2570,8 +2570,12 @@ test('the portal modules: each parses, each view is mapped once, the core guards
   const modOfSrc = core.match(/var MOD_OF = \{([\s\S]*?)\};/);
   assert.ok(modOfSrc, 'MOD_OF moved -- update the extractor');
   const modOf = Object.fromEntries([...modOfSrc[1].matchAll(/(\w+):'(\w+)'/g)].map(m => [m[1], m[2]]));
-  const onDisk = readdirSync(join(PUBLIC, 'mod')).map(f => f.replace(/\.js$/, '')).sort();
+  // A helper module is not a screen: it is loaded by a script of its own (Claudian-PMO's bubble, handbook Part 156), has no VIEWS and no tab
+  // to map. It must still parse; test/claudian-ui.test.mjs reads what it does.
+  const HELPER_MODS = ['claudian'];
+  const onDisk = readdirSync(join(PUBLIC, 'mod')).map(f => f.replace(/\.js$/, '')).filter(m => !HELPER_MODS.includes(m)).sort();
   assert.deepEqual(onDisk, MODS.slice().sort(), 'the modules on disk are the ones the tests read');
+  for (const h of HELPER_MODS) assert.doesNotThrow(() => new vm.Script(page(h), { filename: h + '.js' }), h + '.js does not parse');
   for (const v of Object.values(modOf)) assert.ok(onDisk.includes(v), 'MOD_OF names a module that is not on disk: ' + v);
   const coreViews = new Set([...core.matchAll(/^VIEWS\.([A-Za-z_]+) = function/gm)].map(m => m[1]));
   for (const name of MODS) {
@@ -3420,7 +3424,7 @@ test('wireForms() is a list of attachments that may be run once per keystroke: w
   assert.ok(!/\b(setInterval|requestAnimationFrame|MutationObserver|IntersectionObserver|sendBeacon|XMLHttpRequest)\b/.test(code), 'nothing that keeps running after the wiring');
   // The calls it makes by name, once each per wiring. A new one is welcome -- when it is safe to run at every repaint: say so by adding it here.
   const called = [...new Set([...code.matchAll(/\b(wire[A-Za-z_]*|hopeSecrets|adjHint|recalc)\(/g)].map(m => m[1]))].filter(n => n !== 'wireForms').sort();
-  assert.deepEqual(called, ['adjHint', 'hopeSecrets', 'recalc', 'wireLnAssessPlan_', 'wireLnCs_', 'wireLnFinance_', 'wireLnGm_', 'wireLnReversals_'],
+  assert.deepEqual(called, ['adjHint', 'hopeSecrets', 'recalc', 'wireClaudian_', 'wireLnAssessPlan_', 'wireLnCs_', 'wireLnFinance_', 'wireLnGm_', 'wireLnReversals_'],
     'wireForms() calls ' + called.join(', ') + ': each of them must be safe to run at every repaint (an assignment to elements that are on the page now, a write that reads the page), '
     + 'not a timer, a request, a listener or a focus -- then add the name to this list');
 });

@@ -45,6 +45,8 @@ export const AUDITED = new Set([
   // settings & the system switch
   'settingSet', 'settingDelete', 'systemOpenSet', 'commissionSave', 'announceSave',
   'fuStatusesSave', 'leaveSetAnnualDays',
+  // ... and Claudian-PMO's switch and limits: whether a helper that costs money is on, and for how many questions.
+  'claudianSet',
   // the customer registers
   'addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint', 'deleteComplaint',
   'addRestructure', 'decideRestructure', 'addDemandNotice',
