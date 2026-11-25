@@ -79,7 +79,7 @@ const client = { messages: { create: async (req) => {
 } } };
 
 /* What the server was asked for, by the pages: so "nothing until the bubble is tapped" is a count, not a hope. */
-const seen = { module: [], claudian: [], modules404: false, force: 0 };
+const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0 };
 let DEVICE = 'dF';
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const REAL_PORTAL = new Set(['settings', 'accessCodes', 'officerAccounts', 'systemOpenGet', 'teams', 'claudianStatus', 'claudianSet', 'settingSet', 'storageUsage']);
@@ -125,6 +125,8 @@ const srv = http.createServer((req, res) => {
     req.on('end', async () => {
       const body = JSON.parse(b || '{}');
       seen.claudian.push(body);
+      if (seen.delayStatus && body.op === 'status') await new Promise(r => setTimeout(r, seen.delayStatus));
+      if (seen.delayAsk && body.op === 'ask') await new Promise(r => setTimeout(r, seen.delayAsk));
       if (seen.force) { send(res, seen.force, { ok: false, error: 'forced ' + seen.force }); return; }
       try {
         let subject;
@@ -567,6 +569,127 @@ await section('A16 (404)', async () => {
 });
 
 /* ================================================= B. SETTINGS ================================================= */
+// ---- the TAIL of a touch (the second reader of Part 163): one tap on the bubble must not also press the page's own control that is under the finger afterwards
+await section('A17 (the tail of a tap)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests();
+  for (const [name, frac] of [['top right', { fx: 1, fy: 0 }], ['bottom right', { fx: 1, fy: 1 }], ['middle right', { fx: 1, fy: 0.5 }]]) {
+    seen.claudian.length = 0;
+    const { page, ctx } = await portal('A17', { viewport: { width: 390, height: 780 }, touch: true, store: { 'claudianPos.portal': JSON.stringify(frac) } });
+    await page.evaluate(() => {
+      window.__pageClicks = [];
+      const b = document.createElement('button'); b.id = 'pgBtn'; b.textContent = 'PAGE CONTROL';
+      b.style.cssText = 'position:fixed;left:0;right:0;top:0;bottom:0;z-index:10;opacity:.01';     // a control under EVERY place the bubble can be parked (the real page has its log-out and header buttons)
+      b.onclick = () => window.__pageClicks.push('page');
+      document.body.appendChild(b);
+    });
+    let s = await shape(page);
+    await page.touchscreen.tap(s.bub.x + 28, s.bub.y + 28);
+    await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    await page.waitForTimeout(700);
+    s = await shape(page);
+    const clicks = await page.evaluate(() => window.__pageClicks.length);
+    const stored = await page.evaluate(() => localStorage.getItem('claudianPos.portal'));
+    check('A17 ' + name + ': one tap opens the panel and presses NOTHING of the page under the finger', s.open && clicks === 0, JSON.stringify([s.open, clicks]));
+    check('A17 ' + name + ': nor a button of the sheet (the bubble keeps the place it was left in)', stored !== null && JSON.parse(stored).fy === frac.fy, String(stored));
+    // the swallowing is for a moment only: a tap on the page well after it is a tap on the page
+    await page.keyboard.press('Escape');
+    await page.touchscreen.tap(20, 400);
+    check('A17 ' + name + ': a tap on the page a moment later is still a tap on the page', (await page.evaluate(() => window.__pageClicks.length)) === 1);
+    await ctx.close();
+  }
+});
+
+// ---- the focus is the person's (the second reader of Part 163): the list arriving must not take it from the box, and a chip pressed by the keyboard gives it back
+await section('A18 (the focus)', async () => {
+  seen.delayStatus = 1500;
+  const { page, ctx } = await portal('A18', { viewport: { width: 390, height: 780 }, touch: true });
+  await page.locator('.bub').tap();
+  await page.locator('textarea').tap();
+  await page.keyboard.type('mshahara ');
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0, null, 8000);
+  await page.keyboard.type('unaingia');
+  const v = await page.locator('textarea').inputValue();
+  check('A18 the list arriving does not take the focus from the box: what is typed after it still lands in the box', v === 'mshahara unaingia', JSON.stringify(v));
+  seen.delayStatus = 0;
+  await ctx.close();
+  // a keyboard user: Enter on a ready question, and the focus is where it can be used again
+  const k = await portal('A18k', { viewport: { width: 1280, height: 800 } });
+  await tap(k.page);
+  await until(k.page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await k.page.locator('.chip').first().focus();
+  await k.page.keyboard.press('Enter');
+  await waitAnswer(k.page, 2);
+  await k.page.waitForTimeout(150);
+  check('A18 after a ready question is pressed with the keyboard the focus is on the box, not lost', (await shape(k.page)).focus === '' && (await k.page.evaluate(() => { const r = document.getElementById('claudianPMO').shadowRoot; return r.activeElement === r.querySelector('textarea'); })));
+  await k.ctx.close();
+});
+
+// ---- a short window (a 1366x768 laptop has under 650 pixels of page): the open panel is not drawn over the bubble
+await section('A19 (a short window)', async () => {
+  for (const [w, h] of [[1024, 600], [1366, 640], [1280, 480]]) {
+    const { page, ctx } = await portal('A19', { viewport: { width: w, height: h } });
+    await tap(page);
+    await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    const s = await shape(page);
+    const over = !(s.panel.x + s.panel.w <= s.bub.x || s.bub.x + s.bub.w <= s.panel.x || s.panel.y + s.panel.h <= s.bub.y || s.bub.y + s.bub.h <= s.panel.y);
+    check('A19 ' + w + 'x' + h + ': the open panel is not over the bubble, and both are inside the window', !over && inside(s) && panelInside(s), JSON.stringify([s.bub, s.panel]));
+    if (SHOTS && w === 1024) await page.screenshot({ path: path.join(SHOTS, 'claudian-short-window.png') });
+    await ctx.close();
+  }
+});
+
+// ---- a question that was not answered goes back into the box; a server fault is not "no connection"
+await section('A20 (a failed question)', async () => {
+  setting('CLAUDIAN_AI', 'ON'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests();
+  const { page, ctx } = await portal('A20', { lang: 'en' });
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  seen.force = 500;
+  await page.locator('textarea').fill('A long question I do not want to type again');
+  await page.keyboard.press('Enter');
+  await waitAnswer(page, 2);
+  const s = await shape(page);
+  const last = s.msgs[s.msgs.length - 1];
+  check('A20 a server fault is said as a fault, not as "no connection"', last.kind === 'h' && /fault/i.test(last.text) && !/No connection/.test(last.text), JSON.stringify(last));
+  check('A20 the question is back in the box, to send again', (await page.locator('textarea').inputValue()) === 'A long question I do not want to type again');
+  seen.force = 0;
+  await ctx.close();
+});
+
+// ---- SW / EN pressed while something is on its way (the second reader of Part 163): the ready questions are asked for again in the new language once nothing is on its way, not left in the old one until the panel is closed and opened a minute later
+await section('A21 (SW / EN while busy)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests();
+  // (a) the first list is still on its way
+  seen.claudian.length = 0; seen.delayStatus = 1500;
+  const a = await portal('A21a', { lang: 'sw' });
+  await tap(a.page);
+  await a.page.waitForTimeout(300);
+  check('A21 the first list was asked for in Swahili and is on its way', asks('status').length === 1 && asks('status')[0].lang === 'sw', JSON.stringify(asks('status').map(x => x.lang)));
+  await a.page.locator('.hd button').first().click();          // SW / EN while the list is still on its way
+  seen.delayStatus = 0;
+  const gotEn = await until(a.page, () => [...document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip')].some(c => /What is a portfolio call/i.test(c.textContent)), null, 8000);
+  const sa = await shape(a.page);
+  check('A21 pressed while the first list was on its way, the list is asked for again in English as soon as it has landed', gotEn && asks('status').length === 2 && asks('status')[1].lang === 'en', JSON.stringify(asks('status').map(x => x.lang)));
+  check('A21 and no ready question is left in Swahili beside them', !sa.chips.some(c => /Simu ya portfolio ni nini/i.test(c)) && sa.chips.length > 0, JSON.stringify(sa.chips.slice(0, 3)));
+  check('A21 the page itself is still in Swahili (the button flips the panel, not the page)', (await a.page.evaluate(() => S.lang)) === 'sw');
+  await a.ctx.close();
+  // (b) a typed question is on its way
+  seen.claudian.length = 0; seen.delayStatus = 0; seen.delayAsk = 1500;
+  const b = await portal('A21b', { lang: 'sw' });
+  await tap(b.page);
+  await until(b.page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await b.page.locator('textarea').fill('mshahara unaingia lini');
+  await b.page.keyboard.press('Enter');
+  await b.page.waitForTimeout(300);
+  await b.page.locator('.hd button').first().click();
+  seen.delayAsk = 0;
+  const gotEn2 = await until(b.page, () => [...document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip')].some(c => /What is a portfolio call/i.test(c.textContent)), null, 8000);
+  const sb = await shape(b.page);
+  check('A21 pressed while a typed question was on its way, the list is asked for again in English after the answer', gotEn2 && asks('status').length === 2 && asks('status')[1].lang === 'en' && !sb.chips.some(c => /Simu ya portfolio ni nini/i.test(c)), JSON.stringify(asks('status').map(x => x.lang)));
+  await b.ctx.close();
+  seen.delayAsk = 0; seen.delayStatus = 0;
+});
+
 await section('B (settings)', async () => {
   setting('CLAUDIAN_AI', 'OFF'); setting('CLAUDIAN_USER_DAILY', '20'); setting('CLAUDIAN_ALL_DAILY', '2000'); C.noteClaudianSettingsWritten(db);
   const { page, ctx } = await portal('B1');
@@ -641,6 +764,41 @@ await section('C (calls)', async () => {
   await page.evaluate(() => { try { doLogout(); } catch (e) {} });
   await page.waitForTimeout(200);
   check('C3 signing out of the app takes the bubble away', await page.evaluate(() => document.getElementById('claudianPMO').style.display === 'none'));
+  await ctx.close();
+});
+
+// ---- the handset is shared: signing out forgets the officer who left, and the next one meets an empty panel and sends none of the last one's words
+await section('C2 (sign-out forgets)', async () => {
+  setting('CLAUDIAN_AI', 'ON'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); PROV.text = 'Piga wateja wa leo kwanza.';
+  seen.claudian.length = 0; DEVICE = 'dF';
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errs.push('C2: ' + String(e)));
+  page.setDefaultTimeout(9000);
+  await page.addInitScript(SPEED, 1500);
+  await page.goto(base + '/call');
+  await page.waitForFunction(() => typeof S === 'object' && S.entered === true, null, { timeout: 12000 }).catch(() => {});
+  await until(page, () => !!document.getElementById('claudianPMO'), null, 20000);
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('textarea').fill('Timu yangu inadaiwa kiasi gani?');
+  await page.keyboard.press('Enter');
+  await waitAnswer(page, 2);
+  await page.evaluate(() => { try { doLogout(); } catch (e) {} });
+  await page.waitForTimeout(200);
+  const after = await page.evaluate(() => { const h = document.getElementById('claudianPMO'), r = h.shadowRoot; return { host: h.style.display, open: /\bopen\b/.test(r.querySelector('.panel').className), lines: r.querySelectorAll('.body .m:not(.w)').length, box: r.querySelector('textarea').value }; });
+  check('C4 signing out forgets the conversation: the panel is closed and holds no line of the officer who left', after.host === 'none' && !after.open && after.lines === 0 && after.box === '', JSON.stringify(after));
+  await page.evaluate(() => window.ClaudianPMO.show());
+  seen.claudian.length = 0;
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('textarea').fill('Na ahadi za leo?');
+  await page.keyboard.press('Enter');
+  await waitAnswer(page, 2);
+  const nxt = asks('ask');
+  check('C4 the next officer\'s first question carries NO exchange of the one who left, and the list was asked for again', nxt.length === 1 && Array.isArray(nxt[0].hist) && nxt[0].hist.length === 0 && asks('status').length === 1, JSON.stringify([nxt.map(a => a.hist), asks('status').length]));
+  const quoted = asked.filter(r => /Timu yangu inadaiwa/.test(r.messages[0].content) && /Na ahadi za leo/.test(r.messages[0].content));
+  check('C4 and the model was never given the last officer\'s words as the previous exchange', quoted.length === 0, String(quoted.length));
   await ctx.close();
 });
 

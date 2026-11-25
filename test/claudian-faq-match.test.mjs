@@ -207,3 +207,29 @@ test('THE TWO HALVES OF THE CORPUS AGREE: the questions the keys were tuned on a
   const pa = a.right / a.n, pb = b.right / b.n;
   assert.ok(Math.abs(pa - pb) < 0.2, 'answered right: ' + Math.round(pa * 100) + '% on one half, ' + Math.round(pb * 100) + '% on the other');
 });
+
+/* ---------------- the second reader of Part 163 (handbook Part 163, addendum 1) ---------------- */
+test('A LONE GENERIC VERB DOES NOT ANSWER: "approve", "idhini", "start", "mazungumzo" alone offer the entry as a choice; with their object they answer', () => {
+  const who = ['who approves imprest', 'how do i approve leave', 'approve loan', 'when do leave approvals close', 'idhini ya imprest', 'how do I start a new advance request', 'app inarekodi mazungumzo ya simu'];
+  for (const q of who) {
+    const r = M.faqMatch(ADMIN, q);
+    assert.equal(r.best, null, q + ' was answered with ' + JSON.stringify(r.best));
+  }
+  assert.ok(M.faqMatch(ADMIN, 'who approves imprest').near.some(n => n.id === 'advance-approve'), 'offered as a choice, not answered');
+  assert.equal(M.faqMatch(ADMIN, 'how do I approve advance requests').best.id, 'advance-approve');
+  assert.equal(M.faqMatch(ADMIN, 'nitaidhinishaje ombi la advance').best.id, 'advance-approve');
+});
+
+test('A QUESTION ABOUT ONE\'S OWN LEAVE DAYS IS NOT ANSWERED WITH THE ALLOWANCE AS IF IT WERE THE BALANCE: the guard knows "do I have", "balance" and "remaining", and the answer says where the balance is', () => {
+  const leave = portal(['leavereq']);
+  for (const q of ['what is my leave balance', 'how many leave days do i have left', 'how many leave days do I have', 'nimebakiwa na siku ngapi za likizo']) {
+    assert.equal(M.asksForFigure(q), true, q);
+    assert.equal(M.faqMatch(leave, q).best, null, q + ' must not be answered by the rule');
+  }
+  // a question that does not say it is the person's own is still answered, and the answer now says where their balance is
+  const a = M.faqMatch(leave, 'balance ya likizo');
+  assert.equal(a.best.id, 'leave-ask');
+  const entry = FAQ.find(e => e.id === 'leave-ask');
+  assert.match(entry.en.a, /Remaining/);
+  assert.match(entry.sw.a, /Zilizobaki/);
+});

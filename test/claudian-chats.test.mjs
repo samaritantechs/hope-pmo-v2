@@ -125,7 +125,29 @@ test('THE LIST ASKS THE DATABASE FOR NO ANSWER AND NO NOTE: they are not even re
   await chat(db);
   assert.ok(cols.length >= 2, 'two reads: ' + cols.length);
   for (const c of cols) assert.ok(!/\banswer\b|\bnote\b|\bms\b/.test(c), 'the list must not read ' + c);
-  assert.ok(cols.some(c => c.replace(/\s/g, '') === 'thread,created_at,question'), 'the typed questions are read on their own: ' + cols.join(' | '));
+  assert.ok(cols.some(c => c.replace(/\s/g, '') === 'thread,created_at,question,mode'), 'the typed questions are read on their own, with the kind of each (a greeting is not a chat\'s first question): ' + cols.join(' | '));
+});
+
+/* THE FIRST QUESTION OF A CHAT IS ITS FIRST REAL ONE (handbook Part 163, addendum 1). A chat that opens with "hi" or "asante" is listed under the question that
+   followed it: a greeting the helper answers with a fixed line (kind `canned`) stands only until a real question comes, and a chat of greetings alone shows the first. */
+test('THE FIRST QUESTION OF A CHAT SKIPS A GREETING: a fixed greeting line stands only until a real question comes; a chat of greetings alone keeps its first; a real first question is never replaced', async () => {
+  const T = 'k-greet:2026-11-25', rows = [
+    R({ id: 'g1', thread: T, user_key: 'k-greet', created_at: '2026-11-25T05:00:00Z', mode: 'canned', question: 'hi' }),
+    R({ id: 'g2', thread: T, user_key: 'k-greet', created_at: '2026-11-25T05:01:00Z', mode: 'canned', question: 'asante' }),
+    R({ id: 'g3', thread: T, user_key: 'k-greet', created_at: '2026-11-25T05:02:00Z', mode: 'ai', question: 'Reached % yangu ni ngapi?' }),
+    R({ id: 'g4', thread: T, user_key: 'k-greet', created_at: '2026-11-25T05:03:00Z', mode: 'ai', question: 'Swali la pili' }),
+    // only greetings: the first of them
+    R({ id: 'h1', thread: 'k-only:2026-11-25', user_key: 'k-only', created_at: '2026-11-25T05:00:00Z', mode: 'canned', question: 'habari' }),
+    R({ id: 'h2', thread: 'k-only:2026-11-25', user_key: 'k-only', created_at: '2026-11-25T05:01:00Z', mode: 'canned', question: 'asante sana' }),
+    // a real first question, then a greeting: the real one stays
+    R({ id: 'j1', thread: 'k-real:2026-11-25', user_key: 'k-real', created_at: '2026-11-25T05:00:00Z', mode: 'match', question: 'Je, nifanye nini leo?' }),
+    R({ id: 'j2', thread: 'k-real:2026-11-25', user_key: 'k-real', created_at: '2026-11-25T05:01:00Z', mode: 'canned', question: 'asante' }),
+  ];
+  const d = await chat(fakeDb(book(rows)));
+  const first = Object.fromEntries(d.threads.map(t => [t.thread, t.first]));
+  assert.equal(first[T], 'Reached % yangu ni ngapi?', 'a greeting or thanks before it is skipped');
+  assert.equal(first['k-only:2026-11-25'], 'habari', 'a chat of greetings alone shows its first');
+  assert.equal(first['k-real:2026-11-25'], 'Je, nifanye nini leo?', 'a real first question is never replaced by a later greeting');
 });
 
 test('THE BEHIND FLAG OF A CHAT: any row of a team behind makes it behind; only on-target rows make it on target; no figure at all is neither', async () => {

@@ -9,7 +9,7 @@
         SELECT and INSERT on every table as a Supabase book grants them to its API roles.
      2. THE FILE RUNS as one transaction (psql -1, as the editor does) and answers ONE row: no chat yet, and the table is there.
      3. IT CAN BE RUN AGAIN: nothing is lost (a row written between the two runs is still there), nothing fails.
-     4. THE ROWS THE APP WRITES ARE ACCEPTED: one of each mode (ai, faq, canned, limit, busy), inserted the way PostgREST inserts (json_populate_record from a JSON
+     4. THE ROWS THE APP WRITES ARE ACCEPTED: one of each mode (ai, faq, canned, limit, busy, match, nomatch), inserted the way PostgREST inserts (json_populate_record from a JSON
         object), with the exact keys logChat sends; and what the table needs is NOT NULL (day, source, user_key, mode): a row without one is refused.
      5. THE COUNTS THE APP ASKS FOR ARE ANSWERED, and by an index: a person's questions today (user_key, day, mode) and everybody's (day, mode).
      6. NOBODY BUT THE SERVER READS IT: row security is on, no policy exists, and the plain API role sees no row although it holds SELECT.
@@ -42,6 +42,9 @@ const ROWS = [
   { ...base, source: 'call', user_key: 'c:fedcba9876543210', mode: 'canned', question: 'asante', answer: 'Karibu.', tokens_in: 0, tokens_out: 0 },
   { ...base, mode: 'limit', question: 'q', answer: null, note: 'person limit' },
   { ...base, mode: 'busy', question: 'q', answer: null, ms: 25000, note: 'the provider did not answer' },
+  // the two kinds a typed question leaves when the AI is off (handbook Part 163): the nearest ready answer, and none
+  { ...base, mode: 'match', faq_id: 'targets', question: 'target za timu', answer: 'Malengo ni ...', tokens_in: 0, tokens_out: 0, note: 'keys: target, timu \u00b7 score 3.2' },
+  { ...base, mode: 'nomatch', question: 'mshahara unaingia lini', answer: null, tokens_in: 0, tokens_out: 0, note: 'no ready answer fits' },
 ];
 /** One row, as PostgREST inserts it: the columns named are the keys of the JSON object, every other column takes its default. */
 const insertOne = row => { const cols = Object.keys(row).join(', ');
@@ -66,18 +69,18 @@ function checks(file, DB, say) {
     if (g.err) return failed;
     // 4. the rows the app writes
     const ins = tryRun(insertAll(ROWS), DB, false);
-    check(!ins.err, 'the six rows the app writes (ai twice, faq, canned, limit, busy) are accepted, inserted as PostgREST inserts' + (ins.err ? ' [' + ins.err.slice(0, 160).replace(/\s+/g, ' ') + ']' : ''));
-    check(run('select count(*) from public.claudian_chats', DB).trim() === '6', 'and they are six rows');
+    check(!ins.err, 'the eight rows the app writes (ai twice, faq, canned, limit, busy, match, nomatch) are accepted, inserted as PostgREST inserts' + (ins.err ? ' [' + ins.err.slice(0, 160).replace(/\s+/g, ' ') + ']' : ''));
+    check(run('select count(*) from public.claudian_chats', DB).trim() === '8', 'and they are eight rows');
     for (const col of ['day', 'source', 'user_key', 'mode']) {
       const bad = tryRun(insertOne({ ...ROWS[0], [col]: null }), DB, false);
       check(!!bad.err && /null value|not-null/i.test(bad.err), 'a row without ' + col + ' is refused');
     }
-    check(run("select count(*) from public.claudian_chats where id is not null and created_at is not null", DB).trim() === '6', 'every row has its own id and its time');
+    check(run("select count(*) from public.claudian_chats where id is not null and created_at is not null", DB).trim() === '8', 'every row has its own id and its time');
     // 3. again
     const between = tryRun("insert into public.claudian_chats (day, source, user_key, mode) values ('2026-11-25', 'portal', 'p:between', 'ai');", DB, false);
     check(!between.err, 'a row that names only what it must (day, source, user_key, mode) is accepted: the id and the time come from the table');
     const again = tryRun(file, DB);
-    check(!again.err && again.out.trim() === '7 | t', 'run again it fails nothing and loses nothing: seven rows, one of them written between the two runs' + (again.err ? ' [' + again.err.slice(0, 120).replace(/\s+/g, ' ') + ']' : ' [' + (again.out || '').trim() + ']'));
+    check(!again.err && again.out.trim() === '9 | t', 'run again it fails nothing and loses nothing: nine rows, one of them written between the two runs' + (again.err ? ' [' + again.err.slice(0, 120).replace(/\s+/g, ' ') + ']' : ' [' + (again.out || '').trim() + ']'));
     // 5. the counts the app asks for, and an index for each
     const mine = run("select count(*) from public.claudian_chats where day = '2026-11-25' and mode = 'ai' and user_key = 'p:0123456789abcdef'", DB).trim();
     const all = run("select count(*) from public.claudian_chats where day = '2026-11-25' and mode = 'ai'", DB).trim();
@@ -91,7 +94,7 @@ function checks(file, DB, say) {
     check(run("select relrowsecurity from pg_class where oid = 'public.claudian_chats'::regclass", DB).trim() === 't', 'row security is on');
     check(run("select count(*) from pg_policies where tablename = 'claudian_chats'", DB).trim() === '0', 'and no policy exists');
     check(run('set role hope_app; select count(*) from public.claudian_chats;', DB).trim().split('\n').pop() === '0', 'the API\'s own role holds SELECT and sees no row');
-    check(run('select count(*) from public.claudian_chats', DB).trim() === '7', 'while the server (the owner of the table) sees all seven');
+    check(run('select count(*) from public.claudian_chats', DB).trim() === '9', 'while the server (the owner of the table) sees all nine');
     // 7. the undo
     run('drop table public.claudian_chats;', DB);
     check(run("select to_regclass('public.claudian_chats') is null", DB).trim() === 't', 'the undo line removes it');
@@ -107,6 +110,7 @@ const BREAKS = [
   ['row security off', f => f.replace('alter table public.claudian_chats enable row level security;\n', '')],
   ['a policy that lets everybody read', f => f.replace('alter table public.claudian_chats enable row level security;\n', 'alter table public.claudian_chats enable row level security;\ncreate policy open_read on public.claudian_chats for select using (true);\n')],
   ['mode may be empty', f => f.replace('mode text not null,', 'mode text,')],
+  ['mode is limited to the five older kinds (a typed question would then fail to be logged)', f => f.replace('mode text not null,', "mode text not null check (mode in ('ai', 'faq', 'canned', 'limit', 'busy')),")],
   ['day may be empty', f => f.replace('day date not null,', 'day date,')],
   ['user_key may be empty', f => f.replace('user_key text not null,', 'user_key text,')],
   ['no index for a person\'s count', f => f.replace(/create index if not exists idx_claudian_chats_user[^\n]*\n/, '')],

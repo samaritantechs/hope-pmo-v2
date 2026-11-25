@@ -751,3 +751,88 @@ test('A QUESTION THAT TOUCHES CALLS AND LAST WEEK\'S RESULTS GETS BOTH REPORTS, 
   assert.ok(msg.indexOf('CALLS BY TEAM') > 0 && msg.indexOf('STANDING, last full week') > msg.indexOf('CALLS BY TEAM'));
   assert.match(db._dump('claudian_chats')[0].note, /data: calls by team, last week by team$/);
 });
+
+/* ---------------- the second reader of Part 163: what a typed question may cost (handbook Part 163, addendum 1) ---------------- */
+const digitsAs = (digits, base) => Array.from(digits).map(d => String.fromCharCode(base + Number(d))).join('');
+test('A QUESTION OF MEGABYTES IS CUT BEFORE ANYTHING RUNS OVER IT: it neither holds the process nor throws, whether it is the question or the last answer quoted back', () => {
+  for (const mb of [1, 4.5, 6, 20]) {
+    const t0 = Date.now();
+    const out = C.cleanQuestion('1 '.repeat(mb * 1024 * 1024 / 2));
+    assert.ok(out.length <= C.MAX_QUESTION_CHARS, mb + ' MB came back as ' + out.length + ' characters');
+    assert.ok(Date.now() - t0 < 250, mb + ' MB took ' + (Date.now() - t0) + ' ms: the cleaning must be given a short text');
+  }
+  const t1 = Date.now();
+  const msg = C.buildUserMessage('CONTEXT', 'the question', [{ q: 'a', a: 'x '.repeat(3 * 1024 * 1024) }]);
+  assert.ok(msg.length < 2000 && Date.now() - t1 < 250, 'a last answer of six megabytes is cut too');
+  assert.equal(C.MAX_RAW_CHARS, 4000);
+  assert.equal(C.cleanQuestion('Habari za asubuhi, nina swali kuhusu mikopo'), 'Habari za asubuhi, nina swali kuhusu mikopo', 'an ordinary question is not touched');
+});
+
+test('A NUMBER WRITTEN IN LOOK-ALIKE CHARACTERS IS STILL A NUMBER: full-width digits, Arabic-Indic digits and a zero-width space inside it are masked like the plain one, before it is matched, logged or sent', async () => {
+  const loan = '62561111341';
+  const zw = String.fromCharCode(0x200B), shy = String.fromCharCode(0x00AD), bom = String.fromCharCode(0xFEFF);
+  const forms = { plain: loan, fullwidth: digitsAs(loan, 0xFF10), arabic: digitsAs(loan, 0x0660), persian: digitsAs(loan, 0x06F0),
+    zeroWidth: '6256' + zw + '1111' + zw + '341', softHyphen: '6256' + shy + '1111341', bom: bom + loan };
+  for (const [name, form] of Object.entries(forms)) assert.equal(C.cleanQuestion('mteja ' + form + ' ana deni'), 'mteja [namba] ana deni', name + ' form of a loan number');
+  // and it never reaches the log either
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  await ask(db, PERSON(), 'deni la ' + digitsAs(loan, 0xFF10) + ' ni ngapi', {});
+  const rows = db._dump('claudian_chats');
+  assert.equal(rows.length, 1);
+  assert.ok(!rows[0].question.includes(loan) && !rows[0].question.includes(digitsAs(loan, 0xFF10)), 'the logged question: ' + rows[0].question);
+  assert.ok(rows[0].question.includes('[namba]'));
+});
+
+test('A TYPED QUESTION KEEPS THE PERSON\'S PACE WITH THE AI OFF TOO: two in the same instant write one row, and the second is told to wait', async () => {
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  const a = await ask(db, PERSON(), 'what is reached', {}, {});
+  const b = await ask(db, PERSON(), 'what is reached', { noGap: false }, {});
+  assert.notEqual(a.mode, 'busy');
+  assert.equal(b.mode, 'busy', 'the second question of the same person inside two seconds');
+  assert.equal(db._dump('claudian_chats').length, 1, 'a question refused for its pace writes no row');
+  const later = await C.claudianHandle(db, PERSON(), { op: 'ask', q: 'what is reached', lang: 'en' }, { nowMs: NOW + C.MIN_GAP_MS + 1 });
+  assert.notEqual(later.mode, 'busy', 'two seconds later it is answered');
+  const other = await C.claudianHandle(db, PERSON({ code: 'OTHER-CODE-456', name: 'ASHA B' }), { op: 'ask', q: 'what is reached', lang: 'en' }, { nowMs: NOW });
+  assert.notEqual(other.mode, 'busy', 'another person is not held back by the first');
+});
+
+test('A SCRIPT THAT TYPES AND TYPES IS STOPPED AT A CEILING: the ready answers are free, the log the owner reads is not unbounded', async () => {
+  assert.equal(C.FREE_TYPED_DAILY, 300);
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  let last = null;
+  // a question and a greeting, one after the other: both are answered without the model, and both count
+  for (let i = 0; i < C.FREE_TYPED_DAILY + 6; i++) last = await C.claudianHandle(db, PERSON(), { op: 'ask', q: i % 2 ? 'hello' : 'what is reached ' + i, lang: 'en' }, { nowMs: NOW + i * 2100 });
+  assert.equal(last.mode, 'limit', 'past the ceiling the person gets the working-hard hint, not an answer');
+  assert.equal(db._dump('claudian_chats').filter(r => r.mode !== 'limit').length, C.FREE_TYPED_DAILY, 'exactly the ceiling of typed rows');
+  const limitRows = db._dump('claudian_chats').filter(r => r.mode === 'limit');
+  assert.equal(limitRows.length, 1, 'ONE row says the ceiling was met, and the rest write nothing');
+  assert.match(limitRows[0].note, /typed ceiling/);
+  // somebody else, and the next day, are not held
+  const other = await C.claudianHandle(db, PERSON({ code: 'OTHER-CODE-456', name: 'ASHA B' }), { op: 'ask', q: 'what is reached', lang: 'en' }, { nowMs: NOW + 700 * 2100 });
+  assert.notEqual(other.mode, 'limit');
+  const tomorrow = await C.claudianHandle(db, PERSON(), { op: 'ask', q: 'what is reached', lang: 'en' }, { nowMs: NOW + 86400000 });
+  assert.notEqual(tomorrow.mode, 'limit');
+});
+
+test('A FLOOD OF GREETINGS IS STOPPED TOO, WITH THE AI ON: they cost no model, but each writes a row', async () => {
+  const db = fakeDb(book());
+  const calls = [];
+  let last = null;
+  for (let i = 0; i < C.FREE_TYPED_DAILY + 3; i++) last = await C.claudianHandle(db, PERSON(), { op: 'ask', q: 'hello', lang: 'en' }, { nowMs: NOW + i * 2100, client: client(text('x'), calls) });
+  assert.equal(calls.length, 0, 'a greeting never reaches the model');
+  assert.equal(last.mode, 'limit');
+  assert.equal(db._dump('claudian_chats').filter(r => r.mode === 'canned').length, C.FREE_TYPED_DAILY);
+});
+
+test('A FLOOD OF TAPS ON A READY QUESTION IS STOPPED AT THE SAME CEILING (a tap has no pace: a person browsing the choices taps several in a few seconds)', async () => {
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  const id = faqChoices(PERSON(), 'en')[0].id;
+  let last = null;
+  for (let i = 0; i < 5; i++) last = await C.claudianHandle(db, PERSON(), { op: 'faq', id, lang: 'en' }, { nowMs: NOW });
+  assert.equal(last.mode, 'faq', 'five taps in the same instant are all answered');
+  for (let i = 5; i < C.FREE_TYPED_DAILY + 4; i++) last = await C.claudianHandle(db, PERSON(), { op: 'faq', id, lang: 'en' }, { nowMs: NOW });
+  assert.equal(last.mode, 'limit');
+  assert.equal(db._dump('claudian_chats').filter(r => r.mode === 'faq').length, C.FREE_TYPED_DAILY);
+  const limit = db._dump('claudian_chats').filter(r => r.mode === 'limit');
+  assert.equal(limit.length, 1); assert.match(limit[0].note, /tap ceiling/);
+});

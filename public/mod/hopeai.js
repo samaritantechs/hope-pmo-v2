@@ -163,8 +163,8 @@ function haDraw_(){
     col('first', 'Swali la kwanza / First question')];
   ONROW = function(r){ haOpen_(r.thread); };
   S.tail = d.on === false || !all.length ? '' : haBoards_(list, labels, d);
-  S.foot = 'Gusa mstari kufungua mazungumzo yote. Majina, vyeo na timu ni vile mfumo ulivyovijua wakati mtu aliuliza; namba za tarakimu 7 au zaidi zilibadilishwa kuwa [namba] kabla swali kuhifadhiwa. '
-    + '/ Tap a row to open the whole chat. Names, roles and teams are as the system knew them when the person asked; numbers of seven digits or more were replaced by [namba] before the question was kept. '
+  S.foot = 'Gusa mstari kufungua mazungumzo yote. Majina, vyeo na timu ni vile mfumo ulivyovijua wakati mtu aliuliza; namba za tarakimu 7 au zaidi zilibadilishwa kuwa [namba] kabla swali kuhifadhiwa; jina la mteja au namba fupi iliyoandikwa kwenye swali HAIONDOLEWI: iko kama ilivyoandikwa. '
+    + '/ Tap a row to open the whole chat. Names, roles and teams are as the system knew them when the person asked; numbers of seven digits or more were replaced by [namba] before the question was kept; a customer\'s name or a short reference typed into a question is NOT removed: it is kept as typed. '
     + 'Kuwapa cheo kingine ruhusa ya kichupo hiki kunawaruhusu kusoma mazungumzo ya kila mtu. / Ticking this tab for a role lets that role read everybody\'s chats.';
 }
 
@@ -317,11 +317,11 @@ function haDrawer_(d){
   var w = d.who || {}, items = d.items || [];
   var rows = items.map(function(x){
     return { at: x.at, mode: HA_MODE_TEXT[x.mode] || x.mode, q: x.q, a: x.a || (x.mode === 'faq' ? '(jibu la kawaida / ready answer)' : x.mode === 'nomatch' ? '(hakuna jibu la kawaida / no ready answer)' : ''),
-      tokensIn: x.tokensIn, tokensOut: x.tokensOut, ms: x.ms, behind: haBehindText_(x.behind), note: x.note };
+      tokensIn: x.tokensIn, tokensOut: x.tokensOut, ms: x.ms, behind: haBehindText_(x.behind), note: x.note, ready: x.faqLabel ? x.faqLabel.sw + ' / ' + x.faqLabel.en : '' };
   });
   BOARDS.haThread = { title: 'Hope-Ai-' + String(w.name || 'chat') + '-' + (d.day || ''), rows: rows,
     cols: [col('at', 'Saa / Time', 'dt'), col('mode', 'Aina / Kind'), col('q', 'Swali / Question'), col('a', 'Jibu / Answer'), col('tokensIn', 'Tokens ndani / in', 'num'),
-      col('tokensOut', 'Tokens nje / out', 'num'), col('ms', 'ms', 'num'), col('behind', 'Nyuma? / Behind?'), col('note', 'Maelezo / Note')] };
+      col('tokensOut', 'Tokens nje / out', 'num'), col('ms', 'ms', 'num'), col('behind', 'Nyuma? / Behind?'), col('ready', 'Jibu la kawaida kwa / Ready answer to'), col('note', 'Maelezo / Note')] };
   var tin = 0, tout = 0;
   items.forEach(function(x){ tin += x.tokensIn || 0; tout += x.tokensOut || 0; });
   var html = '<h3 style="margin:0 0 2px">' + esc(w.name || '—') + ' <span class="mut" style="font-weight:400;font-size:13px">· ' + esc(w.role || '—') + '</span></h3>'

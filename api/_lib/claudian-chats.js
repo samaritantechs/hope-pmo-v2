@@ -91,7 +91,7 @@ export async function claudianChatsList(db, args, nowMs = Date.now()) {
   try {
     [light, typed] = await Promise.all([
       fetchAll(() => db.from('claudian_chats').select(LIGHT).gte('day', w.from).lte('day', w.to).order('created_at', { ascending: false })),
-      fetchAll(() => db.from('claudian_chats').select('thread, created_at, question').gte('day', w.from).lte('day', w.to).in('mode', TYPED_MODES).order('created_at', { ascending: true })),
+      fetchAll(() => db.from('claudian_chats').select('thread, created_at, question, mode').gte('day', w.from).lte('day', w.to).in('mode', TYPED_MODES).order('created_at', { ascending: true })),
     ]);
   } catch (e) {
     if (missing(e)) return { ...out, on: false, note: CHATS_NOTE };
@@ -115,9 +115,14 @@ export async function claudianChatsList(db, args, nowMs = Date.now()) {
     if (r.behind === true) t.behind = true; else if (r.behind === false && t.behind === null) t.behind = false;
     if (r.faq_id && r.mode === 'faq') t.faqIds[r.faq_id] = (t.faqIds[r.faq_id] || 0) + 1;          // the ready questions TAPPED (a typed question that found one is counted as match)
   }
-  for (const r of typed || []) {                // oldest first: the first typed question of the chat
+  const greeting = new Set();                   // chats whose "first question" so far is only a greeting or thanks
+  for (const r of typed || []) {                // oldest first: the first typed question of the chat (a greeting stands only until a real question comes)
     const t = byThread.get(String(r.thread || ''));
-    if (t && !t.first && r.question) t.first = squeeze(r.question).slice(0, SNIPPET_CHARS);
+    if (!t || !r.question) continue;
+    if (!t.first || (greeting.has(t.thread) && r.mode !== 'canned')) {
+      t.first = squeeze(r.question).slice(0, SNIPPET_CHARS);
+      if (r.mode === 'canned') greeting.add(t.thread); else greeting.delete(t.thread);
+    }
   }
   const all = [...byThread.values()].sort((a, b) => (String(a.lastAt) < String(b.lastAt) ? 1 : String(a.lastAt) > String(b.lastAt) ? -1 : 0));
   out.rowsRead = (light || []).length;
