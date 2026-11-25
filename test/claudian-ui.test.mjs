@@ -131,7 +131,7 @@ test('the portal loads it late and only once, by BUILD, in a try, and nothing wa
   assert.equal((strip(APP).match(/claudianLater_/g) || []).length, 2, 'the function and ONE call');
   assert.ok(/setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'the one call is a seven-second timer, after the first screen\'s own reads (2.5 s)');
   assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); pushAsk_\(\); \}, 2500\);\s*setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'it follows the first screen\'s reads');
-  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread):1,\s*/g, '')), 'the portal page knows the helper nowhere else (its three reads in READ_FNS: the status of the Settings card and, since Part 158, the two reads of the Hope Ai tab)');
+  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export)');
   assert.ok(!/var BUILD = '2026-11-25-a'/.test(APP), 'BUILD moved with the front-end change');
 });
 

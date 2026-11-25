@@ -814,7 +814,7 @@ var READ_FNS = { dashboardFull:1, orodhaJudge:1, dashboardProbe:1, officerBoards
   weekly:1, leaderReports:1, reports:1, commission:1, callReport:1, callAgents:1,
   complaints:1, complaintLog:1, restructures:1, restructureEligible:1, legalPreview:1,
   legalFind:1, legalRecoveries:1, demandNoticePrint:1, demandNotices:1, abnormal:1, deductions:1, fraudCases:1, fraudFind:1,
-  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1, claudianStatus:1, claudianChats:1, claudianThread:1,
+  advStaff:1, advRequestPage:1, advQueue:1, advReport:1, credit:1, teams:1, leadersCheck:1, settings:1, storageUsage:1, claudianStatus:1, claudianChats:1, claudianThread:1, claudianChatsExport:1,
   accessCodes:1, officerAccounts:1, loans:1, loanPipeline:1, hints:1, comments:1,
   // HOPE Loan's own reads -- opening a queue must not wipe the HOPE PMO screens' cache, and
   // vice versa; both live under one cache key scheme, so both lists matter equally.
@@ -834,7 +834,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-25-g';
+var BUILD = '2026-11-25-h';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation

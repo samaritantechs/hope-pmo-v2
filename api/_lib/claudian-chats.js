@@ -21,6 +21,18 @@
    seven digits or more already replaced by [namba], the answer, and a one-way fingerprint that is
    never an access code or a device number.
 
+   THE REPORT FOR CLAUDE, AND THE CLEAR (handbook Part 162):
+
+     "I need to always export a report you may need at that window of Hope Ai, then clear all existing history so that i may always deliver you
+      with what went on (so that you tell me any concerns) and keep the db fresh."                              -- the owner, 25 Nov 2026
+
+   The tab can hand over EVERYTHING on file (not only the window it shows) as one report, a page of rows at a time (claudianChatsExport), and can
+   then clear exactly what that report held (claudianChatsClear: admin only, audited). The report is DRAWN AT THE NEWEST ROW ON FILE when it is
+   asked for: that row's own time (`upTo`) is the line, a page asks for rows up to it, and a clear deletes rows up to it and nothing after it, so a
+   chat that arrives while the report is made is kept for the next report. The clear also counts the rows up to that line first and refuses when
+   there are MORE than the report held (a row that was being written as the report was read): nothing is deleted then and the owner is told to
+   export again. A clear that is cut short by its time limit deletes whole slices only and can be pressed again.
+
    THE COST (CLAUDE.md section 1). Nothing here is on /api/upload or /api/call, and portal-core.js
    (which api/upload.js imports) loads this file only when one of the two functions is CALLED. The
    list is two reads of one small table through its day index, for at most 31 days (7 by default):
@@ -29,7 +41,7 @@
    so and shows the newest. When RUN-ME-090 has not been run the tab says that and shows nothing:
    never an empty table, which would read as "nobody has asked anything".
    ===================================================================================== */
-import { fetchAll } from './supabase.js';
+import { fetchAll, runQuery } from './supabase.js';
 import { todayKey, addDaysKey } from './time.js';
 import { FAQ } from './claudian-faq.js';
 
@@ -140,4 +152,104 @@ export async function claudianChatThread(db, args) {
       behind: r.behind === true ? true : r.behind === false ? false : null, note: r.note || '',
     })),
   };
+}
+
+/* ===================================================================================================================================
+   THE REPORT AND THE CLEAR (handbook Part 162)
+   =================================================================================================================================== */
+export const EXPORT_PAGE_ROWS = 500;
+export const CLEAR_BUDGET_MS = 30000;
+export const CLEAR_SLICE_DAYS = 7;
+export const SETTING_LAST_CLEAR = 'CLAUDIAN_LAST_CLEAR';
+const EXPORT_COLS = 'created_at, day, source, user_name, role, teams, zone, lang, thread, mode, faq_id, question, answer, tokens_in, tokens_out, cache_read, ms, behind, note';
+/** A time as the database writes one (or as ISO writes one): the report's line is a value an earlier answer gave, never something typed. */
+const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}:?\d{2})$/;
+const stampOk = v => typeof v === 'string' && v.length <= 40 && STAMP.test(v) && !isNaN(Date.parse(v));
+const wholeIn = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+const shapeRow = r => ({
+  at: r.created_at, day: String(r.day || '').slice(0, 10), source: r.source || '', name: r.user_name || '', role: r.role || '', teams: r.teams || '', zone: r.zone || '',
+  lang: r.lang || '', thread: r.thread || '', mode: r.mode || '', faq: r.faq_id || '', q: r.question || '', a: r.answer || '', tokensIn: whole(r.tokens_in),
+  tokensOut: whole(r.tokens_out), cacheRead: whole(r.cache_read), ms: whole(r.ms), behind: r.behind === true ? true : r.behind === false ? false : null, note: r.note || '',
+});
+
+/** The note the last clear left (one setting row, JSON), shaped and bounded: anything that is not what the clear wrote reads as "never cleared". */
+export function lastClearOf(text) {
+  let o;
+  try { o = JSON.parse(String(text || '')); } catch (e) { return null; }
+  if (!o || typeof o !== 'object' || !stampOk(o.at) || !stampOk(o.upTo) || !wholeIn(o.deleted, 0, 100000000)) return null;
+  return { at: o.at, by: String(o.by || '').slice(0, 80), role: String(o.role || '').slice(0, 60), upTo: o.upTo, deleted: o.deleted, partial: o.partial === true };
+}
+
+/** One page of the whole history, oldest first. The first call (no `upTo`) draws the line at the newest row on file and counts the rows up to it; every
+    later call gives that `upTo` back with the `offset` the last page announced as `next`. A page is at most EXPORT_PAGE_ROWS rows. Without the table
+    (db/RUN-ME-090 not run) it says so and holds nothing: never an empty report. */
+export async function claudianChatsExport(db, args) {
+  const a = args && typeof args === 'object' ? args : {};
+  let upTo = null;
+  if (a.upTo != null && a.upTo !== '') { if (!stampOk(a.upTo)) throw bad('upTo must be the time an earlier page of this report gave.'); upTo = a.upTo; }
+  const offset = a.offset == null ? 0 : a.offset;
+  if (!wholeIn(offset, 0, 100000000)) throw bad('offset must be a whole number from 0.');
+  const nothing = { on: true, note: null, upTo: null, total: 0, offset: 0, rows: [], next: null, faqLabels: {} };
+  const gone = e => { if (missing(e)) return { ...nothing, on: false, note: CHATS_NOTE }; throw e; };
+  if (upTo === null) {
+    const r = await runQuery(() => db.from('claudian_chats').select('created_at').order('created_at', { ascending: false }).limit(1));
+    if (r.error) return gone(r.error);
+    if (!r.data || !r.data.length) return nothing;
+    upTo = String(r.data[0].created_at);
+  }
+  let total = null;
+  if (offset === 0) {                                  // counted once, with the first page: the pages after it are not slowed by a count each
+    const t = await runQuery(() => db.from('claudian_chats').select('id', { count: 'exact', head: true }).lte('created_at', upTo));
+    if (t.error) return gone(t.error);
+    total = Number.isFinite(t.count) ? t.count : 0;
+  }
+  const p = await runQuery(() => db.from('claudian_chats').select(EXPORT_COLS).lte('created_at', upTo)
+    .order('created_at', { ascending: true }).order('id', { ascending: true }).range(offset, offset + EXPORT_PAGE_ROWS - 1));
+  if (p.error) return gone(p.error);
+  const rows = (p.data || []).map(shapeRow);
+  const more = rows.length === EXPORT_PAGE_ROWS && (total === null || offset + rows.length < total);
+  const out = { on: true, note: null, upTo, total, offset, rows, next: more ? offset + rows.length : null, faqLabels: {} };
+  if (offset === 0) for (const e of FAQ) out.faqLabels[e.id] = { sw: e.sw.q, en: e.en.q };
+  return out;
+}
+
+/** Deletes the rows the report held: everything with a `created_at` up to `upTo`, and nothing after it. `expected` is the number of rows the report
+    held. Refuses (deleting nothing) when MORE rows than that are up to the line. Deletes a week of days at a time and stops between slices when its
+    time is up (`partial`: press it again). Answers what was deleted and what is left up to the line. */
+export async function claudianChatsClear(db, args, nowMs = Date.now(), budgetMs = CLEAR_BUDGET_MS) {
+  const a = args && typeof args === 'object' ? args : {};
+  if (!stampOk(a.upTo)) throw bad('upTo must be the time the report was drawn at.');
+  if (Date.parse(a.upTo) > nowMs + 5 * 60 * 1000) throw bad('upTo is in the future.');
+  if (!wholeIn(a.expected, 0, 100000000)) throw bad('expected must be the number of chats the report held.');
+  const upTo = a.upTo, started = Date.now();
+  const out = { on: true, note: null, cleared: false, changed: false, partial: false, upTo, expected: a.expected, found: 0, deleted: 0, remaining: 0 };
+  const count = async () => {
+    const r = await runQuery(() => db.from('claudian_chats').select('id', { count: 'exact', head: true }).lte('created_at', upTo));
+    if (r.error) throw r.error;
+    return Number.isFinite(r.count) ? r.count : 0;
+  };
+  const edgeDay = async asc => {
+    const r = await runQuery(() => db.from('claudian_chats').select('day').lte('created_at', upTo).order('day', { ascending: asc }).limit(1));
+    if (r.error) throw r.error;
+    return r.data && r.data[0] ? String(r.data[0].day).slice(0, 10) : null;
+  };
+  try {
+    out.found = await count();
+    if (out.found > a.expected) return { ...out, changed: true };           // rows the report never held: nothing is deleted
+    if (out.found === 0) return { ...out, cleared: true };
+    const first = await edgeDay(true), last = await edgeDay(false);
+    for (let from = first; from && last && from <= last; from = addDaysKey(from, CLEAR_SLICE_DAYS)) {
+      if (Date.now() - started > budgetMs) { out.partial = true; break; }
+      const to = addDaysKey(from, CLEAR_SLICE_DAYS - 1) < last ? addDaysKey(from, CLEAR_SLICE_DAYS - 1) : last;
+      const r = await runQuery(() => db.from('claudian_chats').delete().gte('day', from).lte('day', to).lte('created_at', upTo));
+      if (r.error) throw r.error;
+    }
+    out.remaining = await count();
+  } catch (e) {
+    if (missing(e)) return { ...out, on: false, note: CHATS_NOTE };
+    throw e;
+  }
+  out.deleted = Math.max(0, out.found - out.remaining);
+  out.cleared = out.remaining === 0;
+  return out;
 }

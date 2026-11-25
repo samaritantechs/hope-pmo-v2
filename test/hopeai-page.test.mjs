@@ -16,6 +16,7 @@ import { createRequire } from 'node:module';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = fs.readFileSync(path.join(ROOT, 'public/mod/hopeai.js'), 'utf8');
+const REPORT_SRC = fs.readFileSync(path.join(ROOT, 'public/mod/hopeai-report.js'), 'utf8');
 const require = createRequire(import.meta.url);
 
 const T = (over) => ({ thread: 'k-1:2026-11-25', day: '2026-11-25', source: 'portal', name: 'JUMA G', role: 'MANAGER', zone: 'DAR CENTER', teams: 'KONGOWE, MBAGALA', lang: 'sw',
@@ -36,7 +37,8 @@ const ANSWER = () => ({ on: true, note: null, from: '2026-11-19', to: '2026-11-2
 
 /** The module run in an empty window with stand-ins for what the core page gives it. `srvAnswers` maps a function name to what the server answers. */
 function load(srvAnswers = {}) {
-  const calls = [], painted = [], drawn = [], toasts = [];
+  const calls = [], painted = [], drawn = [], toasts = [], downloads = [], confirms = [], renders = [], loaded = [];
+  const els = { haExpBtn: { disabled: false, textContent: '' }, haClrBtn: { disabled: true }, haExpNote: { innerHTML: '' } };
   const win = {
     S: { args: {}, filters: {} }, VIEWS: {}, BOARDS: {}, HEAD: '', ONROW: null,
     esc: s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])),
@@ -52,10 +54,16 @@ function load(srvAnswers = {}) {
     toast: (m, bad) => toasts.push([m, !!bad]),
     drawer: (html, opts) => drawn.push({ html, opts }),
     paint: keep => painted.push(!!keep),
+    modLoad_: name => { loaded.push(name); if (name === 'hopeai-report' && !win.harBuild_) vm.runInContext(REPORT_SRC, win); return Promise.resolve(); },
+    download: (blob, name) => downloads.push({ blob, name }),
+    confirm: m => { confirms.push(m); return win.__confirm !== false; },
+    render: () => renders.push(1),
+    Blob: class { constructor(parts, o) { this.parts = parts; this.type = o && o.type; } },
+    document: { getElementById: id => els[id] },
   };
   vm.createContext(win);
   vm.runInContext(SRC, win);
-  return { win, calls, painted, drawn, toasts };
+  return { win, calls, painted, drawn, toasts, downloads, confirms, renders, loaded, els };
 }
 /* The module runs in its own realm, so what it makes is another realm's Array and Object: compared by value, as JSON. */
 const J = x => JSON.parse(JSON.stringify(x === undefined ? null : x));
@@ -280,4 +288,126 @@ test('THE TAB IS REGISTERED THE WAY EVERY MODULE TAB IS: a nav entry after the a
   assert.match(app.match(/var MOD_OF = \{([\s\S]*?)\};/)[1], /hopeai:'hopeai'/, 'mapped to its module');
   assert.match(app, /claudianChats:1, claudianThread:1/, 'both are reads');
   assert.ok(fs.existsSync(path.join(ROOT, 'public/mod/hopeai.js')));
+});
+
+
+/* =====================================================================================
+   THE REPORT FOR CLAUDE AND THE CLEAR, THE PAGE (handbook Part 162)
+
+     "I need to always export a report you may need at that window of Hope Ai, then clear all existing history so that i may always deliver you with what
+      went on (so that you tell me any concerns) and keep the db fresh."                                         -- the owner, 25 Nov 2026
+   ===================================================================================== */
+const settle = async () => { for (let i = 0; i < 20; i++) await new Promise(r => setImmediate(r)); };
+const rowOf = i => ({ at: '2026-11-' + String(1 + (i % 20)).padStart(2, '0') + 'T06:00:00Z', day: '2026-11-' + String(1 + (i % 20)).padStart(2, '0'), source: 'portal', name: 'JUMA G', role: 'MANAGER', teams: 'KONGOWE', zone: 'DAR CENTER', lang: 'sw',
+  thread: 'k-juma:2026-11-' + String(1 + (i % 20)).padStart(2, '0'), mode: i % 5 === 4 ? 'faq' : 'ai', faq: i % 5 === 4 ? 'targets' : '', q: 'swali ' + i, a: i % 5 === 4 ? '' : 'jibu ' + i, tokensIn: 100, tokensOut: 10, cacheRead: 0, ms: 500, behind: null, note: '' });
+/** The server's pages, as a stand-in: the first draws the line and counts, the rest give the line back. */
+function exportServer(n, over = {}) {
+  const rows = Array.from({ length: n }, (_, i) => rowOf(i)), upTo = '2026-11-25T06:00:00Z';
+  return args => (n === 0 ? { on: true, upTo: null, total: 0, offset: 0, rows: [], next: null, faqLabels: {} }
+    : { on: true, upTo, total: args.offset === 0 ? (over.total != null ? over.total : n) : null, offset: args.offset, rows: rows.slice(args.offset, args.offset + 500),
+      next: args.offset + 500 < n ? args.offset + 500 : null, faqLabels: args.offset === 0 ? { targets: { sw: 'Malengo ya kampuni ni yapi?', en: 'What are the company targets?' } } : {} });
+}
+const adminAnswer = over => ({ ...ANSWER(), canClear: true, lastClear: null, ...over });
+const opened = async (srvAnswers, over) => {
+  const h = load({ claudianChats: adminAnswer(over), ...srvAnswers });
+  h.win.S.me = { name: 'THE ADMIN', role: 'ADMIN' };
+  await h.win.VIEWS.hopeai();
+  return h;
+};
+const exportCalls = h => h.calls.filter(c => c[0] === 'claudianChatsExport');
+
+test('THE REPORT CARD: the export button for everybody who holds the tab, the clear button for the admin alone and dead until an export, the last clear said in words, and no card when the table is not there', async () => {
+  const h = await opened({}, { lastClear: { at: '2026-11-18T10:00:00.000Z', by: 'THE ADMIN', role: 'ADMIN', upTo: '2026-11-18T09:00:00Z', deleted: 412, partial: false } });
+  assert.match(h.win.HEAD, /<b>Ripoti kwa Claude \/ Report for Claude<\/b>/);
+  assert.match(h.win.HEAD, /<button class="btn sm" id="haExpBtn" onclick="haExport_\(\)">Pakua ripoti yote \/ Export the whole report<\/button>/);
+  assert.match(h.win.HEAD, /<button class="btn sm ghost" id="haClrBtn" onclick="haClear_\(\)" disabled>Futa historia iliyopakuliwa \/ Clear what was exported<\/button>/, 'dead until an export of this visit');
+  assert.match(h.win.HEAD, /Historia ilifutwa mara ya mwisho 2026-11-18 13:00 na THE ADMIN \(mazungumzo 412\) \/ History last cleared 2026-11-18 13:00 by THE ADMIN \(412 rows\)/);
+  assert.match(h.win.HEAD, /ALL the history \(not only the days shown\)/);
+  const holder = await opened({}, { canClear: false });
+  assert.match(holder.win.HEAD, /id="haExpBtn"/); assert.ok(!/haClrBtn/.test(holder.win.HEAD), 'a role ticked for the tab has no clear button'); assert.match(holder.win.HEAD, /Clearing is for the admin only/);
+  const gone = await opened({}, { on: false, note: 'RUN-ME-090 missing', threads: [] });
+  assert.ok(!/haExpBtn|Ripoti kwa Claude/.test(gone.win.HEAD), 'no table, no report');
+  // a repaint from a filter keeps the state of the card
+  h.win.HAX.got = { upTo: '2026-11-25T06:00:00Z', count: 10, typed: 8 }; h.win.haSet_('role', 'MANAGER');
+  assert.ok(!/id="haClrBtn"[^>]*disabled/.test(h.win.HEAD) && /Imepakuliwa: 10 hadi 2026-11-25 09:00/.test(h.win.HEAD), 'a pick repaints the card from its state, not from nothing');
+});
+
+test('EXPORT ASKS FOR EVERY PAGE UNTIL NONE IS ANNOUNCED, HANDS THE LINE BACK, BUILDS ONE TEXT AND SAVES IT: 1,203 rows are three asks, one file, and the clear button wakes up; the list is not repainted per page', async () => {
+  const h = await opened({ claudianChatsExport: exportServer(1203) });
+  const paintedBefore = h.painted.length;
+  h.win.haExport_(); h.win.haExport_();                                           // a second press while it runs does nothing
+  await settle();
+  deq(exportCalls(h), [['claudianChatsExport', { upTo: '', offset: 0 }], ['claudianChatsExport', { upTo: '2026-11-25T06:00:00Z', offset: 500 }], ['claudianChatsExport', { upTo: '2026-11-25T06:00:00Z', offset: 1000 }]]);
+  deq(h.loaded, ['hopeai-report']);
+  assert.equal(h.downloads.length, 1); assert.equal(h.downloads[0].name, 'Hope-Ai-report-2026-11-25.txt'); assert.equal(h.downloads[0].blob.type, 'text/plain;charset=utf-8;');
+  const text = h.downloads[0].blob.parts[0];
+  assert.match(text, /^HOPE AI REPORT - /); assert.match(text, /Made: [^\n]* by THE ADMIN\n/); assert.match(text, /1,203 rows:/); assert.match(text, /END OF REPORT: .*1,203 rows/);
+  assert.match(text, /ready: What are the company targets\?/, 'the labels of the ready questions came with the first page');
+  deq(h.win.HAX.got, { upTo: '2026-11-25T06:00:00Z', count: 1203, typed: 963 }); assert.equal(h.win.HAX.busy, false);
+  assert.equal(h.els.haClrBtn.disabled, false, 'the clear button wakes up'); assert.equal(h.els.haExpBtn.disabled, false); assert.equal(h.els.haExpBtn.textContent, 'Pakua ripoti yote / Export the whole report');
+  assert.match(h.els.haExpNote.innerHTML, /Imepakuliwa: 1,203 hadi 2026-11-25 09:00\. Hifadhi faili, kisha unaweza kufuta\. \/ Exported: 1,203 rows up to 2026-11-25 09:00\. Save the file, then you may clear\./);
+  assert.equal(h.painted.length, paintedBefore, 'the list was not repainted while pages arrived');
+});
+
+test('AN EXPORT THAT IS NOT WHOLE, EMPTY, REFUSED OR FAILED SAVES NOTHING AND LEAVES THE CLEAR DEAD, and says why in words', async () => {
+  // fewer rows reached the page than the server counted
+  const short = await opened({ claudianChatsExport: exportServer(700, { total: 705 }) });
+  short.win.haExport_(); await settle();
+  assert.equal(short.win.HAX.got, null); assert.equal(short.els.haClrBtn.disabled, true);
+  assert.match(short.els.haExpNote.innerHTML, /Ripoti haijakamilika \(700 kati ya 705\): usifute\. Pakua tena\. \/ The report is not whole \(700 of 705\): do not clear\. Export again\./);
+  assert.match(short.downloads[0].blob.parts[0], /WARNING: the server counted 705 rows when the report was drawn and 700 reached the page\./, 'the file says so too');
+  // nothing on file
+  const none = await opened({ claudianChatsExport: exportServer(0) });
+  none.win.haExport_(); await settle();
+  assert.equal(none.downloads.length, 0); assert.match(none.els.haExpNote.innerHTML, /Hakuna historia ya kupakua\. \/ There is no history to export\./); assert.equal(none.win.HAX.busy, false);
+  // the table is not there
+  const gone = await opened({ claudianChatsExport: () => ({ on: false, note: 'RUN-ME-090 missing' }) });
+  gone.win.haExport_(); await settle();
+  assert.equal(gone.downloads.length, 0); assert.match(gone.els.haExpNote.innerHTML, /RUN-ME-090 missing/);
+  // a failing page, in the middle
+  let n = 0; const bad = await opened({ claudianChatsExport: args => { if (++n === 2) throw new Error('database down'); return exportServer(1203)(args); } });
+  bad.win.haExport_(); await settle();
+  assert.equal(bad.downloads.length, 0); assert.equal(bad.win.HAX.got, null); assert.equal(bad.win.HAX.busy, false); assert.match(bad.els.haExpNote.innerHTML, /database down/); assert.equal(bad.els.haExpBtn.disabled, false, 'it can be pressed again');
+});
+
+test('CLEAR NEEDS AN EXPORT OF THIS VISIT, THE ADMIN, AND A YES: without any of them it asks the server nothing; the question names the count and the day in both languages', async () => {
+  const none = await opened({ claudianChatsClear: () => ({ on: true, cleared: true, deleted: 1 }) });
+  none.win.haClear_();
+  assert.equal(none.confirms.length, 0); assert.equal(none.calls.filter(c => c[0] === 'claudianChatsClear').length, 0, 'no export: nothing to clear');
+  const holder = await opened({ claudianChatsExport: exportServer(50), claudianChatsClear: () => ({ on: true, cleared: true, deleted: 50 }) }, { canClear: false });
+  holder.win.haExport_(); await settle(); holder.win.haClear_();
+  assert.equal(holder.calls.filter(c => c[0] === 'claudianChatsClear').length, 0, 'a role that may not clear cannot, whatever the page holds');
+  const h = await opened({ claudianChatsExport: exportServer(50), claudianChatsClear: () => ({ on: true, cleared: true, deleted: 50, found: 50, remaining: 0, partial: false, changed: false }) });
+  h.win.haExport_(); await settle();
+  h.win.__confirm = false; h.win.haClear_();
+  assert.equal(h.confirms.length, 1); assert.equal(h.calls.filter(c => c[0] === 'claudianChatsClear').length, 0, 'declined: nothing asked');
+  assert.match(h.confirms[0], /Futa mazungumzo 50 \(maswali 40 yaliyoandikwa\) yaliyopakuliwa hadi 2026-11-25 09:00\?\n\nHaiwezi kurudishwa\./);
+  assert.match(h.confirms[0], /Delete the 50 rows \(40 typed questions\) that were exported, up to 2026-11-25 09:00\?\n\nThis cannot be undone\. Make sure the report file is saved/);
+});
+
+test('CLEAR: THE LINE AND THE COUNT GO BACK TO THE SERVER; cleared shows a toast, forgets the export and reads the tab again; more on file than the report held, a part, and a failure each say so and delete nothing the page hides', async () => {
+  const run = async answer => {
+    const h = await opened({ claudianChatsExport: exportServer(50), claudianChatsClear: answer });
+    h.win.haExport_(); await settle(); h.win.__confirm = true; h.win.haClear_(); await settle();
+    return h;
+  };
+  const ok = await run(() => ({ on: true, cleared: true, changed: false, partial: false, found: 50, deleted: 50, remaining: 0, expected: 50 }));
+  deq(ok.calls.filter(c => c[0] === 'claudianChatsClear'), [['claudianChatsClear', { upTo: '2026-11-25T06:00:00Z', expected: 50, date: '2026-11-25' }]]);
+  deq(ok.toasts, [['Zimefutwa 50 / 50 rows cleared', false]]); assert.equal(ok.renders.length, 1, 'the tab reads the history again'); assert.equal(ok.win.HAX.got, null, 'the export is spent: the clear is dead again'); assert.equal(ok.win.HAX.busy, false);
+  const changed = await run(() => ({ on: true, cleared: false, changed: true, found: 52, deleted: 0, expected: 50 }));
+  assert.equal(changed.win.HAX.got, null); assert.equal(changed.renders.length, 0); assert.equal(changed.toasts.length, 0);
+  assert.match(changed.els.haExpNote.innerHTML, /Kuna mazungumzo mengi kuliko yaliyomo kwenye ripoti \(52 dhidi ya 50\): hakuna kilichofutwa\. Pakua ripoti tena\. \/ There is more on file than the report held \(52 against 50\): nothing was deleted\. Export again\./);
+  const part = await run(() => ({ on: true, cleared: false, changed: false, partial: true, found: 50, deleted: 20, remaining: 30, expected: 50 }));
+  assert.ok(part.win.HAX.got, 'a part: the export still stands, so it can be pressed again'); assert.equal(part.renders.length, 0);
+  assert.match(part.els.haExpNote.innerHTML, /Imefutwa 20, bado 30: bonyeza tena\. \/ 20 deleted, 30 left: press again\./);
+  const missing = await run(() => ({ on: false, note: 'RUN-ME-090 missing' })); assert.match(missing.els.haExpNote.innerHTML, /RUN-ME-090 missing/);
+  const fail = await run(() => Promise.reject(new Error('refused'))); assert.match(fail.els.haExpNote.innerHTML, /refused/); assert.equal(fail.win.HAX.busy, false); assert.ok(fail.win.HAX.got, 'a failed clear leaves the export as it was');
+});
+
+test('THE PAGE KNOWS WHAT IS A READ: the export is a read (it must not empty the screens\' memory), the clear is not; the build moved so every browser fetches the module; the report module is a helper, not a screen', () => {
+  const app = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'latin1');
+  assert.match(app, /claudianChats:1, claudianThread:1, claudianChatsExport:1/); assert.ok(!/claudianChatsClear:1/.test(app), 'the clear changes things: it is not in READ_FNS');
+  assert.match(app, /var BUILD = '2026-11-25-h';/);
+  assert.ok(/modLoad_\('hopeai-report'\)/.test(SRC) && /download\(new Blob\(\[text\], \{ type: 'text\/plain;charset=utf-8;' \}\)/.test(SRC));
+  assert.ok(!/claudianChatsClear|haClear_/.test(fs.readFileSync(path.join(ROOT, 'public/mod/hopeai-report.js'), 'utf8')), 'the report module only builds a text');
 });

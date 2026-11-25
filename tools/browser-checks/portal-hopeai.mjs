@@ -13,7 +13,11 @@
      5. the boards under the list (by role, team and day, and the ready questions tapped) add up to the list and have their own Excel;
      6. another window reads another set of chats (a chat of ten days ago is out of the first and in the second);
      7. before db/RUN-ME-090 is run the tab says so and names the file: never an empty list that would read as "nobody asked";
-     8. no page error in any world.
+     8. no page error in any world;
+     9. the REPORT FOR CLAUDE and the CLEAR (handbook Part 162: "I need to always export a report you may need at that window of Hope Ai, then clear all
+        existing history ... and keep the db fresh"): the export saves one text file of EVERYTHING on file (a chat ten days old that the window does not show
+        is in it), the clear button is dead until then and for anybody but the admin, the clear deletes exactly what the report held and leaves a chat written
+        after it, the tab reads the history again and says when it was last cleared.
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -62,12 +66,12 @@ const chats = () => [
     question: '<img src=x onerror="window.__xss=1"> naomba <b>msaada</b>', answer: '<script>window.__xss=2</script>jibu' }),
   R(OLD, '08:00:00', { user_key: 'k-old', user_name: 'MZEE O', role: 'MANAGER', teams: 'ILEMELA', thread: 'k-old:' + OLD, question: 'Swali la zamani', behind: false }),
 ];
-const tables = () => ({ teams: [], access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'hopeai'] }], settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }], roles: [], audit_log: [],
+const tables = () => ({ audit_log: [], teams: [], access_codes: [{ code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'hopeai'] }], settings: [{ key: 'SYSTEM_OPEN', value: 'YES' }], roles: [], audit_log: [],
   claudian_chats: chats() });
 const ADMIN = { code: 'ADMIN1', name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['settings', 'hopeai', 'dashboard'] };
 const CLERK = { code: 'CL1', name: 'A CLERK', role: 'CREDIT ANALYST', teams: ['KONGOWE'], tabs: ['dashboard'] };
-let db = fakeDb(tables()), USER = ADMIN;
-const REAL = new Set(['claudianChats', 'claudianThread']);
+let db = fakeDb(tables()), USER = ADMIN, NOWMS;                 // NOWMS: the server's clock for a world that needs one (the chats are seeded at fixed times of today)
+const REAL = new Set(['claudianChats', 'claudianThread', 'claudianChatsExport', 'claudianChatsClear']);
 const asked = [];
 const warn = console.warn; console.warn = () => {};
 
@@ -85,7 +89,7 @@ const srv = http.createServer((req, res) => {
       const { fn, args } = JSON.parse(b || '{}');
       asked.push([fn, args]);
       let out;
-      try { out = REAL.has(fn) ? await portalApi(db, USER, fn, args || {}) : { rows: [] }; }
+      try { out = REAL.has(fn) ? await portalApi(db, USER, fn, args || {}, NOWMS) : { rows: [] }; }
       catch (e) { res.writeHead(e.status || 500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: String((e && e.message) || e) })); return; }
       res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, ...out, workspace: 'hopepmo' }));
     });
@@ -243,6 +247,53 @@ page = await open(fakeDb(tables(), { missingTables: ['claudian_chats'] }), ADMIN
 const gone = await page.evaluate(() => ({ note: (document.querySelector('#view .note.bad') || {}).textContent || '', rows: document.querySelectorAll('#mainCard tbody tr[data-i]').length, boards: !!document.getElementById('haRole') }));
 check('7 the red line names the file, there are no rows and no boards', /RUN-ME-090/.test(gone.note) && gone.rows === 0 && !gone.boards, JSON.stringify(gone).slice(0, 200));
 await page.close();
+
+// ---- 9. the report and the clear (handbook Part 162)
+{
+  NOWMS = Date.parse(TODAY + 'T23:59:30Z');                        // the end of today: a clear refuses a line ahead of the server's clock, and the seeded chats are at fixed times
+  const world = fakeDb(tables());
+  let pg = await open(world, ADMIN);
+  const dead = () => pg.evaluate(() => { const c = document.getElementById('haClrBtn'); return c ? c.disabled : null; });
+  check('9 the report card is there, and the clear button is dead before any export', (await pg.evaluate(() => /Ripoti kwa Claude/.test(document.getElementById('view').textContent))) && (await dead()) === true);
+  const dlr = await Promise.all([pg.waitForEvent('download', { timeout: 15000 }), pg.click('#haExpBtn')]).then(r => r[0]);
+  const raw = fs.readFileSync(await dlr.path(), 'utf8');
+  check('9 the export saves one text file named for the day', dlr.suggestedFilename() === 'Hope-Ai-report-' + TODAY + '.txt', dlr.suggestedFilename());
+  check('9 it holds EVERYTHING on file: the chat of ten days ago, which the window does not show, is in it', /MZEE O/.test(raw) && /Swali la zamani/.test(raw) && /JUMA G/.test(raw) && /ZUBERI K/.test(raw), raw.length + ' characters');
+  check('9 it says how many: nine rows, six chats of five people (JUMA and ASHA two days, ZUBERI, MALICIOUS, MZEE)', /9 rows: 6 chats of 5 people, 6 typed questions, 3 taps? of ready questions|9 rows: 6 chats of 5 people/.test(raw) && /END OF REPORT: 6 chats, 9 rows/.test(raw), (raw.match(/Covers:[^\n]*/) || [''])[0].slice(0, 200));
+  check('9 markup a person typed is in the file as plain text', raw.indexOf('<img src=x onerror="window.__xss=1">') >= 0 && !(await pg.evaluate(() => window.__xss)));
+  check('9 the clear button woke up and the card says what was exported', (await dead()) === false && /Imepakuliwa: 9 hadi/.test(await pg.evaluate(() => document.getElementById('haExpNote').textContent)));
+  check('9 pages were asked with the line the first one drew', asked.filter(a => a[0] === 'claudianChatsExport').length === 1 && asked.find(a => a[0] === 'claudianChatsExport')[1].upTo === '', JSON.stringify(asked.filter(a => a[0] === 'claudianChatsExport')));
+  // a chat is written while the owner reads the card: the clear must leave it
+  world._dump('claudian_chats').push(R(TODAY, '23:30:00', { user_key: 'k-late', user_name: 'LATE L', role: 'MANAGER', teams: 'ILALA', thread: 'k-late:' + TODAY, question: 'Imeandikwa baada ya ripoti', behind: false }));
+  const dialogs = []; pg.removeAllListeners('dialog'); pg.on('dialog', d => { dialogs.push(d.message()); d.accept(); });
+  await pg.click('#haClrBtn');
+  await pg.waitForFunction(() => document.querySelectorAll('#mainCard tbody tr[data-i]').length >= 0 && /Zimefutwa|rows cleared/.test((document.getElementById('toast') || document.body).textContent), null, { timeout: 8000 }).catch(() => {});
+  await pg.waitForTimeout(600);
+  const left = world._dump('claudian_chats');
+  check('9 the clear asked first, in both languages, with the count', dialogs.length === 1 && /Futa mazungumzo 9 /.test(dialogs[0]) && /Delete the 9 rows/.test(dialogs[0]), JSON.stringify(dialogs).slice(0, 160));
+  check('9 and deleted exactly the nine rows the report held; the chat written after it is still there', left.length === 1 && left[0].user_name === 'LATE L', JSON.stringify(left.map(r => r.user_name)));
+  check('9 the clear button is dead again (the export is spent) and the note of the clear is on file', (await dead()) === true && world._dump('settings').some(r => r.key === 'CLAUDIAN_LAST_CLEAR'));
+  check('9 the tab read the history again and shows only the chat that remains', JSON.stringify((await listOf(pg)).map(r => r[3])) === JSON.stringify(['LATE L']), JSON.stringify(await listOf(pg)));
+  check('9 and says when the history was last cleared, by whom', /Historia ilifutwa mara ya mwisho/.test(await pg.evaluate(() => document.getElementById('haExpNote').textContent)) && /THE ADMIN/.test(await pg.evaluate(() => document.getElementById('haExpNote').textContent)));
+  check('9 the server recorded the clear in the audit log', world._dump('audit_log').some(r => r.action === 'claudianChatsClear' && r.ok === true));
+  if (SHOTS) await pg.screenshot({ path: path.join(SHOTS, 'hopeai-report-card.png'), fullPage: true });
+  await pg.close();
+
+  // a role ticked for the tab: the export, no clear
+  const HOLDER = { code: 'GM1', name: 'THE GM', role: 'GM', teams: null, tabs: ['dashboard', 'hopeai'] };
+  const w2 = fakeDb(tables());
+  pg = await open(w2, HOLDER);
+  check('9 a role ticked for the tab has the export and no clear button', (await pg.evaluate(() => !!document.getElementById('haExpBtn') && !document.getElementById('haClrBtn'))));
+  const refusedClear = await pg.evaluate(async () => { try { await srv('claudianChatsClear', { upTo: new Date().toISOString(), expected: 1 }); return 'answered'; } catch (e) { return String(e.message || e); } });
+  check('9 and the server refuses it the clear anyway; nothing was deleted', refusedClear !== 'answered' && w2._dump('claudian_chats').length === 9, refusedClear);
+  await pg.close();
+
+  // before RUN-ME-090: no card at all
+  pg = await open(fakeDb(tables(), { missingTables: ['claudian_chats'] }), ADMIN);
+  check('9 before RUN-ME-090 there is no report card', await pg.evaluate(() => !document.getElementById('haExpBtn')));
+  await pg.close();
+  NOWMS = undefined;
+}
 } catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
 
 check('8 no page error in any world', errs.length === 0, errs.slice(0, 3).join(' | '));

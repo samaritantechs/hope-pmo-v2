@@ -145,7 +145,8 @@ function haDraw_(){
     + haSelect_('behind', 'Nyuma? / Behind?', 'Wote / All', [{ v: 'yes', t: 'Timu ziko nyuma / Teams behind' }, { v: 'no', t: 'Timu ziko sawa / Teams on target' }])
     + '<button class="btn sm ghost" onclick="haReset_()">Futa vichujio / Clear</button>'
     + '<span class="mut" style="font-size:11.5px">Yanaonyeshwa / Showing <b>' + money(list.length) + '</b> / ' + money(all.length) + '</span>'
-    + '</div></div>';
+    + '</div></div>'
+    + haExpCard_(d);
   /* Thirteen columns, the last of them the first question: on a laptop the list wraps to the card's width (S.fit = 'words', cleared in go(): it breaks at spaces
      only, so no short column is squeezed to a few letters) so the question is in sight without a scroll to the right; a phone keeps the sideways scroll. */
   S.fit = 'words';
@@ -163,6 +164,110 @@ function haDraw_(){
   S.foot = 'Gusa mstari kufungua mazungumzo yote. Majina, vyeo na timu ni vile mfumo ulivyovijua wakati mtu aliuliza; namba za tarakimu 7 au zaidi zilibadilishwa kuwa [namba] kabla swali kuhifadhiwa. '
     + '/ Tap a row to open the whole chat. Names, roles and teams are as the system knew them when the person asked; numbers of seven digits or more were replaced by [namba] before the question was kept. '
     + 'Kuwapa cheo kingine ruhusa ya kichupo hiki kunawaruhusu kusoma mazungumzo ya kila mtu. / Ticking this tab for a role lets that role read everybody\'s chats.';
+}
+
+/* THE REPORT FOR CLAUDE, AND THE CLEAR (handbook Part 162) --
+     "I need to always export a report you may need at that window of Hope Ai, then clear all existing history so that i may always deliver you with what
+      went on (so that you tell me any concerns) and keep the db fresh."                                         -- the owner, 25 Nov 2026
+
+   EXPORT asks the server for EVERYTHING on file (not only the window the list shows), a page of 500 rows at a time up to the line the first page draws (the
+   newest row's own time), builds one plain-text report from them in the browser (public/mod/hopeai-report.js, fetched the first time it is wanted) and saves
+   it. CLEAR deletes exactly those rows (the line and the count go back to the server, which refuses if there is more on file than the report held) and is
+   offered to the admin alone, and only after an export in this visit that came back whole. Nothing here repaints the list while pages arrive: the card
+   updates its own words. */
+var HAX = { busy: false, step: '', done: 0, total: 0, got: null, err: '' };
+function haStamp_(iso){
+  var ms = Date.parse(iso);
+  return isNaN(ms) ? String(iso || '') : new Date(ms + 3 * 3600 * 1000).toISOString().slice(0, 16).replace('T', ' ');
+}
+function haWho_(){
+  try { return (typeof S !== 'undefined' && S.me && (S.me.name || S.me.role)) || ''; } catch (e) { return ''; }
+}
+function haExpLabel_(){
+  return HAX.busy && HAX.step === 'export' ? 'Inapakua... / Downloading...' : 'Pakua ripoti yote / Export the whole report';
+}
+function haExpNote_(d){
+  var bits = [];
+  if (d && d.lastClear) bits.push('Historia ilifutwa mara ya mwisho ' + esc(haStamp_(d.lastClear.at)) + ' na ' + esc(d.lastClear.by || '?') + ' (mazungumzo ' + money(d.lastClear.deleted)
+    + ') / History last cleared ' + esc(haStamp_(d.lastClear.at)) + ' by ' + esc(d.lastClear.by || '?') + ' (' + money(d.lastClear.deleted) + ' rows)');
+  if (HAX.busy) bits.push(HAX.step === 'clear' ? 'Inafuta... / Clearing...'
+    : 'Inapakua ' + money(HAX.done) + (HAX.total ? ' kati ya ' + money(HAX.total) : '') + '... / Downloading ' + money(HAX.done) + (HAX.total ? ' of ' + money(HAX.total) : '') + '...');
+  else if (HAX.err) bits.push('<span style="color:var(--bad)">' + esc(HAX.err) + '</span>');
+  else if (HAX.got) bits.push('Imepakuliwa: ' + money(HAX.got.count) + ' hadi ' + esc(haStamp_(HAX.got.upTo)) + '. Hifadhi faili, kisha unaweza kufuta. / Exported: ' + money(HAX.got.count)
+    + ' rows up to ' + esc(haStamp_(HAX.got.upTo)) + '. Save the file, then you may clear.');
+  return bits.join(' &nbsp;&middot;&nbsp; ');
+}
+/** The card under the filters: the two buttons and what is going on. The clear button is drawn only for the admin (the server checks it again), and is dead until
+    an export of this visit came back whole. */
+function haExpCard_(d){
+  if (!d || d.on === false) return '';
+  return '<div class="card" style="padding:10px;margin:8px 0"><div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+    + '<b>Ripoti kwa Claude / Report for Claude</b>'
+    + '<button class="btn sm" id="haExpBtn" onclick="haExport_()"' + (HAX.busy ? ' disabled' : '') + '>' + haExpLabel_() + '</button>'
+    + (d.canClear ? '<button class="btn sm ghost" id="haClrBtn" onclick="haClear_()"' + (HAX.got && !HAX.busy ? '' : ' disabled') + '>Futa historia iliyopakuliwa / Clear what was exported</button>'
+        : '<span class="mut" style="font-size:11.5px">Kufuta ni kwa msimamizi tu. / Clearing is for the admin only.</span>')
+    + '<span class="mut" style="font-size:11.5px" id="haExpNote">' + haExpNote_(d) + '</span>'
+    + '</div><div class="mut" style="font-size:11px;margin-top:4px">Ripoti ni faili moja la maandishi lenye historia YOTE (si siku zilizoonyeshwa tu): hesabu, mambo ya kuangalia kwanza, na kila mazungumzo. Mpe Claude faili hilo akueleze wasiwasi wowote. '
+    + '/ One text file of ALL the history (not only the days shown): the counts, what to look at first, and every chat. Give the file to Claude and ask for any concerns. Clearing deletes only what that file held.</div></div>';
+}
+function haExpUi_(){
+  var n = document.getElementById('haExpNote'), b = document.getElementById('haExpBtn'), c = document.getElementById('haClrBtn');
+  if (n) n.innerHTML = haExpNote_(HA.d);
+  if (b) { b.disabled = !!HAX.busy; b.textContent = haExpLabel_(); }
+  if (c) c.disabled = !(HAX.got && !HAX.busy);
+}
+function haExport_(){
+  if (HAX.busy) return;
+  HAX.busy = true; HAX.step = 'export'; HAX.err = ''; HAX.got = null; HAX.done = 0; HAX.total = 0; haExpUi_();
+  var rows = [], upTo = '', total = 0, labels = {};
+  modLoad_('hopeai-report').then(function(){
+    function page(offset){
+      return srv('claudianChatsExport', { upTo: upTo, offset: offset }).then(function(d){
+        if (d.on === false) throw new Error(d.note || 'The chats table is not there.');
+        if (offset === 0) { upTo = d.upTo || ''; total = d.total || 0; labels = d.faqLabels || {}; HAX.total = total; }
+        if (!upTo) return null;
+        Array.prototype.push.apply(rows, d.rows || []);
+        HAX.done = rows.length; haExpUi_();
+        return d.next != null ? page(d.next) : null;
+      });
+    }
+    return page(0);
+  }).then(function(){
+    HAX.busy = false;
+    if (!upTo) { HAX.err = 'Hakuna historia ya kupakua. / There is no history to export.'; haExpUi_(); return; }
+    var whole = rows.length === total, typed = 0;
+    rows.forEach(function(r){ if (r.mode !== 'faq') typed++; });
+    var text = harBuild_(rows, { madeAt: new Date().toISOString(), by: haWho_(), upTo: upTo, total: total, faqLabels: labels, lastClear: HA.d && HA.d.lastClear });
+    download(new Blob([text], { type: 'text/plain;charset=utf-8;' }), 'Hope-Ai-report-' + today() + '.txt');
+    HAX.got = whole ? { upTo: upTo, count: rows.length, typed: typed } : null;
+    HAX.err = whole ? '' : 'Ripoti haijakamilika (' + money(rows.length) + ' kati ya ' + money(total) + '): usifute. Pakua tena. / The report is not whole (' + money(rows.length) + ' of ' + money(total) + '): do not clear. Export again.';
+    haExpUi_();
+  }).catch(function(e){ HAX.busy = false; HAX.got = null; HAX.err = String((e && e.message) || e); haExpUi_(); });
+}
+function haClear_(){
+  var g = HAX.got;
+  if (!g || HAX.busy || !(HA.d && HA.d.canClear)) return;
+  var when = haStamp_(g.upTo);
+  if (!confirm('Futa mazungumzo ' + money(g.count) + ' (maswali ' + money(g.typed) + ' yaliyoandikwa) yaliyopakuliwa hadi ' + when + '?\n\nHaiwezi kurudishwa. Hakikisha faili la ripoti limehifadhiwa kabla ya kuendelea.\n\n'
+    + 'Delete the ' + money(g.count) + ' rows (' + money(g.typed) + ' typed questions) that were exported, up to ' + when + '?\n\nThis cannot be undone. Make sure the report file is saved before you go on.')) return;
+  HAX.busy = true; HAX.step = 'clear'; HAX.err = ''; haExpUi_();
+  srv('claudianChatsClear', { upTo: g.upTo, expected: g.count, date: String(g.upTo).slice(0, 10) }).then(function(out){
+    HAX.busy = false;
+    if (out.on === false) { HAX.err = out.note || ''; haExpUi_(); return; }
+    if (out.changed) {
+      HAX.got = null;
+      HAX.err = 'Kuna mazungumzo mengi kuliko yaliyomo kwenye ripoti (' + money(out.found) + ' dhidi ya ' + money(out.expected) + '): hakuna kilichofutwa. Pakua ripoti tena. '
+        + '/ There is more on file than the report held (' + money(out.found) + ' against ' + money(out.expected) + '): nothing was deleted. Export again.';
+      haExpUi_(); return;
+    }
+    if (out.partial) {
+      HAX.err = 'Imefutwa ' + money(out.deleted) + ', bado ' + money(out.remaining) + ': bonyeza tena. / ' + money(out.deleted) + ' deleted, ' + money(out.remaining) + ' left: press again.';
+      haExpUi_(); return;
+    }
+    HAX.got = null;
+    toast('Zimefutwa ' + money(out.deleted) + ' / ' + money(out.deleted) + ' rows cleared');
+    render();
+  }).catch(function(e){ HAX.busy = false; HAX.err = String((e && e.message) || e); haExpUi_(); });
 }
 
 VIEWS.hopeai = function(){
