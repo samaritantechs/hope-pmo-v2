@@ -50,11 +50,11 @@ test('THE HEADER SAYS WHAT THE REPORT COVERS AND WHETHER IT IS WHOLE: when, by w
 
 test('PART A: the counts by kind, where, tokens, the days newest first, the roles and the teams (a person with several teams counts under each; "+3" is not a team)', () => {
   const a = section(report(), 'PART A', 'PART B');
-  assert.match(a, /Rows 7: AI 5, READY 1, FIXED 0, LIMIT 1, BUSY 0\. Where: Portal 5, HOPE Calls 2\./);
+  assert.match(a, /Rows 7: AI 5, READY 1, MATCH 0, NO ANSWER 0, FIXED 0, LIMIT 1, BUSY 0\. Where: Portal 5, HOPE Calls 2\./);
   assert.match(a, /Tokens: 7,500 in, 200 out, 7,200 read from cache\. Average answer time 900 ms\./);
   assert.match(a, /Chats of teams that were behind last week: 1 of 2 \(50%\)\./);
   assert.ok(a.indexOf('2026-11-25     1') < a.indexOf('2026-11-24     1'), 'newest day first');
-  assert.match(a, /MANAGER\s+1\s+1\s+5\s+3\s+1\s+1\s+4,620/); assert.match(a, /FIELD OFFICER\s+1\s+1\s+2\s+2\s+0\s+0\s+3,080/);
+  assert.match(a, /MANAGER\s+1\s+1\s+5\s+3\s+1\s+0\s+1\s+4,620/); assert.match(a, /FIELD OFFICER\s+1\s+1\s+2\s+2\s+0\s+0\s+0\s+3,080/);
   assert.match(a, /KONGOWE\s+1\s+1\s+5/); assert.match(a, /MBAGALA\s+1\s+1\s+5/); assert.match(a, /TEMEKE\s+1\s+1\s+2/); assert.ok(!/\+3/.test(a), 'a count of more teams is not a team');
 });
 
@@ -164,4 +164,37 @@ test('THE MODULE IS PLAIN ASCII AND TOUCHES NOTHING: no page, no server, no cloc
   assert.ok(!/\bdocument\b|\bwindow\b|\bfetch\b|\bsrv\(|localStorage|XMLHttpRequest|Date\.now|new Date\(\)|innerHTML|eval\(/.test(SRC.replace(/\/\*[\s\S]*?\*\//g, '')), 'rows in, text out');
   const made = Object.keys(win).filter(k => !/^(HAR_|har)/.test(k));
   assert.deepEqual(made, [], 'nothing global that is not the module\'s own: ' + made.join(', '));
+});
+
+test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): MATCH and NO ANSWER are counted on their own, a NO ANSWER is the first thing to write a ready answer for (B9), a MATCH is listed with the ready question it answered (B10), neither is a stop or a card gap, and part C shows them', () => {
+  const rows = [
+    row({ at: '2026-11-25T05:00:00Z', mode: 'match', faq: 'targets', q: 'malengo ya timu yetu', a: 'Malengo ya kila timu: mauzo wateja 7+.', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off \u00b7 score 1.8 \u00b7 near: improve' }),
+    row({ at: '2026-11-25T05:10:00Z', mode: 'nomatch', faq: '', q: 'mshahara unaingia lini', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off \u00b7 tie \u00b7 near: advance-ask, leave-ask' }),
+    row({ at: '2026-11-25T05:20:00Z', mode: 'nomatch', faq: '', q: 'Mshahara unaingia lini?', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off', name: 'ASHA M', thread: 'k-asha:2026-11-25', role: 'FIELD OFFICER', behind: false }),
+    row({ at: '2026-11-25T05:30:00Z', mode: 'nomatch', faq: '', q: 'riba ya mkopo', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'no key or sdk' }),
+    row({ at: '2026-11-25T05:35:00Z', mode: 'nomatch', faq: '', q: 'reached yangu leo ni ngapi', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off \u00b7 figure \u00b7 near: targets' }),
+    row({ at: '2026-11-25T05:40:00Z', mode: 'ai', q: 'Swali la AI', a: 'Jibu.', note: 'cards: x' }),
+  ];
+  const t = report(rows, { faqLabels: { ...FAQ, 'advance-ask': { sw: 'Naombaje advance ya mshahara?', en: 'How do I request a salary advance?' } } });
+  assert.match(t, /Rows 6: AI 1, READY 0, MATCH 1, NO ANSWER 4, FIXED 0, LIMIT 0, BUSY 0\./);
+  assert.match(t, /MATCH = a typed question answered from the best ready answer while the AI was off or had no key[\s\S]*NO ANSWER = a typed question no ready answer fitted/, 'the report says what the two kinds are');
+  assert.match(t, /day +chats people asked +AI +ready none held tokens/, 'the tables have a column for the questions nothing fitted');
+  assert.match(t, /2026-11-25 +2 +2 +6 +1 +1 +4 +0 +\d/, 'the day: 6 asked, 1 by the model, 1 answered from the list, 4 nothing fitted');
+  const b9 = section(t, 'B9.', 'B10.');
+  assert.match(b9, /B9\. Typed questions NO ready answer fitted[^\n]*: 4 questions of 3 kinds\./);
+  assert.match(b9, /1\. 2x by 2 people: (mshahara unaingia lini|Mshahara unaingia lini\?)/, 'the same question typed by two people, two ways of writing it, is one line');
+  assert.match(b9, /riba ya mkopo/); assert.match(b9, /reached yangu leo ni ngapi/);
+  const b10 = section(t, 'B10.', 'PART C');
+  assert.match(b10, /B10\. Typed questions answered from a ready answer \(MATCH\): 1\./);
+  assert.ok(b10.includes('malengo ya timu yetu') && b10.includes('-> What are the company targets?'), 'a match names the ready question it answered');
+  // neither is a stop or a failure, and neither is a card gap
+  assert.match(section(t, 'B2.', 'B3.'), /B2\. Stops and failures written in a note[^\n]*: 0 kinds, 0 rows/, 'agent off, a score and a tie are not failures');
+  assert.match(section(t, 'B3.', 'B4.'), /B3\.[^\n]*: 0 of 1 AI answer/, 'no model was asked: the questions answered from the list are no card gap');
+  // part C
+  const c = section(t, 'PART C');
+  assert.ok(c.includes('A (ready answer to: What are the company targets?): Malengo ya kila timu: mauzo wateja 7+.'), 'the answer a person was given and the ready question it answers');
+  assert.ok(c.includes('A: (no ready answer fitted) (two ready answers weighed alike)'), 'a tie is said');
+  assert.ok(c.includes('A: (no ready answer fitted) (the question asks for a figure of the person\'s own: a ready answer is a rule and cannot give one)'), 'a question for the person\'s own figure says so');
+  assert.ok(c.includes('nearest ready questions: How do I request a salary advance?; leave-ask'), 'the nearest ready questions: a label where the report has one, the id where not');
+  assert.ok(!/NOTE: agent off|NOTE: score|NOTE: tie|NOTE: near|NOTE: figure/.test(c), 'no note of these kinds is printed as a problem');
 });

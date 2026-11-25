@@ -82,16 +82,16 @@ test('OPENING THE TAB ASKS THE SERVER ONCE, for the last seven days, today inclu
   deq(calls, [['claudianChats', { from: '2026-11-19', to: '2026-11-25' }]]);
   deq(win.S.args, { from: '2026-11-19', to: '2026-11-25' });
   deq(win.S.rows.map(r => r.name), ['ASHA M', 'JUMA G', 'ZUBERI K', '<b>EVIL</b>'], 'a row for each chat, in the order the server sent');
-  deq(win.S.cols.map(c => c.key), ['lastAt', 'source', 'name', 'role', 'zone', 'teams', 'n', 'ai', 'faq', 'held', 'tokens', 'behind', 'first']);
+  deq(win.S.cols.map(c => c.key), ['lastAt', 'source', 'name', 'role', 'zone', 'teams', 'n', 'ai', 'faq', 'none', 'held', 'tokens', 'behind', 'first']);
   const k = kpis(win.HEAD);
-  deq(k.map(x => x[0]), ['Mazungumzo / Chats', 'Watu / People', 'Maswali / Questions asked', 'Majibu ya AI / AI answers', 'Ya kawaida / Ready answers', 'Kikomo au shughuli / Limit or busy', 'Timu ziko nyuma / Chats of teams behind']);
-  deq(k.map(x => x[1]), ['4', '4', '9', '4', '4', '1', '1'], 'chats, people, asked 3+3+2+1, ai 0+2+1+1, ready 3+1+0+0, held, behind');
+  deq(k.map(x => x[0]), ['Mazungumzo / Chats', 'Watu / People', 'Maswali / Questions asked', 'Majibu ya AI / AI answers', 'Ya kawaida / Ready answers', 'Hakuna jibu la kawaida / No ready answer', 'Kikomo au shughuli / Limit or busy', 'Timu ziko nyuma / Chats of teams behind']);
+  deq(k.map(x => x[1]), ['4', '4', '9', '4', '4', '0', '1', '1'], 'chats, people, asked 3+3+2+1, ai 0+2+1+1, ready 3+1+0+0, no ready answer, held, behind');
   assert.equal(k[3][2], 'tokens 3,640', 'tokens in and out of every chat');
   deq(win.S.rows[1], { thread: 'k-1:2026-11-25', day: '2026-11-25', lastAt: '2026-11-25T06:20:00Z', source: 'portal', name: 'JUMA G', role: 'MANAGER', zone: 'DAR CENTER',
-    teams: 'KONGOWE, MBAGALA', n: 3, ai: 2, faq: 1, held: 0, tokens: 2600, behind: true, first: 'Je, nifanye nini leo?', _t: win.S.rows[1]._t });
+    teams: 'KONGOWE, MBAGALA', n: 3, ai: 2, faq: 1, none: 0, held: 0, tokens: 2600, behind: true, first: 'Je, nifanye nini leo?', _t: win.S.rows[1]._t });
   assert.equal(win.S.rows[0].first, 'Maswali ya kawaida / Ready: Simu ya portfolio ni nini?; Malengo ya kampuni ni yapi?', 'a chat of ready questions only names two of them in Swahili');
   assert.equal(win.S.rows[2].held, 1, 'a limit hit counts as held');
-  assert.equal(win.S.fit, 'words', 'thirteen columns: the list wraps to the card on a laptop, at spaces only, so the first question is in sight and no short column is squeezed to a few letters');
+  assert.equal(win.S.fit, 'words', 'fourteen columns: the list wraps to the card on a laptop, at spaces only, so the first question is in sight and no short column is squeezed to a few letters');
   const chip = key => win.S.cols.find(c => c.key === key);
   deq([true, false, null].map(v => chip('behind').get({ thread: 'k:2026-11-25', behind: v })), ['NYUMA / BEHIND', 'SAWA / OK', '—']);
   deq([true, false, null].map(v => chip('behind').chip({ behind: v })), ['bad', 'ok', 'mut']);
@@ -130,10 +130,10 @@ test('THE BOARDS UNDER THE LIST ARE THE LIST, SUMMED: by role, by team, by day a
   assert.equal(win.S.tail, '[board haRole][board haTeam][board haDay][board haFaq]');
   const B = win.__boards, sum = (b, f) => b.rows.reduce((s, r) => s + r[f], 0);
   for (const id of ['haRole', 'haTeam', 'haDay']) {
-    deq(B[id].cols, [id === 'haRole' ? 'role' : id === 'haTeam' ? 'team' : 'day', 'chats', 'people', 'asked', 'ai', 'faq', 'held', 'tokens', 'behind'], id);
+    deq(B[id].cols, [id === 'haRole' ? 'role' : id === 'haTeam' ? 'team' : 'day', 'chats', 'people', 'asked', 'ai', 'faq', 'none', 'held', 'tokens', 'behind'], id);
   }
   // by role: every chat is under its one role, so the totals are the counters
-  for (const f of ['chats', 'asked', 'ai', 'faq', 'held', 'tokens', 'behind']) assert.equal(B.haRole.total[f], sum(B.haRole, f), 'the total row of by-role adds its lines: ' + f);
+  for (const f of ['chats', 'asked', 'ai', 'faq', 'none', 'held', 'tokens', 'behind']) assert.equal(B.haRole.total[f], sum(B.haRole, f), 'the total row of by-role adds its lines: ' + f);
   assert.equal(B.haRole.total.chats, 4); assert.equal(B.haRole.total.asked, 9); assert.equal(B.haRole.total.tokens, 3640);
   deq(B.haRole.rows.map(r => r.role).sort(), ['A<B', 'FIELD OFFICER', 'GM', 'MANAGER']);
   // by day: also one line for each chat's day
@@ -407,7 +407,50 @@ test('CLEAR: THE LINE AND THE COUNT GO BACK TO THE SERVER; cleared shows a toast
 test('THE PAGE KNOWS WHAT IS A READ: the export is a read (it must not empty the screens\' memory), the clear is not; the build moved so every browser fetches the module; the report module is a helper, not a screen', () => {
   const app = fs.readFileSync(path.join(ROOT, 'public/app.html'), 'latin1');
   assert.match(app, /claudianChats:1, claudianThread:1, claudianChatsExport:1/); assert.ok(!/claudianChatsClear:1/.test(app), 'the clear changes things: it is not in READ_FNS');
-  assert.match(app, /var BUILD = '2026-11-25-h';/);
+  assert.ok(!/var BUILD = '2026-11-25-g'/.test(app), 'the build moved with the report (a later change may move it again)');
   assert.ok(/modLoad_\('hopeai-report'\)/.test(SRC) && /download\(new Blob\(\[text\], \{ type: 'text\/plain;charset=utf-8;' \}\)/.test(SRC));
   assert.ok(!/claudianChatsClear|haClear_/.test(fs.readFileSync(path.join(ROOT, 'public/mod/hopeai-report.js'), 'utf8')), 'the report module only builds a text');
+});
+
+test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): the ready answers found for typed questions count with the ready answers, the questions nothing fitted have a counter, a filter and a column of their own, and the chat opens with the ready question it answered', async () => {
+  const a = ANSWER();
+  a.threads.push(T({ thread: 'k-5:2026-11-25', name: 'NEEMA K', role: 'FIELD OFFICER', zone: 'DAR CENTER', teams: 'TEMEKE', source: 'call', n: 4, ai: 0, faq: 1, match: 2, nomatch: 1, tokensIn: 0, tokensOut: 0, cacheRead: 0,
+    behind: null, faqIds: { targets: 1 }, first: 'nifanyeje kufikia targt', lastAt: '2026-11-25T08:00:00Z' }));
+  const { win } = load({ claudianChats: a });
+  await win.VIEWS.hopeai();
+  const neema = win.S.rows.find(r => r.name === 'NEEMA K');
+  assert.equal(neema.faq, 3, 'ready = the one tap and the two typed questions that found a ready answer'); assert.equal(neema.none, 1);
+  assert.equal(neema.first, 'nifanyeje kufikia targt', 'the first question typed, though it was answered from the list');
+  const k = kpis(win.HEAD), kn = Object.fromEntries(k.map(x => [x[0], x]));
+  assert.equal(kn['Ya kawaida / Ready answers'][1], '7', '3+1+0+0 of the first four chats and 3 of the new one');
+  assert.equal(kn['Hakuna jibu la kawaida / No ready answer'][1], '1'); assert.equal(kn['Hakuna jibu la kawaida / No ready answer'][3], 'warn', 'a question nothing fitted is the one to look at: amber');
+  win.haSet_('mode', 'nomatch'); deq(win.S.rows.map(r => r.name), ['NEEMA K'], 'the filter finds the chats where a question had no ready answer');
+  win.haSet_('mode', 'typedOnly'); assert.ok(win.S.rows.some(r => r.name === 'NEEMA K'), 'a chat whose typed questions were all answered from the list typed questions all the same');
+  win.haSet_('mode', 'faq'); assert.ok(win.S.rows.some(r => r.name === 'NEEMA K'));
+  win.haReset_();
+  const B = win.__boards;
+  assert.equal(B.haRole.total.none, 1); assert.equal(B.haRole.total.faq, 7);
+  // the ready questions TAPPED board counts taps only
+  assert.equal(B.haFaq.total.taps, 5, 'the matched questions are not taps: 4 earlier and the one tap of the new chat');
+  // the chat in full
+  const items = [
+    { at: '2026-11-25T08:00:00Z', mode: 'match', faq: 'improve', faqLabel: { sw: 'Nifanye nini ili kufikia malengo?', en: 'What should I do to reach the targets?' }, q: 'nifanyeje kufikia targt', a: 'Anza na simu za portfolio.', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'agent off · score 1.8 · near: targets' },
+    { at: '2026-11-25T08:01:00Z', mode: 'nomatch', faq: '', faqLabel: null, q: 'mshahara unaingia lini <b>x</b>', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'no key or sdk · tie' },
+    { at: '2026-11-25T08:02:00Z', mode: 'busy', faq: '', faqLabel: null, q: 'z', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 5, behind: null, note: 'the provider did not answer' },
+    { at: '2026-11-25T08:03:00Z', mode: 'nomatch', faq: '', faqLabel: null, q: 'reached % yangu leo ni ngapi', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'agent off \u00b7 figure \u00b7 near: reached' },
+  ];
+  const w2 = load({ claudianThread: { on: true, note: null, thread: 'k-5:2026-11-25', day: '2026-11-25', who: { name: 'NEEMA K', role: 'FIELD OFFICER', zone: 'DAR CENTER', teams: 'TEMEKE', source: 'call', lang: 'sw' }, items } });
+  w2.win.haOpen_('k-5:2026-11-25'); await new Promise(r => setImmediate(r));
+  const h = w2.drawn[0].html;
+  assert.ok(h.includes('JIBU LA KAWAIDA / READY ANSWER') && h.includes('HAKUNA JIBU / NO ANSWER'), 'both kinds are named');
+  assert.ok(h.includes('Jibu la swali la kawaida / Ready answer to:') && h.includes('Nifanye nini ili kufikia malengo? / What should I do to reach the targets?'), 'the ready question a typed one found is named');
+  assert.ok(h.includes('Anza na simu za portfolio.'), 'the answer the person was given');
+  assert.ok(h.includes('Hakuna jibu la kawaida lililofaa. / No ready answer fitted.'), 'a question nothing fitted says so');
+  assert.ok(h.includes('mshahara unaingia lini &lt;b&gt;x&lt;/b&gt;') && !h.includes('<b>x</b>'), 'what was typed is text');
+  // the notes of the two kinds are information (grey), a failure is still red
+  assert.ok(/color:var\(--mut\)[^>]*>AI ilikuwa imezimwa \/ The AI was off</.test(h) && /color:var\(--mut\)[^>]*>Alama ya kufanana \/ Match score: 1\.8</.test(h) && /color:var\(--mut\)[^>]*>Maswali ya karibu \/ Nearest ready questions: targets</.test(h), 'a ready answer\'s note is grey');
+  assert.ok(/color:var\(--mut\)[^>]*>AI haikuwa na ufunguo \/ The AI had no key</.test(h) && /color:var\(--mut\)[^>]*>Majibu mawili yalilingana/.test(h));
+  assert.ok(/color:var\(--bad\)[^>]*>the provider did not answer</.test(h), 'a failure is red');
+  assert.ok(/color:var\(--mut\)[^>]*>Aliomba namba yake mwenyewe \/ Asked for a figure of their own</.test(h), 'a question that asked for the person\'s own figure says so, in grey');
+  deq(w2.win.BOARDS.haThread.rows.map(r => [r.mode, r.a]), [['JIBU LA KAWAIDA / READY ANSWER', 'Anza na simu za portfolio.'], ['HAKUNA JIBU / NO ANSWER', '(hakuna jibu la kawaida / no ready answer)'], ['SHUGHULI / BUSY', ''], ['HAKUNA JIBU / NO ANSWER', '(hakuna jibu la kawaida / no ready answer)']], 'the Excel of the chat says it too');
 });

@@ -310,7 +310,7 @@ test('THE PAGE WIRES THE CLOCK TO THE BELL AND TO NOTHING ELSE: bellRefresh hand
   assert.ok(/bellRemind_\(d\);\s*\n\s*return d;/.test(bellRefresh), 'the answer goes to the clock');
   const region = html.slice(html.indexOf('var BELL_TIMER = null;'), html.indexOf('function bellOpen()'));
   assert.ok(!/setInterval/.test(region), 'no interval: one look at the mark the server names, then the next');
-  assert.match(html, /var CALL_BUILD = '2026-11-25-b';/);
+  assert.ok(!/var CALL_BUILD = '2026-11-25-a'/.test(html), 'the call build moved with the bell (a later change may move it again)');
 });
 
 test('NOTHING NEW ON THE UPLOAD, AND THE PHONE\'S TICK IS ONE DEFINITION: api/upload.js does not know the check, and the list and the bell both ask calledHit_', () => {

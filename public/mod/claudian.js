@@ -41,10 +41,12 @@
       move: 'Buruta kuhamisha',
       home: 'Rudisha kwenye kona',
       subAi: 'Uliza swali kuhusu HOPE PMO',
-      subFaq: 'Maswali ya kawaida tu',
+      subFaq: 'Majibu ya maswali ya kawaida',
       welcomeAi: 'Andika swali kuhusu HOPE PMO, au chagua moja hapa chini.',
-      welcomeFaq: 'Chagua swali hapa chini.',
+      welcomeFaq: 'Andika swali lako au chagua moja hapa chini. Claudian-PMO inajibu maswali ya kawaida tu kwa sasa.',
       ready: 'Maswali ya kawaida',
+      matched: 'Jibu la swali la kawaida:',
+      near: 'Karibu na:',
       ph: 'Andika swali lako…',
       send: 'Tuma',
       left: 'Maswali yaliyobaki leo: {n}',
@@ -60,10 +62,12 @@
       move: 'Drag to move',
       home: 'Back to the corner',
       subAi: 'Ask a question about HOPE PMO',
-      subFaq: 'Ready questions only',
+      subFaq: 'Answers to the standard questions',
       welcomeAi: 'Type a question about HOPE PMO, or pick one below.',
-      welcomeFaq: 'Pick a question below.',
+      welcomeFaq: 'Type your question or pick one below. Claudian-PMO answers the standard questions only for now.',
       ready: 'Ready questions',
+      matched: 'Ready answer to:',
+      near: 'Closest:',
       ph: 'Type your question…',
       send: 'Send',
       left: 'Questions left today: {n}',
@@ -77,7 +81,7 @@
 
   /* The HOPE Ai icon (docs/brand/HOPE-Ai-icon.svg: the same drawing, held equal to it by a test), drawn once for the bubble and once, with another id, for the header.
      The letters of HOPE Ai are bent along the round face: each stays whole and stands upright toward the centre of a circle. */
-  var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" aria-hidden="true" focusable="false">'
+  var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="61 58 390 390" aria-hidden="true" focusable="false">'
     + '<defs><clipPath id="HEADID"><path d="M256 64C334 64 388 124 388 208C388 262 366 308 348 336C340 356 334 368 322 378C304 392 280 394 256 394C232 394 208 392 190 378C178 368 172 356 164 336C146 308 124 262 124 208C124 124 178 64 256 64Z"/></clipPath></defs>'
     + '<rect x="88" y="188" width="28" height="100" rx="14" fill="#0B2A6B"/><rect x="95" y="200" width="9" height="62" rx="4.5" fill="#93C5FD"/>'
     + '<rect x="396" y="188" width="28" height="100" rx="14" fill="#0B2A6B"/><rect x="408" y="200" width="9" height="62" rx="4.5" fill="#93C5FD"/>'
@@ -101,19 +105,20 @@
     '.root{position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;',
     '--card:#fff;--ink:#0F172A;--mut:#64748B;--line:#D5DEEC;--chip:#EFF6FF;--chipink:#1D4ED8;--ua:#1D4ED8;--aa:#F1F5F9;--hint:#FEF3C7;--hintink:#92400E;--bad:#FEE2E2;--badink:#991B1B}',
     '.root.dark{--card:#131C2E;--ink:#E5EAF2;--mut:#8B9AB3;--line:#22304A;--chip:#10244A;--chipink:#93C5FD;--ua:#2563EB;--aa:#1B2740;--hint:#3A2F10;--hintink:#FCD34D;--bad:#3B1515;--badink:#FCA5A5}',
-    '.bub{position:absolute;left:0;top:0;width:56px;height:56px;margin:0;padding:5px;border-radius:50%;border:2px solid #1D4ED8;background:#fff;cursor:grab;pointer-events:auto;',
-    'touch-action:none;display:block;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;box-shadow:0 10px 24px -8px rgba(8,28,74,.55)}',
+    '.bub{position:absolute;left:0;top:0;width:56px;height:56px;margin:0;padding:0;border:0;border-radius:14px;background:none;cursor:grab;pointer-events:auto;',
+    'touch-action:none;display:block;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}',
     '.bub:focus-visible{outline:3px solid #93C5FD;outline-offset:2px}',
     '.bub.drag{cursor:grabbing;transform:scale(1.07)}',
     '.bub.away{visibility:hidden}',
-    '.bub svg{width:100%;height:100%;display:block;pointer-events:none}',
-    '@media (prefers-reduced-motion:no-preference){.bub.pulse{animation:cpulse 1.6s ease-out 3}@keyframes cpulse{0%{box-shadow:0 0 0 0 rgba(29,78,216,.55)}100%{box-shadow:0 0 0 20px rgba(29,78,216,0)}}}',
+    '.bub svg{width:100%;height:100%;display:block;pointer-events:none;filter:drop-shadow(0 4px 5px rgba(8,28,74,.5))}',
+    '.root.dark .bub svg{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.85)) drop-shadow(0 4px 5px rgba(0,0,0,.6))}',
+    '@media (prefers-reduced-motion:no-preference){.bub.pulse svg{animation:cpulse 1.6s ease-out 3}@keyframes cpulse{0%{filter:drop-shadow(0 0 0 rgba(29,78,216,.9))}100%{filter:drop-shadow(0 0 16px rgba(29,78,216,0))}}}',
     '.panel{position:absolute;display:none;flex-direction:column;pointer-events:auto;width:380px;max-height:540px;background:var(--card);color:var(--ink);',
     'border:1px solid var(--line);border-radius:16px;box-shadow:0 24px 60px -20px rgba(8,28,74,.7);overflow:hidden;font-size:14px;line-height:1.4}',
     '.panel.open{display:flex}',
     '.panel.sheet{width:auto;max-height:none}',
     '.hd{display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,#0B2A6B,#1D4ED8);color:#fff;flex:none}',
-    '.hd .ico{width:34px;height:34px;border-radius:50%;background:#fff;padding:3px;flex:none}',
+    '.hd .ico{width:36px;height:36px;flex:none}',
     '.hd .ico svg{width:100%;height:100%;display:block}',
     '.hd .ttl{flex:1;min-width:0;display:flex;flex-direction:column}',
     '.hd .ttl b{font-size:15px;letter-spacing:.2px}',
@@ -129,6 +134,7 @@
     '.m.e{align-self:flex-start;background:var(--bad);color:var(--badink);border-bottom-left-radius:4px}',
     '.m.w{align-self:stretch;max-width:100%;background:none;color:var(--mut);padding:2px 2px 0;font-size:13px}',
     '.m.t{align-self:flex-start;background:none;color:var(--mut);font-style:italic}',
+    '.m.near{display:flex;flex-direction:column;gap:6px}',
     'details.faq{flex:none;border-top:1px dashed var(--line);padding-top:6px}',
     'details.faq summary{cursor:pointer;color:var(--mut);font-size:12.5px;font-weight:700;padding:2px 0 6px;list-style-position:inside}',
     '.chips{display:flex;flex-wrap:wrap;gap:6px;max-height:210px;overflow-y:auto;padding-bottom:2px}',
@@ -137,8 +143,7 @@
     '.chip:hover{border-color:var(--chipink)}',
     '.chip:disabled{opacity:.55;cursor:default}',
     '.chip:focus-visible,.send:focus-visible,textarea:focus-visible{outline:2px solid #3B82F6;outline-offset:1px}',
-    '.ft{display:none;flex:none;gap:8px;padding:8px 10px;border-top:1px solid var(--line);align-items:flex-end}',
-    '.ft.on{display:flex}',
+    '.ft{display:flex;flex:none;gap:8px;padding:8px 10px;border-top:1px solid var(--line);align-items:flex-end}',
     '.ft textarea{flex:1;resize:none;font:inherit;font-size:14px;color:var(--ink);background:var(--card);border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;max-height:96px;min-height:38px}',
     '.send{font:inherit;font-weight:700;color:#fff;background:#1D4ED8;border:0;border-radius:12px;height:38px;padding:0 14px;cursor:pointer}',
     '.send:disabled{opacity:.55;cursor:default}',
@@ -237,7 +242,21 @@
   function setBusy(b) {
     st.busy = b;
     st.e.send.disabled = b;
-    var c = st.e.chips.children, i; for (i = 0; i < c.length; i++) c[i].disabled = b;
+    var c = st.e.body.querySelectorAll('.chip'), i; for (i = 0; i < c.length; i++) c[i].disabled = b;
+  }
+  /** The nearest ready questions to what was typed, as a line of their own in the conversation: a tap asks one of them, exactly as a tap on the list does. */
+  function addNear(list) {
+    var box = el('div', 'm w near'), row = el('div', 'chips full');
+    box.appendChild(el('div', null, tr('near')));
+    (list || []).forEach(function (c) {
+      var b = el('button', 'chip', c.q); b.type = 'button'; b.setAttribute('data-id', c.id);
+      b.onclick = function () { askFaq(c); };
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+    st.e.body.insertBefore(box, st.e.faq);
+    var all = lines(); while (all.length > MAX_MSGS) st.e.body.removeChild(all.shift());
+    return box;
   }
   function drawChips(list) {
     var box = st.e.chips; box.textContent = '';
@@ -254,7 +273,6 @@
   function paintMode() {
     var ai = !!(st.status && st.status.ai);
     st.e.sub.textContent = ai ? tr('subAi') : tr('subFaq');
-    st.e.ft.className = 'ft' + (ai ? ' on' : '');
     st.e.ta.placeholder = tr('ph');
     st.e.send.textContent = tr('send');
     st.e.summary.textContent = tr('ready');
@@ -306,8 +324,12 @@
     api('ask', { q: q, hist: st.hist ? [st.hist] : [] }).then(function (r) {
       thinking(false);
       var text = r && r.answer ? String(r.answer) : tr('net');
-      var ok = r && (r.mode === 'ai' || r.mode === 'canned');
+      var ok = r && (r.mode === 'ai' || r.mode === 'canned' || r.mode === 'match');
+      // a ready answer found for what was typed says which ready question it answers, so a wrong guess is seen for what it is
+      var top = r && r.mode === 'match' && r.q ? addMsg('w', tr('matched') + ' ' + String(r.q)) : null;
       addMsg(ok ? 'a' : 'h', text);
+      if (top) st.e.body.scrollTop = Math.max(0, top.offsetTop - 12);
+      if (r && r.near && r.near.length) addNear(r.near);
       if (r && r.mode === 'ai') st.hist = { q: q, a: text.slice(0, 240) }; else if (r && r.mode !== 'canned') st.hist = null;
       followSwitch(r);
       if (r && r.left != null && st.status) { st.status.left = r.left; paintMode(); }
@@ -344,17 +366,18 @@
   }
   function onResize() { if (!st.mounted) return; setPos(fromFrac(st.frac, window.innerWidth, window.innerHeight)); if (st.open) layoutPanel(); }
 
+  function paintTheme() { if (st.e.root) st.e.root.className = 'root' + (isDark() ? ' dark' : ''); }
   function openPanel() {
     if (st.open) return;
     st.open = true;
-    st.e.root.className = 'root' + (isDark() ? ' dark' : '');
+    paintTheme();
     st.e.bub.setAttribute('aria-expanded', 'true');
     st.e.bub.className = st.e.bub.className.replace(/ ?pulse/, '');
     layoutPanel();
     paintMode();
     loadStatus(false).then(function () {
       try {
-        if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) { if (st.status && st.status.ai) st.e.ta.focus(); else st.e.x.focus(); }
+        if (!window.matchMedia || !window.matchMedia('(pointer: coarse)').matches) st.e.ta.focus();
         else st.e.x.focus();
       } catch (e) { /* focus is a nicety */ }
     });
@@ -472,6 +495,8 @@
     try { if (window.visualViewport) { window.visualViewport.addEventListener('resize', function () { if (st.open) layoutPanel(); }); } } catch (x) { /* no visual viewport */ }
 
     st.mounted = true;
+    paintTheme();
+    try { if (window.MutationObserver) new MutationObserver(paintTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] }); } catch (x) { /* the look is re-read when the panel opens */ }
     paintMode();
     return true;
   }

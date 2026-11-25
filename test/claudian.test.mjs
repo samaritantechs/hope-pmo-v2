@@ -208,8 +208,11 @@ test('THE SWITCH: OFF (or no key, or no SDK) is the FAQ only: no model, the choi
     const d = deps.client ? { client: client(text('NO'), calls) } : {};
     const st = await C.claudianHandle(db, PERSON(), { op: 'status', lang: 'sw' }, { nowMs: NOW, ...d });
     assert.equal(st.ai, false, why); assert.equal(st.mode, 'faq', why); assert.ok(st.faq.length >= 6 && st.faq.every(f => f.id && f.q), why);
+    // a typed question is matched to the ready answers (Part 163): this one finds "What should I do to reach the targets?"; one that finds nothing is told so and shown the list
     const a = await C.claudianHandle(db, PERSON(), { op: 'ask', q: 'How do I improve?', lang: 'en' }, { nowMs: NOW, noGap: true, ...d });
-    assert.equal(a.mode, 'faq', why); assert.match(a.answer, /standard questions only/); assert.ok(a.faq.length > 0);
+    assert.equal(a.mode, 'match', why); assert.equal(a.id, 'improve'); assert.equal(a.q, 'What should I do to reach the targets?'); assert.match(a.answer, /Start with portfolio calls/);
+    const none = await C.claudianHandle(db, PERSON(), { op: 'ask', q: 'Will it rain in Dodoma tomorrow?', lang: 'en' }, { nowMs: NOW, noGap: true, ...d });
+    assert.equal(none.mode, 'nomatch', why); assert.match(none.answer, /No ready answer fits that question/); assert.deepEqual(none.near, []);
     assert.equal(calls.length, 0, why + ': no model call');
     const f = await C.claudianHandle(db, PERSON(), { op: 'faq', id: 'portfolio-call', lang: 'en' }, { nowMs: NOW, ...d });
     assert.equal(f.mode, 'faq'); assert.match(f.answer, /longer than 5 seconds/, why);
@@ -218,6 +221,70 @@ test('THE SWITCH: OFF (or no key, or no SDK) is the FAQ only: no model, the choi
   const on = await C.claudianHandle(fakeDb(book()), PERSON(), { op: 'status', lang: 'sw' }, { nowMs: NOW, client: client(text('x')) });
   assert.equal(on.ai, true); assert.equal(on.mode, 'ai'); assert.equal(on.left, C.DEFAULT_USER_DAILY); assert.equal(on.name, 'Claudian-PMO');
   assert.ok(on.faq.length > 0, 'the choices are there while the helper is on too: a tap costs nothing');
+});
+
+test('TYPING WITH THE AI OFF (handbook Part 163): a typed question is answered from the ready answer that fits it, shown the nearest ones, or told that none fits; never a model, never a screen the person does not hold, and each is logged as its own kind', async () => {
+  const calls = [];
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  const withClient = { client: client(text('NO'), calls) };
+  const person = PERSON({ tabs: ['dashboard', 'defexp', 'followup'] });
+  // a match, in English and in Swahili: the ready question it answers, its answer with the Settings' figures filled in, and the nearest as choices
+  const m = await ask(db, person, 'what do the arrows on the dashboard mean', withClient);
+  assert.equal(m.mode, 'match'); assert.equal(m.id, 'dash-arrows'); assert.equal(m.q, 'What do the \u25B2 \u25BC arrows on the Dashboard mean?'); assert.match(m.answer, /compare this week with last week/); assert.equal(m.ai, false);
+  assert.ok(Array.isArray(m.near), 'the nearest ready questions come with the answer (here: none)');
+  const t = await ask(db, person, 'malengo ya kampuni ya sasa', withClient, { lang: 'sw' });
+  assert.equal(t.mode, 'match'); assert.equal(t.id, 'targets'); assert.match(t.answer, /wateja 7\+ na TZS 5,000,000\+ kwa siku/, 'the owner\'s figures are filled in, in Swahili'); assert.ok(!/\{\w+\}/.test(t.answer), 'no placeholder is left');
+  // nothing fits: said plainly, no choices of its own, and the whole list is still the person\'s
+  const n = await ask(db, person, 'will it rain in Dodoma tomorrow', withClient);
+  assert.equal(n.mode, 'nomatch'); assert.equal(n.answer, 'No ready answer fits that question. Pick one below, or type it in other words.'); assert.deepEqual(n.near, []);
+  const nsw = await ask(db, person, 'mvua itanyesha kesho dodoma', withClient, { lang: 'sw' });
+  assert.equal(nsw.mode, 'nomatch'); assert.match(nsw.answer, /^Sijapata jibu la swali hilo kati ya maswali ya kawaida\./);
+  // two ready answers that weigh alike are offered, not guessed between
+  const two = await ask(db, person, 'target za timu', withClient, { lang: 'sw' });
+  assert.equal(two.mode, 'nomatch'); assert.deepEqual(two.near.map(x => x.id).sort(), ['improve', 'targets']); assert.ok(two.near.every(x => x.q && !/^(targets|improve)$/.test(x.q)), 'the choices are the ready questions\' own words in the person\'s language');
+  assert.equal(calls.length, 0, 'no model call, whatever was typed');
+  // the log: a row of each kind, the answer kept for a match, nothing spent
+  const rows = db._dump('claudian_chats');
+  assert.deepEqual(rows.slice(0, 5).map(r => r.mode), ['match', 'match', 'nomatch', 'nomatch', 'nomatch']);
+  assert.equal(rows[0].faq_id, 'dash-arrows'); assert.match(rows[0].answer, /compare this week/); assert.equal(rows[0].question, 'what do the arrows on the dashboard mean'); assert.equal(rows[0].tokens_in, 0); assert.equal(rows[0].tokens_out, 0);
+  assert.match(rows[0].note, /^agent off \u00b7 score \d+(\.\d+)?$/); assert.equal(rows[2].faq_id, undefined); assert.equal(rows[2].answer, null); assert.equal(rows[2].note, 'agent off');
+  assert.match(rows[4].note, /^agent off \u00b7 near: (targets, improve|improve, targets)$/, 'the nearest are in the note, for the owner to read');
+  // a question that asks for the person's own figure is not answered with a rule: told so, the nearest ready questions offered, and the note says it
+  const fig = await ask(db, person, 'what is my reached % today, how many', withClient);
+  assert.equal(fig.mode, 'nomatch'); assert.equal(fig.answer, 'A ready answer cannot give a figure of yours. Pick a ready question below.'); assert.ok(fig.near.some(x => x.id === 'reached'));
+  const figSw = await ask(db, person, 'reached % yangu ya leo ni ngapi', withClient, { lang: 'sw' });
+  assert.equal(figSw.answer, 'Jibu la kawaida haliwezi kukupa namba zako mwenyewe. Chagua swali la kawaida hapa chini.');
+  assert.match(db._dump('claudian_chats').filter(r => /reached/.test(r.question)).pop().note, /^agent off \u00b7 figure \u00b7 near: reached/);
+  // ON with no key says why in the note
+  const noKey = fakeDb(book());
+  const nk = await C.claudianHandle(noKey, person, { op: 'ask', q: 'tell me a joke', lang: 'en' }, { nowMs: NOW, noGap: true });
+  assert.equal(nk.mode, 'nomatch'); assert.equal(noKey._dump('claudian_chats')[0].note, 'no key or sdk');
+  // a greeting is still a word, not a search
+  const hi = await ask(db, person, 'asante sana', withClient, { lang: 'sw' });
+  assert.equal(hi.mode, 'canned'); assert.equal(db._dump('claudian_chats').filter(r => r.question === 'asante sana')[0].mode, 'canned');
+});
+
+test('TYPING WITH THE AI OFF NEVER READS ANOTHER SCREEN (handbook Part 163): a question about demand notices, advances or the phone\'s lists finds nothing, and not even a choice, for a person who may not be offered them', async () => {
+  const db = fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] }));
+  const clerk = PERSON({ tabs: ['dashboard'] }), legal = PERSON({ tabs: ['legal'] }), admin = C.portalSubject({ code: 'A', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
+  const q = 'notisi ya madai inatolewa lini';
+  for (const [who, name] of [[clerk, 'a clerk'], [PERSON({ tabs: [] }), 'a person with no screen']]) {
+    const r = await ask(db, who, q, {}, { lang: 'sw' });
+    assert.equal(r.mode, 'nomatch', name); assert.ok(!/D\.C 2/.test(JSON.stringify(r)), name + ': nothing of the Legal screen reaches them'); assert.ok(!r.near.some(n => n.id === 'legal-notice'), name);
+  }
+  assert.equal((await ask(db, legal, q, {}, { lang: 'sw' })).id, 'legal-notice', 'the holder of the screen is answered');
+  assert.equal((await ask(db, admin, q, {}, { lang: 'sw' })).id, 'legal-notice', 'the admin holds every screen');
+  // the phone: no portal screen, no call-app answer for the portal, and the leader\'s report is the leader\'s
+  const off = C.callSubject({ name: 'A', role: 'OFFICER', is_leader: false }, { teams: ['T'] }, 'd'), lead = C.callSubject({ name: 'L', role: 'LEADER', is_leader: true }, { teams: ['T'] }, 'd');
+  assert.equal((await ask(db, off, 'what does Finalize do for advances', {}, {})).mode, 'nomatch', 'the phone is offered no portal screen');
+  const lr = await ask(db, off, 'Ripoti ya simu inaonyesha nini?', {}, { lang: 'sw' });
+  assert.ok(lr.id !== 'call-report' && !(lr.near || []).some(n => n.id === 'call-report'), 'an officer is not answered with, or offered, the leaders\' report question');
+  assert.equal((await ask(db, lead, 'Ripoti ya simu inaonyesha nini?', {}, { lang: 'sw' })).id, 'call-report');
+  assert.equal((await ask(db, off, 'Nimempigia mteja lakini hajapata alama ya Amepigiwa leo', {}, { lang: 'sw' })).id, 'call-not-ticked', 'a call-app answer, to the call app');
+  assert.equal((await ask(db, admin, 'Nimempigia mteja lakini hajapata alama ya Amepigiwa leo', {}, { lang: 'sw' })).mode, 'nomatch', 'and not to the portal');
+  // the log says the same: the two who may not hold the screen found nothing, the two who may found it
+  const rows = db._dump('claudian_chats').filter(r => r.question === q);
+  assert.deepEqual(rows.map(r => [r.mode, r.faq_id || null]), [['nomatch', null], ['nomatch', null], ['match', 'legal-notice'], ['match', 'legal-notice']]);
 });
 
 test('THE FAQ: each person is offered the questions of the screens they may open, and a question id cannot be used to read another screen\'s answer', () => {

@@ -28,9 +28,10 @@ function haPass_(t){
   if (HA.team && haTeamsOf_(t).indexOf(HA.team) < 0) return false;
   if (HA.source && (t.source || '') !== HA.source) return false;
   if (HA.mode === 'ai' && !t.ai) return false;
-  if (HA.mode === 'faq' && !t.faq) return false;
+  if (HA.mode === 'faq' && !((t.faq || 0) + (t.match || 0))) return false;
+  if (HA.mode === 'nomatch' && !t.nomatch) return false;
   if (HA.mode === 'held' && !((t.limit || 0) + (t.busy || 0))) return false;
-  if (HA.mode === 'typedOnly' && !(t.ai || t.canned || t.limit || t.busy)) return false;
+  if (HA.mode === 'typedOnly' && !(t.ai || t.canned || t.limit || t.busy || t.match || t.nomatch)) return false;
   if (HA.behind === 'yes' && t.behind !== true) return false;
   if (HA.behind === 'no' && t.behind !== false) return false;
   return true;
@@ -57,7 +58,7 @@ function haFaqText_(t, labels){
 }
 function haRow_(t, labels){
   return { thread: t.thread, day: t.day, lastAt: t.lastAt, source: t.source, name: t.name, role: t.role, zone: t.zone, teams: t.teams,
-    n: t.n, ai: t.ai, faq: t.faq, held: (t.limit || 0) + (t.busy || 0), tokens: (t.tokensIn || 0) + (t.tokensOut || 0), behind: t.behind,
+    n: t.n, ai: t.ai, faq: (t.faq || 0) + (t.match || 0), none: t.nomatch || 0, held: (t.limit || 0) + (t.busy || 0), tokens: (t.tokensIn || 0) + (t.tokensOut || 0), behind: t.behind,
     first: t.first || haFaqText_(t, labels), _t: t };
 }
 function haBehindText_(v){ return v === true ? 'NYUMA / BEHIND' : v === false ? 'SAWA / OK' : '—'; }
@@ -65,9 +66,9 @@ function haBehindCls_(v){ return v === true ? 'bad' : v === false ? 'ok' : 'mut'
 
 /** One line of a board: the figures of a set of chats. */
 function haTally_(list){
-  var o = { chats: list.length, asked: 0, ai: 0, faq: 0, held: 0, tokens: 0, behind: 0 }, people = {};
+  var o = { chats: list.length, asked: 0, ai: 0, faq: 0, none: 0, held: 0, tokens: 0, behind: 0 }, people = {};
   list.forEach(function(t){
-    o.asked += t.n || 0; o.ai += t.ai || 0; o.faq += t.faq || 0; o.held += (t.limit || 0) + (t.busy || 0);
+    o.asked += t.n || 0; o.ai += t.ai || 0; o.faq += (t.faq || 0) + (t.match || 0); o.none += t.nomatch || 0; o.held += (t.limit || 0) + (t.busy || 0);
     o.tokens += (t.tokensIn || 0) + (t.tokensOut || 0); if (t.behind === true) o.behind++;
     people[haKey_(t)] = 1;
   });
@@ -81,7 +82,7 @@ function haGroup_(list, keysOf){
 }
 function haBoardCols_(firstKey, firstLabel){
   return [col(firstKey, firstLabel), col('chats', 'Mazungumzo / Chats', 'num'), col('people', 'Watu / People', 'num'), col('asked', 'Maswali / Asked', 'num'),
-    col('ai', 'AI', 'num'), col('faq', 'Ya kawaida / Ready', 'num'), col('held', 'Kikomo / Limit', 'num'), col('tokens', 'Tokens', 'num'),
+    col('ai', 'AI', 'num'), col('faq', 'Ya kawaida / Ready', 'num'), col('none', 'Hakuna jibu / No answer', 'num'), col('held', 'Kikomo / Limit', 'num'), col('tokens', 'Tokens', 'num'),
     col('behind', 'Nyuma / Behind', 'num')];
 }
 function haBoardRows_(groups, firstKey, order){
@@ -89,7 +90,7 @@ function haBoardRows_(groups, firstKey, order){
   rows.sort(order || function(a, b){ return b.chats - a.chats || String(a[firstKey]).localeCompare(String(b[firstKey])); });
   return rows;
 }
-var HA_SUM = ['chats', 'asked', 'ai', 'faq', 'held', 'tokens', 'behind'];
+var HA_SUM = ['chats', 'asked', 'ai', 'faq', 'none', 'held', 'tokens', 'behind'];
 /** The boards under the list: the reports the owner asked for, "per user roles, teams and dates", and the ready questions people tap. */
 function haBoards_(list, labels, d){
   var byRole = haBoardRows_(haGroup_(list, function(t){ return [t.role || '—']; }), 'role');
@@ -124,7 +125,8 @@ function haDraw_(){
     + kpi('Watu / People', money(t.people))
     + kpi('Maswali / Questions asked', money(t.asked), 'yaliyoandikwa na yaliyochaguliwa / typed and tapped')
     + kpi('Majibu ya AI / AI answers', money(t.ai), 'tokens ' + money(t.tokens))
-    + kpi('Ya kawaida / Ready answers', money(t.faq), 'bila tokens / no tokens')
+    + kpi('Ya kawaida / Ready answers', money(t.faq), 'bila tokens: yaliyochaguliwa na yaliyoandikwa / no tokens: tapped and typed')
+    + kpi('Hakuna jibu la kawaida / No ready answer', money(t.none), 'yaliyoandikwa AI ikiwa imezimwa / typed while the AI is off', t.none ? 'warn' : '')
     + kpi('Kikomo au shughuli / Limit or busy', money(t.held), 'walioambiwa wajaribu baadaye / told to try later', t.held ? 'warn' : '')
     + kpi('Timu ziko nyuma / Chats of teams behind', money(t.behind), 'wiki iliyopita / last week', t.behind ? 'bad' : '')
     + '</div>'
@@ -141,13 +143,13 @@ function haDraw_(){
     + haSelect_('team', 'Timu / Team', 'Zote / All', haCounts_(all, haTeamsOf_))
     + haSelect_('source', 'Wapi / Where', 'Pote / Both', [{ v: 'portal', t: 'Portal' }, { v: 'call', t: 'HOPE Calls' }])
     + haSelect_('mode', 'Aina ya jibu / Kind of answer', 'Zote / All', [{ v: 'ai', t: 'AI alijibu / the AI answered' }, { v: 'faq', t: 'Maswali ya kawaida / Ready questions' },
-        { v: 'held', t: 'Kikomo au shughuli / Limit or busy' }, { v: 'typedOnly', t: 'Walioandika swali / Typed a question' }])
+        { v: 'nomatch', t: 'Hakuna jibu la kawaida / No ready answer' }, { v: 'held', t: 'Kikomo au shughuli / Limit or busy' }, { v: 'typedOnly', t: 'Walioandika swali / Typed a question' }])
     + haSelect_('behind', 'Nyuma? / Behind?', 'Wote / All', [{ v: 'yes', t: 'Timu ziko nyuma / Teams behind' }, { v: 'no', t: 'Timu ziko sawa / Teams on target' }])
     + '<button class="btn sm ghost" onclick="haReset_()">Futa vichujio / Clear</button>'
     + '<span class="mut" style="font-size:11.5px">Yanaonyeshwa / Showing <b>' + money(list.length) + '</b> / ' + money(all.length) + '</span>'
     + '</div></div>'
     + haExpCard_(d);
-  /* Thirteen columns, the last of them the first question: on a laptop the list wraps to the card's width (S.fit = 'words', cleared in go(): it breaks at spaces
+  /* Fourteen columns, the last of them the first question: on a laptop the list wraps to the card's width (S.fit = 'words', cleared in go(): it breaks at spaces
      only, so no short column is squeezed to a few letters) so the question is in sight without a scroll to the right; a phone keeps the sideways scroll. */
   S.fit = 'words';
   S.rows = list.map(function(x){ return haRow_(x, labels); });
@@ -156,7 +158,7 @@ function haDraw_(){
   S.cols = [col('lastAt', 'Mara ya mwisho / Last', 'dt'),
     { key: 'source', label: 'Wapi / Where', kind: 'chip', chip: function(r){ return r.source === 'call' ? 'warn' : 'ok'; }, get: function(r){ return !r.thread ? '' : r.source === 'call' ? 'CALLS' : 'PORTAL'; } },
     col('name', 'Mtu / Person'), col('role', 'Cheo / Role'), col('zone', 'Zone'), col('teams', 'Timu / Teams'),
-    col('n', 'Maswali / Asked', 'num'), col('ai', 'AI', 'num'), col('faq', 'Ya kawaida / Ready', 'num'), col('held', 'Kikomo / Limit', 'num'), col('tokens', 'Tokens', 'num'),
+    col('n', 'Maswali / Asked', 'num'), col('ai', 'AI', 'num'), col('faq', 'Ya kawaida / Ready', 'num'), col('none', 'Hakuna jibu / No answer', 'num'), col('held', 'Kikomo / Limit', 'num'), col('tokens', 'Tokens', 'num'),
     { key: 'behind', label: 'Nyuma? / Behind?', kind: 'chip', chip: function(r){ return haBehindCls_(r.behind); }, get: function(r){ return !r.thread ? '' : haBehindText_(r.behind); } },
     col('first', 'Swali la kwanza / First question')];
   ONROW = function(r){ haOpen_(r.thread); };
@@ -290,9 +292,14 @@ VIEWS.hopeai = function(){
 function haNoteHtml_(note) {
   return String(note).split(' \u00b7 ').map(function(part){
     var cards = part.indexOf('cards: ') === 0, data = part.indexOf('data: ') === 0 && !/\((late|failed)\)/.test(part);
-    var grey = cards || data;
-    return '<div style="margin:2px 0;font-size:12px;color:' + (grey ? 'var(--mut)' : 'var(--bad)') + '">'
-      + (cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : data ? 'Takwimu / Data: ' + esc(part.slice(6)) : esc(part)) + '</div>';
+    // what a typed question with the AI off leaves in its note (Part 163) is information, never a problem: grey, said in both languages
+    var ready = part === 'agent off' || part === 'no key or sdk' || part === 'tie' || part === 'figure' || part.indexOf('score ') === 0 || part.indexOf('near: ') === 0;
+    var grey = cards || data || ready;
+    var text = cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : data ? 'Takwimu / Data: ' + esc(part.slice(6))
+      : part === 'agent off' ? 'AI ilikuwa imezimwa / The AI was off' : part === 'no key or sdk' ? 'AI haikuwa na ufunguo / The AI had no key'
+      : part === 'tie' ? 'Majibu mawili yalilingana / Two ready answers weighed alike' : part === 'figure' ? 'Aliomba namba yake mwenyewe / Asked for a figure of their own' : part.indexOf('score ') === 0 ? 'Alama ya kufanana / Match score: ' + esc(part.slice(6))
+      : part.indexOf('near: ') === 0 ? 'Maswali ya karibu / Nearest ready questions: ' + esc(part.slice(6)) : esc(part);
+    return '<div style="margin:2px 0;font-size:12px;color:' + (grey ? 'var(--mut)' : 'var(--bad)') + '">' + text + '</div>';
   }).join('');
 }
 
@@ -300,8 +307,8 @@ function haTime_(iso){
   var ms = Date.parse(iso);
   return isNaN(ms) ? '' : new Date(ms + 3 * 3600 * 1000).toISOString().slice(11, 16);
 }
-var HA_MODE_TEXT = { ai: 'AI', faq: 'KAWAIDA / READY', canned: 'NENO MOJA / FIXED', limit: 'KIKOMO / LIMIT', busy: 'SHUGHULI / BUSY' };
-var HA_MODE_CLS = { ai: 'ok', faq: 'mut', canned: 'mut', limit: 'warn', busy: 'warn' };
+var HA_MODE_TEXT = { ai: 'AI', faq: 'KAWAIDA / READY', match: 'JIBU LA KAWAIDA / READY ANSWER', nomatch: 'HAKUNA JIBU / NO ANSWER', canned: 'NENO MOJA / FIXED', limit: 'KIKOMO / LIMIT', busy: 'SHUGHULI / BUSY' };
+var HA_MODE_CLS = { ai: 'ok', faq: 'mut', match: 'ok', nomatch: 'warn', canned: 'mut', limit: 'warn', busy: 'warn' };
 function haOpen_(thread){
   srv('claudianThread', { thread: thread }).then(function(d){ haDrawer_(d); }).catch(function(e){ toast(String(e && e.message || e), true); });
 }
@@ -309,7 +316,7 @@ function haDrawer_(d){
   if (d.on === false) { drawer('<div class="note bad">' + esc(d.note || '') + '</div>'); return; }
   var w = d.who || {}, items = d.items || [];
   var rows = items.map(function(x){
-    return { at: x.at, mode: HA_MODE_TEXT[x.mode] || x.mode, q: x.q, a: x.a || (x.mode === 'faq' ? '(jibu la kawaida / ready answer)' : ''),
+    return { at: x.at, mode: HA_MODE_TEXT[x.mode] || x.mode, q: x.q, a: x.a || (x.mode === 'faq' ? '(jibu la kawaida / ready answer)' : x.mode === 'nomatch' ? '(hakuna jibu la kawaida / no ready answer)' : ''),
       tokensIn: x.tokensIn, tokensOut: x.tokensOut, ms: x.ms, behind: haBehindText_(x.behind), note: x.note };
   });
   BOARDS.haThread = { title: 'Hope-Ai-' + String(w.name || 'chat') + '-' + (d.day || ''), rows: rows,
@@ -328,8 +335,9 @@ function haDrawer_(d){
       + (x.tokensIn || x.tokensOut ? ' · tokens ' + money(x.tokensIn) + ' → ' + money(x.tokensOut) + (x.cacheRead ? ' (cache ' + money(x.cacheRead) + ')' : '') : '')
       + (x.ms ? ' · ' + money(x.ms) + ' ms' : '') + (x.behind === true ? ' · <span class="chip bad" style="font-size:10px">NYUMA / BEHIND</span>' : '') + '</div>'
       + '<div style="margin:2px 0"><b>Swali / Question:</b> ' + esc(x.q || '—') + '</div>'
+      + (x.mode === 'match' && x.faqLabel ? '<div class="mut" style="margin:2px 0"><b>Jibu la swali la kawaida / Ready answer to:</b> ' + esc(x.faqLabel.sw + ' / ' + x.faqLabel.en) + '</div>' : '')
       + (x.a ? '<div style="margin:2px 0;white-space:pre-wrap"><b>Jibu / Answer:</b> ' + esc(x.a) + '</div>'
-             : '<div class="mut" style="margin:2px 0">' + (x.mode === 'faq' ? 'Jibu la kawaida kutoka kwenye orodha. / A ready answer from the catalogue.' : '—') + '</div>')
+             : '<div class="mut" style="margin:2px 0">' + (x.mode === 'faq' ? 'Jibu la kawaida kutoka kwenye orodha. / A ready answer from the catalogue.' : x.mode === 'nomatch' ? 'Hakuna jibu la kawaida lililofaa. / No ready answer fitted.' : '—') + '</div>')
       + (x.note ? haNoteHtml_(x.note) : '')
       + '</div>';
   });

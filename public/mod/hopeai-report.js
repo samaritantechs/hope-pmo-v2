@@ -10,8 +10,8 @@
    question with its answer. Part B is rules in plain words (a hint is not a verdict: each says how it was found); the reader reads the chats they point to.
    Nothing here decides that an answer was wrong. Ready questions (a tap on a catalogue entry) are counted, not repeated: their answers are the catalogue's. */
 
-var HAR_CAP = { held: 20, other: 15, gaps: 40, gapsRest: 60, idk: 30, repeated: 20, risky: 30, heavy: 10, taps: 15, teams: 30, answer: 1500, question: 600 };
-var HAR_KIND = { ai: 'AI', faq: 'READY', canned: 'FIXED', limit: 'LIMIT', busy: 'BUSY' };
+var HAR_CAP = { held: 20, other: 15, gaps: 40, gapsRest: 60, idk: 30, repeated: 20, risky: 30, heavy: 10, taps: 15, teams: 30, answer: 1500, question: 600, noans: 40, matched: 30 };
+var HAR_KIND = { ai: 'AI', faq: 'READY', match: 'MATCH', nomatch: 'NO ANSWER', canned: 'FIXED', limit: 'LIMIT', busy: 'BUSY' };
 /* Words that say the helper did not know or could not see (Swahili and English). Found by words, so a hit may be a false one and a miss is possible. */
 var HAR_IDK = /sijui|siwezi kuona|siwezi kukusaidia|siwezi kuangalia|sina taarifa|sina uwezo|sina ruhusa|haipo kwenye|i don't know|i do not know|cannot see|can't see|cannot look up|can't look up|not able to|no access|i do not have|i don't have|do not have access|unable to/i;
 /* Words that look like an attempt to get the helper to break its rules. Found by words: a hint, never a verdict. */
@@ -45,6 +45,19 @@ function harNote_(note) {
   });
   return o;
 }
+/** The note of a typed question the ready answers handled (kinds MATCH and NO ANSWER): "agent off" or "no key or sdk", a score, "tie", "near: id, id". */
+function harReadyNote_(note) {
+  var o = { why: '', score: '', tie: false, figure: false, near: [] };
+  String(note == null ? '' : note).split(' \u00b7 ').forEach(function(p){
+    p = harOne_(p);
+    if (p === 'agent off' || p === 'no key or sdk') o.why = p;
+    else if (p.indexOf('score ') === 0) o.score = p.slice(6);
+    else if (p === 'tie') o.tie = true;
+    else if (p === 'figure') o.figure = true;
+    else if (p.indexOf('near: ') === 0) o.near = p.slice(6).split(',').map(harOne_).filter(function(x){ return x; });
+  });
+  return o;
+}
 function harBump_(map, key, init) { return map[key] || (map[key] = init()); }
 function harSet_(o) { return Object.keys(o).length; }
 function harPct_(a, b) { return b ? Math.round(1000 * a / b) / 10 + '%' : '-'; }
@@ -57,8 +70,8 @@ function harTop_(map, n, by) {
 
 /** Everything the report counts, in one pass over the rows (oldest first, as the server pages them). */
 function harModel_(rows) {
-  var m = { n: rows.length, kind: { ai: 0, faq: 0, canned: 0, limit: 0, busy: 0 }, tin: 0, tout: 0, cache: 0, ms: 0, msN: 0, first: '', last: '', typed: 0,
-    chats: {}, people: {}, days: {}, roles: {}, teams: {}, source: { portal: 0, call: 0 }, held: [], other: {}, gaps: {}, idk: [], asked: {}, risky: [], who: {}, taps: {}, behindChats: {} };
+  var m = { n: rows.length, kind: { ai: 0, faq: 0, match: 0, nomatch: 0, canned: 0, limit: 0, busy: 0 }, tin: 0, tout: 0, cache: 0, ms: 0, msN: 0, first: '', last: '', typed: 0,
+    chats: {}, people: {}, days: {}, roles: {}, teams: {}, source: { portal: 0, call: 0 }, held: [], other: {}, gaps: {}, idk: [], noans: {}, matched: [], asked: {}, risky: [], who: {}, taps: {}, behindChats: {} };
   rows.forEach(function(r){
     var mode = HAR_KIND[r.mode] ? r.mode : 'ai', day = String(r.day || '').slice(0, 10), thread = r.thread || (harOne_(r.name) + ':' + day), person = harPerson_(thread);
     m.kind[mode]++;
@@ -72,12 +85,12 @@ function harModel_(rows) {
     chat.rows.push(r);
     m.people[person] = 1;
     if (r.behind === true) m.behindChats[thread] = 1;
-    var d = harBump_(m.days, day || '-', function(){ return { chats: {}, people: {}, asked: 0, ai: 0, faq: 0, held: 0, tokens: 0 }; });
+    var d = harBump_(m.days, day || '-', function(){ return { chats: {}, people: {}, asked: 0, ai: 0, faq: 0, none: 0, held: 0, tokens: 0 }; });
     d.chats[thread] = 1; d.people[person] = 1; d.asked++; d.tokens += (r.tokensIn || 0) + (r.tokensOut || 0);
-    if (mode === 'ai') d.ai++; if (mode === 'faq') d.faq++; if (mode === 'limit' || mode === 'busy') d.held++;
-    var ro = harBump_(m.roles, harOne_(r.role) || '-', function(){ return { chats: {}, people: {}, asked: 0, ai: 0, faq: 0, held: 0, tokens: 0 }; });
+    if (mode === 'ai') d.ai++; if (mode === 'faq' || mode === 'match') d.faq++; if (mode === 'nomatch') d.none++; if (mode === 'limit' || mode === 'busy') d.held++;
+    var ro = harBump_(m.roles, harOne_(r.role) || '-', function(){ return { chats: {}, people: {}, asked: 0, ai: 0, faq: 0, none: 0, held: 0, tokens: 0 }; });
     ro.chats[thread] = 1; ro.people[person] = 1; ro.asked++; ro.tokens += (r.tokensIn || 0) + (r.tokensOut || 0);
-    if (mode === 'ai') ro.ai++; if (mode === 'faq') ro.faq++; if (mode === 'limit' || mode === 'busy') ro.held++;
+    if (mode === 'ai') ro.ai++; if (mode === 'faq' || mode === 'match') ro.faq++; if (mode === 'nomatch') ro.none++; if (mode === 'limit' || mode === 'busy') ro.held++;
     var ts = harTeams_(r.teams); if (!ts.length) ts = ['-'];
     ts.forEach(function(t){ var te = harBump_(m.teams, t, function(){ return { chats: {}, people: {}, asked: 0 }; }); te.chats[thread] = 1; te.people[person] = 1; te.asked++; });
     var w = harBump_(m.who, person, function(){ return { name: '', role: '', tokens: 0, asked: 0, limit: 0 }; });
@@ -87,6 +100,11 @@ function harModel_(rows) {
     var q = harNorm_(r.q);
     if (q) { var a = harBump_(m.asked, q, function(){ return { n: 0, people: {}, q: r.q }; }); a.n++; a.people[person] = 1; }
     if (mode === 'limit' || mode === 'busy') m.held.push(r);
+    if (mode === 'match' || mode === 'nomatch') {                   // handled by the ready answers: not a stop, not a failure, and never a card gap (no model was asked)
+      if (mode === 'nomatch') { var na = harBump_(m.noans, q || '(empty)', function(){ return { n: 0, people: {}, q: r.q }; }); na.n++; na.people[person] = 1; } else m.matched.push(r);
+      if (HAR_RISKY.test(String(r.q || ''))) m.risky.push(r);
+      return;
+    }
     var note = harNote_(r.note);
     note.other.forEach(function(t){ var o = harBump_(m.other, t, function(){ return { n: 0, ex: r }; }); o.n++; });
     if (mode === 'ai' && !note.cards && !note.data) {
@@ -132,25 +150,26 @@ function harBuild_(rows, meta) {
   L.push('HOW TO READ IT');
   L.push('  A chat is one person on one day. Kinds of row: AI = the model answered a typed question; READY = a tap on a ready question (an answer from the catalogue, no model, no tokens);');
   L.push('  FIXED = a greeting or thanks answered with one word, no model; LIMIT = the person was told they had reached a limit; BUSY = the model could not answer and the person was told to try later.');
+  L.push('  MATCH = a typed question answered from the best ready answer while the AI was off or had no key (no model, no tokens; the ready question it answered is named); NO ANSWER = a typed question no ready answer fitted (the person was shown the nearest ready questions).');
   L.push('  A note after a row: "cards: ..." = the knowledge cards the answer stood on; "data: ..." = the reports it read for the person\'s own teams; anything else is a stop or a failure.');
   L.push('  "Behind" = the person\'s teams were behind the company standards last week. Names, roles, zones and teams are as the system knew them when the person asked.');
   L.push('  Numbers of seven digits or more were replaced by [namba] before anything was kept. The report holds staff names and what they asked: share it only where it is meant.');
   L.push('  Part B is hints found by plain rules (each says how it was found), not conclusions.');
   L.push('');
   L.push('PART A - THE COUNTS');
-  L.push('  Rows ' + harNum_(m.n) + ': AI ' + harNum_(m.kind.ai) + ', READY ' + harNum_(m.kind.faq) + ', FIXED ' + harNum_(m.kind.canned) + ', LIMIT ' + harNum_(m.kind.limit) + ', BUSY ' + harNum_(m.kind.busy)
+  L.push('  Rows ' + harNum_(m.n) + ': AI ' + harNum_(m.kind.ai) + ', READY ' + harNum_(m.kind.faq) + ', MATCH ' + harNum_(m.kind.match) + ', NO ANSWER ' + harNum_(m.kind.nomatch) + ', FIXED ' + harNum_(m.kind.canned) + ', LIMIT ' + harNum_(m.kind.limit) + ', BUSY ' + harNum_(m.kind.busy)
     + '. Where: Portal ' + harNum_(m.source.portal) + ', HOPE Calls ' + harNum_(m.source.call) + '.');
   L.push('  Tokens: ' + harNum_(m.tin) + ' in, ' + harNum_(m.tout) + ' out, ' + harNum_(m.cache) + ' read from cache.' + (m.msN ? ' Average answer time ' + harNum_(m.ms / m.msN) + ' ms.' : ''));
   L.push('  Chats of teams that were behind last week: ' + harNum_(behind) + ' of ' + harNum_(chats) + ' (' + harPct_(behind, chats) + ').');
   L.push('');
   L.push('  By day (newest first)');
-  harTable_(L, 'day        chats people asked   AI  ready held tokens', Object.keys(m.days).sort().reverse().map(function(k){
-    var d = m.days[k]; return harPad_(k, 10) + ' ' + harPad_(harSet_(d.chats), 5, 1) + ' ' + harPad_(harSet_(d.people), 6, 1) + ' ' + harPad_(d.asked, 5, 1) + ' ' + harPad_(d.ai, 4, 1) + ' ' + harPad_(d.faq, 5, 1) + ' ' + harPad_(d.held, 4, 1) + ' ' + harPad_(harNum_(d.tokens), 8, 1);
+  harTable_(L, 'day        chats people asked   AI  ready none held tokens', Object.keys(m.days).sort().reverse().map(function(k){
+    var d = m.days[k]; return harPad_(k, 10) + ' ' + harPad_(harSet_(d.chats), 5, 1) + ' ' + harPad_(harSet_(d.people), 6, 1) + ' ' + harPad_(d.asked, 5, 1) + ' ' + harPad_(d.ai, 4, 1) + ' ' + harPad_(d.faq, 5, 1) + ' ' + harPad_(d.none, 4, 1) + ' ' + harPad_(d.held, 4, 1) + ' ' + harPad_(harNum_(d.tokens), 8, 1);
   }));
   L.push('');
   L.push('  By role');
-  harTable_(L, 'role                          chats people asked   AI  ready held tokens', harTop_(m.roles, 60, function(v){ return v.asked; }).map(function(e){
-    var d = e.v; return harPad_(harClip_(e.k, 28), 29) + ' ' + harPad_(harSet_(d.chats), 5, 1) + ' ' + harPad_(harSet_(d.people), 6, 1) + ' ' + harPad_(d.asked, 5, 1) + ' ' + harPad_(d.ai, 4, 1) + ' ' + harPad_(d.faq, 5, 1) + ' ' + harPad_(d.held, 4, 1) + ' ' + harPad_(harNum_(d.tokens), 8, 1);
+  harTable_(L, 'role                          chats people asked   AI  ready none held tokens', harTop_(m.roles, 60, function(v){ return v.asked; }).map(function(e){
+    var d = e.v; return harPad_(harClip_(e.k, 28), 29) + ' ' + harPad_(harSet_(d.chats), 5, 1) + ' ' + harPad_(harSet_(d.people), 6, 1) + ' ' + harPad_(d.asked, 5, 1) + ' ' + harPad_(d.ai, 4, 1) + ' ' + harPad_(d.faq, 5, 1) + ' ' + harPad_(d.none, 4, 1) + ' ' + harPad_(d.held, 4, 1) + ' ' + harPad_(harNum_(d.tokens), 8, 1);
   }));
   L.push('');
   var teamTop = harTop_(m.teams, HAR_CAP.teams, function(v){ return v.asked; });
@@ -191,6 +210,13 @@ function harBuild_(rows, meta) {
   var taps = harTop_(m.taps, 100, function(v){ return v; });
   L.push('B8. Ready questions tapped: ' + harN_(m.kind.faq, 'tap') + ' of ' + harN_(taps.length, 'different one') + (taps.length > HAR_CAP.taps ? ' (the ' + HAR_CAP.taps + ' most tapped)' : '') + '.');
   harList_(L, taps, HAR_CAP.taps, function(e){ var f = faq[e.k]; return e.v + 'x  ' + (f ? f.en + ' / ' + f.sw : e.k); }, 'ready questions');
+  // B9
+  var noans = harTop_(m.noans, 500, function(v){ return v.n; });
+  L.push('B9. Typed questions NO ready answer fitted (the AI was off or had no key): ' + harN_(m.kind.nomatch, 'question') + ' of ' + harN_(noans.length, 'kind') + '. Found by: the row\'s kind NO ANSWER. These are the questions to write ready answers for. Most asked first.');
+  harList_(L, noans, HAR_CAP.noans, function(e){ return e.v.n + 'x by ' + harSet_(e.v.people) + ' people: ' + harClip_(e.v.q, 160); }, 'questions');
+  // B10
+  L.push('B10. Typed questions answered from a ready answer (MATCH): ' + harNum_(m.matched.length) + '. Found by: the row\'s kind MATCH. Check that each answer is the one asked for: a wrong one is a concern about the matching words, not about the person.');
+  harList_(L, m.matched.slice().reverse(), HAR_CAP.matched, function(r){ var f = faq[r.faq]; return harRowLine_(r) + '\n       -> ' + (f ? f.en : (r.faq || '?')); }, 'rows');
   L.push('');
   L.push('PART C - EVERY CHAT (newest day first). Ready questions are counted on the chat\'s line, not repeated.');
   var byDay = {};
@@ -210,6 +236,13 @@ function harBuild_(rows, meta) {
         var note = harNote_(r.note);
         L.push('   ' + harEat_(r.at).slice(11) + ' ' + HAR_KIND[r.mode] + (r.tokensIn || r.tokensOut ? ' tokens ' + harNum_(r.tokensIn) + '>' + harNum_(r.tokensOut) : '') + (r.ms ? ' ' + harNum_(r.ms) + 'ms' : ''));
         L.push('     Q: ' + harBlock_(r.q, HAR_CAP.question));
+        if (r.mode === 'match' || r.mode === 'nomatch') {
+          var rn = harReadyNote_(r.note), f = r.faq ? faq[r.faq] : null;
+          if (r.mode === 'match') L.push('     A (ready answer to: ' + harClip_(f ? f.en : (r.faq || '?'), 90) + '): ' + harBlock_(r.a || '(no answer text)', HAR_CAP.answer));
+          else L.push('     A: (no ready answer fitted)' + (rn.tie ? ' (two ready answers weighed alike)' : '') + (rn.figure ? ' (the question asks for a figure of the person\'s own: a ready answer is a rule and cannot give one)' : ''));
+          if (rn.near.length) L.push('     nearest ready questions: ' + rn.near.map(function(id){ return harClip_(faq[id] ? faq[id].en : id, 60); }).join('; '));
+          return;
+        }
         L.push('     A: ' + harBlock_(r.a || '(no answer text)', HAR_CAP.answer));
         if (note.cards) L.push('     cards: ' + note.cards);
         if (note.data) L.push('     data: ' + note.data);
