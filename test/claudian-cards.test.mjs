@@ -201,7 +201,7 @@ test('THE CARDS: every card is whole -- a unique kebab-case id of its area, know
     assert.equal(new Set(c.tabs).size, c.tabs.length, c.id + ' repeats a screen');
     assert.ok(['both', 'web', 'phone'].includes(c.where), c.id + ' where');
     assert.equal(typeof c.leader, 'boolean', c.id + ' leader');
-    assert.ok(Array.isArray(c.keys) && c.keys.length >= 5 && c.keys.length <= 16, c.id + ' has ' + (c.keys || []).length + ' keys');
+    assert.ok(Array.isArray(c.keys) && c.keys.length >= 5 && c.keys.length <= 24, c.id + ' has ' + (c.keys || []).length + ' keys (five to twenty-four: a key that only one card has brings that card by itself, so every key is a trigger)');
     assert.equal(new Set(c.keys).size, c.keys.length, c.id + ' repeats a key');
     for (const k of c.keys) { assert.match(k, /^([a-z0-9]{3,16}|[a-z0-9]{1,12}(_[a-z0-9]{1,12}){1,3})$/, c.id + ' key ' + k); assert.ok(k.length >= 4 || SHORT_KEYS.has(k), c.id + ' key too short: ' + k); }
     assert.equal(typeof c.text, 'string');
