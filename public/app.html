@@ -366,6 +366,29 @@
   #pres .ptable.pname2 th:first-child{width:4%}
   #pres .ptable.pname2 th:nth-child(2){width:18%}
   #pres .ptable.pname2 td:nth-child(2){white-space:normal}
+  /* THE TWO COLLECTION SLIDES GET THEIR OWN COLUMN WIDTHS (handbook Part 164, addendum 4). "Add Tt Count (total count) column after count 1 ... C1 LEO and
+     TC LEO, for space purposes" and "... add CC% (Count collection)": today's slide went from eleven columns to thirteen and the early slide from ten to
+     eleven, and a fixed table shares its width equally, so the column that holds the week's uncollected shillings (ten or eleven characters that never
+     wrap) ran past its share at laptop widths and the slide scrolled sideways. The short counts and the percentages get what they need and the money
+     and the name get the rest; the widths add up to 100% on each. Only a slide that asks for them (tcls): every other wall table is laid out as before. */
+  #pres .ptable.pcolpmo th:nth-child(1){width:3%}
+  #pres .ptable.pcolpmo th:nth-child(2){width:19%}
+  #pres .ptable.pcolpmo th:nth-child(3){width:5.5%}
+  #pres .ptable.pcolpmo th:nth-child(4), #pres .ptable.pcolpmo th:nth-child(5), #pres .ptable.pcolpmo th:nth-child(6){width:6.5%}
+  #pres .ptable.pcolpmo th:nth-child(7), #pres .ptable.pcolpmo th:nth-child(8), #pres .ptable.pcolpmo th:nth-child(9),
+  #pres .ptable.pcolpmo th:nth-child(10), #pres .ptable.pcolpmo th:nth-child(11){width:6%}
+  #pres .ptable.pcolpmo th:nth-child(12){width:15%}
+  #pres .ptable.pcolpmo th:nth-child(13){width:8%}
+  #pres .ptable.pcolearly th:nth-child(1){width:3%}
+  #pres .ptable.pcolearly th:nth-child(2){width:17%}
+  #pres .ptable.pcolearly th:nth-child(3){width:6%}
+  #pres .ptable.pcolearly th:nth-child(4){width:9%}
+  #pres .ptable.pcolearly th:nth-child(5), #pres .ptable.pcolearly th:nth-child(6){width:7.5%}
+  #pres .ptable.pcolearly th:nth-child(7), #pres .ptable.pcolearly th:nth-child(9), #pres .ptable.pcolearly th:nth-child(11){width:8%}
+  #pres .ptable.pcolearly th:nth-child(8), #pres .ptable.pcolearly th:nth-child(10){width:13%}
+  #pres .ptable.pcolpmo td:nth-child(2), #pres .ptable.pcolearly td:nth-child(2){white-space:normal}
+  /* A header of several words ("Coll % (week)", "Wamebaki / Left") may stand on two lines, as the name column's always could: the figures under it still never wrap */
+  #pres .ptable.pcolpmo th.r, #pres .ptable.pcolearly th.r{white-space:normal}
   /* And a last resort: if a board is still wider than the screen, it scrolls INSIDE its own
      box rather than pushing the whole slide sideways and hiding the navigation arrows. */
   #pres .pscroll{overflow-x:auto;max-width:100%}
@@ -847,7 +870,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-25-n';
+var BUILD = '2026-11-25-o';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation

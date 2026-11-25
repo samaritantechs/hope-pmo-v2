@@ -6697,8 +6697,13 @@ test('presentation boards: recovery, early collection, credit, calls and follow-
      one at N.C 1 does not count, and neither does the unpaid one at N.C 0. */
   assert.equal(early.count1, 2, 'two at N.C 1 still owing; the paid one is not counted');
   assert.equal(early.pct, 50);
+  /* CC%, "percentage of paid customers (paid among total)" (25 Nov 2026, Part 164, addendum 4): two of the five have paid, 40% -- NOT the 50%
+     of the money beside it, which is a different question (how much came in, not how many have paid). */
+  assert.equal(early.ccPct, 40, 'two paid of five on the list');
+  assert.notEqual(early.ccPct, early.pct, 'the headcount share and the money share are two different figures');
   const earlyKesho = b.earlyToday.find(r => r.officer === 'EARLY E');
   assert.equal(earlyKesho.count1, 2, 'the next-list board carries it too -- that is the slide\'s own column');
+  assert.equal(earlyKesho.ccPct, 40, 'and so does CC%');
   assert.deepEqual(b.earlyCount1Missing, [], 'every team on the list carries N.C: nothing to name');
   assert.deepEqual(earlyKesho.count1Missing, []);
   /* THE SAME ANSWER WITHOUT THE MIGRATION: the fold counts the identical rule, so a database
@@ -7164,11 +7169,19 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
   /* "between Teams and J3 columns on the PMO Collection (Todays collection) table ... add
      count 1 column too", then "sum of nc 1 of underpaid and unpaid per pmo" */
   assert.equal(k.count1, 1, 'the UNPAID N.C 1 customer on today\'s list; the PAID one at N.C 1 is not counted');
+  /* "Add Tt Count (total count) column after count 1 column ... C1 LEO and TC LEO" (25 Nov 2026, Part 164, addendum 4): the total count is every
+     customer on today's sheet over the officer's teams, so the room reads the Count 1 AMONG which total. KAMARIA's list is the ten above. */
+  assert.equal(k.customers, 10, 'TC LEO: the ten customers on KONGOWE\'s sheet today, paid or not, N.C 1 or not');
+  assert.ok(k.count1 <= k.customers, 'a Count 1 is a part of the total count');
+  // CC% LEO: nine of the ten have paid
+  assert.equal(k.paidOver, 9); assert.equal(k.ccPct, 90, 'CC%: nine paid among ten');
 
   const c = b.pmo.find(r => r.officer === 'CATHERINE');
   assert.equal(c.pct, 50);
   assert.equal(c.uncollected, 1000, 'the same shillings uncollected, a very different percentage');
   assert.equal(c.count1, 0, 'her customers are all at N.C 0: nought, not unknown');
+  assert.equal(c.customers, 2, 'TC LEO: the two customers on MBAGALA\'s sheet today');
+  assert.equal(c.paidOver, 1); assert.equal(c.ccPct, 50, 'one paid among two');
   assert.deepEqual(b.pmoCount1Missing, [], 'every row of today\'s sheet carries N.C: no team to name');
 
   /* NO MONEY ON THE PRESENTATION. Not "not displayed" -- not present in the answer at all, so a
@@ -7189,11 +7202,41 @@ test('a PMO officer is scored on the percentage collected, not the size of the b
      the slide's JUMLA cell under a day is collected over expected across the officers, never
      the mean of their percentages ("not average of the above percentages"). */
   assert.deepEqual(Object.keys(k).sort(),
-    ['officer', 'pct', 'sn', 'teams', 'count1', 'uncollected', 'weekPct', 'weekUncollected',
+    ['officer', 'pct', 'sn', 'teams', 'count1', 'customers', 'paidOver', 'ccPct', 'uncollected', 'weekPct', 'weekUncollected',
      'weekCollected', 'weekExpected',
      'pctJ3', 'pctJ4', 'pctJ5', 'pctAL', 'pctIJ',
      'colJ3', 'colJ4', 'colJ5', 'colAL', 'colIJ',
      'expJ3', 'expJ4', 'expJ5', 'expAL', 'expIJ'].sort());
+});
+
+test('CC% LEO is the share of customers who have PAID among the total count -- a headcount ratio, not the money; an underpaid customer has not paid; nobody on the list is a null, never a nought', async () => {
+  /* "having the columns short in both early and today col slides, we can add CC% (Count collection) to see percentage of paid customers (paid among
+     total)" -- the owner, 25 Nov 2026 (handbook Part 164, addendum 4). KONGOWE today, six customers: three PAID and one OVERPAID (all four count
+     as paid), one UNDERPAID (400 still owing: not paid) and one UNPAID whose instalment is nine times the others'. The money is 4,600 of 14,000
+     (32.9%); the headcount is four of six (66.7%): two different answers to two different questions, and the wall prints both. */
+  const rows = [];
+  for (let i = 0; i < 3; i++) rows.push(X('KONGOWE', TODAY, 'PAID'));
+  rows.push(X('KONGOWE', TODAY, 'OVERPAID'));
+  rows.push(X('KONGOWE', TODAY, 'UNDERPAID', 1000, 400));
+  rows.push(X('KONGOWE', TODAY, 'UNPAID', 9000));
+  const b = await run('officerBoards', {}, ADMIN, fakeDb(pmoTables(rows)));
+  const k = b.pmo.find(r => r.officer === 'KAMARIA');
+  assert.equal(k.customers, 6); assert.equal(k.paidOver, 4, 'PAID and OVERPAID are paid; UNDERPAID and UNPAID are not');
+  assert.equal(k.ccPct, 66.7, 'four of six, to one decimal like every other percentage');
+  assert.equal(k.pct, 32.9, 'the money share is a different figure');
+  // MBAGALA has no sheet today: CATHERINE is on the board with nobody on her list -- no percentage, not 0%
+  const c = b.pmo.find(r => r.officer === 'CATHERINE');
+  assert.equal(c.customers, 0); assert.equal(c.paidOver, 0); assert.equal(c.ccPct, null, 'nobody on the list: no percentage, never "0% have paid"');
+  // the one definition, called directly
+  const { countCollectionPct } = await import('../api/_lib/pmo.js');
+  assert.equal(countCollectionPct(4, 6), 66.7); assert.equal(countCollectionPct(0, 10), 0, 'a real nought is a nought');
+  assert.equal(countCollectionPct(10, 10), 100); assert.equal(countCollectionPct(1, 3), 33.3); assert.equal(countCollectionPct(2, 3), 66.7);
+  assert.equal(countCollectionPct(0, 0), null); assert.equal(countCollectionPct(5, 0), null); assert.equal(countCollectionPct(5, undefined), null);
+  assert.equal(countCollectionPct(undefined, 4), 0); assert.equal(countCollectionPct('x', 4), 0, 'an unreadable count of the paid reads as none, never a thrown error');
+  // the early collection board uses the same definition (one rule, two slides)
+  const core = await readFile(new URL('../api/_lib/portal-core.js', import.meta.url), 'utf8');
+  assert.match(core, /ccPct: countCollectionPct\(b\.paidOver, b\.customers\),/, 'the early board asks the shared function');
+  assert.ok(!/ccPct: pctOf\(|ccPct: Math\.round/.test(core), 'no second copy of the definition in the portal');
 });
 
 test('the five bands pay what the plan says they pay', async () => {
