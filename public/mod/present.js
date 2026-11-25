@@ -104,13 +104,29 @@ function presRefetch(){
 function presSlides(){
     var d = S.presData.d, b = S.presData.b, c = d.cards;
     var slides = [];
-    slides.push({ id:'kpi', kind:'kpi', title:'HOPE PMO — ' + d.weekday, items:[
+    /* THE DAY'S TWELVE: FOUR ACROSS, THREE DOWN, FILLING THE TV -- "Add 6 widgets to hope pmo overall slide at presentation so that they
+       are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). The six that were here keep their
+       places (row one and the first two of row two); the six that join them are figures the dashboard's own answer already carries,
+       worked out by the server and only printed here, so the wall and the dashboard can never say two different things:
+         Initial arrears and Cleared today   the cards beside Current arrears and Defaulters (d.cards);
+         Sales %, Early Collection %, Collection %, Recovery %   the four strip tiles of the dashboard (d.perf), this week's, in the strip's
+         own order -- whole numbers, as everywhere (pct), a dash where the week has nothing to measure.
+       Nothing is read for them: the answer is the one this slide already stood on. The grid is `grid:'4x3'` (a class and a fit in
+       presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
+    var pf = d.perf || {};
+    slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
       { l:'Recovered', v:'TZS '+money(c.recovered) },
       { l:'Defaulters', v:money(c.defaulters) },
       { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
-      { l:'Abnormal', v:money(c.abnormal) }]});
+      { l:'Abnormal', v:money(c.abnormal) },
+      { l:'Initial arrears', v:'TZS '+money(c.initArrears) },
+      { l:'Cleared today', v:money(c.cleared) },
+      { l:'Sales % (week)', v:pct(pf.salesPct) },
+      { l:'Early Collection % (week)', v:pct(pf.ecolPct) },
+      { l:'Collection % (week)', v:pct(pf.colPct) },
+      { l:'Recovery % (week)', v:pct(pf.recPct) }]});
     /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
        that sells well and collects badly is not a good team, and neither is the reverse.
 
@@ -569,7 +585,7 @@ function presStop(){
 function presDraw(){
   var s = S.slides[S.presI], body;
   if (s.kind === 'kpi'){
-    body = '<div class="pkpis">' + s.items.map(function(it){
+    body = '<div class="pkpis' + (s.grid === '4x3' ? ' p12' : '') + '">' + s.items.map(function(it){
       return '<div class="pkpi"><div class="pl">'+esc(it.l)+'</div><div class="pv">'+esc(it.v)+'</div></div>'; }).join('') + '</div>';
   } else if (s.kind === 'progress'){
     body = '<div class="pprog">' + s.units.map(presProgGroup_).join('') + '</div>';
@@ -667,6 +683,22 @@ function presFit_(){
     var need2 = tbl.getBoundingClientRect().height;
     if (need2 < tAvail) tbl.style.fontSize = Math.min(base, Math.max(8, parseFloat(tbl.style.fontSize) * tAvail / need2 * 0.97)) + 'px';
     return;
+  }
+  /* THE DAY'S TWELVE FILL THE SCREEN (handbook Part 164): on a screen wider than a phone the grid is given the whole height under the
+     heading, so its three rows of 1fr stretch to the TV's bottom edge; and one value size is found for every tile -- the largest at which
+     the longest figure ("TZS 1,234,567,890") still fits its tile -- so the twelve read as one set and none runs past its edge. On a narrow
+     screen the grid is two columns and the zoom below fits it as it does any other body. */
+  var kg = pres.querySelector('.pkpis.p12');
+  if (kg){
+    var vals = Array.prototype.slice.call(kg.querySelectorAll('.pv'));
+    kg.style.height = ''; vals.forEach(function(v){ v.style.fontSize = ''; });
+    if (window.innerWidth > 900){
+      kg.style.height = Math.max(240, Math.floor(avail)) + 'px';
+      var over = function(){ return vals.some(function(v){ return v.scrollWidth > v.clientWidth + 1; }); };
+      var sz = vals.length ? (parseFloat(getComputedStyle(vals[0]).fontSize) || 40) : 40, guard = 40;
+      while (over() && sz > 12 && guard-- > 0){ sz = Math.max(12, Math.floor(sz * 0.93)); vals.forEach(function(v){ v.style.fontSize = sz + 'px'; }); }
+      return;
+    }
   }
   var h = body.getBoundingClientRect().height;
   if (h <= avail) return;

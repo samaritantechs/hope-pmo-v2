@@ -1,0 +1,171 @@
+/* THE "HOPE PMO — DAY" SLIDE OF THE PRESENTATION: TWELVE TILES, FOUR ACROSS AND THREE DOWN, FILLING THE TV. The REAL public/app.html and
+   public/mod/present.js in a real browser, the dashboard's answer served from this file (the figures are made up).
+
+     "Add 6 widgets to hope pmo overall slide at presentation so that they are 4x3 full on our tv (HOPE PMO - DAY slide)"
+                                                                                  -- the owner, 25 Nov 2026 (handbook Part 164)
+
+   What it proves, at the sizes a TV and a laptop really are (3840x2160, 1920x1080, 1366x768, 1280x720, 1024x768) and on a phone-width window:
+
+     1. the slide has TWELVE tiles, the six it always had in their places and the six that joined them after, each reading what the dashboard's
+        answer says (the arrears and the customers from its cards, the four percentages from its strip, whole numbers, a dash where the week
+        has nothing to measure);
+     2. on a TV-sized screen they stand FOUR in a row and THREE in a column, every tile the same size, the grid reaching the bottom of the
+        screen (it FILLS the TV: no band of empty wall under it) and the slide never scrolls;
+     3. no figure runs past its tile, however long (a billion-shilling arrears at the smallest laptop), and every tile's figure has one size;
+     4. on a window narrower than a tablet the twelve fall to two columns and the slide is fitted as every other slide is (nothing is cut);
+     5. the other slides of the deck are drawn as they were (the team table is still a table), and no page error in any world.
+
+   Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
+
+       npm i --no-save playwright-core
+       node tools/browser-checks/portal-present-day-slide.mjs
+
+   CHROME overrides the browser path; APP_FILE and MOD_DIR run it against another copy of the page and of the modules (the page as it
+   stood before this change shows what the check is for); SHOTS=<dir> saves pictures. Exit code 0 = everything passed. */
+import { chromium } from 'playwright-core';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const CHROME = process.env.CHROME || '/opt/pw-browsers/chromium';
+const APP = fs.readFileSync(process.env.APP_FILE || path.join(ROOT, 'public/app.html'), 'utf8');
+const MOD_DIR = process.env.MOD_DIR || path.join(ROOT, 'public/mod');
+
+/* THE DASHBOARD'S ANSWER, as much of it as the deck reads. The largest figures are real-sized (a company's arrears in the billions). */
+let CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321,
+  uncollectedToday: 456789012, abnormal: 37 };
+let PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 };
+const DASH = () => ({ ok: true, weekday: 'WED', weekOf: '2026-11-23', weekEnd: '2026-11-29', pastWeek: false, asOfDate: '2026-11-25', cards: CARDS, perf: PERF,
+  teamPerf: [{ branch: 'DAR', team: 'KONGOWE', salesMonth: 1000, curArrears: 5000, defaulters: 3, uncollected: 100, collPct: 90, recPctMon: 80, recPctYest: 70, recPctWeek: 60, basis: 'today' }],
+  colTrend: [], workspace: 'hopepmo' });
+const warn = console.warn; console.warn = () => {};
+
+const srv = http.createServer((req, res) => {
+  const u = new URL(req.url, 'http://x');
+  if (u.pathname === '/' || u.pathname.startsWith('/app')) { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(APP); return; }
+  if (u.pathname.startsWith('/mod/')) {
+    const f = path.join(MOD_DIR, path.basename(u.pathname));
+    if (fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(f)); return; }
+  }
+  if (u.pathname === '/api/me') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: true, build: null })); return; }
+  if (u.pathname === '/api/portal') {
+    let b = ''; req.on('data', c => b += c);
+    req.on('end', () => {
+      const { fn } = JSON.parse(b || '{}');
+      if (fn === 'dashboardFull') { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(DASH())); return; }
+      // the officer boards do not arrive: the deck says so on a slide of its own and plays the rest (the slide under test needs only the dashboard)
+      res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ ok: false, error: 'the officer boards are not served by this check' }));
+    });
+    return;
+  }
+  res.writeHead(404); res.end('');
+});
+await new Promise(r => srv.listen(0, r));
+const base = 'http://127.0.0.1:' + srv.address().port;
+const browser = await chromium.launch({ executablePath: CHROME });
+const ok = [], fail = [], errs = [];
+const check = (name, cond, extra) => (cond ? ok : fail).push(name + (extra ? ' -- ' + extra : ''));
+const BENIGN = /favicon|status of 404|ERR_FAILED|brand|status of 500|status of 403/;
+const UI = { presentSeconds: 3600, refreshSeconds: 6000, hintIntervalSeconds: 3600, hintLifetimeSeconds: 5 };
+const USER = { name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['present', 'dashboard', 'settings'] };
+
+async function openDeck(size) {
+  const page = await browser.newPage({ viewport: size });
+  page.on('pageerror', e => errs.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error' && !BENIGN.test(m.text())) errs.push('console: ' + m.text()); });
+  page.on('dialog', d => d.accept());
+  page.setDefaultTimeout(9000);
+  await page.goto(base + '/');
+  await page.evaluate(m => { S.code = 'ADM'; start(m); }, { name: USER.name, role: USER.role, teams: USER.teams, teamCount: null, tabs: USER.tabs, can: { dashboard: true, upload: false, admin: true }, ui: UI });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => go('present', {}));
+  await page.waitForFunction(() => S.slides && S.slides.length && document.getElementById('presStart'), null, { timeout: 12000 });
+  await page.evaluate(() => { presStart(0); clearInterval(S.presTimer); clearInterval(S.presRefresh); });   // the first slide, held still
+  await page.waitForFunction(() => document.querySelector('#pres .pkpis'), null, { timeout: 8000 });
+  await page.waitForTimeout(250);
+  return page;
+}
+const geo = page => page.evaluate(() => {
+  const pres = document.getElementById('pres'), g = pres.querySelector('.pkpis');
+  const tiles = [...g.querySelectorAll('.pkpi')].map(t => t.getBoundingClientRect());
+  const vals = [...g.querySelectorAll('.pv')].map(v => ({ over: v.scrollWidth > v.clientWidth + 1, fs: Math.round(parseFloat(getComputedStyle(v).fontSize) * 10) / 10 }));
+  const uniq = a => [...new Set(a.map(x => Math.round(x)))].length;
+  const t = e => (e.textContent || '').replace(/\s+/g, ' ').trim();
+  return { cls: g.className, n: tiles.length, cols: uniq(tiles.map(r => r.left)), rows: uniq(tiles.map(r => r.top)),
+    sameW: uniq(tiles.map(r => r.width)) === 1, sameH: uniq(tiles.map(r => r.height)) === 1,
+    bottom: Math.max(...tiles.map(r => r.bottom)), top: Math.min(...tiles.map(r => r.top)), right: Math.max(...tiles.map(r => r.right)), left: Math.min(...tiles.map(r => r.left)),
+    vals, vw: innerWidth, vh: innerHeight, scrolls: pres.scrollHeight > pres.clientHeight + 1, hscrolls: pres.scrollWidth > pres.clientWidth + 1,
+    tiles: [...g.querySelectorAll('.pkpi')].map(el => [t(el.querySelector('.pl')), t(el.querySelector('.pv'))]) };
+});
+
+try {
+const SIZES = [[3840, 2160], [1920, 1080], [1366, 768], [1280, 720], [1024, 768]];
+let first = null;
+for (const [w, h] of SIZES) {
+  const page = await openDeck({ width: w, height: h });
+  const G = await geo(page);
+  if (!first) first = G;
+  const tag = w + 'x' + h;
+  check(tag + ' twelve tiles on the day slide', G.n === 12, 'n=' + G.n + ' class=' + G.cls);
+  check(tag + ' FOUR in a row and THREE in a column', G.cols === 4 && G.rows === 3, G.cols + ' columns, ' + G.rows + ' rows');
+  check(tag + ' every tile the same size', G.sameW && G.sameH);
+  check(tag + ' the grid FILLS the screen: it reaches the bottom (within the slide\'s own margin) and starts under the heading', G.bottom >= G.vh - 70 && G.bottom <= G.vh - 20 && G.top > 40 && G.top < G.vh * 0.2, 'top ' + Math.round(G.top) + ' bottom ' + Math.round(G.bottom) + ' of ' + G.vh);
+  check(tag + ' it uses the width too, clear of the two navigation arrows (they sit on the edges, 74 pixels in)', G.left >= 74 && G.left <= 110 && G.right >= G.vw - 110 && G.right <= G.vw - 74, Math.round(G.left) + ' .. ' + Math.round(G.right) + ' of ' + G.vw);
+  check(tag + ' and no arrow lies over a tile', await page.evaluate(() => { const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    const arrows = [...document.querySelectorAll('#pres .pnav')].map(e => e.getBoundingClientRect()); return ![...document.querySelectorAll('#pres .pkpi')].some(t => arrows.some(a => hit(a, t.getBoundingClientRect()))); }));
+  check(tag + ' the slide does not scroll', !G.scrolls && !G.hscrolls);
+  check(tag + ' no figure runs past its tile, and every tile\'s figure has one size', G.vals.every(v => !v.over) && new Set(G.vals.map(v => v.fs)).size === 1, JSON.stringify(G.vals.map(v => v.fs)));
+  if (process.env.SHOTS && (w === 1920 || w === 1366)) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.SHOTS, 'present-day-' + tag + '.png') }); }
+  await page.close();
+}
+// ---- 1. what the twelve say
+const T = first.tiles, L = T.map(x => x[0]), V = Object.fromEntries(T);
+check('1 the six it always had keep their places, then the six that joined: arrears, customers, then the four percentages of the strip',
+  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Initial arrears', 'Cleared today',
+    'Sales % (week)', 'Early Collection % (week)', 'Collection % (week)', 'Recovery % (week)']), JSON.stringify(L));
+check('1 the old six read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Recovered'] === 'TZS 1,234,567,890' && V['Defaulters'] === '10,372'
+  && V['Sales this week'] === 'TZS 987,654,321' && V['Uncollected today'] === 'TZS 456,789,012' && V['Abnormal'] === '37', JSON.stringify(V));
+check('1 the new money and customers are the dashboard cards\': Initial arrears, Cleared today', V['Initial arrears'] === 'TZS 23,760,795,812' && V['Cleared today'] === '4,321', JSON.stringify(V));
+check('1 the four percentages are the strip\'s, in whole numbers (84.4 reads 84, 91.2 reads 91, 96.7 reads 97, 118.4 reads 118)',
+  V['Sales % (week)'] === '84%' && V['Early Collection % (week)'] === '91%' && V['Collection % (week)'] === '97%' && V['Recovery % (week)'] === '118%', JSON.stringify(V));
+// ---- a week with nothing to measure: a dash, never a nought
+PERF = { salesPct: null, ecolPct: null, colPct: 100, recPct: 0 };
+let page = await openDeck({ width: 1920, height: 1080 });
+let N = Object.fromEntries((await geo(page)).tiles);
+check('1 a percentage the week cannot measure is a dash, a real nought is a nought', N['Sales % (week)'] === '—' && N['Early Collection % (week)'] === '—' && N['Collection % (week)'] === '100%' && N['Recovery % (week)'] === '0%', JSON.stringify(N));
+await page.close();
+PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 };
+// ---- 3. the longest figures at the smallest screens
+CARDS = { ...CARDS, curArrears: 98765432109, initArrears: 123456789012, recovered: 98765432109, salesWeek: 98765432109, uncollectedToday: 98765432109 };
+for (const [w, h] of [[1366, 768], [1024, 768], [1280, 720]]) {
+  page = await openDeck({ width: w, height: h });
+  const G = await geo(page);
+  check('3 ' + w + 'x' + h + ' with arrears of TZS 123 billion no figure runs past its tile and they share one size', G.vals.every(v => !v.over) && new Set(G.vals.map(v => v.fs)).size === 1 && G.cols === 4 && G.rows === 3, JSON.stringify(G.vals.map(v => v.fs)));
+  await page.close();
+}
+if (process.env.SHOTS) { page = await openDeck({ width: 1366, height: 768 }); await page.screenshot({ path: path.join(process.env.SHOTS, 'present-day-1366x768-billions.png') }); await page.close(); }
+// ---- 4. a narrow window: two columns, nothing cut
+page = await openDeck({ width: 800, height: 600 });
+const NW = await geo(page);
+check('4 on a window narrower than a tablet the twelve fall to two columns and are fitted to the screen, none cut', NW.n === 12 && NW.cols === 2 && NW.vals.every(v => !v.over) && NW.bottom <= NW.vh, JSON.stringify({ cols: NW.cols, rows: NW.rows, bottom: Math.round(NW.bottom), vh: NW.vh }));
+await page.close();
+// ---- 5. the other slides are drawn as they were: the second slide is still a table
+page = await openDeck({ width: 1920, height: 1080 });
+await page.evaluate(() => { S.presI = 1; presDraw(); });
+await page.waitForTimeout(250);
+const second = await page.evaluate(() => ({ table: !!document.querySelector('#pres .ptable'), kpis: !!document.querySelector('#pres .pkpis'), head: (document.querySelector('#pres .phead span') || {}).textContent }));
+check('5 the second slide is still the team table, with no tile grid', second.table && !second.kpis && /Team performance/.test(second.head || ''), JSON.stringify(second));
+await page.evaluate(() => { S.presI = 0; presDraw(); });
+await page.waitForTimeout(250);
+const back = await geo(page);
+check('5 coming back to the day slide draws it whole again (the fit is redone on every draw)', back.n === 12 && back.cols === 4 && back.rows === 3 && back.bottom >= back.vh - 70);
+await page.close();
+} catch (e) { fail.push('the check stopped: ' + String((e && e.message) || e).split('\n')[0].slice(0, 240)); }
+
+check('5 no page error in any world', errs.length === 0, errs.slice(0, 3).join(' | '));
+await browser.close(); srv.close(); console.warn = warn;
+for (const f of fail) console.log('FAIL  ' + f);
+console.log(`${ok.length} passed, ${fail.length} failed`);
+process.exit(fail.length ? 1 : 0);

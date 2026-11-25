@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { fetchAll, runQuery , rpcAll, isBusyFailure, STALE_OK_MS, errWords } from './supabase.js';
 import { docketKeyOf } from './docket.js';
 import { commentsOf, withDocketKey } from './history.js';
@@ -1847,16 +1848,54 @@ async function dedRatesWrite_(db, rates) {
   if (error) throw new Error(error.message);
   noteSettingsWritten(db);
 }
-/** The form: one case, many staff. The reporter is the signed-in person -- the sheet asked
-    for a name typed by hand, and a typed name is a name that can be anybody's. */
+/* ONE PRESS, ONE CASE -- AND A CASE MAY NAME SEVERAL CUSTOMERS (handbook Part 164).
+     "[a reporter] pressed multiple times at submitting deduction case and deductions went so many (16) so we must delete all unique rows in
+      the existing deductions bro and prevent such an issue in the future"
+     "at filling deductions case, we can add another customer & ref no in the same case as we add multi officers"   -- the owner, 25 Nov 2026
+   THE CASE'S ID AND EVERY ROW'S ID ARE MADE FROM WHAT WAS SUBMITTED, never drawn at random: the reporter, the team, the customers with
+   their REF NOs, the two dates, the decision, the amount to pay and every staff line, hashed together. The same submission -- a second
+   press, a press on a slow connection, a retry after a timeout, the same form sent from a second tab -- therefore makes the SAME ids, and
+   the table's own primary key refuses the second copy: INSERT ... ON CONFLICT DO NOTHING, the way the phones' call sync already dedups
+   (call-core.js: "no lock, no read-then-write race"). Nothing is read first, so there is no window between a check and a write for two
+   server instances to fall into, and the 16 presses of 25 Nov (16 cases of one staff line, each paying the reporter again) are one.
+   A DIFFERENT submission is never mistaken for a repeat: one changed amount, date, word of the decision, staff line or customer is another
+   case. HR's columns are not touched by a repeat: the first copy stays exactly as HR left it. */
+const DED_MAX_CUSTOMERS = 50;
+/** A uuid made from text: the same text, the same uuid, on every server. Version 5's bits, so it reads as a name-based uuid. */
+function dedUuid_(text) {
+  const h = createHash('sha256').update(String(text)).digest('hex');
+  return h.slice(0, 8) + '-' + h.slice(8, 12) + '-5' + h.slice(13, 16) + '-' + '89ab'[parseInt(h[16], 16) & 3] + h.slice(17, 20) + '-' + h.slice(20, 32);
+}
+/** The customers of a case, as typed: [{ name, ref }], each with BOTH a name and a REF NO, the same REF NO only once (the first name stands).
+    `customers` is the list the form sends; the old pair `customer` + `ref` is read as a list of one, so a client that has not reloaded
+    still works. A row the person left empty is dropped; a row with only half of it is refused, saying which half. */
+function dedCustomers_(p) {
+  const raw = Array.isArray(p && p.customers) && p.customers.length ? p.customers : [{ name: p && p.customer, ref: p && p.ref }];
+  const out = [], seen = new Set();
+  for (const c of raw) {
+    const name = String((c && c.name) || '').trim(), ref = String((c && c.ref) || '').trim();
+    if (!name && !ref) continue;
+    if (!name) throw badRequest('Jina la mteja linahitajika. / The customer\'s name is required.');
+    if (!ref) throw badRequest('REF NO ya mteja inahitajika. / The customer\'s REF NO is required.');
+    const k = K(ref);
+    if (seen.has(k)) continue;
+    seen.add(k); out.push({ name, ref });
+  }
+  if (!out.length) throw badRequest('Jina la mteja linahitajika. / The customer\'s name is required.');
+  if (out.length > DED_MAX_CUSTOMERS) throw badRequest(`Wateja wasizidi ${DED_MAX_CUSTOMERS} kwa kesi moja. / At most ${DED_MAX_CUSTOMERS} customers in one case.`);
+  return out;
+}
+/** The form: one case, many customers, many staff. The reporter is the signed-in person -- the sheet asked for a name typed by hand, and a
+    typed name is a name that can be anybody's. The customers' names and their REF NOs are written, in the order typed, into the two cells
+    every line of the case already has, joined by a comma and a space: the list, its Excel, JPG and CSV, the report and the search read
+    those two cells and show every customer with no other change. */
 async function addDeduction(db, user, p, nowMs = Date.now()) {
   if (!p) throw badRequest('Nothing to save.');
   const team = String(p.team || '').trim();
   if (!team) throw badRequest('Chagua timu. / Pick the team.');
   if (!teamAllowed(user, team)) throw forbidden(`You do not have access to team ${team}.`);
-  const customer = String(p.customer || '').trim(), ref = String(p.ref || '').trim();
-  if (!customer) throw badRequest('Jina la mteja linahitajika. / The customer\'s name is required.');
-  if (!ref) throw badRequest('REF NO ya mteja inahitajika. / The customer\'s REF NO is required.');
+  const customers = dedCustomers_(p);
+  const customer = customers.map(c => c.name).join(', '), ref = customers.map(c => c.ref).join(', ');
   const decision = String(p.decision || '').trim();
   if (!decision) throw badRequest('Andika maamuzi / maelezo. / Write the decision (details).');
   const staff = (Array.isArray(p.staff) ? p.staff : []).map(s => ({
@@ -1864,22 +1903,30 @@ async function addDeduction(db, user, p, nowMs = Date.now()) {
   })).filter(s => s.name);
   if (!staff.length) throw badRequest('Ongeza angalau staff mmoja mtuhumiwa. / Add at least one accused staff.');
   const at = new Date(nowMs).toISOString();
-  const caseId = (globalThis.crypto && crypto.randomUUID) ? crypto.randomUUID()
-    : at + '|' + ref + '|' + Math.random().toString(36).slice(2);
   const toPay = dedMoney_(p.toPay) || 0;
-  const rows = staff.map(s => ({
+  const receivedDate = dedDate_(p.receivedDate), discoveryDate = dedDate_(p.discoveryDate);
+  // WHAT WAS SUBMITTED, in one text: everything the submission says and nothing about when (the minute is what differs between presses).
+  const content = JSON.stringify([1, user.name || '', team, customers.map(c => [c.name, c.ref]), receivedDate, discoveryDate, decision, toPay,
+    staff.map(s => [s.name, s.amountTaken || 0, s.deduction || 0])]);
+  const caseId = dedUuid_(content);
+  const rows = staff.map((s, i) => ({
+    id: dedUuid_(content + '|' + i),
     case_id: caseId, submitted_at: at, dept: String(p.dept || user.role || '').trim() || null, reporter: user.name,
     team, customer, ref, staff: s.name, amount_taken: s.amountTaken || 0,
-    received_date: dedDate_(p.receivedDate), discovery_date: dedDate_(p.discoveryDate),
+    received_date: receivedDate, discovery_date: discoveryDate,
     decision, deduction: s.deduction || 0, to_pay: toPay,
     created_by: user.name, created_at: at,
   }));
-  const { error } = await db.from('pmo_deductions').insert(rows);
+  const { data: written, error } = await db.from('pmo_deductions')
+    .upsert(rows, { onConflict: 'id', ignoreDuplicates: true }).select('id');
   if (error) {
     if (/pmo_deductions|does not exist|schema cache/i.test(String(error.message || ''))) throw badRequest(DED_NOTE);
     throw new Error(error.message);
   }
-  return { caseId, rows: rows.length, team, ref };
+  /* `written` holds only the rows this call really wrote; none of them means the case was already there (a repeat). An answer that does
+     not say (no list) is taken as written -- a repeat is never announced on a guess. */
+  const added = Array.isArray(written) ? written.length : rows.length;
+  return { caseId, rows: rows.length, added, duplicate: added === 0, customers: customers.length, team, ref };
 }
 /** HR's column: notes and the amount actually deducted on one staff line; remaining follows. */
 async function hrDeduction(db, user, p, nowMs = Date.now()) {
@@ -4601,11 +4648,17 @@ export function isAbnormalAmount(amount, step) {
    arrive randomly), or the day asked for (`date`), and `date: 'all'` is the old whole-window
    reading. The uploaded abnormal sheet carries no date of its own, so its rows are placed by
    the day they were uploaded (created_at) -- a sheet uploaded today is today's list. One
-   small, team-scoped read finds the latest day; the dashboard tile keeps its own window. */
+   small, team-scoped read finds the latest day; the dashboard tile keeps its own window.
+   THE TAB NOW OPENS ON THE WHOLE FORTNIGHT AGAIN, AND THE LATEST DAY IS THE CHOICE (25 Nov 2026, handbook Part 164): "Open Abnormal
+   Payments panel with defaults at the two all weeks view, latest is an opt for user" -- the button "Wiki 2 zote / Whole fortnight" is
+   what the tab opens on and "Siku ya mwisho / Latest day" is the one a person presses. The page sends 'all' when nothing was chosen
+   and 'latest' for the latest day; THIS function still answers a blank `date` with the latest day, exactly as it always did, so any
+   other caller that never said keeps the answer it had. */
 async function abnormalDay_(db, user, args, nowMs) {
   const day = String((args && args.date) || '').trim();
   if (day === 'all') return { ...abnormalWindow(nowMs, args), mode: 'all', latest: null };
   if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return { from: day, to: day, mode: 'day', latest: null };
+  // Blank or 'latest': the latest day that has a payment in the book.
   const today = todayKey(nowMs);
   const last = await fetchAll(() => onTeams(db.from('received_payments').select('paid_at')
     .lte('paid_at', today).order('paid_at', { ascending: false }).limit(1), user.teams));

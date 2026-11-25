@@ -1394,10 +1394,17 @@ test('the dashboard paints its core alone; the officer boards load on a tap; a d
 test('the abnormal payments tab asks for a day and carries a day strip', () => {
   const app = appSrc();
   const view = app.slice(app.indexOf('VIEWS.abnormal = function'), app.indexOf('VIEWS.credit = function'));
-  assert.ok(/srv\('abnormal', \{ date: S\.args\.date \|\| '' \}\)/.test(view), 'the day asked for travels; blank is the latest');
-  for (const h of ['data-abn-step="-1"', 'data-abn-step="1"', 'id="abnDate"', 'data-abn-set=""', 'data-abn-set="all"']) {
+  /* THE TAB OPENS ON THE WHOLE FORTNIGHT (25 Nov 2026, handbook Part 164): "Open Abnormal Payments panel with defaults at the two all weeks
+     view, latest is an opt for user". Nothing chosen asks for 'all'; the latest day is a button that asks for 'latest'. */
+  assert.ok(/srv\('abnormal', \{ date: S\.args\.date \|\| 'all' \}\)/.test(view), 'the day asked for travels; nothing chosen is the whole fortnight');
+  assert.ok(!/srv\('abnormal', \{ date: S\.args\.date \|\| '' \}\)/.test(view), 'a blank day is no longer what the tab sends');
+  for (const h of ['data-abn-step="-1"', 'data-abn-step="1"', 'id="abnDate"', 'data-abn-set="latest"', 'data-abn-set="all"']) {
     assert.ok(view.includes(h), h + ' is on the strip');
   }
+  assert.ok(!view.includes('data-abn-set=""'), 'no button asks for the blank day any more');
+  // The latest-day button is lit only when the person asked for it; the fortnight button is lit by what the server answered.
+  assert.ok(/S\.args\.date === 'latest' \? '' : ' ghost'\) \+ '" data-abn-set="latest"/.test(view), 'the latest day is lit only when chosen');
+  assert.ok(/d\.mode === 'all' \? '' : ' ghost'\) \+ '" data-abn-set="all"/.test(view), 'the whole fortnight is lit when it is what is shown');
   assert.ok(/getAttribute\('data-abn-step'\)/.test(app) && /getAttribute\('data-abn-set'\)/.test(app), 'and the strip is wired');
   assert.ok(/abnDate\.onchange/.test(app), 'a typed day is wired too');
 });

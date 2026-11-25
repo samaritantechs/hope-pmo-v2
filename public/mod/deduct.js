@@ -161,10 +161,19 @@ function dedRateDel_(from){
     .catch(function(e){ toast('Haikuondolewa / NOT removed: ' + String((e && e.message) || e), true); });
 }
 
-/* THE FORM: one case, as many accused staff as it takes ("Ongeza wote waliohusika"). The
-   reporter is the signed-in person; every amount is recomputed on the server. */
+/* THE FORM: one case, as many customers and as many accused staff as it takes ("Ongeza wote waliohusika"). The reporter is the signed-in
+   person; every amount is recomputed on the server.
+     "at filling deductions case, we can add another customer & ref no in the same case as we add multi officers" ... "[a reporter] pressed
+      multiple times at submitting deduction case and deductions went so many (16) ... prevent such an issue in the future"
+                                                                                                  -- the owner, 25 Nov 2026 (handbook Part 164)
+   CUSTOMERS are rows exactly like the staff rows: a name and a REF NO, "+ Ongeza mteja mwingine" for the next, "✕ Ondoa" to take one off.
+   ONE PRESS, ONE CASE: the Save button is switched off the instant it is pressed and says it is saving, and a press while the first is on
+   its way does nothing; if the answer is slow the person sees it working, and if it fails the button comes back with the reason and the form
+   keeps what was typed. The server is the second wall: the same submission is the same case however many times it arrives (addDeduction). */
+var DED_SAVE_LABEL_ = 'Hifadhi kesi / Save case';
 function dedNew(){
   var m = S.dedMeta || { teams: [] };
+  S.dedSaving = false;
   var staffRow = function(i){
     return '<div class="facts ded-staff" data-i="'+i+'" style="margin-bottom:8px">'
       + '<div class="fld"><label>Jina la staff mtuhumiwa / Accused staff *</label><input class="dsName" placeholder="Staff name"></div>'
@@ -172,43 +181,77 @@ function dedNew(){
       + '<div class="fld"><label>Makato (kiasi) / Deduction</label><input class="dsDed" type="number" min="0" step="0.01" placeholder="0"></div>'
       + '<a href="#" class="dsRm" style="font-size:12px;color:var(--bad)">✕ Ondoa huyu / Remove</a></div>';
   };
+  var custRow = function(i){
+    return '<div class="facts ded-cust" data-i="'+i+'" style="margin-bottom:8px">'
+      + '<div class="fld"><label>Jina la mteja / Customer *</label><input class="dcName" placeholder="Customer name"></div>'
+      + '<div class="fld"><label>REF NO ya mteja / Customer REF NO *</label><input class="dcRef" inputmode="numeric" placeholder="REF NO"></div>'
+      + '<a href="#" class="dcRm" style="font-size:12px;color:var(--bad)">✕ Ondoa huyu / Remove</a></div>';
+  };
   drawer('<h3>Kesi mpya ya makato / New PMO deduction case</h3>'
     + '<div class="sub">Aliyeripoti / Reporter: <b>'+esc((S.me && S.me.name) || '')+'</b> · '+esc((S.me && S.me.role) || '')+'</div>'
     + '<div class="fld"><label>Timu / Team *</label><select id="ddTeam"><option value="">— chagua / pick —</option>'
       + (m.teams||[]).map(function(t){ return '<option>'+esc(t)+'</option>'; }).join('') + '</select></div>'
-    + '<div class="fld"><label>Jina la mteja / Customer *</label><input id="ddCust"></div>'
-    + '<div class="fld"><label>REF NO ya mteja / Customer REF NO *</label><input id="ddRef" inputmode="numeric"></div>'
-    + '<div class="fld"><label>Tarehe aliyopokea / Date received</label><input id="ddRecv" type="date"></div>'
+    + '<h4 style="margin:10px 0 6px">Wateja / Customers (ongeza wote waliohusika)</h4>'
+    + '<div id="ddCusts">' + custRow(0) + '</div>'
+    + '<button class="btn ghost w" id="ddAddCust" type="button">+ Ongeza mteja mwingine / Add another customer</button>'
+    + '<div class="fld" style="margin-top:10px"><label>Tarehe aliyopokea / Date received</label><input id="ddRecv" type="date"></div>'
     + '<div class="fld"><label>Tarehe ya ugunduzi / kikao / Date discovered (meeting)</label><input id="ddDisc" type="date" value="'+today()+'"></div>'
     + '<div class="fld"><label>Maamuzi (maelezo) / Decision (details) *</label><textarea id="ddDec" rows="3"></textarea></div>'
     + '<div class="fld"><label>Cha kulipiwa mteja / Amount to be paid to the customer</label><input id="ddPay" type="number" min="0" step="0.01" placeholder="0"></div>'
     + '<h4 style="margin:10px 0 6px">Staff watuhumiwa / Accused staff (ongeza wote waliohusika)</h4>'
     + '<div id="ddStaff">' + staffRow(0) + '</div>'
-    + '<button class="btn ghost w" id="ddAdd">+ Ongeza mwingine / Add another</button>'
-    + '<button class="btn w" id="ddSave" style="margin-top:10px">Hifadhi kesi / Save case</button>');
-  var host = $('#ddStaff'), n = 1;
-  var wireRm = function(){
-    Array.prototype.forEach.call(host.querySelectorAll('.dsRm'), function(a){
+    + '<button class="btn ghost w" id="ddAdd" type="button">+ Ongeza mwingine / Add another</button>'
+    + '<button class="btn w" id="ddSave" type="button" style="margin-top:10px">' + DED_SAVE_LABEL_ + '</button>');
+  var staffHost = $('#ddStaff'), custHost = $('#ddCusts'), nStaff = 1, nCust = 1;
+  // A row's own "remove" link, for either list: at least one row stays.
+  var wireRm = function(host, rowCls, rmCls, none){
+    Array.prototype.forEach.call(host.querySelectorAll('.' + rmCls), function(a){
       a.onclick = function(ev){ ev.preventDefault();
-        if (host.querySelectorAll('.ded-staff').length <= 1){ toast('Angalau staff mmoja. / At least one staff.', true); return; }
+        if (host.querySelectorAll('.' + rowCls).length <= 1){ toast(none, true); return; }
         a.parentNode.parentNode.removeChild(a.parentNode); };
     });
   };
-  wireRm();
-  $('#ddAdd').onclick = function(){ host.insertAdjacentHTML('beforeend', staffRow(n++)); wireRm(); };
+  var wireStaff = function(){ wireRm(staffHost, 'ded-staff', 'dsRm', 'Angalau staff mmoja. / At least one staff.'); };
+  var wireCust = function(){ wireRm(custHost, 'ded-cust', 'dcRm', 'Angalau mteja mmoja. / At least one customer.'); };
+  wireStaff(); wireCust();
+  $('#ddAdd').onclick = function(){ staffHost.insertAdjacentHTML('beforeend', staffRow(nStaff++)); wireStaff(); };
+  $('#ddAddCust').onclick = function(){
+    custHost.insertAdjacentHTML('beforeend', custRow(nCust++)); wireCust();
+    var rows = custHost.querySelectorAll('.dcName'); if (rows.length) rows[rows.length - 1].focus();
+  };
   $('#ddSave').onclick = function(){
-    var staff = Array.prototype.map.call(host.querySelectorAll('.ded-staff'), function(el){
+    var btn = this;
+    if (S.dedSaving) return;                                   // ONE PRESS, ONE CASE: a press while the first is on its way does nothing
+    var staff = Array.prototype.map.call(staffHost.querySelectorAll('.ded-staff'), function(el){
       return { name: el.querySelector('.dsName').value.trim(), amountTaken: el.querySelector('.dsTaken').value, deduction: el.querySelector('.dsDed').value };
     }).filter(function(s){ return s.name; });
+    // A customer row left empty is no customer; one with only a name or only a REF NO is said, so it is not lost silently.
+    var customers = [], half = false;
+    Array.prototype.forEach.call(custHost.querySelectorAll('.ded-cust'), function(el){
+      var nm = el.querySelector('.dcName').value.trim(), rf = el.querySelector('.dcRef').value.trim();
+      if (!nm && !rf) return;
+      if (!nm || !rf) { half = true; return; }
+      customers.push({ name: nm, ref: rf });
+    });
     if (!$('#ddTeam').value){ toast('Chagua timu. / Pick the team.', true); return; }
-    if (!$('#ddCust').value.trim() || !$('#ddRef').value.trim()){ toast('Jina na REF NO ya mteja vinahitajika. / Customer name and REF NO are required.', true); return; }
+    if (half || !customers.length){ toast('Kila mteja anahitaji jina na REF NO. / Every customer needs a name and a REF NO.', true); return; }
     if (!$('#ddDec').value.trim()){ toast('Andika maamuzi / maelezo. / Write the decision.', true); return; }
     if (!staff.length){ toast('Ongeza angalau staff mmoja mtuhumiwa. / Add at least one accused staff.', true); return; }
-    srv('addDeduction', { team:$('#ddTeam').value, customer:$('#ddCust').value.trim(), ref:$('#ddRef').value.trim(),
+    S.dedSaving = true; btn.disabled = true; btn.textContent = 'Inahifadhi… / Saving…';
+    srv('addDeduction', { team:$('#ddTeam').value, customers:customers,
       receivedDate:$('#ddRecv').value, discoveryDate:$('#ddDisc').value, decision:$('#ddDec').value.trim(),
       toPay:$('#ddPay').value, staff:staff })
-      .then(function(r){ toast('Kesi imehifadhiwa: '+r.rows+' staff. / Case saved: '+r.rows+' staff line(s).'); closeDrawer(); render({ force:true }); })
-      .catch(function(e){ toast(String(e.message||e), true); });
+      .then(function(r){
+        S.dedSaving = false;
+        toast(r && r.duplicate
+          ? 'Kesi hii ilikwisha hifadhiwa — haikurudiwa. / This case was already saved — not repeated.'
+          : 'Kesi imehifadhiwa: '+r.rows+' staff'+(r.customers > 1 ? ', wateja '+r.customers : '')+'. / Case saved: '+r.rows+' staff line(s)'+(r.customers > 1 ? ', '+r.customers+' customers' : '')+'.');
+        closeDrawer(); render({ force:true });
+      })
+      .catch(function(e){
+        S.dedSaving = false; btn.disabled = false; btn.textContent = DED_SAVE_LABEL_;
+        toast('Haikuhifadhiwa / NOT saved: ' + String((e && e.message) || e), true);
+      });
   };
 }
 
