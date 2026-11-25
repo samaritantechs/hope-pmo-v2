@@ -1247,14 +1247,15 @@ function settingForm(key, value){
 function cpNote_(c){
   if (!c) return 'Inasoma hali ya msaidizi… / Reading the helper’s state…';
   if (c.error) return 'Hali haikusomeka: ' + esc(c.error) + ' / The state could not be read.';
-  var st = c.standards || {};
+  var t = c.targets || {};
   return (c.keyPresent
       ? 'Ufunguo wa mtoa huduma upo kwenye seva. / The provider key is set on the server.'
       : '<b>Ufunguo haupo.</b> Weka <code>ANTHROPIC_API_KEY</code> kwenye mipangilio ya seva (Vercel au seva yetu); bila hiyo msaidizi anajibu maswali ya kawaida tu. '
         + '/ <b>No key.</b> Set <code>ANTHROPIC_API_KEY</code> in the host’s settings (Vercel or our server); until then the helper answers the ready questions only.')
     + '<br>Modeli / Model: <b>' + esc(c.model || '') + '</b> &mdash; ndogo zaidi, mtu hawezi kuibadilisha / the smallest, nobody can change it.'
     + '<br>Maswali ya AI leo / AI questions today: <b>' + money(c.today || 0) + '</b> (kikomo cha kampuni / company limit ' + money(c.allDaily || 0) + ')'
-    + '<br>Viwango vinavyotumika / Standards in use: ' + esc(String(st.sales)) + '% &middot; ' + esc(String(st.col)) + '% &middot; ' + esc(String(st.rec)) + '%'
+    + '<br>Malengo yanayotumika (kila timu) / Targets in use (each team): mauzo / sales ' + esc(String(t.salesCustomers)) + '+ &middot; TZS ' + money(t.salesAmount || 0) + '+ kwa siku / a day &middot; Early Col ' + esc(String(t.ecolPct))
+      + '% &middot; Col ' + esc(String(t.colPct)) + '% &middot; Rec ' + esc(String(t.recPct)) + '% / TZS ' + money(t.recAmount || 0) + '+ &middot; simu / calls ' + esc(String(t.callsDay)) + '+ kwa siku / a day'
     + (c.lastProblem && c.lastProblem.text ? '<br><span style="color:var(--bad)">Tatizo la mwisho / Last problem: ' + esc(c.lastProblem.text) + '</span>' : '');
 }
 function cpCard_(c){
@@ -1333,11 +1334,22 @@ var SETTINGS_GROUPS = [
          boards, the deck on the wall -- turns a percentage GREEN once it reaches its target and
          RED when it is under the JUMLA line; a blank target means nothing turns green. */
       { key:'TARGET_EARLY_COL_PCT', label:'Lengo la Early Col % / Early collection % target', type:'number', dflt:'',
-        note:'Asilimia ya karatasi ya awali (initial). Wazi = hakuna kijani. / Initial-sheet collection %. Blank = nothing turns green.' },
+        note:'Asilimia ya karatasi ya awali (initial). Wazi = hakuna kijani (Claudian-PMO anasema 90). / Initial-sheet collection %. Blank = nothing turns green (Claudian-PMO says 90).' },
       { key:'TARGET_COL_PCT', label:'Lengo la Col % / Collection % target', type:'number', dflt:'',
-        note:'Ukusanyaji wa siku na wa PMO Collection. / Day collection and PMO Collection %.' },
+        note:'Ukusanyaji wa siku na wa PMO Collection. Wazi: Claudian-PMO anasema 100. / Day collection and PMO Collection %. Blank: Claudian-PMO says 100.' },
       { key:'TARGET_REC_PCT', label:'Lengo la Rec % / Recovery % target', type:'number', dflt:'',
-        note:'Kilichorejeshwa ÷ kisichokusanywa. Mauzo: 100% ya lengo ni kijani. / Recovered ÷ uncollected. Sales: 100% of target is green.' },
+        note:'Kilichorejeshwa ÷ kisichokusanywa. Mauzo: 100% ya lengo ni kijani. Wazi: Claudian-PMO anasema 120. / Recovered ÷ uncollected. Sales: 100% of target is green. Blank: Claudian-PMO says 120.' },
+      /* THE OWNER'S OTHER FOUR TARGETS PER TEAM (25 Nov 2026, handbook Part 157): "Sales 7+ customers per day amount of 5m+ per day" ...
+         "Recovery 120% with amounts from 700k+" ... "Portifolio calls 300+ per day". Nothing but Claudian-PMO reads them: it quotes them to every
+         team and pushes the ones who are behind. The dashboard's own sales figure still divides by the weekly target above. */
+      { key:'TARGET_SALES_CUSTOMERS_DAILY', label:'Lengo la wateja wa mauzo kwa siku / Customers sold to per day', type:'number', dflt:'7',
+        note:'Kila timu: wateja 7 au zaidi kwa siku. Claudian-PMO pekee. / Each team: 7 or more customers a day. Claudian-PMO only.' },
+      { key:'TARGET_SALES_AMOUNT_DAILY', label:'Lengo la mauzo kwa siku / Sales per day, TZS', type:'number', dflt:'5000000',
+        note:'Kila timu: TZS 5,000,000 au zaidi kwa siku. Claudian-PMO pekee; Dashibodi bado inagawanya kwa lengo la wiki hapo juu. / Each team: TZS 5,000,000 or more a day. Claudian-PMO only; the Dashboard still divides by the weekly target above.' },
+      { key:'TARGET_REC_AMOUNT', label:'Lengo la kiasi cha urejeshaji / Recovery amount, TZS', type:'number', dflt:'700000',
+        note:'Urejeshaji 120% pamoja na kiasi cha TZS 700,000 au zaidi. Claudian-PMO pekee. / Recovery 120% with TZS 700,000 or more. Claudian-PMO only.' },
+      { key:'TARGET_CALLS_DAILY', label:'Lengo la simu za portfolio kwa siku / Portfolio calls per day', type:'number', dflt:'300',
+        note:'Simu 300 au zaidi kwa siku. Claudian-PMO pekee. / 300 or more a day. Claudian-PMO only.' },
     ] },
   { id:'rotation', title:'Mzunguko wa kufuatilia wadaiwa / Recycling rotation',
     sub:'nani anamiliki mdaiwa wiki hii / who owns a defaulter this week', fields:[

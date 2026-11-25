@@ -19,7 +19,7 @@ process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const C = await import('../api/_lib/claudian.js');
 const { FAQ, faqChoices, faqAnswer, faqAllowed, fill } = await import('../api/_lib/claudian-faq.js');
-const { TAB_NOTES, GLOSSARY, STANDARDS_DEFAULT } = await import('../api/_lib/claudian-knowledge.js');
+const { TAB_NOTES, GLOSSARY, TARGETS_DEFAULT } = await import('../api/_lib/claudian-knowledge.js');
 const { ADMIN_TABS } = await import('../api/_lib/auth.js');
 const { callMinSecsOf } = await import('../api/_lib/call-core.js');
 
@@ -65,7 +65,7 @@ test('THE REQUEST CARRIES THE QUESTION AND THE PERSON\'S OWN CONTEXT, and nothin
   assert.match(m, /SCREENS this person may open: Dashboard; Expected Defaulters; Legal \/ Demand Notices\./);
   assert.match(m, /- Expected Defaulters: /, 'the note of the screen the question is about');
   assert.ok(!/Settings|Audit log|PMO Deduction|Advance|Teams & Staff/.test(m), 'a screen this person may not open is not even named');
-  assert.match(m, /Company standards \(team bonus\): sales 80% of the weekly target \(TZS 100,000,000 per team\); collection 96%; recovery 120%\./);
+  assert.match(m, /Company targets for EACH team: sales 7\+ customers and TZS 5,000,000\+ a day; early collection 90%\+ a day; collection 100%; recovery 120% with amounts from TZS 700,000; portfolio calls 300\+ a day\. Sales % = sales \/ the weekly sales target \(TZS 100,000,000 per team\)\./, 'the owner\'s own targets, as the owner wrote them');
   assert.match(m, /QUESTION: What is on the Expected Defaulters list\?$/);
   assert.ok(!m.includes('SECRET-CODE-123') && !m.includes('JUMA G'), 'neither the access code nor the person\'s name is sent');
   assert.ok(!/\d{7,}/.test(m), 'no long number');
@@ -121,7 +121,9 @@ test('THE INSTRUCTIONS TO THE MODEL carry every one of the owner\'s rules, and n
   assert.match(p, /no access to customers, loans, phone numbers, staff records/, 'no data');
   assert.match(p, /Speak only about the screens in SCREENS/, 'only what the person may see');
   assert.match(p, /not a general assistant/, 'the helper is not a general AI');
-  assert.match(p, /ALWAYS finish your answer with one sentence that pushes \(1\) portfolio calls[^.]*\(2\) the standards they are short of/, 'the users who are behind');
+  assert.match(p, /ALWAYS finish your answer with one sentence that pushes \(1\) portfolio calls[^.]*\(2\) the targets they are short of/, 'the users who are behind');
+  assert.match(p, /Quote them exactly as given; never invent, round or change a target/, 'the targets are quoted, never made up');
+  assert.match(p, /Only sales %, collection % and recovery % of last week are measured[^]*never say the person met or missed them/, 'what is not measured is not judged');
   assert.match(p, /Never repeat or ask for an access code/);
   assert.ok(p.includes('Naweza kusaidia mambo ya HOPE PMO tu.') && p.includes('I can only help with HOPE PMO matters.'));
   assert.ok(p.includes(GLOSSARY), 'the glossary is in the cached front');
@@ -139,11 +141,18 @@ test('USERS WHO ARE BEHIND ARE TOLD SO: last full week\'s figures of the person\
     { ...rec('sales', 'OTHER TEAM', 1, 100000000), name: 'OTHER TEAM' }] });
   const calls = [];
   await ask(fakeDb(t), PERSON({ teams: ['KONGOWE'] }), 'How do I improve my numbers?', { client: client(text('Piga simu.'), calls) });
-  assert.match(calls[0].messages[0].content, /STANDING \(last full week, the person's teams together\): sales 63% \(standard 80%\); collection 94% \(standard 96%\); recovery 101% \(standard 120%\)\. BEHIND: yes \(short on sales, collection, recovery\)\./);
+  assert.match(calls[0].messages[0].content, /STANDING \(last full week, the person's teams together; only these three are measured\): sales 63% of the weekly sales target \(target 100%\); collection 94% \(target 100%\); recovery 101% \(target 120%\)\. BEHIND: yes \(short on sales, collection, recovery\)\./);
   // two teams together are worked out from the sums, not by averaging two percentages
   const calls2 = [];
   await ask(fakeDb(t), PERSON({ teams: ['KONGOWE', 'MBAGALA'] }), 'How do I improve my numbers?', { client: client(text('Piga simu.'), calls2) });
-  assert.match(calls2[0].messages[0].content, /sales 80% \(standard 80%\); collection 97% \(standard 96%\); recovery 126% \(standard 120%\)\. BEHIND: no\./, 'sales 160 of 200 million is 80%: at the standard is not behind');
+  assert.match(calls2[0].messages[0].content, /sales 80% of the weekly sales target \(target 100%\); collection 97% \(target 100%\); recovery 126% \(target 120%\)\. BEHIND: yes \(short on sales, collection\)\./, 'recovery is above its 120%: not short on it; sales and collection are under their 100%');
+  // a team that meets all three is not behind, and exactly AT a target is not behind either
+  const ok = book({ performance_records: [rec('sales', 'KONGOWE', 100000000, 100000000), rec('collection', 'KONGOWE', 100, 100), rec('recovery', 'KONGOWE', 120, 100)] });
+  C.resetClaudianForTests();
+  const calls3 = [];
+  await ask(fakeDb(ok), PERSON({ teams: ['KONGOWE'] }), 'How do I improve my numbers?', { client: client(text('Piga simu.'), calls3) });
+  assert.match(calls3[0].messages[0].content, /sales 100% of the weekly sales target \(target 100%\); collection 100% \(target 100%\); recovery 120% \(target 120%\)\. BEHIND: no\./, 'exactly at every target: not behind');
+  C.resetClaudianForTests();                         // the figures are kept ten minutes for a set of teams: the next look is at the first book again
   const s = await C.standingOf(fakeDb(t), PERSON({ teams: ['KONGOWE'] }), await C.loadCfg(fakeDb(t), NOW), NOW);
   assert.equal(s.week, LAST_WEEK); assert.equal(s.behind, true); assert.deepEqual(s.short, ['sales', 'col', 'rec']);
   // not known: said as not known
@@ -229,24 +238,55 @@ test('THE FAQ: each person is offered the questions of the screens they may open
   assert.equal(faqChoices(PERSON(), 'sw')[0].q, FAQ.find(e => e.id === faqChoices(PERSON(), 'sw')[0].id).sw.q, 'Swahili when asked for Swahili');
 });
 
-test('THE FAQ ANSWERS QUOTE THE SETTINGS: the standards, the minimum seconds and the advance amounts follow Settings, and no placeholder is ever left in a shown answer', async () => {
-  const t = book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }, { key: 'BONUS_SALES_PCT', value: '85' }, { key: 'BONUS_COL_PCT', value: '97' }, { key: 'BONUS_REC_PCT', value: '130' }, { key: 'SALES_TARGET_WEEKLY', value: '120000000' },
+test('THE FAQ ANSWERS QUOTE THE SETTINGS: the company\'s targets, the minimum seconds and the advance amounts follow Settings, and no placeholder is ever left in a shown answer', async () => {
+  const t = book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }, { key: 'TARGET_EARLY_COL_PCT', value: '85%' }, { key: 'TARGET_COL_PCT', value: ' 97 ' }, { key: 'TARGET_REC_PCT', value: '130.5' },
+    { key: 'TARGET_SALES_CUSTOMERS_DAILY', value: '9' }, { key: 'TARGET_SALES_AMOUNT_DAILY', value: '6,500,000' }, { key: 'TARGET_REC_AMOUNT', value: '800000' }, { key: 'TARGET_CALLS_DAILY', value: '350' },
     { key: 'CALL_MIN_SECS', value: '8' }, { key: 'ADVANCE_AMOUNTS', value: '60000, 90000' }] });
   const db = fakeDb(t), all = C.portalSubject({ code: 'A', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
   const t1 = await C.claudianHandle(db, all, { op: 'faq', id: 'targets', lang: 'en' }, { nowMs: NOW });
-  assert.equal(t1.answer, 'The team bonus standards: sales 85% of the weekly target (TZS 120,000,000 per team), collection 97%, recovery 130%. The way to reach them is portfolio calls every day to every customer on your list.');
+  assert.equal(t1.answer, 'Each team\'s targets: sales 9+ customers and TZS 6,500,000+ a day; early collection 85%+ a day; collection 97%; recovery 130.5% with amounts from TZS 800,000; portfolio calls 350+ a day. The way to reach them is portfolio calls every day to every customer on your list.');
+  assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'improve', lang: 'en' }, { nowMs: NOW })).answer, /The aim is 350\+ calls a day, collection 97% and recovery 130\.5%\./);
   assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'portfolio-call', lang: 'sw' }, { nowMs: NOW })).answer, /iliyozidi sekunde 8\./);
   assert.match((await C.claudianHandle(db, all, { op: 'faq', id: 'advance-ask', lang: 'en' }, { nowMs: NOW })).answer, /\(60000, 90000\)/);
   const plain = await C.claudianHandle(fakeDb(book({ settings: [{ key: 'CLAUDIAN_AI', value: 'OFF' }] })), all, { op: 'faq', id: 'targets', lang: 'sw' }, { nowMs: NOW });
-  assert.match(plain.answer, /mauzo 80% ya lengo la wiki \(TZS 100,000,000 kwa timu\), makusanyo 96%, urejeshaji 120%/, 'no setting: the GM\'s own plan (80, 96, 120) and the weekly hundred million');
-  for (const e of FAQ) for (const l of ['sw', 'en']) assert.ok(!/\{\w+\}/.test(fill(e[l].a, C.__vars || { minSecs: 5, salesPct: 80, colPct: 96, recPct: 120, salesTarget: '100,000,000', advAmounts: 'x' })), e.id + ' ' + l + ' has a placeholder the settings do not fill');
-  assert.deepEqual(STANDARDS_DEFAULT, { sales: 80, col: 96, rec: 120 });
+  assert.match(plain.answer, /Malengo ya kila timu: mauzo wateja 7\+ na TZS 5,000,000\+ kwa siku; makusanyo ya awali \(Early Col\) 90%\+ kwa siku; makusanyo 100%; urejeshaji 120% kwa kiasi cha TZS 700,000\+; simu za portfolio 300\+ kwa siku\./, 'no setting: the owner\'s own numbers');
+  const full = { minSecs: 5, salesCust: 7, salesAmt: '5,000,000', ecolPct: 90, colPct: 100, recPct: 120, recAmt: '700,000', callsDay: 300, advAmounts: 'x' };
+  for (const e of FAQ) for (const l of ['sw', 'en']) assert.ok(!/\{\w+\}/.test(fill(e[l].a, full)), e.id + ' ' + l + ' has a placeholder the settings do not fill');
+  assert.deepEqual(TARGETS_DEFAULT, { salesPct: 100, salesCustomers: 7, salesAmount: 5000000, ecolPct: 90, colPct: 100, recPct: 120, recAmount: 700000, callsDay: 300 }, 'the owner\'s own numbers, in one place');
+});
+
+/* THE COMPANY'S TARGETS (handbook Part 157) -- "Targets per team" · "Sales 7+ customers per day amount of 5m+ per day" · "Early col 90%+ per day" ·
+   "Collection 100%" · "Recovery 120% with amounts from 700k+" · "Portifolio calls 300+ per day" (the owner, 25 Nov 2026). */
+test('THE TARGETS ARE THE OWNER\'S, with Settings on top: a blank row, a word or a nought leaves the owner\'s number; a number in Settings wins', async () => {
+  const cfgOf = async settings => { C.resetClaudianForTests(); return C.loadCfg(fakeDb(book({ settings })), NOW); };
+  const dflt = await cfgOf([]);
+  assert.deepEqual(dflt.targets, TARGETS_DEFAULT, 'no row at all: the owner\'s numbers');
+  assert.deepEqual(dflt.std, { sales: 100, col: 100, rec: 120 }, 'what "behind" is measured against: sales at 100% of the weekly target, collection 100, recovery 120');
+  for (const [why, row] of [['blank', ''], ['words', 'high'], ['zero', '0'], ['negative', '-5'], ['too big for a percentage', '5000']]) {
+    const c = await cfgOf([{ key: 'TARGET_COL_PCT', value: row }, { key: 'TARGET_REC_PCT', value: row }, { key: 'TARGET_EARLY_COL_PCT', value: row }]);
+    assert.equal(c.targets.colPct, 100, why); assert.equal(c.targets.recPct, 120, why); assert.equal(c.targets.ecolPct, 90, why);
+  }
+  const c = await cfgOf([{ key: 'TARGET_COL_PCT', value: '95%' }, { key: 'TARGET_REC_PCT', value: '110.5' }, { key: 'TARGET_EARLY_COL_PCT', value: ' 88 ' },
+    { key: 'TARGET_SALES_CUSTOMERS_DAILY', value: '8' }, { key: 'TARGET_SALES_AMOUNT_DAILY', value: '6,000,000' }, { key: 'TARGET_REC_AMOUNT', value: '750000' }, { key: 'TARGET_CALLS_DAILY', value: '320' }]);
+  assert.deepEqual(c.targets, { salesPct: 100, salesCustomers: 8, salesAmount: 6000000, ecolPct: 88, colPct: 95, recPct: 110.5, recAmount: 750000, callsDay: 320 });
+  assert.deepEqual(c.std, { sales: 100, col: 95, rec: 110.5 }, 'the same percentages decide who is behind');
+  const bad = await cfgOf([{ key: 'TARGET_CALLS_DAILY', value: 'many' }, { key: 'TARGET_SALES_CUSTOMERS_DAILY', value: '0' }, { key: 'TARGET_REC_AMOUNT', value: '' }]);
+  assert.equal(bad.targets.callsDay, 300); assert.equal(bad.targets.salesCustomers, 7); assert.equal(bad.targets.recAmount, 700000, 'a count that is not a number is the owner\'s');
+});
+
+test('THE TARGETS REACH THE MODEL AS THE OWNER WROTE THEM, a team that meets the three measured ones is not told it is behind, and the unmeasured ones are never judged', async () => {
+  const calls = [];
+  await ask(fakeDb(book({ performance_records: [rec('sales', 'KONGOWE', 100000000, 100000000), rec('collection', 'KONGOWE', 100, 100), rec('recovery', 'KONGOWE', 125, 100)] })), PERSON({ teams: ['KONGOWE'] }), 'How are we doing?', { client: client(text('Mnaendelea vizuri.'), calls) });
+  const m = calls[0].messages[0].content;
+  assert.match(m, /portfolio calls 300\+ a day/); assert.match(m, /BEHIND: no\./);
+  assert.ok(!/standard/i.test(m), 'the word standards is gone from what the model reads: they are targets');
+  assert.ok(!/Company standards|team bonus/i.test(C.SYSTEM_PROMPT + m), 'the bonus plan\'s 80 / 96 / 120 are not quoted as the company\'s targets any more');
 });
 
 test('THE FAQ CATALOGUE IS SOUND: unique ids, both languages, short answers, only known placeholders and real screens', async () => {
   const ids = FAQ.map(e => e.id);
   assert.equal(new Set(ids).size, ids.length, 'unique ids'); assert.ok(ids.every(i => /^[a-z]+(-[a-z]+)*$/.test(i)));
-  const known = new Set(['minSecs', 'salesPct', 'colPct', 'recPct', 'salesTarget', 'advAmounts']);
+  const known = new Set(['minSecs', 'salesCust', 'salesAmt', 'ecolPct', 'colPct', 'recPct', 'recAmt', 'callsDay', 'advAmounts']);
   const tabs = new Set(ADMIN_TABS);
   for (const e of FAQ) {
     assert.ok(e.any || e.call || (e.tabs && e.tabs.length), e.id + ' says who it is for');

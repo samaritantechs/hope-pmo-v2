@@ -16,8 +16,8 @@
 
    THE ANSWERS ARE THE SYSTEM'S RULES, in the words the handbook gives them (the Part is named
    beside each). A figure that is a setting is a PLACEHOLDER filled from Settings at the moment of
-   the answer ({minSecs}, {salesPct}, {colPct}, {recPct}, {salesTarget}, {advAmounts}): the owner
-   changes a standard in Settings and the answer follows. Swahili first in each entry, as the
+   the answer ({minSecs}, {salesCust}, {salesAmt}, {ecolPct}, {colPct}, {recPct}, {recAmt},
+   {callsDay}, {advAmounts}): the owner changes a target in Settings and the answer follows. Swahili first in each entry, as the
    screens are; the owner reads the Swahili and corrects it (the same order of work as the
    language audit, Part 153).
 
@@ -32,11 +32,11 @@ export const FAQ = [
     sw: { q: 'Simu ya portfolio ni nini?', a: 'Ni simu kwa mteja aliye kwenye orodha zako (mteja mwenyewe, mdhamini, au namba uliyoandika kwenye "Ana namba nyingine") iliyozidi sekunde {minSecs}. Ikishasawazishwa, mteja anapata alama ya "Amepigiwa leo". Simu nyingine ni "nje ya portfolio".' },
     en: { q: 'What is a portfolio call?', a: 'A call to a customer on your own lists (the customer, the guarantor, or the number recorded under "Ana namba nyingine") that lasts longer than {minSecs} seconds. Once synced, the customer shows "Amepigiwa leo". Any other call is "nje ya portfolio".' } },
   { id: 'targets', any: true,
-    sw: { q: 'Malengo ya kampuni ni yapi?', a: 'Viwango vya bonasi ya timu: mauzo {salesPct}% ya lengo la wiki (TZS {salesTarget} kwa timu), makusanyo {colPct}%, urejeshaji {recPct}%. Njia ya kuvifikia ni simu za portfolio kila siku kwa wateja wote wa orodha yako.' },
-    en: { q: 'What are the company targets?', a: 'The team bonus standards: sales {salesPct}% of the weekly target (TZS {salesTarget} per team), collection {colPct}%, recovery {recPct}%. The way to reach them is portfolio calls every day to every customer on your list.' } },
+    sw: { q: 'Malengo ya kampuni ni yapi?', a: 'Malengo ya kila timu: mauzo wateja {salesCust}+ na TZS {salesAmt}+ kwa siku; makusanyo ya awali (Early Col) {ecolPct}%+ kwa siku; makusanyo {colPct}%; urejeshaji {recPct}% kwa kiasi cha TZS {recAmt}+; simu za portfolio {callsDay}+ kwa siku. Njia ya kuvifikia ni simu za portfolio kila siku kwa wateja wote wa orodha yako.' },
+    en: { q: 'What are the company targets?', a: 'Each team\'s targets: sales {salesCust}+ customers and TZS {salesAmt}+ a day; early collection {ecolPct}%+ a day; collection {colPct}%; recovery {recPct}% with amounts from TZS {recAmt}; portfolio calls {callsDay}+ a day. The way to reach them is portfolio calls every day to every customer on your list.' } },
   { id: 'improve', any: true,
-    sw: { q: 'Nifanye nini ili kufikia malengo?', a: 'Anza na simu za portfolio: piga kila mteja wa orodha ya leo (Exp.Def, Def, Exp), andika ahadi za kulipa na uzifuatilie siku ya ahadi. Linganisha na viwango: mauzo {salesPct}%, makusanyo {colPct}%, urejeshaji {recPct}%.' },
-    en: { q: 'What should I do to reach the targets?', a: 'Start with portfolio calls: call every customer on today\'s list (Exp.Def, Def, Exp), record promises to pay and follow them up on the promised day. Compare with the standards: sales {salesPct}%, collection {colPct}%, recovery {recPct}%.' } },
+    sw: { q: 'Nifanye nini ili kufikia malengo?', a: 'Anza na simu za portfolio: piga kila mteja wa orodha ya leo (Exp.Def, Def, Exp), andika ahadi za kulipa na uzifuatilie siku ya ahadi. Lengo ni simu {callsDay}+ kwa siku, makusanyo {colPct}% na urejeshaji {recPct}%.' },
+    en: { q: 'What should I do to reach the targets?', a: 'Start with portfolio calls: call every customer on today\'s list (Exp.Def, Def, Exp), record promises to pay and follow them up on the promised day. The aim is {callsDay}+ calls a day, collection {colPct}% and recovery {recPct}%.' } },
   { id: 'reached', any: true,
     sw: { q: 'Reached % inamaanisha nini?', a: 'Ni asilimia ya namba ulizopigia ambazo mlizungumza kwa zaidi ya sekunde {minSecs}. Simu iliyoita bila kupokelewa, au iliyokatika ndani ya sekunde hizo, haihesabiwi kuwa imefikiwa.' },
     en: { q: 'What does Reached % mean?', a: 'The share of the numbers you rang that you spoke to for longer than {minSecs} seconds. A call that rang out, or ended inside that time, does not count as reached.' } },

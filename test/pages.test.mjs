@@ -404,6 +404,22 @@ test('the shift partner address can be edited on the Settings page', () => {
     'DEVICE_SHIFT_PARTNER is read by the server but cannot be edited anywhere on the Settings page');
 });
 
+/* THE OWNER'S TARGETS FOR EACH TEAM CAN BE EDITED ON THE SETTINGS PAGE (handbook Part 157) -- "Targets per team" · "Sales 7+ customers per day amount of
+   5m+ per day" · "Early col 90%+ per day" · "Collection 100%" · "Recovery 120% with amounts from 700k+" · "Portifolio calls 300+ per day" (the owner,
+   25 Nov 2026). Claudian-PMO reads seven rows; every one of them is a field of the sales-targets group, so nobody has to type a key from memory,
+   and the four rows of the owner's own show their numbers as the value to start from. */
+test('the targets Claudian-PMO quotes can all be found on the Settings page, the four of the owner\'s own with their numbers', () => {
+  const app = appSrc();
+  const groups = app.slice(app.indexOf('var SETTINGS_GROUPS'), app.indexOf('function settingsGroupCard_'));
+  for (const k of ['TARGET_EARLY_COL_PCT', 'TARGET_COL_PCT', 'TARGET_REC_PCT']) assert.ok(groups.includes("key:'" + k + "'"), k + ' is on the Settings page');
+  for (const [k, d] of [['TARGET_SALES_CUSTOMERS_DAILY', '7'], ['TARGET_SALES_AMOUNT_DAILY', '5000000'], ['TARGET_REC_AMOUNT', '700000'], ['TARGET_CALLS_DAILY', '300']]) {
+    const m = groups.match(new RegExp("key:'" + k + "',[^}]*?dflt:'(\\d*)'"));
+    assert.ok(m, k + ' is a field of the sales-targets group');
+    assert.equal(m[1], d, k + ' starts at the owner\'s number');
+  }
+  assert.match(app, /Malengo yanayotumika \(kila timu\) \/ Targets in use \(each team\)/, 'the Claudian-PMO card says which targets it is using');
+});
+
 /* THE ILIYONASIA PICKER MAY ONLY OFFER WHAT THE SERVER WILL ACCEPT.
    -----------------------------------------------------------------------------------
    Reported from the desk with a payment already typed in: report date, team, 500,000,
