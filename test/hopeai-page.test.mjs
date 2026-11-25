@@ -226,6 +226,23 @@ test('ONE CHAT IN FULL: tapping a row asks for that thread; the drawer shows who
   assert.equal(b.rows[0].a, 'Piga simu.\nAngalia malengo.'); assert.equal(b.rows[1].a, '(jibu la kawaida / ready answer)'); assert.equal(b.rows[0].mode, 'AI');
 });
 
+test('THE CARDS AN ANSWER STOOD ON ARE SHOWN IN GREY, NOT IN THE RED OF A PROBLEM (handbook Part 159): "cards: a, b" beside a stop reason keeps its own colours, and both are text', async () => {
+  const items = [
+    { at: '2026-11-25T05:50:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'Likizo?', a: 'Siku 26.', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'cards: hr-leave-balance, hr-leave-rules' },
+    { at: '2026-11-25T05:51:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'Notisi?', a: 'Kata', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'max_tokens · cards: legal-fine' },
+    { at: '2026-11-25T05:52:00Z', mode: 'busy', faq: '', faqLabel: null, q: 'x', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 5, behind: null, note: 'the provider did not answer <b>x</b>' },
+    { at: '2026-11-25T05:53:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'y', a: 'z', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'cards: <i>evil</i>' },
+  ];
+  const { win, drawn } = load({ claudianThread: { on: true, note: null, thread: 'k-1:2026-11-25', day: '2026-11-25', who: { name: 'JUMA G', role: 'MANAGER', zone: 'DAR CENTER', teams: 'KONGOWE', source: 'portal', lang: 'sw' }, items } });
+  win.haOpen_('k-1:2026-11-25'); await new Promise(r => setImmediate(r));
+  const h = drawn[0].html;
+  assert.ok(/color:var\(--mut\)[^>]*>Kadi \/ Cards: hr-leave-balance, hr-leave-rules</.test(h), 'the cards are in grey, labelled in both languages');
+  assert.ok(/color:var\(--bad\)[^>]*>max_tokens</.test(h) && /color:var\(--mut\)[^>]*>Kadi \/ Cards: legal-fine</.test(h), 'a stop reason stays red and the cards beside it grey');
+  assert.ok(/color:var\(--bad\)[^>]*>the provider did not answer &lt;b&gt;x&lt;\/b&gt;</.test(h), 'a failure is red and text');
+  assert.ok(h.includes('Kadi / Cards: &lt;i&gt;evil&lt;/i&gt;') && !h.includes('<i>evil</i>'), 'what is in a note is text');
+  assert.ok(!/color:var\(--bad\)[^>]*>cards:/.test(h), 'a card list is never drawn as a problem');
+});
+
 test('A CHAT THAT CANNOT BE OPENED SAYS WHY: the table not made, an empty chat, a failure of the read', async () => {
   const { win, drawn, toasts } = load({ claudianThread: { on: false, note: 'run db/RUN-ME-090', thread: 'k:2026-11-25', who: null, items: [] } });
   win.haOpen_('k:2026-11-25'); await new Promise(r => setImmediate(r));

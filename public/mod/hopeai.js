@@ -179,6 +179,15 @@ VIEWS.hopeai = function(){
 };
 
 /* ONE CHAT, IN FULL -- who asked, and every question and tap in the order they happened, with what the person was answered. */
+/** A chat's note: what went wrong or was cut, in red (a stop, a failure), and in grey which knowledge cards the helper was given for the question
+    ("cards: a, b"; handbook Part 159). The parts of a note are joined with " · " by the server. */
+function haNoteHtml_(note) {
+  return String(note).split(' \u00b7 ').map(function(part){
+    var cards = part.indexOf('cards: ') === 0;
+    return '<div style="margin:2px 0;font-size:12px;color:' + (cards ? 'var(--mut)' : 'var(--bad)') + '">' + (cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : esc(part)) + '</div>';
+  }).join('');
+}
+
 function haTime_(iso){
   var ms = Date.parse(iso);
   return isNaN(ms) ? '' : new Date(ms + 3 * 3600 * 1000).toISOString().slice(11, 16);
@@ -213,7 +222,7 @@ function haDrawer_(d){
       + '<div style="margin:2px 0"><b>Swali / Question:</b> ' + esc(x.q || '—') + '</div>'
       + (x.a ? '<div style="margin:2px 0;white-space:pre-wrap"><b>Jibu / Answer:</b> ' + esc(x.a) + '</div>'
              : '<div class="mut" style="margin:2px 0">' + (x.mode === 'faq' ? 'Jibu la kawaida kutoka kwenye orodha. / A ready answer from the catalogue.' : '—') + '</div>')
-      + (x.note ? '<div style="margin:2px 0;color:var(--bad);font-size:12px">' + esc(x.note) + '</div>' : '')
+      + (x.note ? haNoteHtml_(x.note) : '')
       + '</div>';
   });
   drawer(html, { wide: true, xls: 'haThread' });

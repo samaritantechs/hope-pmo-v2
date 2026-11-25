@@ -69,6 +69,7 @@ import { registrySpellings } from './snapshots.js';
 import { wholePct } from './recovery.js';
 import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
 import { faqChoices, faqAnswer } from './claudian-faq.js';
+import { pickCards, tabKeyScore } from './claudian-cards.js';
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 
@@ -313,10 +314,10 @@ export { SYSTEM_PROMPT };
 /** The scoring of a question against a screen's words (a screen the question talks about is the one whose note is sent). */
 function noteScore(q, id) {
   const qs = new Set((String(q).toLowerCase().match(/[a-z]{4,}/g) || []));
-  if (!qs.size) return 0;
   let s = 0;
-  for (const w of tabWords(id)) if (qs.has(w)) s++;
-  return s;
+  if (qs.size) for (const w of tabWords(id)) if (qs.has(w)) s++;
+  // the words staff use for the screen, in Swahili and English (claudian-cards-data.js): a question in Swahili finds the note too
+  return s + tabKeyScore(q, id);
 }
 /** The screens this person may open: labels, and the notes of the few the question is about. Admin holds every screen. */
 export function screensOf(subject, question) {
@@ -327,7 +328,7 @@ export function screensOf(subject, question) {
 }
 /** What is said about the person, after the cached front: their role, zone, teams, screens, the targets and how they did. The sentences are
     CTX's (claudian-knowledge.js: text for the model, never shown to a person); this function only chooses and fills them. */
-export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs) {
+export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, cards) {
   const L = [];
   L.push(CTX.head);
   L.push(CTX.date(todayKey(nowMs), lang));
@@ -340,6 +341,8 @@ export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs) 
     L.push(CTX.screens(sc.labels));
     if (sc.notes.length) L.push(CTX.notes(sc.notes));
   }
+  // how HOPE works, for the part of it the question touches: cards chosen in memory by claudian-cards.js, only those this person may be told
+  if (cards && cards.length) L.push(CTX.rules(cards.map(c => '- ' + c.text)));
   L.push(CTX.targets({ ...cfg.targets, salesAmount: money(cfg.targets.salesAmount), recAmount: money(cfg.targets.recAmount) }, money(cfg.target),
     cfg.recTarget ? money(cfg.recTarget) : '', cfg.minSecs));
   L.push(standing ? CTX.standing(standing, v => (v == null ? CTX.unknown : v + '%')) : CTX.standingUnknown);
@@ -500,7 +503,8 @@ export async function claudianHandle(db, subject, body, deps = {}) {
   inflight++;
   try {
     const standing = await standingOf(db, subject, cfg, nowMs, rows);
-    const req = buildRequest(buildUserMessage(buildContext(subject, q, lang, cfg, zone, standing, nowMs), q, b.hist));
+    const cards = pickCards(subject, q);
+    const req = buildRequest(buildUserMessage(buildContext(subject, q, lang, cfg, zone, standing, nowMs, cards), q, b.hist));
     lastAsk.set(subject.key, nowMs);
     if (lastAsk.size > 5000) lastAsk.clear();
     const t0 = Date.now();
@@ -529,7 +533,7 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     const allc = allCache.get(db); if (allc) allc.n++;
     await logChat(db, { ...row, mode: 'ai', question: q, answer: answer.slice(0, 1200), tokens_in: (u.input_tokens | 0) + (u.cache_creation_input_tokens | 0) + (u.cache_read_input_tokens | 0),
       tokens_out: u.output_tokens | 0, cache_read: u.cache_read_input_tokens | 0, ms, behind: standing ? !!standing.behind : null,
-      note: res && res.stop_reason && res.stop_reason !== 'end_turn' ? String(res.stop_reason).slice(0, 40) : null });
+      note: [res && res.stop_reason && res.stop_reason !== 'end_turn' ? String(res.stop_reason).slice(0, 40) : '', cards.length ? 'cards: ' + cards.map(c => c.id).join(', ') : ''].filter(Boolean).join(' · ') || null });
     return { ...base, mode: 'ai', answer, left: Math.max(0, cfg.userDaily - used.mine - 1) };
   } finally { inflight--; }
 }
