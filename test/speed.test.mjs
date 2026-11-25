@@ -850,6 +850,33 @@ for (const [label, fn, args, tripBudget, rowBudget] of PHONE) {
   });
 }
 
+/* THE BELL WITH A PROMISE DUE TODAY (handbook Part 161). The owner's order (25 Nov): a promise due today, with no recovery and no "Amepigiwa leo", is
+   told again every three hours. Whether anybody has acted on it is asked of the day's called numbers and the typed payments, ONCE for all of the reader's
+   promises due today and only when there is one: a reader with none pays exactly what the two bells above are budgeted at. The day's called numbers are
+   the set every list asks, kept thirty seconds and shared while in flight; the typed payments are the register the phone's reports ask, kept and budgeted.
+   Measured on this book (one promise due today for the team): the bell 6 and the phone's bell 6 before, and the figures asserted below after. A ceiling. */
+test('speed: the bell with a promise due today asks the day\'s calls and the typed payments once each, on both doors', async () => {
+  const withPromise = () => {
+    const t = bigBook();
+    t.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER', device_id: 'DEV1', active: true });
+    t.teams = t.teams.map(x => (x.team === TEAMS[0] ? { ...x, team_code: 'TEAM01' } : x));
+    t.pmo_adjustments = [];
+    t.followup_status.push({ ref: 'PROM1', team: TEAMS[0], full_name: 'MTEJA', contact: '0714777001', guarantor_contact: '0755777001', arrears: 4000, status: 'Defaulter',
+      fu_status: 'AMETOA AHADI', promise_date: '2026-07-24', promise_amt: 1000, comment_by: 'JUMA G' });
+    return t;
+  };
+  const base = counting(bigBook()); await portalApi(base.db, OFFICER, 'notifications', {}, NOW);
+  const portal = counting(withPromise()); await portalApi(portal.db, OFFICER, 'notifications', {}, NOW);
+  assert.ok(portal.stat().trips - base.stat().trips <= 4, `the portal's bell took ${portal.stat().trips} trips with a promise due today against ${base.stat().trips} without (at most 4 more: the settings the check reads, the day's calls, the typed payments)`);
+  assert.ok(portal.stat().rows <= 200, `the portal's bell read ${portal.stat().rows} rows`);
+  const t = withPromise(); const ph = counting(t);
+  await callApi(ph.db, 'api_callNotifications', ['DEV1'], NOW);
+  const baseP = counting((() => { const b = bigBook(); b.call_users.push({ user_id: 'U1', name: 'JUMA G', team: TEAMS[0], role: 'OFFICER', device_id: 'DEV1', active: true }); b.teams = b.teams.map(x => (x.team === TEAMS[0] ? { ...x, team_code: 'TEAM01' } : x)); return b; })());
+  await callApi(baseP.db, 'api_callNotifications', ['DEV1'], NOW);
+  assert.ok(ph.stat().trips - baseP.stat().trips <= 4, `the phone's bell took ${ph.stat().trips} trips with a promise due today against ${baseP.stat().trips} without (at most 4 more)`);
+  assert.ok(ph.stat().trips <= 10 && ph.stat().rows <= 200, `the phone's bell with a promise due today: ${ph.stat().trips} trips, ${ph.stat().rows} rows (a ceiling of 10 and 200)`);
+});
+
 test('speed: the bell reads a page, not a table', async () => {
   /* The specific mistake this guards. The bell shows sixty items; it used to read every
      complaint and every comment ever written -- measured at 204,000 rows and 40 MB against a

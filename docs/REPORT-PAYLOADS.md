@@ -238,7 +238,7 @@ adjustments:        rows[…], totals{…}, net, ready, targets[], superseded, d
 perfHistory:        period, rows[…], count, available, note, periods[]
 recoveryByCredit:   week{…}, metrics[{weekday, date, creditUser, team, assigned, recovered}]
 expdfReport:        weekly, weekday, date, weekOf, dayName, hasBaseline, paired + enteredAfter{customers, arrears} (a day: the day's two decks were one date, and how many customers in default on the current deck the morning deck never named, left out of the day: Part 88; null with no pair), sections[{role, rows, totals, unassigned}], totals{…}, unassignedCleared (always null since Part 87)
-notifications:      items[{kind, id, ref, team, who, by, what, at, unseen}], unseen, seenAt
+notifications:      items[{kind, id, ref, team, who, by, what, at, unseen; promises also due, late, repeat}], unseen, seenAt, nextRepeatAt  (repeat: 0 the first telling, 1+ a three-hourly reminder of today's open promise; nextRepeatAt: the next mark, or null; handbook Part 161)
 ```
 </details>
 

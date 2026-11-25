@@ -854,7 +854,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-25-a';
+var CALL_BUILD = '2026-11-25-b';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -2085,6 +2085,32 @@ var LAST_DRAW = null;
    was swallowed in silence, so a bell that could not reach the server ALSO spun for ever.
    Both roads led to the same stuck screen with no way to know which had happened. */
 var BELL_OPEN = false;
+/* A PROMISE DUE TODAY IS TOLD AGAIN EVERY THREE HOURS (handbook Part 161).
+     "At notification bell: Default Customers with today's date promise, no recovery and no "amepigiwa leo" must always repeat the same promise
+      notification after every 3 hrs."                                                                    -- the owner, 25 Nov 2026
+   The server decides what is a reminder and when the next one begins (nextRepeatAt in the bell's answer: 12:00, 15:00 and 18:00 East Africa time,
+   the day's first telling being the morning's). The page only has to LOOK AGAIN at that moment: one more ask of the bell, once, then the next time the
+   answer names. The ask is spread over a minute and a half after the mark so that three hundred phones do not ask in the same second, and it is
+   dropped when the page is hidden (a hidden page asks when it is shown again: the bell's foreground refresh, below, does that already). Nothing runs
+   when the answer names no time, and nothing here asks the server more often than it did. */
+var BELL_TIMER = null;
+function bellRemind_(d){
+  if (BELL_TIMER) { clearTimeout(BELL_TIMER); BELL_TIMER = null; }
+  var at = d && d.nextRepeatAt ? Date.parse(d.nextRepeatAt) : NaN;
+  if (!isFinite(at)) return;
+  var wait = at - Date.now() + Math.floor(Math.random() * 90000);
+  if (wait < 5000) wait = 5000;
+  if (wait > 4 * 3600 * 1000) return;                       // a clock that is far out: the next foreground asks instead
+  BELL_TIMER = setTimeout(function(){
+    BELL_TIMER = null;
+    if (document.hidden) return;
+    bellRefresh().then(function(n){
+      var k = 0;
+      ((n && n.items) || []).forEach(function(x){ if (x.kind === 'promise' && x.unseen && x.repeat >= 1) k++; });
+      if (k && !BELL_OPEN) toast(k + ' ahadi za leo bado hazijafuatiliwa (kumbusho) / ' + k + ' of today\'s promises not followed up yet (reminder)');
+    });
+  }, wait);
+}
 function bellRefresh(){
   return srv('api_callNotifications', DEV).then(function(d){
     if (!d || d.ok === false) throw new Error(d && d.error === 'DEVICE_NOT_REGISTERED'
@@ -2095,6 +2121,7 @@ function bellRefresh(){
     dot.classList.toggle('hide', !d.unseen);
     dot.textContent = d.unseen > 9 ? '9+' : String(d.unseen || '');
     if (BELL_OPEN) bellDraw();
+    bellRemind_(d);
     return d;
   }).catch(function(e){
     // The count quietly failing is fine. A person waiting at an open sheet is not.
