@@ -323,6 +323,8 @@
   #pres .pkpi{background:var(--psoft);border:1px solid var(--pedge);border-radius:16px;padding:22px}
   #pres .pl{font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:var(--plab)}
   #pres .pv{font-size:40px;font-weight:800;margin-top:8px}
+  /* the line UNDER a figure (the percentage that belongs to an amount, Part 164 addendum 2): a little over half the figure's size, whatever size the fit gives the figure */
+  #pres .pv .ps{display:block;font-size:.56em;font-weight:600;line-height:1.25;margin-top:.3em;color:var(--plab);letter-spacing:.02em}
   /* THE DAY'S TWELVE, FOUR ACROSS AND THREE DOWN, FILLING THE TV ("Add 6 widgets to hope pmo overall slide ... 4x3 full on our tv", 25 Nov
      2026, Part 164). Four equal columns whatever the figures say (minmax(0,1fr): a long figure never widens its column), three rows of
      the same height; presFit_ gives the grid the whole height under the heading and one value size that fits the longest figure, so the
@@ -845,7 +847,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-25-k';
+var BUILD = '2026-11-25-l';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
