@@ -174,8 +174,8 @@ function presAbnDedSlide_(d, pd){
   return { id:'abndeduct', kind:'table', tcls:'pcolabn',
     title:'Abnormal payments & deduction cases \u2014 kwa timu / per team \u00b7 wiki hii / this week',
     caption: state + wk
-      + '<div>Abnormal = malipo yaliyowekwa alama kwenye kadi ya Abnormal (jumla ni namba ya kadi) \u00b7 Deduction cases = kesi za kipekee za makato za PMO zilizoripotiwa wiki hii, kesi moja mara moja hata ikiwa na wafanyakazi wengi'
-      + ' / Abnormal = the payments flagged on the Abnormal card (the total is the card\'s own number) \u00b7 Deduction cases = unique PMO deduction cases reported this week, a case counted once however many staff it names</div>',
+      + '<div>Abnormal = malipo yaliyowekwa alama kwenye kadi ya Abnormal (timu zote pamoja ni namba ya kadi) \u00b7 Deduction cases = kesi za kipekee za makato za PMO zilizoripotiwa wiki hii, kesi moja mara moja hata ikiwa na wafanyakazi wengi'
+      + ' / Abnormal = the payments flagged on the Abnormal card (all the teams together are the card\'s own number) \u00b7 Deduction cases = unique PMO deduction cases reported this week, a case counted once however many staff it names</div>',
     rows: rows,
     cols:[col('team','Team'), col('abnormal','Abnormal payments','num'), col('dedCases','Deduction cases (week)','num')] };
 }
