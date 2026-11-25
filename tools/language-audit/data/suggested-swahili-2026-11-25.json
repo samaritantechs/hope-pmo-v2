@@ -1,8 +1,8 @@
 {
   "made": "2026-11-25",
   "about": "Suggested Swahili for the English-only sheet of the language audit workbook (the owner asked for an opinion column, 25 Nov 2026). An OPINION for the owner to correct, not a decision: it is not used by any screen. Row id = EN- + first 6 hex of sha1(English text), as in the workbook. flag: empty = sure, c = please check (note says why), k = keep as it is, n = sure with a note.",
-  "counts": {"sure":2138,"k":301,"c":35,"n":104},
-  "total": 2578,
+  "counts": {"sure":2139,"k":301,"c":35,"n":104},
+  "total": 2579,
   "rows": {
     "EN-000771": {"en":"Reversible loans (request one)","sw":"Mikopo inayoweza kubatilishwa (omba mmoja)","flag":"","note":""},
     "EN-00396b": {"en":"The roles could not be saved.","sw":"Vyeo havikuweza kuhifadhiwa.","flag":"","note":""},
@@ -1423,6 +1423,7 @@
     "EN-8d5fb9": {"en":"INAONEKANA / SHOWN","sw":"INAONEKANA","flag":"n","note":"already a Swahili / English pair (INAONEKANA / SHOWN): the Swahili side only"},
     "EN-8d7b23": {"en":"the measured period","sw":"kipindi kilichopimwa","flag":"","note":""},
     "EN-8da12a": {"en":"{1} × {2} from {3}","sw":"{1} × {2} kuanzia {3}","flag":"","note":""},
+    "EN-8db67c": {"en":"Recovered this week","sw":"Kilichorejeshwa wiki hii","flag":"","note":""},
     "EN-8dbe33": {"en":"OPM {1}","sw":"OPM {1}","flag":"k","note":"name, unit or abbreviation: keep as it is"},
     "EN-8dc649": {"en":"Assigned to {1}","sw":"Imegawiwa kwa {1}","flag":"","note":""},
     "EN-8dce17": {"en":"Value","sw":"Thamani","flag":"","note":""},

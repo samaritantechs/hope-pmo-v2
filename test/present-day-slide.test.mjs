@@ -3,8 +3,11 @@
      "Add 6 widgets to hope pmo overall slide at presentation so that they are 4x3 full on our tv (HOPE PMO - DAY slide)" -- the owner, 25 Nov 2026
 
    What is held here (the picture and the geometry at TV sizes are in tools/browser-checks/portal-present-day-slide.mjs, a real browser):
-     * the slide builds TWELVE tiles: the six it always had in their places, then six more, every one read from the dashboard's own answer (d.cards, d.perf) and only printed here
-       (a percentage in whole numbers, a dash where the week has nothing to measure): the wall and the dashboard cannot say two different things;
+     * the slide builds TWELVE tiles: the six it always had in their places, then six more, every one read from the dashboard's own answer (d.cards, d.perf, d.recTrendTotal) and only printed
+       here (a percentage in whole numbers, a dash where the week has nothing to measure): the wall and the dashboard cannot say two different things;
+     * the seventh tile is the WEEK'S RECOVERY in shillings (it was Initial arrears until the owner replaced it: "replace initial arreas widget with anything else thats crucial in the
+       presentation hope pmo day slide summary", 25 Nov 2026, handbook Part 164, addendum 1): the weekly recovery trend's own TOTAL, added up from its days exactly as the dashboard does
+       when the server did not send the total;
      * the slide declares its grid (`grid: '4x3'`), presDraw gives the tile grid the class the CSS and the fit look for, and a slide that asks for nothing is drawn as before;
      * the CSS is four columns and three rows of one size (minmax(0,1fr): a long figure never widens a column), two columns on a narrow window, clear of the navigation arrows;
      * presFit_ gives the grid the whole height under the heading and ONE value size for every tile, and leaves every other slide's fit exactly as it was;
@@ -20,31 +23,33 @@ const APP = read('public/app.html');
 // the slide's own code, run for real with the page's two formatters
 const money = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
 const pct = v => (v == null || v === '' || isNaN(v)) ? '—' : Math.round(Number(v)) + '%';
-const slideOf = (c, perf, weekday = 'WED') => {
+const slideOf = (c, perf, weekday = 'WED', extra = {}) => {
   const from = PRESENT.indexOf("var pf = d.perf || {};");
   const to = PRESENT.indexOf('/* TEAM PERFORMANCE.');
   assert.ok(from > 0 && to > from, 'the day slide\'s code is where it was');
   const slides = [];
-  new Function('d', 'c', 'slides', 'money', 'pct', PRESENT.slice(from, to))({ weekday, perf }, c, slides, money, pct);
+  new Function('d', 'c', 'slides', 'money', 'pct', PRESENT.slice(from, to))({ weekday, perf, ...extra }, c, slides, money, pct);
   assert.equal(slides.length, 1, 'it builds one slide');
   return slides[0];
 };
 const CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321, uncollectedToday: 456789012, abnormal: 37 };
+const WEEK = { recTrendTotal: { recovered: 94338048, uncollected: 120000000, adjusted: 0, unrecovered: 25661952, pct: 78.6 } };
 
-test('the day slide has TWELVE tiles: the six it always had in their places, then the six that joined them', () => {
-  const s = slideOf(CARDS, { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 });
+test('the day slide has TWELVE tiles: the six it always had in their places, then the six that joined them, the seventh being the week\'s recovery (not the morning\'s arrears)', () => {
+  const s = slideOf(CARDS, { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 }, 'WED', WEEK);
   assert.equal(s.id, 'kpi'); assert.equal(s.kind, 'kpi'); assert.equal(s.title, 'HOPE PMO — WED');
   assert.deepEqual(s.items.map(i => i.l), ['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal',
-    'Initial arrears', 'Cleared today', 'Sales % (week)', 'Early Collection % (week)', 'Collection % (week)', 'Recovery % (week)']);
+    'Recovered this week', 'Cleared today', 'Sales % (week)', 'Early Collection % (week)', 'Collection % (week)', 'Recovery % (week)']);
   assert.equal(s.items.length, 12, 'four across and three down is twelve');
+  assert.ok(!s.items.some(i => /Initial arrears/.test(i.l)), 'the owner replaced the Initial arrears tile (25 Nov): it is not on the slide');
 });
 
-test('the six old tiles read what they read before, and the six new ones are the dashboard\'s own figures: the cards\' arrears and customers, the strip\'s four percentages in whole numbers', () => {
-  const s = slideOf(CARDS, { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 });
+test('the six old tiles read what they read before, and the six new ones are the dashboard\'s own figures: the week\'s recovery, the cleared customers, the strip\'s four percentages in whole numbers', () => {
+  const s = slideOf(CARDS, { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 }, 'WED', WEEK);
   const v = Object.fromEntries(s.items.map(i => [i.l, i.v]));
   assert.deepEqual(v, {
     'Current arrears': 'TZS 3,412,547,121', 'Recovered': 'TZS 1,234,567,890', 'Defaulters': '10,372', 'Sales this week': 'TZS 987,654,321', 'Uncollected today': 'TZS 456,789,012', 'Abnormal': '37',
-    'Initial arrears': 'TZS 23,760,795,812', 'Cleared today': '4,321',
+    'Recovered this week': 'TZS 94,338,048', 'Cleared today': '4,321',
     'Sales % (week)': '84%', 'Early Collection % (week)': '91%', 'Collection % (week)': '97%', 'Recovery % (week)': '118%' });
 });
 
@@ -58,6 +63,22 @@ test('a percentage the week cannot measure is a dash, never a nought; a real nou
   assert.ok(bare.items.slice(8).every(i => i.v === '—'), 'no strip, four dashes');
 });
 
+test('THE WEEK\'S RECOVERY: the server\'s own total when it sent one, else the days added up exactly as the dashboard adds them, else nought; a damaged day counts nothing and never breaks the slide', () => {
+  const tile = (extra) => Object.fromEntries(slideOf(CARDS, { salesPct: 80, ecolPct: 80, colPct: 80, recPct: 80 }, 'WED', extra).items.map(i => [i.l, i.v]))['Recovered this week'];
+  assert.equal(tile(WEEK), 'TZS 94,338,048', 'the total the server worked out');
+  // the total WINS over the days (the dashboard prints the same: the server\'s figure carries the standing, the days are only the fall-back)
+  assert.equal(tile({ ...WEEK, recTrend: [{ recovered: 1 }, { recovered: 2 }] }), 'TZS 94,338,048');
+  // a real nought from the server is a nought, not a fall-back to the days
+  assert.equal(tile({ recTrendTotal: { recovered: 0 }, recTrend: [{ recovered: 5 }] }), 'TZS 0');
+  // no total: the days, added the way the dashboard adds them
+  assert.equal(tile({ recTrend: [{ recovered: 1000 }, { recovered: 2500 }, { recovered: 0 }] }), 'TZS 3,500');
+  // a damaged day (missing, null, text, no recovered) counts nothing
+  assert.equal(tile({ recTrend: [{ recovered: 1000 }, null, {}, { recovered: 'x' }, { recovered: null }, undefined, { recovered: 250 }] }), 'TZS 1,250');
+  // nothing at all: a nought, as the dashboard\'s own card reads
+  assert.equal(tile({}), 'TZS 0');
+  assert.equal(tile({ recTrend: [] }), 'TZS 0');
+});
+
 test('the new tiles come from the answer the slide already has: no read of its own, no call, and nothing of the officer boards (the day slide still plays when they do not load)', () => {
   const from = PRESENT.indexOf("var pf = d.perf || {};"), to = PRESENT.indexOf('/* TEAM PERFORMANCE.');
   const code = PRESENT.slice(from, to).replace(/\/\*[\s\S]*?\*\//g, '');
@@ -67,7 +88,11 @@ test('the new tiles come from the answer the slide already has: no read of its o
   assert.ok(PRESENT.indexOf("id:'kpi'") < PRESENT.indexOf('if (!b){'), 'the day slide is built before the boards\' check');
   // and the server's answer carries exactly the fields the tiles read
   const core = read('api/_lib/portal-core.js');
-  for (const f of ['initArrears', 'cleared', 'curArrears', 'recovered', 'defaulters', 'salesWeek', 'uncollectedToday', 'abnormal']) assert.ok(new RegExp('\\b' + f + ': ').test(core.slice(core.indexOf('cards: {\n      curArrears'), core.indexOf('cards: {\n      curArrears') + 2600)), 'dashboardFull answers cards.' + f);
+  assert.ok(!/initArrears/.test(code), 'the replaced tile (Initial arrears) is no longer read by the slide');
+  assert.match(core, /recTrend, recTrendTotal, ecolTrend, edrTrend/, 'dashboardFull answers recTrendTotal (and recTrend, the fall-back) beside the other trends');
+  const rtt = core.slice(core.indexOf('const recTrendTotal = (() => {'), core.indexOf('const recTrendTotal = (() => {') + 700);
+  assert.match(rtt, /return \{ recovered, uncollected, adjusted, unrecovered:/, 'and the total carries recovered, the figure the tile prints');
+  for (const f of ['cleared', 'curArrears', 'recovered', 'defaulters', 'salesWeek', 'uncollectedToday', 'abnormal']) assert.ok(new RegExp('\\b' + f + ': ').test(core.slice(core.indexOf('cards: {\n      curArrears'), core.indexOf('cards: {\n      curArrears') + 2600)), 'dashboardFull answers cards.' + f);
   for (const f of ['salesPct', 'ecolPct', 'colPct', 'recPct']) assert.ok(core.includes('perf.' + f) || new RegExp('\\b' + f + ': wkNow\\.' + f).test(core), 'dashboardFull answers perf.' + f);
 });
 
