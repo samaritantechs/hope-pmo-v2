@@ -9,7 +9,7 @@ import { collectedOf } from './recovery.js';
 import { expdfMine } from './expdf.js';
 import { isSystemOpen } from './system-gate.js';
 /* The Iliyonasia register and the one function that folds it into a collection figure. */
-import { adjReceived_, withAdj_, ADJ_BUDGET_MS } from './adjustments.js';
+import { adjReceived_, withAdj_, ADJ_BUDGET_MS, ADJ_ALL_TARGETS } from './adjustments.js';
 import { notifCore, notifSeenCore, notifKeyFor } from './notify.js';
 import { statusWithPaid } from './settled.js';
 /* The docket is the key under every comment and pinned point -- see docket.js and history.js. */
@@ -1111,7 +1111,7 @@ async function list(db, [dev, which, which2], nowMs) {
      filtering thirty teams' worth of nothing. */
   const user = { ...base, teams: await scopeFor(db, base) };
   const called = await calledTodaySet(db, nowMs);
-  const hit = (a, b) => !!(called[pnorm(a)] || called[pnorm(b)]);
+  const hit = (a, b) => calledHit_(called, a, b);
   let rows;
   if (which === 'expdf') {
     // The recycling rotation's own list, for the GMO / MANAGER / BIKE signed in on this
@@ -3022,6 +3022,51 @@ async function teamCode(db, [code]) {
   return hit ? { ok: true, team: hit.team } : { ok: false };
 }
 
+/** THE GREY "AMEPIGIWA LEO" TICK, ONE DEFINITION: a customer is ticked when anybody's synced call today (longer than the minimum seconds) went to the
+    customer's own number or to the guarantor's. Never to a number recorded under "Ana namba nyingine". The phone's lists draw it and the bell's promise
+    reminder (promiseSkipsToday) asks it, so the two cannot disagree about who was called. */
+export const calledHit_ = (called, a, b) => !!(called[pnorm(a)] || called[pnorm(b)]);
+
+/* THE BELL'S PROMISE REMINDER, WHO NEEDS NONE (handbook Part 161).
+
+     "At notification bell: Default Customers with today's date promise, no recovery and no "amepigiwa leo" must always repeat the same promise
+      notification after every 3 hrs."                                                                    -- the owner, 25 Nov 2026
+
+   notifCore (notify.js) repeats a promise due today every three hours while nobody has acted on it. Whether anybody has is asked HERE, once, for all of
+   today's open promises of the reader: a customer is done with when
+
+     - they were SPOKEN TO today: the tick the phone's lists draw (calledHit_: their own number or the guarantor's, any officer, longer than the
+       minimum seconds), or
+     - MONEY WAS TYPED for them today: a payment on the Iliyonasia register (Miamala) against their ref, in any of its four books, netting above nothing.
+
+   Two things the bell cannot see, said plainly: a payment made today that nobody has typed and the loan system has not yet shown (the day's later file
+   comes in the evening), and a call made from a phone that has not synced. The officer's own word closes a promise the moment they log another status
+   (that clears the promise date: addComment), and the evening file closes it when the customer reads cleared.
+
+   COST (CLAUDE.md section 1): nothing when the reader has no promise due today (notifCore does not ask). Otherwise the day's called-numbers set, which
+   every list already asks and keeps thirty seconds, shared while in flight, and the Iliyonasia register, kept and budgeted as everywhere on this path:
+   no new kind of read, and at most one wait of PROMISE_CHECK_BUDGET_MS. An answer that does not come in time, or fails, is null: NOBODY IS REMINDED
+   (the bell as it was before), never a reminder that was not checked. Answers a Set of refs, or null. */
+const PROMISE_CHECK_BUDGET_MS = 800;
+export async function promiseSkipsToday(db, user, rows, nowMs) {
+  const day = todayKey(nowMs);
+  try {
+    const [called, adj] = await Promise.all([
+      adminWithin_(calledTodaySet(db, nowMs), PROMISE_CHECK_BUDGET_MS, null),
+      adjReceived_(db, user, { from: day, to: day, budgetMs: PROMISE_CHECK_BUDGET_MS }),         // null: the register is not there, or not in time: the decks are all there is
+    ]);
+    if (!called) return null;
+    const typed = new Set();
+    if (adj) for (const target of ADJ_ALL_TARGETS) for (const c of adj.refCells(target)) if (Number(c.amount) > 0) typed.add(String(c.ref == null ? '' : c.ref).trim());
+    const skip = new Set();
+    for (const r of rows || []) {
+      const ref = String(r.ref == null ? '' : r.ref).trim();
+      if (calledHit_(called, r.contact, r.guarantor_contact) || typed.has(ref)) skip.add(ref);
+    }
+    return skip;
+  } catch (e) { return null; }
+}
+
 /* THE BELL, FOR THE FIELD. Same updates as the portal's -- complaints logged at the desk and
    follow-up comments -- scoped to the teams this handset may see, through the SAME
    implementation. An officer had no way to learn that a complaint had been raised against a
@@ -3032,7 +3077,8 @@ async function teamCode(db, [code]) {
 async function callNotifications(db, [dev], nowMs) {
   const cu = await userByDeviceSoft(db, dev);
   if (!cu) return { ok: false, error: 'DEVICE_NOT_REGISTERED' };
-  const d = await notifCore(db, await scopedUser(db, cu, nowMs), notifKeyFor(cu.user_id), nowMs);
+  const user = await scopedUser(db, cu, nowMs);
+  const d = await notifCore(db, user, notifKeyFor(cu.user_id), nowMs, { skipToday: rows => promiseSkipsToday(db, user, rows, nowMs) });
   return { ok: true, ...d };
 }
 async function callNotifSeen(db, [dev], nowMs) {

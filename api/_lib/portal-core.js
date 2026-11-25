@@ -53,7 +53,7 @@ import { collectedOf, uncollectedOf, num, recoveryBasis, recoveryDenominator } f
 import { isSettled } from './settled.js';
 import { buildDashboard, SALES_STAGES } from './dashboard-core.js';
 import { reportCoreForPortal, pnorm, h36, fuStatusConfig, fuStatusShape, parseFuStatuses,
-  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts, callMinSecsOf, REACH_NOTE } from './call-core.js';
+  FU_STATUS_KEY, isCreditRole, buildLeaderMaps, positionOf, boardRowsFromLogs, dsParts, callMinSecsOf, REACH_NOTE, promiseSkipsToday } from './call-core.js';
 import { ROLE_COLS, assignFor, assignStrategy } from './assign.js';
 import { expdfMine, expdfReport, expdfLeader, expdfPeriod, dayStage } from './expdf.js';
 import { leaderKey, teamsOutsideScope } from './leader-scope.js';
@@ -4308,7 +4308,8 @@ async function announceSave(db, user, p = {}, nowMs = Date.now()) {
    person's screen does not mark them read on everybody's. */
 const NOTIF_LIMIT = 60;
 async function notifications(db, user, _args, nowMs) {
-  return notifCore(db, user, notifKey_(user), nowMs);
+  // The promise reminder (Part 161) is asked the same question the phone's bell asks it: call-core's promiseSkipsToday, one definition for both doors.
+  return notifCore(db, user, notifKey_(user), nowMs, { skipToday: rows => promiseSkipsToday(db, user, rows, nowMs) });
 }
 const notifKey_ = user => notifKeyFor(user.code || user.name);
 /** Marks everything currently visible as read, for THIS code only. */
