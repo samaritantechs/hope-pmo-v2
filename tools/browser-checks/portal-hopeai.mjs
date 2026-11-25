@@ -162,7 +162,7 @@ await page.setViewportSize({ width: 1700, height: 1100 }); await page.waitForTim
 const tot = await totalOf(page);
 check('2 the list\'s total row names no place and no standing (the two chips are blank there) and adds the questions up', !!tot && tot.includes('JUMLA / TOTAL') && !tot.some(c => /PORTAL|CALLS|SAWA|NYUMA/.test(c)) && tot.includes('8'), JSON.stringify(tot));
 let k = await kpisOf(page);
-check('2 the counters: 5 chats, 4 people, 8 questions, 4 AI answers, 3 ready answers, 1 limit, 1 chat of a team behind', k.length === 7 && /^5\b/.test(k[0][1]) && /^4\b/.test(k[1][1]) && /^8\b/.test(k[2][1]) && /^4\b/.test(k[3][1]) && /^3\b/.test(k[4][1]) && /^1\b/.test(k[5][1]) && /^1\b/.test(k[6][1]), JSON.stringify(k));
+check('2 the counters: 5 chats, 4 people, 8 questions, 4 AI answers, 3 ready answers, none with no ready answer, 1 limit, 1 chat of a team behind', k.length === 8 && /^5\b/.test(k[0][1]) && /^4\b/.test(k[1][1]) && /^8\b/.test(k[2][1]) && /^4\b/.test(k[3][1]) && /^3\b/.test(k[4][1]) && /^0\b/.test(k[5][1]) && /^1\b/.test(k[6][1]) && /^1\b/.test(k[7][1]), JSON.stringify(k));
 if (SHOTS) { fs.mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: path.join(SHOTS, 'hopeai-list.png') }); }
 
 // ---- the picks narrow everything from what has arrived: no second request

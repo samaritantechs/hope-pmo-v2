@@ -21,12 +21,19 @@
    screens are; the owner reads the Swahili and corrects it (the same order of work as the
    language audit, Part 153).
 
+   KEYS (handbook Part 163). Each entry also carries `keys`, kept in claudian-faq-keys.js (data for the matcher, left out of the language audit): the Swahili and English words a
+   person would type when they want that answer. The typing box is shown to everybody; with the AI off, or no key in the host's settings, a typed question is matched to these keys,
+   in memory, by the same engine that picks the knowledge cards (claudian-match.js). The test (test/claudian-faq-match.test.mjs) makes every entry find itself from its own
+   question in both languages and fails on a key so common that it touches most questions. AN ENTRY ADDED HERE GETS ITS KEYS THERE, IN THE SAME COMMIT.
+
    WHAT THE OWNER WILL DO WITH IT: read the chats (the Hope Ai tab), see which questions people
    actually ask, and say which entries to add, change or drop. So an entry is cheap to add: one
    object below, one line of test.
    ===================================================================================== */
 
-export const FAQ = [
+import { FAQ_KEYS } from './claudian-faq-keys.js';
+
+const ENTRIES = [
   // ---- for everybody ----
   { id: 'portfolio-call', any: true,
     sw: { q: 'Simu ya portfolio ni nini?', a: 'Ni simu kwa namba ya mteja wa timu zako, ya mdhamini wake, au namba uliyoandika kwenye "Ana namba nyingine", ipokelewe au isipokelewe. Simu nyingine ni "nje ya portfolio". Namba moja huhesabiwa mara moja kwa siku hata ukiipigia mara nyingi, na muda wa mazungumzo ni wa simu za portfolio tu. Mteja anapata alama ya "Amepigiwa leo" simu kwa namba yake au ya mdhamini ikizidi sekunde {minSecs}.' },
@@ -105,12 +112,15 @@ export const FAQ = [
     sw: { q: 'Kiongozi wa timu anabadilishwaje?', a: 'Viongozi huchukuliwa kutoka kwenye misimbo ya kuingia (Settings): ukibadilisha jina kwenye msimbo, Teams & Staff inafuata mara moja kwa timu za msimbo huo.' },
     en: { q: 'How is a team\'s leader changed?', a: 'Leaders come from the access codes (Settings): change the name on a code and Teams & Staff follows at once for that code\'s teams.' } },
   { id: 'settings-claudian', tabs: ['settings'],
-    sw: { q: 'Nawashaje Claudian-PMO?', a: 'Kwenye Settings, kadi ya Claudian-PMO: bonyeza swichi iwe ON. Inahitaji ufunguo wa API kwenye mipangilio ya seva; kikomo cha maswali kwa siku kinawekwa hapohapo. Ikiwa OFF, watu wanaona maswali ya kawaida tu.' },
-    en: { q: 'How do I switch Claudian-PMO on?', a: 'In Settings, on the Claudian-PMO card, press the switch to ON. It needs the API key in the server\'s settings; the questions-a-day limits are set there too. When OFF, people see only the standard questions.' } },
+    sw: { q: 'Nawashaje Claudian-PMO?', a: 'Kwenye Settings, kadi ya Claudian-PMO: bonyeza swichi iwe ON. Inahitaji ufunguo wa API kwenye mipangilio ya seva; kikomo cha maswali kwa siku kinawekwa hapohapo. Kisanduku cha kuandika kinaonekana kwa kila mtu: AI ikiwa OFF (au hakuna ufunguo), swali lililoandikwa hujibiwa kwa jibu la kawaida linalolifaa, na yasiyopata jibu yanaorodheshwa kwenye kichupo cha Hope Ai.' },
+    en: { q: 'How do I switch Claudian-PMO on?', a: 'In Settings, on the Claudian-PMO card, press the switch to ON. It needs the API key in the server\'s settings; the questions-a-day limits are set there too. The typing box is shown to everybody: with the AI OFF (or no key) a typed question is answered from the ready answer that fits it, and the ones nothing fitted are listed on the Hope Ai tab.' } },
   { id: 'hopeai-read', tabs: ['hopeai'],
     sw: { q: 'Nasomaje mazungumzo ya Claudian-PMO?', a: 'Fungua kichupo cha Hope Ai: kila mstari ni mazungumzo ya mtu mmoja kwa siku moja, yenye cheo, timu na idadi ya maswali. Gusa mstari kusoma maswali na majibu yote; chini ya orodha kuna ripoti kwa cheo, timu na siku.' },
     en: { q: 'How do I read what people asked Claudian-PMO?', a: 'Open the Hope Ai tab: each row is one person\'s chat for one day, with role, teams and the number of questions. Tap a row to read every question and answer; under the list are boards by role, team and day.' } },
 ];
+
+/** The catalogue as every reader sees it: each entry with its `keys` (claudian-faq-keys.js: the words a person types to ask for it; data for the matcher, never shown). */
+export const FAQ = ENTRIES.map(e => ({ ...e, keys: FAQ_KEYS[e.id] || [] }));
 
 const langOf = l => (String(l || '').toLowerCase().startsWith('en') ? 'en' : 'sw');
 
@@ -139,6 +149,12 @@ export function faqChoices(subject, lang) {
 /** Fills the placeholders of an answer from the settings' figures; a placeholder with no figure is left as it is. */
 export function fill(text, vars) {
   return String(text).replace(/\{(\w+)\}/g, (m, k) => (vars && vars[k] != null && vars[k] !== '' ? String(vars[k]) : m));
+}
+
+/** The words of a ready question (for a choice, or a note): null when there is no such entry. It is the question, never the answer: it carries nothing a person must not read. */
+export function faqLabel(id, lang) {
+  const e = FAQ.find(x => x.id === id);
+  return e ? e[langOf(lang)].q : null;
 }
 
 /** One answer, or null when the entry does not exist or the person may not be offered it (a question id cannot be used to read another screen's text). */

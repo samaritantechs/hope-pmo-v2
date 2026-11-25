@@ -193,7 +193,10 @@ const shape = page => page.evaluate(() => {
     z: h.style.zIndex, bub: box(b), bubClass: b.className, expanded: b.getAttribute('aria-expanded'), label: b.getAttribute('aria-label'), vw: window.innerWidth, vh: window.innerHeight,
     open: /\bopen\b/.test(p.className), sheet: /\bsheet\b/.test(p.className), panel: box(p), dark: /\bdark\b/.test(r.querySelector('.root').className),
     sub: txt(r.querySelector('.sub')), lg: txt(r.querySelector('.hd button:not(:last-child)')), left: txt(r.querySelector('.mt span')),
-    inputOn: /\bon\b/.test(r.querySelector('.ft').className) && getComputedStyle(r.querySelector('.ft')).display !== 'none',
+    inputOn: getComputedStyle(r.querySelector('.ft')).display !== 'none' && r.querySelector('textarea').getBoundingClientRect().width > 80 && !r.querySelector('textarea').disabled,
+    bubStyle: (function () { var c = getComputedStyle(b), v = getComputedStyle(b.querySelector('svg')); return { border: c.borderTopWidth, bg: c.backgroundColor, radius: c.borderTopLeftRadius, shadow: c.boxShadow, filter: v.filter, padding: c.paddingTop }; })(),
+    icoStyle: (function () { var e = r.querySelector('.hd .ico'); var c = getComputedStyle(e); return { bg: c.backgroundColor, radius: c.borderTopLeftRadius, w: Math.round(e.getBoundingClientRect().width) }; })(),
+    welcome: txt(r.querySelector('.m.w')),
     chips: [...r.querySelectorAll('.chip')].map(c => txt(c)), chipIds: [...r.querySelectorAll('.chip')].map(c => c.getAttribute('data-id')),
     msgs: [...r.querySelectorAll('.body .m')].map(m => ({ kind: m.className.replace('m ', ''), text: txt(m) })),
     faqOpen: r.querySelector('details.faq').open,
@@ -293,7 +296,9 @@ await section('A5 (panel off)', async () => {
   const st = asks('status');
   check('A5 a tap opens the panel and asks for the status, once, as the person with the access code, in Swahili', s.open && s.expanded === 'true' && st.length === 1 && st[0].code === 'ADM' && st[0].lang === 'sw' && !st[0].device, JSON.stringify(st));
   check('A5 the panel stands inside the screen, near the bubble', panelInside(s), JSON.stringify([s.panel, s.vw, s.vh]));
-  check('A5 with the AI off there is no box to type in, and the subtitle says ready questions only', !s.inputOn && /Maswali ya kawaida tu/.test(s.sub), JSON.stringify([s.inputOn, s.sub]));
+  check('A5 with the AI off the box to type in is THERE (the owner: "people ain\'t seeing the keypad"), and the subtitle and the welcome say what it finds', s.inputOn && /Majibu ya maswali ya kawaida/.test(s.sub) && /Andika swali lako au chagua moja/.test(s.welcome) && /inajibu maswali ya kawaida tu/.test(s.welcome), JSON.stringify([s.inputOn, s.sub, s.welcome]));
+  check('A5 the bubble is the head alone: no ring, no disc, no round button, no shadow box; a shadow that follows the head\'s own outline', s.bubStyle.border === '0px' && /rgba\(0, 0, 0, 0\)|transparent/.test(s.bubStyle.bg) && s.bubStyle.radius !== '28px' && s.bubStyle.padding === '0px' && s.bubStyle.shadow === 'none' && /drop-shadow/.test(s.bubStyle.filter), JSON.stringify(s.bubStyle));
+  check('A5 and the header\'s icon is the head alone as well: no white disc behind it', /rgba\(0, 0, 0, 0\)|transparent/.test(s.icoStyle.bg) && s.icoStyle.radius === '0px', JSON.stringify(s.icoStyle));
   check('A5 the ready questions are the choices, open, in Swahili', s.faqOpen && s.chips.length >= 15 && s.chips.some(c => /Simu ya portfolio ni nini/i.test(c)), JSON.stringify(s.chips.slice(0, 3)));
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-faq.png') });
   // a ready question
@@ -319,7 +324,7 @@ await section('A5 (panel off)', async () => {
   await until(page, () => [...document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip')].some(c => /What is a portfolio call/i.test(c.textContent)));
   s = await shape(page);
   const st2 = asks('status');
-  check('A7 SW / EN flips the panel into English and asks for the choices again in English', st2.length === 2 && st2[1].lang === 'en' && /Ready questions only/.test(s.sub) && s.chips.some(c => /What is a portfolio call/i.test(c)), JSON.stringify([st2.map(x => x.lang), s.sub]));
+  check('A7 SW / EN flips the panel into English and asks for the choices again in English', st2.length === 2 && st2[1].lang === 'en' && /Answers to the standard questions/.test(s.sub) && s.chips.some(c => /What is a portfolio call/i.test(c)), JSON.stringify([st2.map(x => x.lang), s.sub]));
   check('A7 and the page itself is still in Swahili', (await page.evaluate(() => S.lang)) === 'sw');
   // Escape
   await page.locator('.chip').first().focus();
@@ -332,6 +337,81 @@ await section('A5 (panel off)', async () => {
   await page.waitForTimeout(200);
   check('A8 opened again within the minute, the ready questions are not asked for again', seen.claudian.length === n0 && (await shape(page)).open, String(seen.claudian.length - n0));
   await ctx.close();
+});
+
+// ---- typing with the AI off (handbook Part 163): the box is there, and a typed question is answered from the ready answers, or told that none fits
+await section('A5t (typing with the AI off)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db);
+  seen.claudian.length = 0; asked.length = 0; db._dump('claudian_chats').length = 0;
+  const { page, ctx } = await portal('A5t', { lang: 'en' });
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  let s = await shape(page);
+  check('A5t the box is there with the AI off, and the English welcome says what it finds', s.inputOn && /Type your question or pick one below/.test(s.welcome) && /standard questions only/.test(s.welcome), JSON.stringify([s.inputOn, s.welcome]));
+  // 1. a question a ready answer fits
+  await page.locator('textarea').fill('what do the arrows on the dashboard mean');
+  await page.locator('.send').click();
+  await waitAnswer(page, 2);
+  s = await shape(page);
+  const q1 = asks('ask');
+  check('A5t a typed question goes out as the person with the access code, and the provider is asked NOTHING', q1.length === 1 && q1[0].q === 'what do the arrows on the dashboard mean' && q1[0].code === 'ADM' && asked.length === 0, JSON.stringify([q1, asked.length]));
+  const m1 = s.msgs.filter(x => x.kind !== 'w' || /Ready answer to/.test(x.text));
+  check('A5t the question, then the ready question it answers, then the answer', m1.length === 3 && m1[0].kind === 'u' && m1[1].kind === 'w' && /^Ready answer to: What do the .* arrows on the Dashboard mean\?$/.test(m1[1].text) && m1[2].kind === 'a' && /last week/.test(m1[2].text), JSON.stringify(m1));
+  check('A5t and the box is still there and free for the next question', s.inputOn && !(await page.locator('.send').isDisabled()), String(s.inputOn));
+  // 2. a question nothing fits
+  await page.locator('textarea').fill('will it rain in Dodoma tomorrow');
+  await page.locator('.send').click();
+  await waitAnswer(page, 4);
+  s = await shape(page);
+  const last = s.msgs[s.msgs.length - 1];
+  check('A5t a question no ready answer fits is told so, in the amber hint, and offers no nearest choices', last.kind === 'h' && /No ready answer fits that question\. Pick one below, or type it in other words\./.test(last.text) && !s.msgs.some(x => /Closest/.test(x.text)), JSON.stringify(last));
+  // 3. a question that touches two ready answers alike: nothing is answered, the two are offered
+  await page.locator('textarea').fill('target za timu');
+  await page.locator('.send').click();
+  await waitAnswer(page, 6);
+  s = await shape(page);
+  const near = s.msgs[s.msgs.length - 1], hint = s.msgs[s.msgs.length - 2];
+  check('A5t two ready answers that weigh alike are not guessed between: the hint, then "Closest:" with both as choices', hint.kind === 'h' && near.kind === 'w near' && /^Closest:/.test(near.text) && /company targets/.test(near.text) && /reach the targets/.test(near.text), JSON.stringify([hint, near]));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-typed.png') });
+  // a tap on one of them asks for that ready answer, exactly as a tap on the list does
+  await page.locator('.m.near .chip').first().click();
+  await waitAnswer(page, 8);
+  s = await shape(page);
+  const f1 = asks('faq');
+  check('A5t a tap on a nearest choice asks for its ready answer by id, and the answer follows', f1.length >= 1 && f1[f1.length - 1].id === 'targets' && s.msgs[s.msgs.length - 1].kind === 'a' && /sales .* customers/.test(s.msgs[s.msgs.length - 1].text), JSON.stringify([f1, s.msgs[s.msgs.length - 1]]));
+  // 4. the log: the person's own questions, no model, no tokens, the kind of each
+  const rows = db._dump('claudian_chats');
+  const kinds = rows.map(r => r.mode).join(',');
+  check('A5t the log has a row for each: a match, two that nothing settled, and the tap', kinds === 'match,nomatch,nomatch,faq', kinds);
+  const r1 = rows[0];
+  check('A5t the matched row names the ready answer, keeps what the person was told, and cost no tokens', r1.faq_id === 'dash-arrows' && /last week/.test(r1.answer) && r1.tokens_in === 0 && r1.tokens_out === 0 && /^agent off · score [\d.]+/.test(r1.note), JSON.stringify(r1));
+  check('A5t the row of a question nothing fitted keeps the words, no answer, and the two nearest as the note', rows[2].question === 'target za timu' && rows[2].answer === null && /^agent off · near: (targets, improve|improve, targets)$/.test(rows[2].note), JSON.stringify(rows[2]));
+  await ctx.close();
+});
+// a person who does not hold a screen is never answered from it, however the question is worded
+await section('A5p (privacy of the ready answers)', async () => {
+  seen.claudian.length = 0; db._dump('claudian_chats').length = 0;
+  const { page, ctx } = await portal('A5p', { code: 'CLK', lang: 'sw' });
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('textarea').fill('notisi ya madai inatolewa lini');
+  await page.locator('.send').click();
+  await waitAnswer(page, 2);
+  let s = await shape(page);
+  const last = s.msgs[s.msgs.length - 1];
+  check('A5p a clerk who does not hold the Legal screen asks about demand notices: no answer from it, in any words', last.kind === 'h' && !/D\.C 2/.test(JSON.stringify(s.msgs)) && !s.msgs.some(x => x.kind === 'w near' && /notisi/i.test(x.text)), JSON.stringify(s.msgs.slice(-2)));
+  check('A5p and the chip list the clerk was shown has none of the Legal screen\'s questions', !s.chips.some(c => /Notisi ya madai/.test(c)), JSON.stringify(s.chips));
+  await ctx.close();
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db);
+  const adm = await portal('A5p2', { code: 'ADM', lang: 'sw' });
+  await tap(adm.page);
+  await until(adm.page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await adm.page.locator('textarea').fill('notisi ya madai inatolewa lini');
+  await adm.page.locator('.send').click();
+  await waitAnswer(adm.page, 2);
+  s = await shape(adm.page);
+  check('A5p the admin, who holds every screen, is answered from the Legal screen\'s ready answer for the same words', s.msgs.some(x => x.kind === 'a' && /D\.C 2 au zaidi/.test(x.text)), JSON.stringify(s.msgs.slice(-2)));
+  await adm.ctx.close();
 });
 
 // ---- the AI on
@@ -391,14 +471,14 @@ await section('A9 (AI on)', async () => {
   check('A11 no connection at all says so, in the page\'s language, and the panel still works', last3.kind === 'h' && /No connection/.test(last3.text), JSON.stringify(last3));
   await page.unroute('**/api/claudian');
   check('A11 the send button is free again after a failure', !(await page.locator('.send').isDisabled()));
-  // the owner switches the AI off while the panel is open: the next answer takes the box away at once, and says ready questions only
+  // the owner switches the AI off while the panel is open: the next answer comes from the ready answers (a question none fits is told so), the box STAYS, and the subtitle and the counter follow the switch
   setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db);
   await page.locator('textarea').fill('Is anybody there?');
   await page.locator('.send').click();
-  await until(page, () => !document.getElementById('claudianPMO').shadowRoot.querySelector('.ft.on'));
+  await until(page, () => /standard questions/.test(document.getElementById('claudianPMO').shadowRoot.querySelector('.sub').textContent));
   s = await shape(page);
   const lastOff = s.msgs[s.msgs.length - 1];
-  check('A11 the AI switched off while the panel is open: the next answer says ready questions only, and the box goes away at once', !s.inputOn && lastOff.kind === 'h' && /standard questions only/i.test(lastOff.text) && s.chips.length > 0 && /Ready questions only/.test(s.sub), JSON.stringify([s.inputOn, lastOff, s.sub]));
+  check('A11 the AI switched off while the panel is open: the next answer is a ready-answer one, the box STAYS (it is there for everybody), and the subtitle and the counter follow the switch', s.inputOn && lastOff.kind === 'h' && /No ready answer fits that question/i.test(lastOff.text) && s.chips.length > 0 && /Answers to the standard questions/.test(s.sub) && s.left === '', JSON.stringify([s.inputOn, lastOff, s.sub, s.left]));
   check('A11 and its ready questions are laid out in full again (no height limit)', s.faqOpen);
   await ctx.close();
 });

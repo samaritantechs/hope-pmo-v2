@@ -68,7 +68,8 @@ import { todayKey, weekMondayKey, addDaysKey } from './time.js';
 import { registrySpellings } from './snapshots.js';
 import { wholePct } from './recovery.js';
 import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
-import { faqChoices, faqAnswer } from './claudian-faq.js';
+import { faqChoices, faqAnswer, faqLabel } from './claudian-faq.js';
+import { faqMatch } from './claudian-match.js';
 import { pickCards, tabKeyScore } from './claudian-cards.js';
 import { viewsFor, readViews, resetClaudianDataForTests } from './claudian-data.js';
 
@@ -124,7 +125,8 @@ const FIXED = {
   offTopic: { sw: 'Naweza kusaidia mambo ya HOPE PMO tu.', en: 'I can only help with HOPE PMO matters.' },
   refused: { sw: 'Siwezi kujibu swali hilo.', en: 'I cannot answer that.' },
   empty: { sw: 'Andika swali.', en: 'Type a question.' },
-  faqOnly: { sw: 'Claudian-PMO inajibu maswali ya kawaida tu kwa sasa. Chagua swali hapa chini.', en: 'Claudian-PMO answers the standard questions only for now. Pick a question below.' },
+  /** A typed question with the AI off that touches no ready answer: said plainly, with the way out (the ready questions, or other words). */
+  noMatch: { sw: 'Sijapata jibu la swali hilo kati ya maswali ya kawaida. Chagua moja hapa chini, au liandike kwa maneno mengine.', en: 'No ready answer fits that question. Pick one below, or type it in other words.' },
   slow: { sw: 'Subiri sekunde chache kabla ya swali lingine.', en: 'Wait a few seconds before the next question.' },
 };
 /** "Working hard, try later": what a person is told when the helper cannot answer, with advice that is worth following meanwhile. Three
@@ -492,8 +494,19 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     return { ...base, mode: 'canned', answer: talk };
   }
   if (!aiOn) {
-    await logChat(db, { ...row, mode: 'faq', question: q, answer: null, note: cfg.on ? 'no key or sdk' : 'agent off' });
-    return { ...base, mode: 'faq', answer: FIXED.faqOnly[lang], faq: choices() };
+    // The typing box is there for everybody (Part 163). With no model to answer it, the question is matched, in memory, to the ready answers THIS person may be
+    // offered: nothing is read, nothing is spent, and a person is never answered from a screen they do not hold.
+    const why = cfg.on ? 'no key or sdk' : 'agent off';
+    const m = faqMatch(subject, q);
+    const near = m.near.map(n => ({ id: n.id, q: faqLabel(n.id, lang) })).filter(n => n.q);
+    const nearNote = m.near.length ? ' \u00b7 near: ' + m.near.map(n => n.id).join(', ') : '';
+    const a = m.best ? faqAnswer(m.best.id, subject, lang, cfg.vars) : null;
+    if (a) {
+      await logChat(db, { ...row, mode: 'match', faq_id: a.id, question: q, answer: a.a.slice(0, 1200), tokens_in: 0, tokens_out: 0, note: why + ' \u00b7 score ' + m.best.score + nearNote });
+      return { ...base, mode: 'match', id: a.id, q: a.q, answer: a.a, near };
+    }
+    await logChat(db, { ...row, mode: 'nomatch', question: q, answer: null, tokens_in: 0, tokens_out: 0, note: why + (m.tie ? ' \u00b7 tie' : '') + nearNote });
+    return { ...base, mode: 'nomatch', answer: FIXED.noMatch[lang], near };
   }
 
   // the person's own pace, then the day's limits

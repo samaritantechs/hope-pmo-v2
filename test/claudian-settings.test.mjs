@@ -117,13 +117,13 @@ test('a person\'s next question follows the switch: ON with a key and a fake pro
   const client = { messages: { create: async () => { calls++; return { content: [{ type: 'text', text: 'Piga simu za portfolio leo.' }], usage: { input_tokens: 10, output_tokens: 5 }, stop_reason: 'end_turn' }; } } };
   C.resetClaudianForTests();
   const off = await C.claudianHandle(db, subject, { op: 'ask', q: 'What should I do today?', lang: 'en' }, { client, noGap: true, nowMs: NOW });
-  assert.equal(off.mode, 'faq'); assert.equal(calls, 0);
+  assert.equal(off.mode, 'match', 'a typed question with the AI off is answered from the nearest ready answer (Part 163)'); assert.equal(off.id, 'improve'); assert.equal(calls, 0);
   await portalApi(db, ADMIN, 'claudianSet', { on: true }, NOW);
   const on = await C.claudianHandle(db, subject, { op: 'ask', q: 'What should I do today?', lang: 'en' }, { client, noGap: true, nowMs: NOW + 1000 });
   assert.equal(on.mode, 'ai'); assert.equal(calls, 1);
   await portalApi(db, ADMIN, 'claudianSet', { on: false }, NOW);
   const off2 = await C.claudianHandle(db, subject, { op: 'ask', q: 'What should I do today?', lang: 'en' }, { client, noGap: true, nowMs: NOW + 2000 });
-  assert.equal(off2.mode, 'faq'); assert.equal(calls, 1, 'switched off again: the provider is not called');
+  assert.equal(off2.mode, 'match'); assert.equal(calls, 1, 'switched off again: the provider is not called');
 });
 
 test('THE PERCENTAGE TARGETS ARE THE ROWS EVERY TABLE ALREADY COLOURS ITSELF BY: the helper reads the same three Settings rows as the portal (PCT_TARGET_KEYS), so one definition of which row is which', async () => {

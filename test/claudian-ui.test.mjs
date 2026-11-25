@@ -191,3 +191,47 @@ test('the HOPE Ai icon in the bubble is the brand file\'s drawing, and its text 
   for (const g of gs) assert.ok(g.y > 300 && g.y < 345, 'a letter left the mouth: ' + JSON.stringify(g));
 });
 
+
+test('THE ICON IS THE HEAD ALONE (the owner, 25 Nov: "Modify the icon by only removing the boundary only leave the head"): no ring, no disc, no round button, no box-shadow around it; the drawing is cropped to the head, and the brand file\'s drawing is the same one', () => {
+  const rule = name => { const m = SRC.match(new RegExp("'\\." + name + "\\{([^']*)\\}'")); return m ? m[1] : ''; };
+  const bub = SRC.slice(SRC.indexOf("'.bub{"), SRC.indexOf("'.panel{"));
+  assert.ok(bub.length > 300, 'the bubble\'s rules moved: update the slice');
+  const first = bub.slice(0, bub.indexOf("'.bub:focus-visible"));
+  assert.ok(!/border:\s*[1-9]|border-radius:\s*50%|background:\s*#|box-shadow/.test(first), 'the bubble itself has a ring, a disc, a round shape or a shadow of its own again: ' + first);
+  assert.ok(/border:0/.test(first) && /background:none/.test(first) && /padding:0/.test(first), 'the bubble is a bare button: no border, no background, no padding');
+  assert.ok(!/box-shadow/.test(bub.replace(/@keyframes[^}]*\}[^}]*\}/g, '')) || !/\.bub\{[^}]*box-shadow/.test(bub), 'no box-shadow on the button');
+  assert.ok(/'\.bub svg\{[^']*filter:drop-shadow\(/.test(bub), 'the lift is a shadow that follows the head\'s own outline');
+  assert.ok(/'\.root\.dark \.bub svg\{[^']*drop-shadow\(0 0 1\.5px rgba\(255,255,255/.test(bub), 'on a dark page the head has a light edge so that its navy parts stay seen');
+  assert.ok(/\.bub\.pulse svg\{animation:cpulse/.test(bub) && !/box-shadow:0 0 0 0 rgba/.test(bub), 'the first-sight pulse is a glow that follows the head, not a ring around a button');
+  assert.ok(/\.hd \.ico\{width:36px;height:36px;flex:none\}/.test(SRC) && !/\.hd \.ico\{[^}]*(background|border-radius|padding)/.test(SRC), 'the header\'s icon is the head alone as well');
+  assert.ok(!rule('hd .ico').includes('background'), 'no disc behind the header\'s head');
+  // the drawing: a square window around the head (its ears and neck), nothing of the old canvas' margins
+  const vb = /<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="([\d.-]+) ([\d.-]+) ([\d.-]+) ([\d.-]+)"/.exec(T.ICON);
+  assert.ok(vb, 'the icon has a viewBox'); const [x, y, w, h] = vb.slice(1).map(Number);
+  assert.equal(w, h, 'a square window: the bubble stays a square the drag can keep inside the screen');
+  assert.ok(x <= 88 && x + w >= 424 && y <= 64 && y + h >= 442, 'the whole head, with its ears and its neck, is inside the window: ' + vb[0]);
+  assert.ok(x >= 40 && y >= 40 && x + w <= 472 && y + h <= 472, 'and the window is cropped to it: the margins of the old 512 canvas are gone (the head fills the bubble)');
+  const brand = fs.readFileSync(path.join(ROOT, 'docs/brand/HOPE-Ai-icon.svg'), 'utf8');
+  assert.ok(!/<circle[^>]*r="2[0-9][0-9]"|<circle[^>]*cx="256"[^>]*cy="256"/.test(brand), 'the brand file has no round frame around the head');
+});
+
+test('THE TYPING BOX IS THERE FOR EVERYBODY (the owner, 25 Nov: "People ain\'t seeing the keypad to ask agent.. there are only opts"): it is not hidden while the AI is off, it takes the focus, and a typed question that found a ready answer, or none, is drawn', () => {
+  assert.ok(/'\.ft\{display:flex;flex:none;/.test(SRC) && !/\.ft\{display:none/.test(SRC) && !/\.ft\.on/.test(SRC), 'the box\'s row is shown by its own rule, not by a class that only the AI-on state adds');
+  assert.ok(!/st\.e\.ft\.className/.test(CODE), 'nothing switches the box off');
+  assert.ok(/function openPanel\(\)[\s\S]{0,900}st\.e\.ta\.focus\(\)/.test(CODE) && !/st\.status && st\.status\.ai\) st\.e\.ta\.focus/.test(CODE), 'the box takes the focus whatever the switch says (a touch screen keeps the keyboard down)');
+  // what is drawn for each answer to a typed question
+  const ask = CODE.slice(CODE.indexOf('function ask()'), CODE.indexOf('function followSwitch'));
+  assert.ok(/r\.mode === 'ai' \|\| r\.mode === 'canned' \|\| r\.mode === 'match'/.test(ask), 'a ready answer found for the question is drawn as an answer, a failure as a hint');
+  assert.ok(/r\.mode === 'match' && r\.q \? addMsg\('w', tr\('matched'\) \+ ' ' \+ String\(r\.q\)\)/.test(ask), 'a ready answer says which ready question it answers, so a wrong guess is seen for what it is');
+  assert.ok(/r\.near && r\.near\.length\) addNear\(r\.near\)/.test(ask), 'the nearest ready questions are offered as choices');
+  const near = CODE.slice(CODE.indexOf('function addNear('), CODE.indexOf('function drawChips('));
+  assert.ok(/el\('button', 'chip', c\.q\)/.test(near) && /b\.onclick = function \(\) \{ askFaq\(c\); \}/.test(near) && !/innerHTML/.test(near), 'a nearest question is a button with text, and a tap asks it exactly as the list does');
+  assert.ok(/querySelectorAll\('\.chip'\)/.test(CODE.slice(CODE.indexOf('function setBusy'), CODE.indexOf('function addNear'))), 'every chip, the nearest ones too, is held while a question is on its way');
+  // the words
+  assert.equal(T.T.sw.matched, 'Jibu la swali la kawaida:'); assert.equal(T.T.en.matched, 'Ready answer to:'); assert.equal(T.T.sw.near, 'Karibu na:'); assert.equal(T.T.en.near, 'Closest:');
+  for (const l of ['sw', 'en']) assert.ok(/standard questions only|maswali ya kawaida tu/.test(T.T[l].welcomeFaq), l + ': with the AI off the welcome says what the box finds');
+  assert.ok(/Type your question|Andika swali lako/.test(T.T.en.welcomeFaq + T.T.sw.welcomeFaq), 'and invites typing, not only a pick');
+  // the look follows the page from the start (the bubble's edge needs it), not only when the panel opens
+  assert.ok(/function paintTheme\(\)/.test(CODE) && /st\.mounted = true;\s*paintTheme\(\);/.test(CODE), 'the dark look is known from the first draw');
+  assert.ok(/new MutationObserver\(paintTheme\)\.observe\(document\.body, \{ attributes: true, attributeFilter: \['class'\] \}\)/.test(CODE), 'and follows the page when its own theme is switched');
+});

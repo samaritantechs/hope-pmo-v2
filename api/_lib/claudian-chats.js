@@ -51,8 +51,11 @@ export const CHATS_MAX_THREADS = 3000;
 export const SNIPPET_CHARS = 140;
 export const CHATS_NOTE = 'Jedwali la mazungumzo bado halijaanzishwa — endesha db/RUN-ME-090-claudian-chats.sql. / The chats table does not exist yet — run db/RUN-ME-090-claudian-chats.sql.';
 
-const MODES = ['ai', 'faq', 'canned', 'limit', 'busy'];
-const TYPED_MODES = ['ai', 'canned', 'limit', 'busy'];
+/* The kinds of row: ai = the model answered a typed question; faq = a tap on a ready question; canned = a greeting answered with a word; limit and busy = the person was told to try later;
+   and, since Part 163 (the typing box is there for everybody), match = a typed question answered from the best ready answer, and nomatch = a typed question no ready answer fits
+   (both only while the AI is off or has no key). A typed question is every kind but faq. */
+const MODES = ['ai', 'faq', 'canned', 'limit', 'busy', 'match', 'nomatch'];
+const TYPED_MODES = ['ai', 'canned', 'limit', 'busy', 'match', 'nomatch'];
 const LIGHT = 'created_at, day, source, user_key, user_name, role, teams, zone, lang, thread, mode, faq_id, tokens_in, tokens_out, cache_read, behind';
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const realDay = s => {
@@ -100,7 +103,7 @@ export async function claudianChatsList(db, args, nowMs = Date.now()) {
     let t = byThread.get(key);
     if (!t) {                                   // the rows come newest first: the person's name, role and teams are the latest the system knew
       t = { thread: key, day: r.day, source: r.source || '', name: r.user_name || '', role: r.role || '', zone: r.zone || '', teams: r.teams || '', lang: r.lang || '',
-        firstAt: r.created_at, lastAt: r.created_at, n: 0, ai: 0, faq: 0, canned: 0, limit: 0, busy: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0,
+        firstAt: r.created_at, lastAt: r.created_at, n: 0, ai: 0, faq: 0, canned: 0, limit: 0, busy: 0, match: 0, nomatch: 0, tokensIn: 0, tokensOut: 0, cacheRead: 0,
         behind: null, faqIds: {}, first: '' };
       byThread.set(key, t);
     }
@@ -110,7 +113,7 @@ export async function claudianChatsList(db, args, nowMs = Date.now()) {
     if (String(r.created_at) < String(t.firstAt)) t.firstAt = r.created_at;
     if (String(r.created_at) > String(t.lastAt)) t.lastAt = r.created_at;
     if (r.behind === true) t.behind = true; else if (r.behind === false && t.behind === null) t.behind = false;
-    if (r.faq_id) t.faqIds[r.faq_id] = (t.faqIds[r.faq_id] || 0) + 1;
+    if (r.faq_id && r.mode === 'faq') t.faqIds[r.faq_id] = (t.faqIds[r.faq_id] || 0) + 1;          // the ready questions TAPPED (a typed question that found one is counted as match)
   }
   for (const r of typed || []) {                // oldest first: the first typed question of the chat
     const t = byThread.get(String(r.thread || ''));

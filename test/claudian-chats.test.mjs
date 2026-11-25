@@ -95,7 +95,7 @@ test('THE LIST HOLDS NO ANSWER TEXT AND NO ACCESS CODE: only counts, the person 
   const d = await chat(fakeDb(book(rows)));
   const s = JSON.stringify(d);
   assert.ok(!s.includes('SECRET-ANSWER-TEXT') && !s.includes('SECRET-NOTE'), 'the list says what was asked first and nothing of the answers');
-  for (const t of d.threads) assert.deepEqual(Object.keys(t).sort(), ['ai', 'behind', 'busy', 'cacheRead', 'canned', 'day', 'faq', 'faqIds', 'first', 'firstAt', 'lang', 'lastAt', 'limit', 'n', 'name', 'role', 'source', 'teams', 'thread', 'tokensIn', 'tokensOut', 'zone'].sort());
+  for (const t of d.threads) assert.deepEqual(Object.keys(t).sort(), ['ai', 'behind', 'busy', 'cacheRead', 'canned', 'day', 'faq', 'faqIds', 'first', 'firstAt', 'lang', 'lastAt', 'limit', 'match', 'n', 'name', 'nomatch', 'role', 'source', 'teams', 'thread', 'tokensIn', 'tokensOut', 'zone'].sort());
 });
 
 test('THE PERSON IS AS THE SYSTEM KNEW THEM LAST: a role, teams, zone or name that changed during the day shows as the latest, never the first', async () => {
@@ -227,4 +227,25 @@ test('THE UPLOAD AND THE CALL APP NEVER LOAD IT: portal-core reaches the reader 
   assert.ok(!/^\s*import[^\n]*claudian-chats/m.test(core), 'portal-core.js (imported by api/upload.js) must not import the reader statically');
   assert.equal((core.match(/import\('\.\/claudian-chats\.js'\)/g) || []).length, 4, 'one lazy import in each of the four functions (the list, one chat, the report, the clear)');
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.ok(!/claudian-chats|claudianChats|claudianThread/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')), f + ' knows the reader');
+});
+
+test('A TYPED QUESTION WITH THE AI OFF (Part 163): a MATCH (answered from a ready answer) and a NO ANSWER are counted on their own, are typed questions (the first one shows), and only a TAP is counted as a ready question tapped', async () => {
+  const rows = [
+    R({ id: 'm1', created_at: '2026-11-25T05:00:00Z', user_key: 'k-neema', user_name: 'NEEMA K', role: 'FIELD OFFICER', thread: 'k-neema:2026-11-25', mode: 'match', faq_id: 'improve', question: 'nifanyeje kufikia targt', answer: 'Anza na simu za portfolio.', tokens_in: 0, tokens_out: 0, cache_read: null, ms: null, behind: null, note: 'agent off \u00b7 score 1.8 \u00b7 near: targets' }),
+    R({ id: 'm2', created_at: '2026-11-25T05:01:00Z', user_key: 'k-neema', user_name: 'NEEMA K', role: 'FIELD OFFICER', thread: 'k-neema:2026-11-25', mode: 'nomatch', faq_id: null, question: 'mshahara unaingia lini', answer: null, tokens_in: 0, tokens_out: 0, cache_read: null, ms: null, behind: null, note: 'agent off' }),
+    R({ id: 'm3', created_at: '2026-11-25T05:02:00Z', user_key: 'k-neema', user_name: 'NEEMA K', role: 'FIELD OFFICER', thread: 'k-neema:2026-11-25', mode: 'faq', faq_id: 'targets', question: 'Malengo ya kampuni ni yapi?', answer: null, tokens_in: null, tokens_out: null, cache_read: null, ms: null, behind: null }),
+  ];
+  const d = await chat(fakeDb(book(rows)));
+  assert.equal(d.threads.length, 1);
+  const t = d.threads[0];
+  assert.equal(t.n, 3); assert.equal(t.match, 1); assert.equal(t.nomatch, 1); assert.equal(t.faq, 1); assert.equal(t.ai, 0);
+  assert.equal(t.first, 'nifanyeje kufikia targt', 'a typed question that found a ready answer is still the first question typed');
+  assert.deepEqual(t.faqIds, { targets: 1 }, 'only a tap is a ready question tapped: the matched question is counted as a match, not as a tap');
+  assert.equal(d.faqLabels.targets.en, 'What are the company targets?');
+  assert.ok(!d.faqLabels.improve, 'a label is kept for the questions that were tapped');
+  // the chat in full: the typed question, the answer it was given, the ready question it answered, and what the note says
+  const th = await thread(fakeDb(book(rows)), t.thread);
+  const m1 = th.items.find(x => x.mode === 'match'), m2 = th.items.find(x => x.mode === 'nomatch');
+  assert.equal(m1.q, 'nifanyeje kufikia targt'); assert.equal(m1.a, 'Anza na simu za portfolio.'); assert.equal(m1.faq, 'improve'); assert.equal(m1.faqLabel.en, 'What should I do to reach the targets?'); assert.match(m1.note, /near: targets/);
+  assert.equal(m2.q, 'mshahara unaingia lini'); assert.equal(m2.a, ''); assert.equal(m2.faq, '');
 });

@@ -184,7 +184,7 @@ cd /srv/hope-pmo && sudo -u deploy npm ci --omit=dev
 **2. The keys, outside the repository.** `/etc/hope-pmo.env`, owned by root, mode `600` —
 the same variables as Vercel (see 3d): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, the
 **same** `VAPID_*` pair, `RESEND_API_KEY`, `DEVICE_SHIFT_SECRET`, `IMPREST_LINK_SECRET`,
-`ANTHROPIC_API_KEY` (optional: Claudian-PMO answers from its ready questions only without it), `HOPELOAN_*`, and `PORT=8080`.
+`ANTHROPIC_API_KEY` (optional: without it Claudian-PMO answers from its ready answers only, tapped or typed: the typing box is always shown and finds the nearest one), `HOPELOAN_*`, and `PORT=8080`.
 
 **3. The service.** `/etc/systemd/system/hope-pmo.service`:
 ```ini
