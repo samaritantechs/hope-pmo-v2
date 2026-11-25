@@ -635,6 +635,11 @@ VIEWS.settings = function(){
     // The HOPE LOAN visibility switch, read off the settings rows already in hand. Unset
     // means SHOWN -- the switch is newer than every deployment that lacks the row.
     var hlOn = !/^(no|off|0|false|hapana)$/i.test(String(settingVal(st.rows, 'HOPELOAN_VISIBLE', 'YES') || '').trim());
+    /* CLAUDIAN-PMO'S CARD (handbook Part 156): its state is the SERVER'S reading of its own settings (one definition of what the switch and the limits mean),
+       asked for here without waiting for it, so the screen opens as fast as before and the card fills when the answer lands. */
+    S.claudian = null;
+    srv('claudianStatus').then(function(d){ S.claudian = d; cpPaint_(); })
+      .catch(function(e){ S.claudian = { error: String((e && e.message) || e) }; cpPaint_(); });
     S.officers = cu;
     S.teamCount = (tm.rows||[]).length;
     S.roles = ac.roles || [];
@@ -912,6 +917,7 @@ VIEWS.settings = function(){
               + ' / HOPE LOAN is hidden: none of its navs are visible to anybody right now.'
               + ' Nothing was deleted — press to show it again.')
         + '</div></div></div>'
+      + cpCard_(S.claudian)
       + '<div class="card"><div class="card-h">Tangazo / Announcement'
         + '<span class="sub">huonekana kwenye kila skrini, hata ya kuingia / shows on every screen, including sign-in</span></div>'
         + '<div class="fld"><label>Maandishi / Text (max 500)</label>'
@@ -1228,6 +1234,78 @@ function settingForm(key, value){
 }
 
 // Read one key out of the settings rows the page already has, rather than a call of its own.
+/* CLAUDIAN-PMO'S CARD, on Settings (handbook Part 156).
+
+     "In settings- give a switch button to switch it on or off, when I switch the agen off, it shifts to FAQs only that are choices and
+      answers a role could ask and get answers but when the agent is on - it answers with Hope and System knowledge as Ai."
+                                                                                                      -- the owner, 25 Nov 2026
+
+   One card: whether the AI is ON (and the one button that flips it), whether the host holds a key (never the key), the limits, what was
+   asked today and the last thing that went wrong. It draws what the SERVER says (claudianStatus): nothing here decides what ON means. The
+   card sits in HEAD between markers so that a repaint (a table search) keeps what has arrived; its two buttons are wired by wireClaudian_(),
+   which the core's wireForms() calls on every paint. */
+function cpNote_(c){
+  if (!c) return 'Inasoma hali ya msaidizi… / Reading the helper’s state…';
+  if (c.error) return 'Hali haikusomeka: ' + esc(c.error) + ' / The state could not be read.';
+  var st = c.standards || {};
+  return (c.keyPresent
+      ? 'Ufunguo wa mtoa huduma upo kwenye seva. / The provider key is set on the server.'
+      : '<b>Ufunguo haupo.</b> Weka <code>ANTHROPIC_API_KEY</code> kwenye mipangilio ya seva (Vercel au seva yetu); bila hiyo msaidizi anajibu maswali ya kawaida tu. '
+        + '/ <b>No key.</b> Set <code>ANTHROPIC_API_KEY</code> in the host’s settings (Vercel or our server); until then the helper answers the ready questions only.')
+    + '<br>Modeli / Model: <b>' + esc(c.model || '') + '</b> &mdash; ndogo zaidi, mtu hawezi kuibadilisha / the smallest, nobody can change it.'
+    + '<br>Maswali ya AI leo / AI questions today: <b>' + money(c.today || 0) + '</b> (kikomo cha kampuni / company limit ' + money(c.allDaily || 0) + ')'
+    + '<br>Viwango vinavyotumika / Standards in use: ' + esc(String(st.sales)) + '% &middot; ' + esc(String(st.col)) + '% &middot; ' + esc(String(st.rec)) + '%'
+    + (c.lastProblem && c.lastProblem.text ? '<br><span style="color:var(--bad)">Tatizo la mwisho / Last problem: ' + esc(c.lastProblem.text) + '</span>' : '');
+}
+function cpCard_(c){
+  var ready = !!(c && !c.error), on = ready && !!c.on, noKey = ready && on && !c.keyPresent;
+  return '<!--cpc--><div class="card" id="cpCard"><div class="card-h">Claudian-PMO &mdash; msaidizi wa AI / the AI helper'
+    + '<span class="sub">kimbo kwenye kona ya skrini / the bubble in the corner of every screen</span></div>'
+    + '<div class="cleanbox">'
+    + '<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    + '<span class="chip ' + (!ready ? 'mut' : noKey ? 'warn' : on ? 'ok' : 'mut') + '" id="cpState">'
+      + (!ready ? '…' : noKey ? 'AI IMEWASHWA, HAKUNA UFUNGUO / AI ON, NO KEY' : on ? 'AI IMEWASHWA / AI ON' : 'MASWALI YA KAWAIDA TU / READY QUESTIONS ONLY') + '</span>'
+    + '<button class="btn sm" id="cpToggle"' + (ready ? '' : ' disabled') + '>' + (on ? 'Zima AI / Turn the AI OFF' : 'Washa AI / Turn the AI ON') + '</button>'
+    + '</div>'
+    + '<div class="note" id="cpNote" style="margin-top:10px;display:block">' + cpNote_(c) + '</div>'
+    + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:flex-end">'
+    + '<div class="fld" style="margin:0"><label>Maswali kwa mtu kwa siku / Questions per person per day (1-200)</label>'
+      + '<input type="number" id="cpUser" min="1" max="200" step="1" style="width:120px" value="' + (ready ? esc(String(c.userDaily)) : '') + '"' + (ready ? '' : ' disabled') + '></div>'
+    + '<div class="fld" style="margin:0"><label>Maswali ya kampuni kwa siku / Questions for everybody per day (10-50000)</label>'
+      + '<input type="number" id="cpAll" min="10" max="50000" step="1" style="width:140px" value="' + (ready ? esc(String(c.allDaily)) : '') + '"' + (ready ? '' : ' disabled') + '></div>'
+    + '<button class="btn sm ghost" id="cpSave"' + (ready ? '' : ' disabled') + '>Hifadhi vikomo / Save the limits</button>'
+    + '</div>'
+    + '<div class="note" style="margin-top:10px;display:block">Msaidizi anajibu kwa kifupi, hawezi kubadilisha chochote kwenye mfumo, na anajibu tu kulingana na cheo na skrini za mtu. '
+      + 'Kikomo kikifika mtu anapata ushauri wa kujaribu tena baadaye. '
+      + '/ It answers briefly, cannot change anything in the system, and answers only from the person’s role and screens. A person who reaches a limit is told to try again later, with advice.</div>'
+    + '</div></div><!--/cpc-->';
+}
+/** Redraws the card where it stands and in HEAD (so a repaint keeps it), then wires it again. */
+function cpPaint_(){
+  var html = cpCard_(S.claudian);
+  if (typeof HEAD === 'string' && HEAD.indexOf('<!--cpc-->') >= 0) HEAD = HEAD.replace(/<!--cpc-->[\s\S]*?<!--\/cpc-->/, function(){ return html; });
+  var card = document.getElementById('cpCard');
+  if (card && S.view === 'settings') { var t = document.createElement('div'); t.innerHTML = html; if (t.firstElementChild) card.parentNode.replaceChild(t.firstElementChild, card); wireClaudian_(); }
+}
+function cpSave_(body, btn, said){
+  if (btn) btn.disabled = true;
+  srv('claudianSet', body).then(function(r){
+    S.claudian = r.state; cpPaint_(); toast(said);
+  }).catch(function(e){ if (btn) btn.disabled = false; toast(String((e && e.message) || e), true); });
+}
+/** Safe to run on every paint: it only assigns handlers by id. */
+function wireClaudian_(){
+  var tg = document.getElementById('cpToggle');
+  if (tg) tg.onclick = function(){
+    var on = !!(S.claudian && S.claudian.on);
+    cpSave_({ on: !on }, tg, on ? 'AI imezimwa: maswali ya kawaida tu. / The AI is off: ready questions only.' : 'AI imewashwa. / The AI is on.');
+  };
+  var sv = document.getElementById('cpSave');
+  if (sv) sv.onclick = function(){
+    cpSave_({ userDaily: (document.getElementById('cpUser') || {}).value, allDaily: (document.getElementById('cpAll') || {}).value }, sv, 'Vikomo vimehifadhiwa. / The limits are saved.');
+  };
+}
+
 function settingVal(rows, key, dflt){
   var r = (rows||[]).find(function(x){ return x.key === key; });
   return r ? r.value : dflt;

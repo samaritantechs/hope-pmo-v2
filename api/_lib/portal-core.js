@@ -8341,6 +8341,50 @@ async function systemOpenGet(db, user) {
   requireAdmin(user);
   return { open: await isSystemOpen(db) };
 }
+/* =======================================================================================
+   CLAUDIAN-PMO'S SWITCH AND LIMITS, for the card on Settings (handbook Part 156).
+
+     "In settings- give a switch button to switch it on or off, when I switch the agen off, it
+      shifts to FAQs only ..."  -- the owner, 25 Nov 2026
+
+   Three settings rows and nothing else: CLAUDIAN_AI (ON / OFF), CLAUDIAN_USER_DAILY and
+   CLAUDIAN_ALL_DAILY. The helper's own code (api/_lib/claudian.js) is loaded when one of these two
+   is CALLED and never before: this file is imported by api/upload.js, and the upload never pays,
+   at load or per request, for a helper it does not use (CLAUDE.md section 1).
+   ======================================================================================= */
+const CLAUDIAN_LIMITS = { userDaily: [1, 200], allDaily: [10, 50000] };
+/** What the Settings card shows: on or off, whether the host holds a key (never the key), the model, the limits, today's count and the last problem. */
+async function claudianStatus(db, user) {
+  requireAdmin(user);
+  const C = await import('./claudian.js');
+  return C.claudianState(db);
+}
+/** The switch and the two limits, any of them: ON or OFF, whole numbers inside the limits above. Admin only, audited, refused to a view-only code at the one door. */
+async function claudianSet(db, user, p) {
+  requireAdmin(user);
+  const q = p || {};
+  const C = await import('./claudian.js');
+  const rows = [];
+  if (q.on !== undefined) {
+    const w = String(q.on).trim();
+    if (typeof q.on !== 'boolean' && !/^(on|off|yes|no|true|false|1|0)$/i.test(w)) throw badRequest('on must be ON or OFF.');
+    rows.push({ key: C.SETTING_AI, value: (q.on === true || /^(on|yes|true|1)$/i.test(w)) ? 'ON' : 'OFF' });
+  }
+  const whole = (v, name, key) => {
+    const [lo, hi] = CLAUDIAN_LIMITS[name];
+    const w = typeof v === 'string' ? v.trim() : v;
+    if (typeof w === 'boolean' || (typeof w === 'string' ? !/^\d{1,6}$/.test(w) : !Number.isInteger(w)) || Number(w) < lo || Number(w) > hi) throw badRequest(name + ' must be a whole number from ' + lo + ' to ' + hi + '.');
+    rows.push({ key, value: String(Number(w)) });
+  };
+  if (q.userDaily !== undefined) whole(q.userDaily, 'userDaily', C.SETTING_USER_DAILY);
+  if (q.allDaily !== undefined) whole(q.allDaily, 'allDaily', C.SETTING_ALL_DAILY);
+  if (!rows.length) throw badRequest('Nothing to save: send on, userDaily or allDaily.');
+  const { error } = await db.from('settings').upsert(rows, { onConflict: 'key' });
+  noteSettingsWritten(db);
+  if (error) throw new Error(error.message);
+  C.noteClaudianSettingsWritten(db);          // the helper's own memo of these rows: the next question sees the new switch, not the old one
+  return { saved: rows.map(r => r.key), state: await C.claudianState(db) };
+}
 /* EVERY ROLE THAT EXISTS, NOT ONLY THE ONES SOMEBODY HAS ALREADY WRITTEN A ROW FOR.
  *
  *   "Nafasi na ruhusa / Roles & access showed only collection and pmo collection"
@@ -11058,7 +11102,7 @@ const FN = {
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
-  systemOpenGet, systemOpenSet, settingDelete,
+  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet,
   accessCodes, saveAccessCode, deleteAccessCode, leadersCheck, leadersSync, leadersSyncUndo, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */
