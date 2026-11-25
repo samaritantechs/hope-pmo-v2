@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="HOPE Ai">
+  <title>HOPE Ai</title>
+  <!-- HOPE Ai: a robot head in the system's own blues (portal palette: b900 #0B2A6B, b700 #1D4ED8, b300 #93C5FD). The words sit on the covered mouth. -->
+  <defs>
+    <clipPath id="head">
+      <path d="M256 64C334 64 388 124 388 208C388 262 366 308 348 336C340 356 334 368 322 378C304 392 280 394 256 394C232 394 208 392 190 378C178 368 172 356 164 336C146 308 124 262 124 208C124 124 178 64 256 64Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- ear pieces -->
+  <rect x="88" y="188" width="28" height="100" rx="14" fill="#0B2A6B"/>
+  <rect x="95" y="200" width="9" height="62" rx="4.5" fill="#93C5FD"/>
+  <rect x="396" y="188" width="28" height="100" rx="14" fill="#0B2A6B"/>
+  <rect x="408" y="200" width="9" height="62" rx="4.5" fill="#93C5FD"/>
+
+  <!-- neck -->
+  <path d="M222 399Q256 405 290 399C288 418 278 430 262 438Q256 442 250 438C234 430 224 418 222 399Z" fill="#0B2A6B"/>
+
+  <!-- head -->
+  <path d="M256 64C334 64 388 124 388 208C388 262 366 308 348 336C340 356 334 368 322 378C304 392 280 394 256 394C232 394 208 392 190 378C178 368 172 356 164 336C146 308 124 262 124 208C124 124 178 64 256 64Z" fill="#1D4ED8"/>
+
+  <!-- the covered mouth -->
+  <g clip-path="url(#head)">
+    <path d="M110 250Q256 326 402 250V400H110Z" fill="#0B2A6B"/>
+    <path d="M110 250Q256 326 402 250" fill="none" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  </g>
+
+  <!-- shine -->
+  <path d="M178 108C158 124 146 150 142 182" fill="none" stroke="#FFFFFF" stroke-opacity=".85" stroke-width="6" stroke-linecap="round"/>
+
+  <!-- eyes -->
+  <ellipse cx="204" cy="206" rx="17" ry="24" fill="#FFFFFF"/>
+  <ellipse cx="308" cy="206" rx="17" ry="24" fill="#FFFFFF"/>
+
+  <!-- HOPE Ai, drawn as strokes so that it never depends on a font -->
+  <g transform="translate(178 314) scale(.95)" fill="none" stroke="#FFFFFF" stroke-width="6.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M0 0V30M22 0V30M0 15H22"/>
+    <ellipse cx="42" cy="15" rx="11" ry="15"/>
+    <path d="M62 30V0H75A9 9 0 0 1 75 18H62"/>
+    <path d="M115 0H93V30H115M93 15H110"/>
+    <path d="M133 30L144 0L155 30M137.5 19H150.5"/>
+    <path d="M164 11V30"/>
+    <circle cx="164" cy="2" r="3.4" fill="#93C5FD" stroke="none"/>
+  </g>
+</svg>

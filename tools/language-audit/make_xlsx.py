@@ -7,8 +7,13 @@ from openpyxl.utils import get_column_letter
 
 src = sys.argv[1] if len(sys.argv) > 1 else 'rows3.json'
 out = sys.argv[2] if len(sys.argv) > 2 else 'HOPE-system-language-audit.xlsx'
-meta = json.load(open(sys.argv[3])) if len(sys.argv) > 3 else {}
+meta = json.load(open(sys.argv[3])) if len(sys.argv) > 3 and not sys.argv[3].startswith('--') else {}
 R = json.load(open(src))
+# optional: --suggest FILE = my suggested Swahili for the English-only sheet (data/suggested-swahili-*.json: {"rows": {id: {en, sw, flag, note}}})
+SUGG = None
+if '--suggest' in sys.argv:
+    SUGG = json.load(open(sys.argv[sys.argv.index('--suggest') + 1]))['rows']
+CONF = {'': 'Sure', 'c': 'Please check', 'k': 'Keep as it is', 'n': 'Sure, with a note'}
 
 def norm(s):
     s = re.sub(r'\{\d+\}', ' ', s or '')
@@ -47,14 +52,14 @@ OWNER = PatternFill('solid', fgColor='FDE68A')
 NOTE = PatternFill('solid', fgColor='EEF2FF')
 thin = Side(style='thin', color='D1D5DB')
 
-def sheet(ws, title, banner, headers, widths, rows, owner_cols):
+def sheet(ws, title, banner, headers, widths, rows, owner_cols, banner_h=62, banner_cols=None):
     ws.title = title
     ws['A1'] = banner
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=banner_cols or len(headers))
     ws['A1'].alignment = Alignment(wrap_text=True, vertical='top')
     ws['A1'].fill = NOTE
     ws['A1'].font = Font(size=10)
-    ws.row_dimensions[1].height = 62
+    ws.row_dimensions[1].height = banner_h
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=2, column=i, value=h)
         c.font = Font(bold=True, color='FFFFFF')
@@ -86,10 +91,16 @@ for e in R['en']:
     if e['text'].strip().lower() in PLACES:
         flags.append('place name: not translated')
     sw = sorted(en2sw.get(norm(e['text']), []))[:2]
-    en_rows.append((areas(e), e['text'].lower(), [
-        hid('EN', e['text']), e['text'], '', '', kinds(e), areas(e), e['count'], where(e),
-        ' || '.join(sw), '; '.join(flags),
-    ]))
+    rid = hid('EN', e['text'])
+    if SUGG is None:
+        row = [rid, e['text'], '', '', kinds(e), areas(e), e['count'], where(e), ' || '.join(sw), '; '.join(flags)]
+    else:
+        g = SUGG.get(rid)
+        if g is None:
+            row = [rid, e['text'], '', 'No suggestion yet (new text)', '', '', '', kinds(e), areas(e), e['count'], where(e), ' || '.join(sw), '; '.join(flags)]
+        else:
+            row = [rid, e['text'], g['sw'], CONF[g.get('flag', '')], g.get('note', ''), '', '', kinds(e), areas(e), e['count'], where(e), ' || '.join(sw), '; '.join(flags)]
+    en_rows.append((areas(e), e['text'].lower(), row))
 en_rows.sort(key=lambda x: (x[0].lower(), x[1]))
 # ---------------- sheet 2: Swahili + English
 pr_rows = []
@@ -119,13 +130,29 @@ for e in R['sw']:
 sw_rows.sort(key=lambda x: (x[0].lower(), x[1]))
 
 today = datetime.date.today().isoformat()
-sheet(wb.active, '1 English only',
-      'HOPE PMO · system language audit · sheet 1 of 3 · PHRASES THAT EXIST IN ENGLISH ONLY (' + today + ').  '
-      'Write the Swahili you accept in the yellow column "Acceptable Swahili (owner)". Leave it empty if the English should stay as it is (names, abbreviations, brands). '
-      '{1} {2} … stand for values the system fills in (a number, a name, an amount): keep them in your wording, in the order you need. '
-      'Column "Swahili used elsewhere" shows how the system already says the same English phrase in a Swahili / English pair.',
-      ['ID', 'English phrase (current)', 'Acceptable Swahili (owner)', 'Notes (owner)', 'Kind of text', 'Screen / area', 'Times used', 'Where in the system (file:line)', 'Swahili used elsewhere for this English', 'Check'],
-      [12, 52, 46, 28, 20, 34, 8, 40, 40, 30], [r[2] for r in en_rows], {3, 4})
+if SUGG is None:
+    sheet(wb.active, '1 English only',
+          'HOPE PMO · system language audit · sheet 1 of 3 · PHRASES THAT EXIST IN ENGLISH ONLY (' + today + ').  '
+          'Write the Swahili you accept in the yellow column "Acceptable Swahili (owner)". Leave it empty if the English should stay as it is (names, abbreviations, brands). '
+          '{1} {2} … stand for values the system fills in (a number, a name, an amount): keep them in your wording, in the order you need. '
+          'Column "Swahili used elsewhere" shows how the system already says the same English phrase in a Swahili / English pair.',
+          ['ID', 'English phrase (current)', 'Acceptable Swahili (owner)', 'Notes (owner)', 'Kind of text', 'Screen / area', 'Times used', 'Where in the system (file:line)', 'Swahili used elsewhere for this English', 'Check'],
+          [12, 52, 46, 28, 20, 34, 8, 40, 40, 30], [r[2] for r in en_rows], {3, 4})
+else:
+    sheet(wb.active, '1 English only',
+          'HOPE PMO · system language audit · sheet 1 of 3 · PHRASES THAT EXIST IN ENGLISH ONLY (' + today + ').  '
+          'Column C is my SUGGESTED SWAHILI for every row: an opinion, not a decision. If you agree with a row, leave the yellow column "Acceptable Swahili (owner)" empty and my suggestion stands; if you want other words, write them in the yellow column. '
+          'Column D says how sure I am: start with the "Please check" rows (where I was unsure); "Keep as it is" rows are names, abbreviations and file column names that I think should not be translated (say so if you disagree). '
+          '{1} {2} … stand for values the system fills in (a number, a name, an amount): they are kept, in the order the Swahili needs. '
+          'The annual report deck (PowerPoint) is written in English for the board: say if it should be in Swahili too. "Swahili used elsewhere" shows how the system already says the same English in a Swahili / English pair.',
+          ['ID', 'English phrase (current)', "Suggested Swahili (Claude's opinion)", "Claude's confidence", "Claude's note", 'Acceptable Swahili (owner)', 'Notes (owner)', 'Kind of text', 'Screen / area', 'Times used', 'Where in the system (file:line)', 'Swahili used elsewhere for this English', 'Check'],
+          [12, 52, 56, 16, 40, 46, 28, 20, 34, 8, 40, 40, 30], [r[2] for r in en_rows], {6, 7}, banner_h=124, banner_cols=5)
+    ws1 = wb.active
+    SOFT = {'Please check': 'FEF3C7', 'Keep as it is': 'E5E7EB', 'No suggestion yet (new text)': 'FEE2E2'}
+    for r in range(3, ws1.max_row + 1):
+        c = ws1.cell(row=r, column=4)
+        if c.value in SOFT:
+            c.fill = PatternFill('solid', fgColor=SOFT[c.value])
 sheet(wb.create_sheet(), '2 Swahili + English',
       'HOPE PMO · system language audit · sheet 2 of 3 · PHRASES SHOWN IN SWAHILI AND ENGLISH TOGETHER (' + today + ').  '
       'Read the Swahili column; if it sounds robotic or wrong, write the wording you accept in the yellow column "Acceptable Swahili (owner)". Leave it empty to keep the current Swahili. '
