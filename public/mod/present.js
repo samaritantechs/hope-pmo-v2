@@ -210,6 +210,11 @@ function presSlides(){
          today's collection % (the Weekly expected trend card's tile for today) where the week's was; and the week's Collection % leaves
          it to stand beside the Early collection % on a tile of their own; and the Legal recovery tile says how much of its figure came BY PHONE
          ("legal recovery widget on presentation, have their phone recovery in the same widget"), a second line under it.
+       "Performance card is not showing if today's or weekly at presentation / Recovered this week should go with uncol week / Going with uncol today
+        on the same widget on the presentation slide doesn't make sense. Better kill the loan app request widget and differentiate today from weekly
+        recovery vs uncollected" (addendum 8): Performance says it is the WEEK's average; Recovered this week carries the WEEK's uncollected (and
+        nothing of today's: the "today" line it had is gone); TODAY has a Recovered tile of its own, beside Uncollected today, that carries today's
+        uncollected; the Loan applications widget is gone; and the tiles stand in the order the story is told in (see the list below).
        A percentage the week cannot measure is a dash, never a nought. The owner can name other widgets and each is one line here. The grid
        is `grid:'4x3'` (a class and a fit in presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
     var pf = d.perf || {};
@@ -225,6 +230,17 @@ function presSlides(){
       return (list || []).filter(function(x){ return !!x && (a ? x.date === a : x.weekday === d.weekday); })[0] || null;
     };
     var colNow = dayNow(d.colTrend), salesNow = dayNow(d.salesTrend);
+    /* TODAY'S RECOVERY AGAINST TODAY'S UNCOLLECTED, on a tile of its own ("differentiate today from weekly recovery vs uncollected"): the dashboard's own
+       Recovered card (initial - current, the Weekly recovery trend's tile for today) over the day's own uncollected (the Uncollected today card), the same
+       ratio the trend's tile prints (÷ leo). The dashboard's own words where nothing was filed: no defaulter deck today is "not uploaded yet", never a
+       nought that reads as "nothing came back" (VIEWS.dashboard, deckToday); and a day with no collection sheet (a weekend, a morning before the upload)
+       has no uncollected to divide by. */
+    var recTodayTile = (function(){
+      if (d.deckToday === false) return { v: DASH_, s: 'not uploaded yet' };
+      var rec = Number(c.recovered) || 0, unc = Number(c.uncollectedToday) || 0;
+      if (!colNow || colNow.uploaded === false) return { v: 'TZS '+money(rec), s: 'no collection sheet today' };
+      return { v: 'TZS '+money(rec), s: ['of TZS '+money(unc)+' uncollected', under(pct, unc > 0 ? Math.round(rec / unc * 1000) / 10 : null, 'recovered')] };
+    })();
     /* the week's Expected Defaulters recovery: the dashboard's own total, and only when the database answered it (edrNote says it did not)
        and at least one day of the week has its two files (a week with none reads "not uploaded yet" on the dashboard, never a nought) */
     var edr = d.edrTrendTotal, edrOn = !!edr && !d.edrNote && (d.edrTrend || []).some(function(x){ return !!(x && x.uploaded); });
@@ -232,8 +248,14 @@ function presSlides(){
        a notice and phoned counts once). Null on a side that cannot be read (the ledger not there, db/RUN-ME-089 not run, a phone read that
        failed or was late), and a grand figure that silently left a side out would read as a result: a dash, and no line, then */
     var lg = d.legal && d.legal.grand, lgOn = !!lg && lg.on === true && !!lg.total && lg.total.recovered != null;
-    /* the week's loan applications: the strip's own count (every application that ARRIVED this week, whatever stage it is at now) */
-    var appsOn = pf.appsCount != null;
+    /* THE WEEK'S UNCOLLECTED, beside the week's recovery ("Recovered this week should go with uncol week"): the Weekly recovery trend's own TOTAL
+       (Monday to Friday's own sheets, once each: the figure the week's Rec % is divided by), else the Weekly expected trend's days added up (the
+       same sheets). Only when the week has a collection sheet behind it: a week nobody has uploaded a sheet for has no uncollected to show, and
+       "of TZS 0 uncollected" would read as a fact (a dash's words say it). */
+    var colDays = d.colTrend || [];
+    var colUp = colDays.some(function(x){ return !!x && x.uploaded !== false; });
+    var rtt = d.recTrendTotal, rttU = rtt && rtt.uncollected != null && isFinite(Number(rtt.uncollected)) ? Number(rtt.uncollected) : null;
+    var weekUncollected = rttU != null ? rttU : colDays.reduce(function(s2, x){ return s2 + (Number(x && x.uncollected) || 0); }, 0);
     /* TODAY'S SALES: the Sales trend card's own tile for today (what the dashboard prints for the day: the approved principal, the loans, the
        percentage of the daily target), so the wall and the dashboard cannot say two different things */
     var loansTxt = function(n){ n = Number(n) || 0; return n === 1 ? '1 loan' : money(n) + ' loans'; };
@@ -242,22 +264,23 @@ function presSlides(){
       var p = pct(salesNow.pct);
       return loansTxt(salesNow.loans) + (p === DASH_ ? '' : ' · ' + p + ' of target');
     };
+    /* THE TWELVE IN THE ORDER THE STORY IS TOLD IN: the book and the sales; then what was left to collect today, what came back today and what came back
+       this week; then the week's measures (every one of the last row says "(week)"). */
     slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
-      /* RECOVERED, TODAY'S AND THE WEEK'S IN ONE TILE ("combine recovered today and this week"): the week's money is the figure, and under it the
-         percentage that belongs to it, then today's -- two lines, which a tile may carry (`s` as an array) */
-      { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:[under(pct, pf.recPct, 'of uncollected'), 'TZS '+money(c.recovered)+' today'] },
       { l:'Defaulters', v:money(c.defaulters), s:money(c.cleared)+' cleared today' },
       { l:'Sales this week', v:'TZS '+money(c.salesWeek), s:under(pct, pf.salesPct, 'of target') },
+      { l:'Sales today', v:salesNow ? 'TZS '+money(salesNow.amount) : DASH_, s:salesTodayLine() },
       /* COLLECTION TODAY % AT UNCOLLECTED TODAY ("show collection today% at uncollected today"): the Weekly expected trend card's own percentage
          for today (collected over expected, the day's sheet), where the week's used to be */
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday), s:under(pct, colNow ? colNow.pct : null, 'collected today') },
+      /* RECOVERED TODAY, AND RECOVERED THIS WEEK, EACH WITH ITS OWN UNCOLLECTED AND ITS OWN PERCENTAGE: two tiles, two periods, never one tile with both */
+      { l:'Recovered today', v:recTodayTile.v, s:recTodayTile.s },
+      { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:colUp ? ['of TZS '+money(weekUncollected)+' uncollected', under(pct, pf.recPct, 'recovered')] : 'no collection sheet yet' },
       /* AND THE WEEK'S DEDUCTION CASES UNDER IT ("at abnormal card in presentation - show weekly deduction case counts per team counts too. so that i get the
          impact from that view", the owner, 25 Nov 2026; addendum 6): the line is made above (presDedLine_), because the cases are a read of their own and not a field
          of the dashboard's answer; nothing is read here. Their per-team counts are the slide that follows this one. */
       { l:'Abnormal', v:money(c.abnormal), s:dedLine },
-      { l:'Sales today', v:salesNow ? 'TZS '+money(salesNow.amount) : DASH_, s:salesTodayLine() },
-      { l:'Loan applications (week)', v:appsOn ? money(pf.appsCount) : DASH_, s:appsOn ? 'TZS '+money(pf.appsAmount)+' requested' : '' },
       /* EARLY COL % AND COL % (WEEK) ON THEIR OWN WIDGET ("ealry col% and col% week on their own widget"): the strip's two collection percentages
          side by side, the early one first as the owner wrote it, each a dash when the week cannot measure it */
       { l:'Early col · Col % (week)', v:pct(pf.ecolPct)+' · '+pct(pf.colPct) },
@@ -267,7 +290,10 @@ function presSlides(){
          served a notice and phoned counts once, under notices). A dash for it if an answer has the total and not its parts. */
       { l:'Legal recovery (week)', v:lgOn ? 'TZS '+money(lg.total.recovered) : DASH_, s:lgOn ? [under(pct, lg.total.pct, 'of owed'), 'by phone ' + (lg.total.cRec != null ? 'TZS '+money(lg.total.cRec) : DASH_)] : '' },
       { l:'Exp.Def recovery (week)', v:edrOn ? 'TZS '+money(edr.recovered) : DASH_, s:edrOn ? under(pct1, edr.pct, 'of their arrears') : '' },
-      { l:'Performance (average)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
+      /* THE PERFORMANCE STRIP IS THE WEEK'S ("Performance card is not showing if today's or weekly"): the average of the week's sales %, collection % and
+         recovery % (d.perf.avgPct), and the label now says so. "(week avg)", not "(week average)": the longer label wraps onto a second line at a TV's width
+         and lowers its figure below the others' */
+      { l:'Performance (week avg)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
     /* THE ABNORMAL CARD'S PER-TEAM VIEW: the slide right after the day's, whose Abnormal tile it explains. Built from the dashboard's answer and the deduction read,
        never from the officer boards, so it is in the deck whether or not they arrive; absent for a person who does not hold the PMO Deduction tab. */
     var abnDed = presAbnDedSlide_(d, S.presData);

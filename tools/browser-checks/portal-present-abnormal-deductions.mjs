@@ -164,7 +164,7 @@ for (const [w, h] of SIZES) {
 }
 const V = firstDay.tiles['Abnormal'];
 check('1 the Abnormal tile is the dashboard\'s own figure (37) with the week\'s deduction cases under it', V && V.v === '37' && JSON.stringify(V.s) === JSON.stringify(['9 deduction cases this week']), JSON.stringify(V));
-check('1 every other tile is as it was (no line of the cases anywhere else), and the eleven others still carry their own', Object.entries(firstDay.tiles).filter(([l, x]) => l !== 'Abnormal' && x.s.some(s => /deduction/.test(s))).length === 0 && firstDay.tiles['Defaulters'].s[0] === '4,321 cleared today', JSON.stringify(firstDay.tiles['Defaulters']));
+check('1 every other tile is as it was (no line of the cases anywhere else), and the others still carry their own', Object.entries(firstDay.tiles).filter(([l, x]) => l !== 'Abnormal' && x.s.some(s => /deduction/.test(s))).length === 0 && firstDay.tiles['Defaulters'].s[0] === '4,321 cleared today', JSON.stringify(firstDay.tiles['Defaulters']));
 check('2 the slide\'s title, its three columns and its caption say what it is', /Abnormal payments & deduction cases/.test(firstTable.title) && JSON.stringify(firstTable.head) === JSON.stringify(['#', 'Team', 'Abnormal payments', 'Deduction cases (week)']) && /Wiki \/ Week: 2026-11-23 → 2026-11-29/.test(firstTable.caption) && /teams with a deduction case: 3 \/ 5/.test(firstTable.caption), firstTable.title + ' | ' + firstTable.head.join(','));
 check('2 a row for each team with an abnormal payment or a case: the most cases first (KONGOWE 4, TANDIKA 3, MBAGALA 2), then the flagged team with none (NYAMA); QUIET, with nothing, is not there',
   JSON.stringify(firstTable.rows.slice(0, 4)) === JSON.stringify([['1', 'KONGOWE', '7', '4'], ['2', 'TANDIKA', '0', '3'], ['3', 'MBAGALA', '20', '2'], ['4', 'NYAMA', '10', '0']]) && firstTable.n === 5, JSON.stringify(firstTable.rows));
@@ -245,7 +245,7 @@ DED = DED0;
 REQ = []; page = await openDeck({ width: 1920, height: 1080 }, OUTSIDER);
 check('6 a person without the PMO Deduction tab is NEVER asked for the cases (the two other reads are made)', JSON.stringify(REQ.map(r => r[0])) === JSON.stringify(['dashboardFull', 'officerBoards']), JSON.stringify(REQ.map(r => r[0])));
 const Go = await day(page);
-check('6 the Abnormal tile has no line, and the day slide is what it was before (twelve tiles, eleven lines under the figures)', JSON.stringify(Go.tiles['Abnormal'].s) === '[]' && Go.n === 12 && Object.values(Go.tiles).filter(x => x.s.length).length === 9, JSON.stringify(Go.tiles['Abnormal']));
+check('6 the Abnormal tile has no line, and the day slide is what it was before (twelve tiles, nine of them with lines under their figures)', JSON.stringify(Go.tiles['Abnormal'].s) === '[]' && Go.n === 12 && Object.values(Go.tiles).filter(x => x.s.length).length === 9, JSON.stringify(Go.tiles['Abnormal']));
 const ids = await page.evaluate(() => S.slides.map(s => s.id));
 check('6 no per-team slide, and the team table is the second slide', !ids.includes('abndeduct') && ids[1] === 'teams', JSON.stringify(ids));
 check('6 no note on the page about the cases, and no segment box for the slide', await page.evaluate(() => !document.getElementById('presDedRetry') && !document.querySelector('input.presSeg[value="abndeduct"]')));
