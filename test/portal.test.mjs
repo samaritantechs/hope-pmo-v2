@@ -3502,6 +3502,129 @@ test('a PMO deduction case is one submission with a row per accused staff, scope
   assert.equal(off.on, false); assert.match(off.note, /RUN-ME-043/); assert.deepEqual(off.rows, []);
 });
 
+/* ONE PRESS, ONE CASE; SEVERAL CUSTOMERS IN A CASE (handbook Part 164).
+     "[a reporter] pressed multiple times at submitting deduction case and deductions went so many (16) so we must delete all unique rows in the
+      existing deductions bro and prevent such an issue in the future"
+     "at filling deductions case, we can add another customer & ref no in the same case as we add multi officers"   -- the owner, 25 Nov 2026
+   The export the owner attached held sixteen cases of ONE staff line, identical but for their case ids, all saved in the minute 12:22:
+   every press made a new random case id, so nothing could tell a repeat from a new case -- and the reporters are paid per unique case. */
+const dedForm = (extra = {}) => ({ team: 'KONGOWE', customer: 'ASHA JUMA', ref: '555', receivedDate: '2026-07-01', discoveryDate: TODAY,
+  decision: 'Alitoa pesa kwa afisa', toPay: 100000, staff: [{ name: 'JUMA G', amountTaken: 60000, deduction: 60000 }], ...extra });
+const dedGmo = () => ({ ...GMO, tabs: GMO.tabs.concat(['deduct']) });
+test('a deduction case submitted again is the same case: sixteen presses are one, in a row, at once, and from a retry, and HR\'s entry is left alone', async () => {
+  const t = tables();
+  const db = fakeDb(t), G = dedGmo();
+  const first = await portalApi(db, G, 'addDeduction', dedForm(), NOW);
+  assert.equal(first.added, 1); assert.equal(first.duplicate, false);
+  // The sixteen presses of 25 Nov: one after another, every one with the minute moving on.
+  const again = [];
+  for (let i = 1; i <= 15; i++) again.push(await portalApi(db, G, 'addDeduction', dedForm(), NOW + i * 7000));
+  assert.ok(again.every(r => r.duplicate === true && r.added === 0), 'every later press is told it was already saved');
+  assert.ok(again.every(r => r.caseId === first.caseId && r.rows === 1), 'and names the SAME case');
+  assert.equal(db._dump('pmo_deductions').length, 1, 'one line in the register, not sixteen');
+  // At once: sixteen requests in flight together. The code reads nothing before it writes (so there is no gap between a check and a write for
+  // two server instances to fall into): the table's primary key refuses every copy but the first, as the phones' call sync dedups.
+  const t2 = tables(); t2.pmo_deductions = [];
+  const a = fakeDb(t2);
+  const burst = await Promise.all(Array.from({ length: 16 }, (_, i) => portalApi(a, G, 'addDeduction', dedForm(), NOW + i)));
+  assert.equal(burst.filter(r => !r.duplicate).length, 1, 'exactly one of sixteen simultaneous presses writes');
+  assert.equal(a._dump('pmo_deductions').length, 1);
+  const calls = [];
+  const spy = fakeDb(tables()), spyFrom = spy.from.bind(spy);
+  spy.from = n => {
+    const q = spyFrom(n);
+    for (const m of ['select', 'insert', 'upsert', 'update', 'delete']) { const f = q[m] && q[m].bind(q); if (f) q[m] = (...x) => { if (n === 'pmo_deductions') calls.push(m); return f(...x); }; }
+    return q;
+  };
+  await portalApi(spy, G, 'addDeduction', dedForm(), NOW);
+  assert.deepEqual(calls, ['upsert', 'select'], 'the register is written first (and asked what it wrote): nothing is read BEFORE the write, so there is nothing to race');
+  // A slow answer and a retry hours later (a timeout is not a failure of the save): still the one case, whatever the clock says.
+  const late = await portalApi(db, G, 'addDeduction', dedForm(), NOW + 6 * 3600 * 1000);
+  assert.equal(late.duplicate, true);
+  assert.equal(db._dump('pmo_deductions').length, 1);
+  // HR records the deduction on the case; a later press of the same form does not touch what HR wrote.
+  const hr = { code: 'H', name: 'HR PERSON', role: 'HR', teams: null, tabs: ['deduct'] };
+  const row = db._dump('pmo_deductions')[0];
+  await portalApi(db, hr, 'hrDeduction', { id: row.id, hrNotes: 'Kata Novemba', deducted: 25000 }, NOW);
+  await portalApi(db, G, 'addDeduction', dedForm(), NOW + 99000);
+  const after = db._dump('pmo_deductions');
+  assert.equal(after.length, 1);
+  assert.equal(after[0].deducted, 25000); assert.equal(after[0].hr_notes, 'Kata Novemba'); assert.equal(after[0].remaining, 75000);
+  // The reporter is paid for ONE case, not sixteen (the earners' table counts unique cases).
+  const g = await portalApi(db, G, 'deductions', {}, NOW);
+  assert.equal(g.cases, 1); assert.equal(g.entries, 1);
+  assert.equal(g.reporters.length, 1); assert.equal(g.reporters[0].cases, 1);
+});
+
+test('a deduction case that differs in anything is another case, and another reporter filing the same words is another case too', async () => {
+  const db = fakeDb(tables()), G = dedGmo();
+  const base = await portalApi(db, G, 'addDeduction', dedForm(), NOW);
+  const changed = [
+    dedForm({ ref: '556' }), dedForm({ customer: 'ASHA JUMA 2' }), dedForm({ decision: 'Alitoa pesa kwa afisa.' }), dedForm({ toPay: 100001 }),
+    dedForm({ receivedDate: '2026-07-02' }), dedForm({ discoveryDate: '2026-07-01' }), dedForm({ team: 'MBAGALA' }),
+    dedForm({ staff: [{ name: 'JUMA G', amountTaken: 60001, deduction: 60000 }] }), dedForm({ staff: [{ name: 'JUMA G', amountTaken: 60000, deduction: 60001 }] }),
+    dedForm({ staff: [{ name: 'JUMA H', amountTaken: 60000, deduction: 60000 }] }),
+    dedForm({ staff: [{ name: 'JUMA G', amountTaken: 60000, deduction: 60000 }, { name: 'PILI P' }] }),
+    dedForm({ customers: [{ name: 'ASHA JUMA', ref: '555' }, { name: 'ZAWADI', ref: '777' }] }),
+  ];
+  const ids = new Set([base.caseId]);
+  for (const f of changed) {
+    const r = await portalApi(db, f.team === 'MBAGALA' ? ADMIN : G, 'addDeduction', f, NOW + 1000);
+    assert.equal(r.duplicate, false, 'a changed ' + JSON.stringify(f).slice(0, 60) + ' is a new case');
+    ids.add(r.caseId);
+  }
+  assert.equal(ids.size, changed.length + 1, 'every one of them has a case id of its own');
+  // The same words from ANOTHER signed-in person are not the first person's repeat (they are paid per case they filed).
+  const other = { ...dedGmo(), name: 'ANOTHER GMO', code: 'G2' };
+  const r2 = await portalApi(db, other, 'addDeduction', dedForm(), NOW + 2000);
+  assert.equal(r2.duplicate, false);
+  assert.notEqual(r2.caseId, base.caseId);
+  // The ids are the same on any server and at any time: they are made from the submission, never from the clock or luck.
+  const a = fakeDb(tables()), b = fakeDb(tables());
+  const ra = await portalApi(a, G, 'addDeduction', dedForm({ staff: [{ name: 'X1', amountTaken: 1 }, { name: 'X2', amountTaken: 2 }] }), NOW);
+  const rb = await portalApi(b, G, 'addDeduction', dedForm({ staff: [{ name: 'X1', amountTaken: 1 }, { name: 'X2', amountTaken: 2 }] }), NOW + 86400000 * 3);
+  assert.equal(ra.caseId, rb.caseId);
+  assert.deepEqual(a._dump('pmo_deductions').map(r => r.id), b._dump('pmo_deductions').map(r => r.id));
+  assert.ok(a._dump('pmo_deductions').every(r => /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(r.id)), 'a real uuid, which is what the id column holds');
+  assert.equal(new Set(a._dump('pmo_deductions').map(r => r.id)).size, 2, 'each staff line has its own id');
+});
+
+test('a deduction case names as many customers as it needs: their names and REF NOs go into the two cells every line has, in the order typed', async () => {
+  const db = fakeDb(tables()), G = dedGmo();
+  const r = await portalApi(db, G, 'addDeduction', dedForm({ customer: undefined, ref: undefined, customers: [
+    { name: 'CUSTOMER A', ref: '9900000001' }, { name: '  ', ref: '' }, { name: 'CUSTOMER B', ref: '9900000002' },
+    { name: 'CUSTOMER A AGAIN', ref: '9900000001' }, { name: 'CUSTOMER C', ref: '9900000003' }],
+    staff: [{ name: 'S ONE', amountTaken: 10 }, { name: 'S TWO', amountTaken: 20 }] }), NOW);
+  assert.equal(r.customers, 3, 'an empty row is dropped and the same REF NO twice is one customer (the first name stands)');
+  assert.equal(r.ref, '9900000001, 9900000002, 9900000003');
+  const rows = db._dump('pmo_deductions');
+  assert.equal(rows.length, 2);
+  for (const x of rows) {
+    assert.equal(x.customer, 'CUSTOMER A, CUSTOMER B, CUSTOMER C');
+    assert.equal(x.ref, '9900000001, 9900000002, 9900000003');
+    assert.equal(x.case_id, r.caseId);
+  }
+  // The tab reads them back as they were stored: one case, two staff lines, every customer in the cells the list, the Excel and the search read.
+  const g = await portalApi(db, G, 'deductions', {}, NOW);
+  assert.equal(g.cases, 1); assert.equal(g.entries, 2);
+  assert.ok(g.rows.every(x => x.customer === 'CUSTOMER A, CUSTOMER B, CUSTOMER C' && x.ref === '9900000001, 9900000002, 9900000003'));
+  // The single pair the form sent before this change still works, to the letter.
+  const one = await portalApi(db, G, 'addDeduction', dedForm({ customer: ' ZAWADI ', ref: ' 888 ' }), NOW + 5000);
+  assert.equal(one.customers, 1);
+  assert.deepEqual(db._dump('pmo_deductions').filter(x => x.case_id === one.caseId).map(x => [x.customer, x.ref]), [['ZAWADI', '888']]);
+  // Half a customer is refused, naming the half.
+  const bad = c => portalApi(db, G, 'addDeduction', dedForm({ customer: undefined, ref: undefined, customers: c }), NOW);
+  await assert.rejects(() => bad([{ name: 'A', ref: '1' }, { name: 'B', ref: '' }]), e => e.status === 400 && /REF NO/.test(e.message));
+  await assert.rejects(() => bad([{ name: 'A', ref: '1' }, { name: '', ref: '2' }]), e => e.status === 400 && /name/i.test(e.message));
+  await assert.rejects(() => bad([{ name: ' ', ref: ' ' }]), e => e.status === 400);
+  await assert.rejects(() => bad([]), e => e.status === 400, 'no customer at all is still refused');
+  await assert.rejects(() => bad(Array.from({ length: 51 }, (_, i) => ({ name: 'C' + i, ref: String(i + 1) }))), e => e.status === 400 && /50/.test(e.message));
+  const fifty = await bad(Array.from({ length: 50 }, (_, i) => ({ name: 'C' + i, ref: String(i + 1) })));
+  assert.equal(fifty.customers, 50);
+  // Nothing was written by the refused ones.
+  assert.equal(db._dump('pmo_deductions').filter(x => x.team === 'KONGOWE').length, 2 + 1 + 1);
+});
+
 /* THE EARNERS' AMOUNT PER CASE IS A DATED SCHEDULE (handbook Part 152) -- "the bluedot at Makato ya PMO / PMO Deduction opens commisions,
    it just kills the meaning - remove it there but under the makato table add the earner's table and as admin could have copmmission
    settings alone, i need to set earners amount there - b/se like now its 10,000 per case sometimes the amount changes to boost followup"
@@ -13369,7 +13492,7 @@ test('a code that spells a team differently from the registry still opens its bo
 
 /* ONE DAY AT A TIME -- "Pmos make daily followup .. they can't be always finding huge list".
    The tab opens on the latest day with a payment, takes a day, and 'all' is the old window. */
-test('abnormal payments: the tab opens on the latest day that has a payment, not the whole fortnight', async () => {
+test('abnormal payments: no day and \'latest\' are the latest day that has a payment, a day is that day, \'all\' is the whole fortnight (the tab itself sends \'all\' since Part 164)', async () => {
   const t = tables();
   t.received_payments = [
     { id: 'r1', team: 'KONGOWE', amount_paid: 1001, paid_at: '2026-07-20', transaction_id: 'OLD' },
@@ -13386,6 +13509,13 @@ test('abnormal payments: the tab opens on the latest day that has a payment, not
   assert.equal(d.date, '2026-07-22');
   assert.equal(d.latest, '2026-07-22');
   assert.deepEqual(d.rows.map(r => r.transaction_id).sort(), ['LATEST', 'LATEST2', 'SHEET22']);
+  // 'latest' is the explicit way to ask for it (the tab opens on the whole fortnight and the latest day is a button, handbook Part 164):
+  // the same answer as no date at all, row for row.
+  const asked = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', { date: 'latest' }, NOW);
+  assert.equal(asked.mode, 'day');
+  assert.equal(asked.date, '2026-07-22');
+  assert.equal(asked.latest, '2026-07-22');
+  assert.deepEqual(asked.rows.map(r => r.transaction_id).sort(), d.rows.map(r => r.transaction_id).sort());
   // A day asked for: that day only, the uploaded sheet placed by its upload day.
   d = await portalApi(dbWithRpc(t), ADMIN, 'abnormal', { date: '2026-07-20' }, NOW);
   assert.equal(d.mode, 'day');

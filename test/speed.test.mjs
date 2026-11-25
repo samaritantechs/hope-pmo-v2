@@ -516,6 +516,13 @@ const BUDGETS = [
   /* 4 -> 5 (24 Nov): that week's stamped phone rows, the same one answer as above. Still never more than this week's list. */
   ['Legal recoveries list, another week', 'legalRecoveries', { period: 'week', weekOf: '2026-07-13' }, ADMIN, 5, 800, 5, 800],
   ['Abnormal payments',       'abnormal',            {}, ADMIN,  6,  2500,  6, 2500],
+  /* THE TAB'S FIRST OPEN IS THE WHOLE FORTNIGHT (25 Nov 2026, handbook Part 164): "Open Abnormal Payments panel with defaults at the two
+     all weeks view, latest is an opt for user". The page sends date 'all' when nothing was chosen; the row above is the latest-day
+     reading a press of "Siku ya mwisho" asks for. The whole window is THREE trips on this fixture (the uploaded sheets, the settings
+     and the received payments of the window) where the latest day asks one more -- which day is the latest -- and, for rows with no PMO,
+     the stage lookups. What that window reads at the live book's size is the test below ('an officer does not download forty teams of
+     abnormal payments': 4,000 uploaded rows, an officer reads 100). A portal screen: nothing on /api/upload or /api/call. */
+  ['Abnormal payments, whole fortnight (the tab\'s first open)', 'abnormal', { date: 'all' }, ADMIN,  3,  100,  3, 100],
   /* IMPREST, measured on OFFICER -- the fixture user that already holds impreq/impappr/imprep
      through USER_TABS, exactly as an officer with all three ticked would in the field. Neither
      world differs (imprest calls no rpc), so both budget columns are the same measured number.
