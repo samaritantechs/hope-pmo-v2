@@ -141,8 +141,10 @@ test('THE WINDOW IS ASKED OF THE DATABASE: rows of other days are never read, an
   const seen = []; const from = db.from.bind(db); db.from = t => { seen.push(t); return from(t); };
   const d = await chat(db, { from: '2026-11-24', to: '2026-11-24' });
   assert.equal(d.rowsRead, 2); assert.deepEqual(d.threads.map(t => t.thread), ['k-asha:2026-11-24']);
-  assert.ok(seen.length >= 2 && seen.every(t => t === 'claudian_chats'), 'only the chats table: ' + seen.join(','));
-  assert.ok(seen.length <= 4, 'two reads, a page each: ' + seen.length);
+  // the two reads of the chats table, and the one settings row that holds the note of the last clear (Part 162), read through the memo the whole portal reads
+  assert.ok(seen.filter(t => t === 'claudian_chats').length >= 2 && seen.every(t => t === 'claudian_chats' || t === 'settings'), 'only the chats table and the one settings row: ' + seen.join(','));
+  assert.ok(seen.filter(t => t === 'settings').length <= 1, 'the settings are read once: ' + seen.join(','));
+  assert.ok(seen.length <= 5, 'two reads of the chats, a page each, and the settings: ' + seen.length);
   const none = await chat(db, { from: '2026-10-01', to: '2026-10-05' });
   assert.equal(none.on, true); assert.deepEqual(none.threads, []); assert.equal(none.rowsRead, 0);
 });
@@ -223,6 +225,6 @@ test('THE TAB IS NAMED ONCE AND REACHED THE WAY EVERY TAB IS: in EXTRA_TABS (so 
 test('THE UPLOAD AND THE CALL APP NEVER LOAD IT: portal-core reaches the reader only through an import made when the two functions are CALLED, and neither function of the two paths knows its name', () => {
   const core = fs.readFileSync(path.join(ROOT, 'api/_lib/portal-core.js'), 'utf8');
   assert.ok(!/^\s*import[^\n]*claudian-chats/m.test(core), 'portal-core.js (imported by api/upload.js) must not import the reader statically');
-  assert.equal((core.match(/import\('\.\/claudian-chats\.js'\)/g) || []).length, 2, 'one lazy import in each of the two functions');
+  assert.equal((core.match(/import\('\.\/claudian-chats\.js'\)/g) || []).length, 4, 'one lazy import in each of the four functions (the list, one chat, the report, the clear)');
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.ok(!/claudian-chats|claudianChats|claudianThread/.test(fs.readFileSync(path.join(ROOT, f), 'utf8')), f + ' knows the reader');
 });

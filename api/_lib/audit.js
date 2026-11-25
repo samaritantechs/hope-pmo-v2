@@ -47,6 +47,8 @@ export const AUDITED = new Set([
   'fuStatusesSave', 'leaveSetAnnualDays',
   // ... and Claudian-PMO's switch and limits: whether a helper that costs money is on, and for how many questions.
   'claudianSet',
+  // ... and the clearing of the helper's chat history (admin only): the one thing here that deletes what people asked.
+  'claudianChatsClear',
   // the customer registers
   'addComment', 'addComplaint', 'saveComplaint', 'resolveComplaint', 'deleteComplaint',
   'addRestructure', 'decideRestructure', 'addDemandNotice',

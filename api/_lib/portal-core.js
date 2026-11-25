@@ -8394,11 +8394,37 @@ async function claudianSet(db, user, p) {
    before (this file is imported by api/upload.js: CLAUDE.md section 1). */
 async function claudianChats(db, user, a, nowMs) {
   const M = await import('./claudian-chats.js');
-  return M.claudianChatsList(db, a || {}, nowMs);
+  const [out, memo] = await Promise.all([M.claudianChatsList(db, a || {}, nowMs), settingGet(db, M.SETTING_LAST_CLEAR)]);
+  /* What the tab needs to draw the report's two buttons: whether this person may clear (the admin, not a view-only code; the clear itself checks again),
+     and when the history was last cleared and by whom (one setting row, read through the memo the rest of the portal reads). */
+  out.canClear = (user.tabs || []).includes('settings') && !user.readOnly;
+  out.lastClear = M.lastClearOf(memo);
+  return out;
 }
 async function claudianThread(db, user, a) {
   const M = await import('./claudian-chats.js');
   return M.claudianChatThread(db, a || {});
+}
+/* THE REPORT FOR CLAUDE, AND THE CLEAR (handbook Part 162) -- "I need to always export a report you may need at that window of Hope Ai, then clear all
+   existing history so that i may always deliver you with what went on (so that you tell me any concerns) and keep the db fresh" (the owner, 25 Nov 2026).
+   The export is a read like the list, gated on the tab; the clear deletes, so it is the admin's alone, audited (AUDITED: and so refused to a view-only
+   code at the one door) and leaves a note of itself (one setting row) for the tab and the next report to say when the history was last cleared. */
+async function claudianChatsExport(db, user, a) {
+  const M = await import('./claudian-chats.js');
+  return M.claudianChatsExport(db, a || {});
+}
+async function claudianChatsClear(db, user, a, nowMs) {
+  requireAdmin(user);
+  const M = await import('./claudian-chats.js');
+  const out = await M.claudianChatsClear(db, a || {}, nowMs);
+  if (out.on && out.deleted > 0) {
+    try {
+      const note = { at: new Date(nowMs || Date.now()).toISOString(), by: String(user.name || '').slice(0, 80), role: String(user.role || '').slice(0, 60), upTo: out.upTo, deleted: out.deleted, partial: !!out.partial };
+      await db.from('settings').upsert([{ key: M.SETTING_LAST_CLEAR, value: JSON.stringify(note) }], { onConflict: 'key' });
+      noteSettingsWritten(db);
+    } catch (e) { /* the rows are gone and the audit line stands; the note of it is a convenience */ }
+  }
+  return out;
 }
 /* EVERY ROLE THAT EXISTS, NOT ONLY THE ONES SOMEBODY HAS ALREADY WRITTEN A ROW FOR.
  *
@@ -11117,7 +11143,7 @@ const FN = {
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
-  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet, claudianChats, claudianThread,
+  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet, claudianChats, claudianThread, claudianChatsExport, claudianChatsClear,
   accessCodes, saveAccessCode, deleteAccessCode, leadersCheck, leadersSync, leadersSyncUndo, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */
@@ -11569,7 +11595,7 @@ const FN_TAB = {
   // The Fraud Detector (fraud.js): every approved loan's parties against every other's and the defaults sheet.
   fraudCases: ['fraud'], fraudFind: ['fraud'],
   // The Hope Ai tab (claudian-chats.js): what people asked Claudian-PMO. Granted like the audit log: admin from the start, a role when ticked.
-  claudianChats: ['hopeai'], claudianThread: ['hopeai'],
+  claudianChats: ['hopeai'], claudianThread: ['hopeai'], claudianChatsExport: ['hopeai'], claudianChatsClear: ['hopeai'],
 };
 
 /** Which tab, if any, this function needs -- and whether this person holds it. ADMIN and the

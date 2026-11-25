@@ -2589,7 +2589,7 @@ test('the portal modules: each parses, each view is mapped once, the core guards
   const modOf = Object.fromEntries([...modOfSrc[1].matchAll(/(\w+):'(\w+)'/g)].map(m => [m[1], m[2]]));
   // A helper module is not a screen: it is loaded by a script of its own (Claudian-PMO's bubble, handbook Part 156), has no VIEWS and no tab
   // to map. It must still parse; test/claudian-ui.test.mjs reads what it does.
-  const HELPER_MODS = ['claudian'];
+  const HELPER_MODS = ['claudian', 'hopeai-report'];
   const onDisk = readdirSync(join(PUBLIC, 'mod')).map(f => f.replace(/\.js$/, '')).filter(m => !HELPER_MODS.includes(m)).sort();
   assert.deepEqual(onDisk, MODS.slice().sort(), 'the modules on disk are the ones the tests read');
   for (const h of HELPER_MODS) assert.doesNotThrow(() => new vm.Script(page(h), { filename: h + '.js' }), h + '.js does not parse');
