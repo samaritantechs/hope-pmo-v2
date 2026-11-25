@@ -11,7 +11,11 @@
         "replace initial arreas widget with anything else thats crucial ..." (Initial arrears is gone, the week's recovery in shillings is the
         seventh tile) and "combine % of sales, and of recovered at their amounts and replace with any other meaningful widgets": the Sales %
         and the Recovery % are a line UNDER Sales this week and Recovered this week, and the two tiles that were left are the week's Expected
-        Defaulters recovery (a dash while the database has not answered it) and the Performance average of the strip;
+        Defaulters recovery (a dash while the database has not answered it) and the Performance average of the strip; and then "also cleared today
+        to defaulters, add another meaningful widget" / "col% and uncollected today also in a single widget. add another meaningful one": Cleared
+        today is a line under Defaulters and Collection % a line under Uncollected today, and the two tiles left free are the week's Loan
+        applications (the count, the amount asked under it) and the week's Legal recovery (notices and calls together; a dash while either side
+        cannot be read);
      2. on a TV-sized screen they stand FOUR in a row and THREE in a column, every tile the same size, the grid reaching the bottom of the
         screen (it FILLS the TV: no band of empty wall under it) and the slide never scrolls;
      3. no figure runs past its tile, however long (a billion-shilling arrears at the smallest laptop), and every tile's figure has one size;
@@ -39,13 +43,14 @@ const MOD_DIR = process.env.MOD_DIR || path.join(ROOT, 'public/mod');
 /* THE DASHBOARD'S ANSWER, as much of it as the deck reads. The largest figures are real-sized (a company's arrears in the billions). */
 let CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321,
   uncollectedToday: 456789012, abnormal: 37 };
-let PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8 };
+let PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };
 let RECTOT = { recovered: 94338048, uncollected: 120000000, adjusted: 0, unrecovered: 25661952, pct: 78.6 };
 let EDRTOT = { initial: 120000000, current: 116400000, recovered: 3600000, pct: 3 };
+let LEGAL = { grand: { on: true, nOn: true, pOn: true, rows: [], total: { owed: 52000000, recovered: 41000000, pct: 78.8, nRec: 30000000, cRec: 11000000 } } };
 let EDRDAYS = [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }];
 let EDRNOTE = null;
 const DASH = () => ({ ok: true, weekday: 'WED', weekOf: '2026-11-23', weekEnd: '2026-11-29', pastWeek: false, asOfDate: '2026-11-25', cards: CARDS, perf: PERF, recTrendTotal: RECTOT,
-  edrTrendTotal: EDRTOT, edrTrend: EDRDAYS, edrNote: EDRNOTE,
+  edrTrendTotal: EDRTOT, edrTrend: EDRDAYS, edrNote: EDRNOTE, legal: LEGAL,
   teamPerf: [{ branch: 'DAR', team: 'KONGOWE', salesMonth: 1000, curArrears: 5000, defaulters: 3, uncollected: 100, collPct: 90, recPctMon: 80, recPctYest: 70, recPctWeek: 60, basis: 'today' }],
   colTrend: [], workspace: 'hopepmo' });
 const warn = console.warn; console.warn = () => {};
@@ -130,35 +135,37 @@ for (const [w, h] of SIZES) {
   check(tag + ' the slide does not scroll', !G.scrolls && !G.hscrolls);
   check(tag + ' no figure runs past its tile, and every tile\'s figure has one size', G.vals.every(v => !v.over) && new Set(G.vals.map(v => v.fs)).size === 1, JSON.stringify(G.vals.map(v => v.fs)));
   check(tag + ' the figures of a row stand level whether the tile has a line under its figure or not (among tiles whose label is one line: a label that wraps is a taller label, as it always was)', await page.evaluate(() => { const rows = {}; [...document.querySelectorAll('#pres .pkpi')].forEach(t => { const pl = t.querySelector('.pl'), one = pl.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(pl).fontSize); if (!one) return; const k = Math.round(t.getBoundingClientRect().top); (rows[k] = rows[k] || []).push(Math.round(t.querySelector('.pv').getBoundingClientRect().top - t.getBoundingClientRect().top)); }); const L = Object.values(rows); return L.length >= 2 && L.every(r => Math.max(...r) - Math.min(...r) <= 2); }));
-  check(tag + ' nothing of a tile (its label, its figure, the line under it) runs past the tile, and each of the four lines under a figure lies inside its tile', !G.tileOverflow && G.subs.length === 4 && G.subs.every(Boolean), JSON.stringify({ over: G.tileOverflow, subs: G.subs }));
+  check(tag + ' nothing of a tile (its label, its figure, the line under it) runs past the tile, and each of the eight lines under a figure lies inside its tile', !G.tileOverflow && G.subs.length === 8 && G.subs.every(Boolean), JSON.stringify({ over: G.tileOverflow, subs: G.subs }));
   if (process.env.SHOTS && (w === 1920 || w === 1366)) { fs.mkdirSync(process.env.SHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.SHOTS, 'present-day-' + tag + '.png') }); }
   await page.close();
 }
 // ---- 1. what the twelve say
 const T = first.tiles, L = T.map(x => x[0]), V = Object.fromEntries(T.map(x => [x[0], x[1]])), SUB = Object.fromEntries(T.map(x => [x[0], x[2]]));
-check('1 the twelve, in their places: the first eight as they were (the seventh is the week\'s recovery), then the two collection percentages, the week\'s Expected Defaulters recovery and the Performance average',
-  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Cleared today',
-    'Early Collection % (week)', 'Collection % (week)', 'Exp.Def recovery (week)', 'Performance (average)']), JSON.stringify(L));
-check('1 the old six read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Recovered'] === 'TZS 1,234,567,890' && V['Defaulters'] === '10,372'
+check('1 the twelve, in their places: the first six and the seventh (the week\'s recovery) as they were, then the loan applications, Early Collection, the week\'s Legal recovery, the Expected Defaulters recovery and the Performance average',
+  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Loan applications (week)',
+    'Early Collection % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (average)']), JSON.stringify(L));
+check('1 the first six read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Recovered'] === 'TZS 1,234,567,890' && V['Defaulters'] === '10,372'
   && V['Sales this week'] === 'TZS 987,654,321' && V['Uncollected today'] === 'TZS 456,789,012' && V['Abnormal'] === '37', JSON.stringify(V));
-check('1 the week\'s recovery is the weekly recovery trend\'s own total and the cleared customers are the dashboard card\'s', V['Recovered this week'] === 'TZS 94,338,048' && V['Cleared today'] === '4,321', JSON.stringify(V));
-check('1 neither the Initial arrears tile nor the two percentage tiles that were combined with their amounts are on the slide as tiles of their own',
-  !('Initial arrears' in V) && !('Sales % (week)' in V) && !('Recovery % (week)' in V) && CARDS.initArrears > 0, JSON.stringify(L));
-check('1 the two collection percentages are the strip\'s, in whole numbers (91.2 reads 91, 96.7 reads 97)', V['Early Collection % (week)'] === '91%' && V['Collection % (week)'] === '97%', JSON.stringify(V));
-check('1 SALES % IS UNDER THE SALES AMOUNT and RECOVERY % UNDER THE WEEK\'S RECOVERY (84.4 reads 84, 118.4 reads 118), each a line under its figure on the same tile',
-  SUB['Sales this week'] === '84% of target' && SUB['Recovered this week'] === '118% of uncollected', JSON.stringify(SUB));
+check('1 the week\'s recovery is the weekly recovery trend\'s own total', V['Recovered this week'] === 'TZS 94,338,048', JSON.stringify(V));
+check('1 none of Initial arrears, Sales %, Recovery %, Cleared today or Collection % is a tile of its own: each is printed with its amount',
+  !('Initial arrears' in V) && !('Sales % (week)' in V) && !('Recovery % (week)' in V) && !('Cleared today' in V) && !('Collection % (week)' in V) && CARDS.initArrears > 0, JSON.stringify(L));
+check('1 Early Collection stands alone, in whole numbers (91.2 reads 91)', V['Early Collection % (week)'] === '91%', JSON.stringify(V));
+check('1 CLEARED TODAY IS UNDER THE DEFAULTERS, SALES % UNDER THE SALES, COLLECTION % UNDER THE DAY\'S UNCOLLECTED, RECOVERY % UNDER THE WEEK\'S RECOVERY, each a line under its figure on the same tile',
+  SUB['Defaulters'] === '4,321 cleared today' && SUB['Sales this week'] === '84% of target' && SUB['Uncollected today'] === '97% collected this week' && SUB['Recovered this week'] === '118% of uncollected', JSON.stringify(SUB));
+check('1 the week\'s loan applications are the strip\'s count with the amount asked under it', V['Loan applications (week)'] === '486' && SUB['Loan applications (week)'] === 'TZS 1,234,000,000 requested', JSON.stringify([V['Loan applications (week)'], SUB['Loan applications (week)']]));
+check('1 the week\'s Legal recovery is the dashboard card\'s notices and calls together, the percentage of what they were owed under it', V['Legal recovery (week)'] === 'TZS 41,000,000' && SUB['Legal recovery (week)'] === '79% of owed', JSON.stringify([V['Legal recovery (week)'], SUB['Legal recovery (week)']]));
 check('1 the week\'s Expected Defaulters recovery is the dashboard card\'s own total, its percentage to one decimal under it', V['Exp.Def recovery (week)'] === 'TZS 3,600,000' && SUB['Exp.Def recovery (week)'] === '3.0% of their arrears', JSON.stringify([V['Exp.Def recovery (week)'], SUB['Exp.Def recovery (week)']]));
 check('1 the Performance average is the strip\'s (99.8 reads 100) and says what it is the average of', V['Performance (average)'] === '100%' && SUB['Performance (average)'] === 'sales · collection · recovery', JSON.stringify([V['Performance (average)'], SUB['Performance (average)']]));
-check('1 only the four tiles that carry a percentage or a meaning under the figure have the line, and no tile has an empty one', T.filter(x => x[2]).map(x => x[0]).join('|') === 'Sales this week|Recovered this week|Exp.Def recovery (week)|Performance (average)', JSON.stringify(T.filter(x => x[2]).map(x => x[0])));
+check('1 exactly the eight tiles that carry a percentage or a meaning under the figure have the line, and no tile has an empty one', T.filter(x => x[2]).map(x => x[0]).join('|') === 'Defaulters|Sales this week|Uncollected today|Recovered this week|Loan applications (week)|Legal recovery (week)|Exp.Def recovery (week)|Performance (average)', JSON.stringify(T.filter(x => x[2]).map(x => x[0])));
 // ---- a week with nothing to measure: a dash, never a nought
-PERF = { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null };
+PERF = { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null, appsCount: 0, appsAmount: 0 };
 let page = await openDeck({ width: 1920, height: 1080 });
 let G0 = await geo(page), N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]])), NS = Object.fromEntries(G0.tiles.map(x => [x[0], x[2]]));
-check('1 a percentage the week cannot measure is a dash, a real nought is a nought: Early Collection and the Performance average a dash, Collection 100%',
-  N['Early Collection % (week)'] === '—' && N['Collection % (week)'] === '100%' && N['Performance (average)'] === '—', JSON.stringify(N));
+check('1 a percentage the week cannot measure is a dash, a real nought is a nought: Early Collection and the Performance average a dash; no application is a real 0, never a dash',
+  N['Early Collection % (week)'] === '—' && N['Performance (average)'] === '—' && N['Loan applications (week)'] === '0' && NS['Loan applications (week)'] === 'TZS 0 requested' && NS['Uncollected today'] === '100% collected this week', JSON.stringify([N, NS]));
 check('1 and under the amounts: Sales % has nothing to measure (a dash alone, never "— of target"), Recovery % is a real nought (0% of uncollected)', NS['Sales this week'] === '—' && NS['Recovered this week'] === '0% of uncollected', JSON.stringify(NS));
 await page.close();
-PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8 };
+PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };
 // ---- the week's Expected Defaulters recovery when the database has NOT answered it (the dashboard says so in a note), and when no day of the week has its files
 EDRNOTE = 'Kadi ya Expected Defaulters haijajibiwa / The Expected Defaulters card got no answer from the database';
 page = await openDeck({ width: 1920, height: 1080 });
@@ -171,10 +178,25 @@ G0 = await geo(page); N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]]));
 check('1 a week with no day uploaded yet reads a dash, not "TZS 0"', N['Exp.Def recovery (week)'] === '—', JSON.stringify(N['Exp.Def recovery (week)']));
 await page.close();
 EDRDAYS = [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }];
+// ---- the week's Legal recovery when a side cannot be read (db/RUN-ME-089 not run, a phone read that was late): a dash and no line, never one side alone; and with no Legal card at all
+const LEGAL0 = LEGAL;
+LEGAL = { grand: { on: false, nOn: true, pOn: false, rows: [], total: { owed: null, recovered: null, pct: null, nRec: 30000000, cRec: 0 } } };
+page = await openDeck({ width: 1920, height: 1080 });
+G0 = await geo(page); N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]])); NS = Object.fromEntries(G0.tiles.map(x => [x[0], x[2]]));
+check('1 with the calls side of the Legal card not read, the Legal tile is a dash with no line (never the notices alone), and the slide still has twelve tiles', N['Legal recovery (week)'] === '—' && NS['Legal recovery (week)'] === '' && G0.n === 12, JSON.stringify([N['Legal recovery (week)'], NS['Legal recovery (week)']]));
+await page.close();
+LEGAL = undefined;
+page = await openDeck({ width: 1920, height: 1080 });
+G0 = await geo(page); N = Object.fromEntries(G0.tiles.map(x => [x[0], x[1]]));
+check('1 with no Legal card in the answer the Legal tile is a dash and the slide still has twelve tiles', N['Legal recovery (week)'] === '—' && G0.n === 12, JSON.stringify(N['Legal recovery (week)']));
+await page.close();
+LEGAL = LEGAL0;
 // ---- 3. the longest figures at the smallest screens
 CARDS = { ...CARDS, curArrears: 98765432109, initArrears: 123456789012, recovered: 98765432109, salesWeek: 98765432109, uncollectedToday: 98765432109 };
 RECTOT = { ...RECTOT, recovered: 98765432109 };
 EDRTOT = { ...EDRTOT, recovered: 98765432109, pct: 100 };
+LEGAL = { grand: { on: true, nOn: true, pOn: true, rows: [], total: { owed: 98765432109, recovered: 98765432109, pct: 100, nRec: 1, cRec: 1 } } };
+PERF = { ...PERF, appsCount: 12345, appsAmount: 98765432109 };
 for (const [w, h] of [[1366, 768], [1024, 768], [1280, 720]]) {
   page = await openDeck({ width: w, height: h });
   const G = await geo(page);
