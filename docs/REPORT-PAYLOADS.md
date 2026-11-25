@@ -186,7 +186,7 @@ args: `weekOf` · answer: `weekday, weekOf, today, deckWarning, initialCount, cu
 `earlyToday[]`, `earlyWeek[{sn, officer, uncollected, paidOver, teams, expected, collected, pct}]` (initial sheets), `earlySource, earlyDate`,
 `recToday[{officer, initial, current, uncollected, debtCrisis, recovered, pct}]` (uncollected is the day's own, the figure pct divides by), `recWeek[…]`,
 `creditToday[]`, `creditWeek[{analyst, apps, amount, salesPct, recPct, perf}]`,
-`callToday[{agent, team, calls, duration, portfolio, customers, unit, connectPct, portfolioPct}]`, `callWeek[…]`, `callWeekWorst[…]`,
+`callToday[{agent, team, calls, duration, portfolio, customers, unit, connectPct, portfolioPct}]` (every list of the three, `callToday`, `callWeek` and `callWeekWorst`, is ranked by portfolio talk time — `duration`, the busiest first — and by calls only where the talk time ties; `callWeekWorst` is `callWeek` the other way up: the HOPE Calls slide reads `callToday` down and marks the first six and the last six), `callWeek[…]`, `callWeekWorst[…]`,
 `csToday[]`, `csWeek[{agent, id, unassigned, assigned, brought, amount}]`, `csExcluded{today{…}, week{…}}`,
 `pmo[]`, `pmoBasis, pmoBasisLabel`, `fuStatus[{status, customers, arrears, pct}]`, `fuTotal`
 

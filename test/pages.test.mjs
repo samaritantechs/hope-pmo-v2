@@ -627,10 +627,18 @@ test('the early, recovery and calls slides carry the remaining count, the team c
   // The pair is lifted off b.recToday onto the row (recRows, just above the slide).
   assert.ok(/tInitial: t\.initial, tCurrent: t\.current/.test(view), 'fed from recToday, the day\'s own pair');
   const calls = view.slice(view.indexOf('var callRows'), view.indexOf("id:'credit'"));
+  const code_ = t => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/[^\n]*/g, '$1');     // the code of a slice, a comment may name what was taken out
   assert.ok(/rows: callRows,/.test(calls), 'the calls slide lists every officer of the pool, not six at each end');
   assert.ok(!/callTop\.concat\(callLow\)/.test(view), 'the old twelve-row cut is gone');
-  assert.ok(/i >= callPool\.length - 6 \|\| !\(Number\(x\.calls\) \|\| 0\)/.test(calls), 'least active = bottom six or nil calls');
+  /* "Sort busiest and least active officers slide by portifolio talk time brother not calls" (the owner, 25 Nov 2026; Part 164, addendum 7): the rank is the
+     server's, made of PORTFOLIO TALK TIME (test/present-calls-talk-order.test.mjs holds it end to end), so the mark for nobody-at-all follows the same key. */
+  assert.ok(/i >= callPool\.length - 6 \|\| !\(Number\(x\.duration\) \|\| 0\)/.test(calls), 'least active = bottom six or nil portfolio talk');
+  assert.ok(!/x\.calls/.test(code_(calls).slice(0, code_(calls).indexOf('slides.push'))), 'and the mark no longer asks how many calls: the key is the talk time');
   assert.ok(/r\.end==='Least active' \? 'bad'/.test(calls), 'and they are the ones in red');
+  // the page reads the server's order down and never sorts the pool again: a second sort is a second answer to who is busiest
+  const pool = code_(view.slice(view.indexOf('var PMO_UNITS'), view.indexOf("id:'credit'")));
+  assert.ok(pool.includes('callPool') && !/\.sort\(/.test(pool), 'no sort between the server\'s list and the slide');
+  assert.ok(/title:'HOPE Calls — busiest first by time talking to customers \(muda wa maongezi na wateja, si idadi ya simu \/ not by calls made\)'/.test(calls), 'the slide\'s title says what the rank is');
 });
 
 /* A DECK LEFT PLAYING RELOADS ITSELF FOR A NEW VERSION AND COMES BACK ON THE SAME SLIDE.

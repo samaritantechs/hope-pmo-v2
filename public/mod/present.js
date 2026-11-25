@@ -621,10 +621,19 @@ function presSlides(){
     /* EVERY OFFICER OF THE THREE UNITS, busiest first -- "the hope calls slide should list all
        officers in the 3 units and format red the least actives". A slide that only ever had
        room for six at each end let a quiet officer sit unseen in the middle. The top six keep
-       their green mark; the least active -- the bottom six, and anybody at nil calls however
-       long the list -- are marked red. The S/N still reads as one ranking, top to bottom. */
+       their green mark; the least active -- the bottom six, and anybody with no portfolio talk
+       at all however long the list -- are marked red. The S/N still reads as one ranking, top
+       to bottom.
+       RANKED BY PORTFOLIO TALK TIME, NOT BY CALLS -- "Sort busiest and least active officers
+       slide by portifolio talk time brother not calls" (the owner, 25 Nov 2026; handbook Part
+       164, addendum 7). The order is the server's (callBoard's one sort in portal-core.js:
+       portfolio talk time, calls only where that ties), so it is read down here and never
+       sorted again: a second sort is a second answer to who is busiest. The nil mark follows
+       the key: an officer with no portfolio talk is red, numbers rung or not (somebody who
+       dialled all day and never spoke to a portfolio customer is the quietest on this slide),
+       and since the list is in that order they are always its tail. */
     var callRows = callPool.map(function(x, i){
-      var least = i >= callPool.length - 6 || !(Number(x.calls) || 0);
+      var least = i >= callPool.length - 6 || !(Number(x.duration) || 0);
       return { ...x, end: (i < 6 && !least) ? 'Busiest' : least ? 'Least active' : '' }; });
     /* "the least active should just change just the left 'least active' but continue flowing
        high to low no of calls in that sense the s/n makes sence" -- the worst list arrives
@@ -632,11 +641,13 @@ function presSlides(){
        the slide, reversing direction mid-table. The six least active are still the same six
        people (picked from the worst end); .reverse() only prints them high-to-low, so the
        whole 12-row slide descends continuously from busiest to quietest and the S/N reads as
-       one ranking. The 'Least active' label in the left column is what marks the second half. */
+       one ranking. The 'Least active' label in the left column is what marks the second half.
+       (Since 25 Nov the figure that descends all the way down is the PORTFOLIO TALK column, the
+       one the rank is made of; the Calls beside it no longer has to.) */
     /* Under the call counting rule (call-core.js): Calls are numbers rung, once per day; the
        dials sit beside them so a redialler is visible; talk time is portfolio talk time. */
     slides.push({ id:'calls', kind:'table',
-      title:'HOPE Calls — busiest first (namba, si majaribio / numbers rung, not dials)'
+      title:'HOPE Calls — busiest first by time talking to customers (muda wa maongezi na wateja, si idadi ya simu / not by calls made)'
         + (unitOnly ? ' · Expected · Collection · Recovery' : ' · vitengo havijawekwa / units not set')
         /* REACHED % = the numbers really spoken to (a call longer than the minimum seconds) out of the numbers rung, not every
            number dialled. The server says which minimum it counted by (callsReachMin); where the database is still behind the rule
