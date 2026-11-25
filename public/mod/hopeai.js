@@ -293,11 +293,11 @@ function haNoteHtml_(note) {
   return String(note).split(' \u00b7 ').map(function(part){
     var cards = part.indexOf('cards: ') === 0, data = part.indexOf('data: ') === 0 && !/\((late|failed)\)/.test(part);
     // what a typed question with the AI off leaves in its note (Part 163) is information, never a problem: grey, said in both languages
-    var ready = part === 'agent off' || part === 'no key or sdk' || part === 'tie' || part.indexOf('score ') === 0 || part.indexOf('near: ') === 0;
+    var ready = part === 'agent off' || part === 'no key or sdk' || part === 'tie' || part === 'figure' || part.indexOf('score ') === 0 || part.indexOf('near: ') === 0;
     var grey = cards || data || ready;
     var text = cards ? 'Kadi / Cards: ' + esc(part.slice(7)) : data ? 'Takwimu / Data: ' + esc(part.slice(6))
       : part === 'agent off' ? 'AI ilikuwa imezimwa / The AI was off' : part === 'no key or sdk' ? 'AI haikuwa na ufunguo / The AI had no key'
-      : part === 'tie' ? 'Majibu mawili yalilingana / Two ready answers weighed alike' : part.indexOf('score ') === 0 ? 'Alama ya kufanana / Match score: ' + esc(part.slice(6))
+      : part === 'tie' ? 'Majibu mawili yalilingana / Two ready answers weighed alike' : part === 'figure' ? 'Aliomba namba yake mwenyewe / Asked for a figure of their own' : part.indexOf('score ') === 0 ? 'Alama ya kufanana / Match score: ' + esc(part.slice(6))
       : part.indexOf('near: ') === 0 ? 'Maswali ya karibu / Nearest ready questions: ' + esc(part.slice(6)) : esc(part);
     return '<div style="margin:2px 0;font-size:12px;color:' + (grey ? 'var(--mut)' : 'var(--bad)') + '">' + text + '</div>';
   }).join('');

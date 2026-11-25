@@ -39,7 +39,7 @@ export const FAQ_COMMON = new Set(['change', 'badili', 'record', 'rekodi', 'comm
   'initial', 'cleared', 'chats', 'faint', 'hafifu', 'officers', 'maafisa', 'tabs', 'lists', 'advice', 'ushauri', 'increase', 'behind', 'nyuma', 'goal', 'company', 'kampuni',
   'percent', 'asilimia', 'calculated', 'formula', 'sales', 'mauzo', 'kufunga', 'access', 'permission', 'mshahara', 'salary', 'kesho', 'nifanye', 'jina', 'haionekani', 'haijaonekana',
   'sioni', 'ripoti', 'report', 'leader', 'kiongozi', 'nianzie', 'nianze', 'tofauti', 'difference', 'box', 'options', 'choices', 'limit', 'rate', 'source', 'closed', 'finance', 'paid',
-  'morning', 'evening', 'replace', 'mwingine', 'menu', 'page', 'tab', 'ongez', 'uliza', 'fungwa', 'aliyelipa', 'waliolipa']);
+  'morning', 'evening', 'replace', 'mwingine', 'menu', 'page', 'tab', 'ongez', 'uliza', 'fungwa', 'aliyelipa', 'waliolipa', 'kuandika']);
 export const FAQ_COMMON_FACTOR = 0.5;
 
 const cardsOf = new WeakMap();
@@ -91,7 +91,23 @@ export function matchFrom(entries, allowed, question) {
   return out;
 }
 
-/** What a typed question finds among the ready answers this person may be offered. `subject` is the helper's own ({ source, tabs, allTabs, leader }). */
+/** A QUESTION THAT ASKS FOR THE PERSON'S OWN FIGURE ("reached % yangu ya leo ni ngapi", "how many portfolio calls did I make today", "makusanyo % ya timu yangu wiki hii ni ngapi"): a ready
+    answer is a RULE and can never state a number of anybody's, so it is not given as if it did (the definition of the term would read as an answer and is not one). The two things
+    that say so: a word that makes it the person's own (mine, my team, this customer) and a word that asks how many or how much. Measured on the 364 questions a ready answer genuinely
+    answers: none of them has both; on the 156 that only share its topic: 14 do (and are the ones whose answer was the definition when a figure was asked). */
+const PERSONAL = new Set(['yangu', 'wangu', 'langu', 'zangu', 'changu', 'vyangu', 'pangu', 'my', 'mine', 'nina', 'huyu', 'yule', 'nimepiga', 'nimefikia', 'nimeripoti', 'nimeidhinisha', 'nimebakiza', 'nimepata']);
+const COUNT = new Set(['ngapi', 'wangapi', 'kiasi', 'jumla', 'total']);
+export function asksForFigure(question) {
+  const t = wordsOf(question), joined = t.join(' ');
+  if (!(t.some(w => COUNT.has(w)) || /\bhow (many|much)\b/.test(joined))) return false;
+  return t.some(w => PERSONAL.has(w)) || /\bhow (many|much)\b.{0,40}\b(did|have) i\b/.test(joined);
+}
+
+/** What a typed question finds among the ready answers this person may be offered. `subject` is the helper's own ({ source, tabs, allTabs, leader }). A question that asks for the
+    person's own figure is never ANSWERED from a ready answer (`figure: true`): the nearest ready answers are offered and nothing more. */
 export function faqMatch(subject, question) {
-  return matchFrom(FAQ, e => faqAllowed(e, subject), question);
+  const r = matchFrom(FAQ, e => faqAllowed(e, subject), question);
+  if (!asksForFigure(question)) return r;
+  const near = r.best ? [r.best, ...r.near].slice(0, MAX_NEAR_WITHOUT) : r.near;
+  return { best: null, near, tie: false, tokens: r.tokens, figure: true };
 }

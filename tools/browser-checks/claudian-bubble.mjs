@@ -379,10 +379,18 @@ await section('A5t (typing with the AI off)', async () => {
   s = await shape(page);
   const f1 = asks('faq');
   check('A5t a tap on a nearest choice asks for its ready answer by id, and the answer follows', f1.length >= 1 && f1[f1.length - 1].id === 'targets' && s.msgs[s.msgs.length - 1].kind === 'a' && /sales .* customers/.test(s.msgs[s.msgs.length - 1].text), JSON.stringify([f1, s.msgs[s.msgs.length - 1]]));
+  // 3b. a question that asks for the person's own figure is not answered with the rule that defines the term
+  await page.locator('textarea').fill('reached % yangu ya leo ni ngapi');
+  await page.locator('.send').click();
+  await waitAnswer(page, 10);
+  s = await shape(page);
+  const figNear = s.msgs[s.msgs.length - 1], figHint = s.msgs[s.msgs.length - 2];
+  check('A5t a question for the person\'s own figure is told that a ready answer cannot give one, and the ready question that defines the term is a choice, not the answer', figHint.kind === 'h' && /^A ready answer cannot give a figure of yours\. Pick a ready question below\.$/.test(figHint.text) && figNear.kind === 'w near' && /Reached %/.test(figNear.text), JSON.stringify([figHint, figNear]));
   // 4. the log: the person's own questions, no model, no tokens, the kind of each
   const rows = db._dump('claudian_chats');
   const kinds = rows.map(r => r.mode).join(',');
-  check('A5t the log has a row for each: a match, two that nothing settled, and the tap', kinds === 'match,nomatch,nomatch,faq', kinds);
+  check('A5t the log has a row for each: a match, two that nothing settled, the tap and the question for a figure', kinds === 'match,nomatch,nomatch,faq,nomatch', kinds);
+  check('A5t the question for a figure says so in its note', /^agent off · figure · near: reached/.test(rows[4].note), JSON.stringify(rows[4]));
   const r1 = rows[0];
   check('A5t the matched row names the ready answer, keeps what the person was told, and cost no tokens', r1.faq_id === 'dash-arrows' && /last week/.test(r1.answer) && r1.tokens_in === 0 && r1.tokens_out === 0 && /^agent off · score [\d.]+/.test(r1.note), JSON.stringify(r1));
   check('A5t the row of a question nothing fitted keeps the words, no answer, and the two nearest as the note', rows[2].question === 'target za timu' && rows[2].answer === null && /^agent off · near: (targets, improve|improve, targets)$/.test(rows[2].note), JSON.stringify(rows[2]));

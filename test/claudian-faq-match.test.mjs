@@ -80,6 +80,18 @@ test('A KEY THAT MOST ENTRIES SHARE TELLS THEM APART FROM NOTHING: it is not eve
   assert.equal(M.matchFrom(l, ALL, 'rare').best.id, 'g');
 });
 
+test('A QUESTION THAT ASKS FOR THE PERSON\'S OWN FIGURE IS NEVER ANSWERED FROM A RULE: a ready answer defines a term and cannot state a number of anybody\'s, so the nearest are offered and nothing is answered', () => {
+  for (const q of ['reached % yangu ya leo ni ngapi', 'how many portfolio calls did i make today', 'makusanyo % ya timu yangu wiki hii ni ngapi', 'MTEJA HUYU ANA DC NGAPI KWA SASA', 'nimeripoti kesi ngapi mwezi huu', 'how much has my team recovered today'])
+    assert.equal(M.asksForFigure(q), true, q);
+  for (const q of ['reached % ni nini', 'simu ya portfolio ni nini?', 'what does reached mean', 'sekunde ngapi zinatakiwa ili mteja aonekane amefikiwa', 'namba ileile nikipiga mara tano kwa siku inahesabiwa ngapi', 'how many seconds count as reached', 'kwn dc ya mteja ni 2 ina maana gani', 'my advance got rejected do i have to wait', ''])
+    assert.equal(M.asksForFigure(q), false, q);
+  const asked = M.faqMatch(OFFICER, 'reached % yangu ya leo ni ngapi');
+  assert.equal(asked.best, null); assert.equal(asked.figure, true); assert.ok(asked.near.some(n => n.id === 'reached'), 'the ready answer that DEFINES the term is offered, not given as if it were the figure');
+  assert.equal(M.faqMatch(OFFICER, 'reached % ni nini').best.id, 'reached', 'the same words with no figure asked for are answered');
+  assert.equal(M.faqMatch(OFFICER, 'reached % ni nini').figure, undefined);
+  const none = M.faqMatch(OFFICER, 'nina wateja wangapi leo'); assert.equal(none.figure, true); assert.deepEqual(none.near.map(n => n.id), [], 'a figure asked for with no topic touched: nothing to offer');
+});
+
 test('A PERCENT SIGN IS A WORD (the cards engine drops it): "Rec %" and "Makusanyo %" are about a percentage', () => {
   const l = [E('pct', ['percent']), E('other', ['recovery'])];
   assert.deepEqual(M.matchFrom(l, ALL, 'Rec %').near.map(n => n.id), ['pct'], 'the sign is the word "percent" (an ordinary word: it is offered, not answered)');
@@ -181,7 +193,7 @@ const halfOf = parity => ({
 
 test('THE CORPUS: questions written by other people, in everyday Swahili and English, are answered right, listed or left alone at the rates the keys were measured at', () => {
   const o = measure(Object.fromEntries(Object.entries(FIX.entries).map(([id, v]) => [id, { direct: v.direct }])), FIX.uncovered, FIX.offtopic);
-  assert.ok(o.n >= 300, 'a corpus of ' + o.n + ' questions that mean something: ' + o.n);
+  assert.ok(o.n >= 500, 'a corpus of ' + o.n + ' questions that mean something: ' + o.n);
   const pct = (a, b) => Math.round(1000 * a / b) / 10;
   const say = JSON.stringify({ n: o.n, right: pct(o.right, o.n), listed: pct(o.listed, o.n), wrong: o.wrong, negAnswered: o.negAnswered, negN: o.negN });
   assert.ok(pct(o.right, o.n) >= FIX.floors.right, 'answered right fell below ' + FIX.floors.right + '%: ' + say);

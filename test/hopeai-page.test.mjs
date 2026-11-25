@@ -437,6 +437,7 @@ test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): the ready answers fo
     { at: '2026-11-25T08:00:00Z', mode: 'match', faq: 'improve', faqLabel: { sw: 'Nifanye nini ili kufikia malengo?', en: 'What should I do to reach the targets?' }, q: 'nifanyeje kufikia targt', a: 'Anza na simu za portfolio.', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'agent off · score 1.8 · near: targets' },
     { at: '2026-11-25T08:01:00Z', mode: 'nomatch', faq: '', faqLabel: null, q: 'mshahara unaingia lini <b>x</b>', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'no key or sdk · tie' },
     { at: '2026-11-25T08:02:00Z', mode: 'busy', faq: '', faqLabel: null, q: 'z', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 5, behind: null, note: 'the provider did not answer' },
+    { at: '2026-11-25T08:03:00Z', mode: 'nomatch', faq: '', faqLabel: null, q: 'reached % yangu leo ni ngapi', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, behind: null, note: 'agent off \u00b7 figure \u00b7 near: reached' },
   ];
   const w2 = load({ claudianThread: { on: true, note: null, thread: 'k-5:2026-11-25', day: '2026-11-25', who: { name: 'NEEMA K', role: 'FIELD OFFICER', zone: 'DAR CENTER', teams: 'TEMEKE', source: 'call', lang: 'sw' }, items } });
   w2.win.haOpen_('k-5:2026-11-25'); await new Promise(r => setImmediate(r));
@@ -450,5 +451,6 @@ test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): the ready answers fo
   assert.ok(/color:var\(--mut\)[^>]*>AI ilikuwa imezimwa \/ The AI was off</.test(h) && /color:var\(--mut\)[^>]*>Alama ya kufanana \/ Match score: 1\.8</.test(h) && /color:var\(--mut\)[^>]*>Maswali ya karibu \/ Nearest ready questions: targets</.test(h), 'a ready answer\'s note is grey');
   assert.ok(/color:var\(--mut\)[^>]*>AI haikuwa na ufunguo \/ The AI had no key</.test(h) && /color:var\(--mut\)[^>]*>Majibu mawili yalilingana/.test(h));
   assert.ok(/color:var\(--bad\)[^>]*>the provider did not answer</.test(h), 'a failure is red');
-  deq(w2.win.BOARDS.haThread.rows.map(r => [r.mode, r.a]), [['JIBU LA KAWAIDA / READY ANSWER', 'Anza na simu za portfolio.'], ['HAKUNA JIBU / NO ANSWER', '(hakuna jibu la kawaida / no ready answer)'], ['SHUGHULI / BUSY', '']], 'the Excel of the chat says it too');
+  assert.ok(/color:var\(--mut\)[^>]*>Aliomba namba yake mwenyewe \/ Asked for a figure of their own</.test(h), 'a question that asked for the person\'s own figure says so, in grey');
+  deq(w2.win.BOARDS.haThread.rows.map(r => [r.mode, r.a]), [['JIBU LA KAWAIDA / READY ANSWER', 'Anza na simu za portfolio.'], ['HAKUNA JIBU / NO ANSWER', '(hakuna jibu la kawaida / no ready answer)'], ['SHUGHULI / BUSY', ''], ['HAKUNA JIBU / NO ANSWER', '(hakuna jibu la kawaida / no ready answer)']], 'the Excel of the chat says it too');
 });

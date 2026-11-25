@@ -172,17 +172,18 @@ test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): MATCH and NO ANSWER 
     row({ at: '2026-11-25T05:10:00Z', mode: 'nomatch', faq: '', q: 'mshahara unaingia lini', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off \u00b7 tie \u00b7 near: advance-ask, leave-ask' }),
     row({ at: '2026-11-25T05:20:00Z', mode: 'nomatch', faq: '', q: 'Mshahara unaingia lini?', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off', name: 'ASHA M', thread: 'k-asha:2026-11-25', role: 'FIELD OFFICER', behind: false }),
     row({ at: '2026-11-25T05:30:00Z', mode: 'nomatch', faq: '', q: 'riba ya mkopo', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'no key or sdk' }),
+    row({ at: '2026-11-25T05:35:00Z', mode: 'nomatch', faq: '', q: 'reached yangu leo ni ngapi', a: '', tokensIn: 0, tokensOut: 0, cacheRead: 0, ms: 0, note: 'agent off \u00b7 figure \u00b7 near: targets' }),
     row({ at: '2026-11-25T05:40:00Z', mode: 'ai', q: 'Swali la AI', a: 'Jibu.', note: 'cards: x' }),
   ];
   const t = report(rows, { faqLabels: { ...FAQ, 'advance-ask': { sw: 'Naombaje advance ya mshahara?', en: 'How do I request a salary advance?' } } });
-  assert.match(t, /Rows 5: AI 1, READY 0, MATCH 1, NO ANSWER 3, FIXED 0, LIMIT 0, BUSY 0\./);
+  assert.match(t, /Rows 6: AI 1, READY 0, MATCH 1, NO ANSWER 4, FIXED 0, LIMIT 0, BUSY 0\./);
   assert.match(t, /MATCH = a typed question answered from the best ready answer while the AI was off or had no key[\s\S]*NO ANSWER = a typed question no ready answer fitted/, 'the report says what the two kinds are');
   assert.match(t, /day +chats people asked +AI +ready none held tokens/, 'the tables have a column for the questions nothing fitted');
-  assert.match(t, /2026-11-25 +2 +2 +5 +1 +1 +3 +0 +\d/, 'the day: 5 asked, 1 by the model, 1 answered from the list, 3 nothing fitted');
+  assert.match(t, /2026-11-25 +2 +2 +6 +1 +1 +4 +0 +\d/, 'the day: 6 asked, 1 by the model, 1 answered from the list, 4 nothing fitted');
   const b9 = section(t, 'B9.', 'B10.');
-  assert.match(b9, /B9\. Typed questions NO ready answer fitted[^\n]*: 3 questions of 2 kinds\./);
+  assert.match(b9, /B9\. Typed questions NO ready answer fitted[^\n]*: 4 questions of 3 kinds\./);
   assert.match(b9, /1\. 2x by 2 people: (mshahara unaingia lini|Mshahara unaingia lini\?)/, 'the same question typed by two people, two ways of writing it, is one line');
-  assert.match(b9, /2\. 1x by 1 people: riba ya mkopo/);
+  assert.match(b9, /riba ya mkopo/); assert.match(b9, /reached yangu leo ni ngapi/);
   const b10 = section(t, 'B10.', 'PART C');
   assert.match(b10, /B10\. Typed questions answered from a ready answer \(MATCH\): 1\./);
   assert.ok(b10.includes('malengo ya timu yetu') && b10.includes('-> What are the company targets?'), 'a match names the ready question it answered');
@@ -193,6 +194,7 @@ test('A TYPED QUESTION WITH THE AI OFF (handbook Part 163): MATCH and NO ANSWER 
   const c = section(t, 'PART C');
   assert.ok(c.includes('A (ready answer to: What are the company targets?): Malengo ya kila timu: mauzo wateja 7+.'), 'the answer a person was given and the ready question it answers');
   assert.ok(c.includes('A: (no ready answer fitted) (two ready answers weighed alike)'), 'a tie is said');
+  assert.ok(c.includes('A: (no ready answer fitted) (the question asks for a figure of the person\'s own: a ready answer is a rule and cannot give one)'), 'a question for the person\'s own figure says so');
   assert.ok(c.includes('nearest ready questions: How do I request a salary advance?; leave-ask'), 'the nearest ready questions: a label where the report has one, the id where not');
-  assert.ok(!/NOTE: agent off|NOTE: score|NOTE: tie|NOTE: near/.test(c), 'no note of these kinds is printed as a problem');
+  assert.ok(!/NOTE: agent off|NOTE: score|NOTE: tie|NOTE: near|NOTE: figure/.test(c), 'no note of these kinds is printed as a problem');
 });

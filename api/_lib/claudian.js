@@ -127,6 +127,8 @@ const FIXED = {
   empty: { sw: 'Andika swali.', en: 'Type a question.' },
   /** A typed question with the AI off that touches no ready answer: said plainly, with the way out (the ready questions, or other words). */
   noMatch: { sw: 'Sijapata jibu la swali hilo kati ya maswali ya kawaida. Chagua moja hapa chini, au liandike kwa maneno mengine.', en: 'No ready answer fits that question. Pick one below, or type it in other words.' },
+  /** The same, for a typed question that asks for the person's own figure: a ready answer is a rule and cannot state a number (with the AI on, the reports can). */
+  noFigure: { sw: 'Jibu la kawaida haliwezi kukupa namba zako mwenyewe. Chagua swali la kawaida hapa chini.', en: 'A ready answer cannot give a figure of yours. Pick a ready question below.' },
   slow: { sw: 'Subiri sekunde chache kabla ya swali lingine.', en: 'Wait a few seconds before the next question.' },
 };
 /** "Working hard, try later": what a person is told when the helper cannot answer, with advice that is worth following meanwhile. Three
@@ -505,8 +507,8 @@ export async function claudianHandle(db, subject, body, deps = {}) {
       await logChat(db, { ...row, mode: 'match', faq_id: a.id, question: q, answer: a.a.slice(0, 1200), tokens_in: 0, tokens_out: 0, note: why + ' \u00b7 score ' + m.best.score + nearNote });
       return { ...base, mode: 'match', id: a.id, q: a.q, answer: a.a, near };
     }
-    await logChat(db, { ...row, mode: 'nomatch', question: q, answer: null, tokens_in: 0, tokens_out: 0, note: why + (m.tie ? ' \u00b7 tie' : '') + nearNote });
-    return { ...base, mode: 'nomatch', answer: FIXED.noMatch[lang], near };
+    await logChat(db, { ...row, mode: 'nomatch', question: q, answer: null, tokens_in: 0, tokens_out: 0, note: why + (m.tie ? ' \u00b7 tie' : '') + (m.figure ? ' \u00b7 figure' : '') + nearNote });
+    return { ...base, mode: 'nomatch', answer: (m.figure ? FIXED.noFigure : FIXED.noMatch)[lang], near };
   }
 
   // the person's own pace, then the day's limits

@@ -1,10 +1,10 @@
 {
 "note": "Questions typed by staff, written by agents that had not seen the ready answers' keys (Part 163): everyday Swahili and English, slang, typos. direct = questions the ready answer genuinely answers; near = questions about the same topic that it does NOT answer; uncovered = HOPE questions no ready answer covers; offtopic = not about HOPE. Made-up: no person, no number.",
 "floors": {
-"right": 70,
-"listed": 90,
-"wrongMax": 5,
-"negMax": 5
+"right": 75,
+"listed": 93,
+"wrongMax": 4,
+"negMax": 2
 },
 "entries": {
 "call-not-ticked": {
@@ -22,7 +22,15 @@
 "called the ana namba nyingine number and no tick on the customer",
 "does a call to the guarantor give the customer a tick",
 "i called the customer lakini tick haionekani sijui nisync tena",
-"my call lasted dakika mbili lakini customer hana tick"
+"my call lasted dakika mbili lakini customer hana tick",
+"nimempigia mteja lkn bado anaonekana hajapigiwa leo",
+"nimepiga ila tick haionekani",
+"ALAMA YA AMEPIGIWA LEO HAITOKEI NIMEPIGA",
+"mteja nimempigia dakika mbili lakini hajawekewa alama ya kupigiwa leo",
+"nimepiga namba ya pili ya mteja alama haitoki kwa nn",
+"i called the customer but no tick showing",
+"called the guarantor but the customer is still not marked called today",
+"i called mteja but hakuna tick ni sync issue au"
 ],
 "near": [
 "nimepiga simu ngapi leo",
@@ -30,7 +38,11 @@
 "reached % yangu iko chini kwa nini",
 "naombaje admin anitikie ukurasa mwingine",
 "does the app see my personal calls too",
-"mteja hapokei simu nimpigie mara ngapi kwa siku"
+"mteja hapokei simu nimpigie mara ngapi kwa siku",
+"alama ya amepigiwa leo inapotea saa ngapi usiku",
+"nimempigia mteja mara tatu leo itahesabiwa ngapi",
+"how do i remove the called today mark from a customer",
+"how long does sync take kwenye hope calls app"
 ]
 },
 "call-other-number": {
@@ -48,7 +60,15 @@
 "add extra number customer card",
 "how can i make calls to a customers other number count as portfolio calls",
 "mteja ana another number nairecord wapi",
-"where can i add namba ya pili ya customer"
+"where can i add namba ya pili ya customer",
+"naomba msaada namba ya pili ya mteja nairekodi wapi",
+"namba ya mke wa mteja niiweke wapi",
+"namba nyingine naweka wapi",
+"namba ya jirani wa mteja naiandika sehemu gani",
+"ana namba nyingine inajazwa wap",
+"where do i put a second number for a customer",
+"custmer gave me anothr number wher do i add it",
+"customer ana another number nai save wapi kwenye app"
 ],
 "near": [
 "simu nilizopiga nje ya portfolio leo ni ngapi",
@@ -56,7 +76,11 @@
 "namba ya mdhamini wa mteja huyu ni ipi",
 "how do i delete a number i added by mistake",
 "naweza kumtumia mteja sms kutoka kwenye app",
-"namba ya kwanza ya mteja ikikosewa nani anaibadilisha mfumoni"
+"namba ya kwanza ya mteja ikikosewa nani anaibadilisha mfumoni",
+"simu za nje ya portfolio ni zipi",
+"niliweka namba vibaya kwa mteja nifute vipi",
+"how do i call a customer straight from the app",
+"whatsapp call kwa mteja inahesabiwa kama portfolio"
 ]
 },
 "call-lists": {
@@ -74,7 +98,15 @@
 "what is on the kesho list",
 "chr stands for what",
 "list ya chr ni customers wa aina gani",
-"def na exp ina difference gani kwenye list"
+"def na exp ina difference gani kwenye list",
+"orodha ya leo ina wateja gani",
+"chr kwenye list ni nn",
+"DEF NA EXP TOFAUTI YAKE",
+"list ya kesho ni ya siku gani ya kazi",
+"exp.def ni orodha gani na kila afisa anayo?",
+"wat are those tabs leo kesho def exp chr",
+"does exp mean expired loans or expected",
+"does chr list mean long term defaulters? au ni kitu kingine"
 ],
 "near": [
 "wateja wangapi nina kwenye def leo",
@@ -82,7 +114,11 @@
 "def inaanza baada ya siku ngapi za kuchelewa",
 "why does the exp.def list show 0 recovered",
 "naweza kuona orodha ya wateja wa wiki nzima",
-"d.c na d.s zinamaanisha nini"
+"d.c na d.s zinamaanisha nini",
+"mteja anakuwa chronic baada ya miezi mingapi",
+"orodha yangu ya leo ina wateja wangapi",
+"can i sort def list kwa kiasi cha deni",
+"how many days late before a customer goes on def"
 ]
 },
 "call-search": {
@@ -100,7 +136,15 @@
 "find custmer by name",
 "where can i see a customers arrears and status",
 "nikitaka kufind customer kwa jina naandika wapi",
-"search box iko wapi kwenye hii app"
+"search box iko wapi kwenye hii app",
+"nawezaje kumtafuta mteja kwny app",
+"mteja nikitaka kumpata haraka lkn sijui jina natumia nini",
+"naweza kumpata mteja kwa namba yake ya simu tu",
+"REF ya mteja naiandika wapi ili nimpate",
+"kadi ya mteja inaonyesha deni na rejesho tu au kuna kingine pia",
+"how do i lookup a custmer on the app",
+"can i search by customer ref number or only name",
+"after i search a customer, nitaona deni lake kwenye card?"
 ],
 "near": [
 "mteja huyu amelipa kiasi gani leo",
@@ -108,7 +152,11 @@
 "kwa nini sioni wateja wa timu nyingine",
 "ref ya mteja ni nini hasa",
 "naweza kupakua orodha ya wateja wangu wote",
-"how do i see which customers promised to pay today"
+"how do i see which customers promised to pay today",
+"REF ni kifupi cha nini hasa",
+"mteja ametoroka simu yake haipatikani nitamtafutaje",
+"how do i add a new customer kwenye app",
+"can i search customers by village or zone"
 ]
 },
 "call-report": {
@@ -126,7 +174,15 @@
 "can leaders see talk time per officer",
 "calls report shows non portfolio calls?",
 "report ya simu ina show nini kwa kila officer",
-"kwenye call report naona reached na talk time?"
+"kwenye call report naona reached na talk time?",
+"ripoti ya simu kwenye app inaonyesha nini kwa kila afisa",
+"report ya simu za maafisa kwenye app ina nini ndani",
+"kwenye hope calls ripoti ya simu za maafisa wangu hizo namba ni nn",
+"kiongozi akifungua ripoti ya simu kwenye app ataona muda wa mazungumzo na reached",
+"app ya simu ina ripoti inayoonyesha simu nje ya portfolio?",
+"what is in the call report on the app for team leaders",
+"does the app call report show talk time for each officer",
+"on the calls app ile report ina show reached % ya kila afisa"
 ],
 "near": [
 "afisa wangu amepiga simu ngapi leo",
@@ -134,7 +190,11 @@
 "ripoti ya mauzo ya wiki naipata wapi",
 "what does the exp.def report show",
 "reached % inahesabiwaje",
-"nani ana simu nyingi zaidi nje ya portfolio wiki hii"
+"nani ana simu nyingi zaidi nje ya portfolio wiki hii",
+"ripoti ya simu inasasishwa baada ya muda gani",
+"afisa wangu mmoja amepiga simu ngapi leo",
+"can i export the call report to a spreadsheet",
+"what is a good portfolio share % for an officer"
 ]
 },
 "dash-arrows": {
@@ -152,7 +212,15 @@
 "faint number next to the arrow is what",
 "why no arrow for tomorow on the sales card",
 "arrows za dashboard zinaonyesha nini",
-"dashboard ina ▲▼ inacompare na wiki gani"
+"dashboard ina ▲▼ inacompare na wiki gani",
+"samahani hizi mishale ya juu na chini kwenye dashibodi ni za nini",
+"kwn mishale ya dashboard inalinganisha na nn",
+"mishale ya dashboard?",
+"ile namba ndogo karibu na mshale kwenye dashbord ni ya wiki gani",
+"mbona siku zilizobaki za wiki hii hazina mshale kwenye kadi ya mauzo",
+"whats the little arrows on the dashboard comparing to",
+"wat is the small grey numbr beside the arrows on dashboard",
+"arrow ya chini kwenye dashboard means sales dropped vs last week"
 ],
 "near": [
 "kwa nini sioni dashibodi kwenye menu",
@@ -160,7 +228,11 @@
 "kadi ya maombi inaonyesha maombi gani",
 "mauzo ya jana yalikuwa ngapi",
 "sales % inahesabiwaje",
-"how often does the dashboard refresh"
+"how often does the dashboard refresh",
+"kwa nini mauzo ya timu yangu yameshuka wiki hii",
+"dashibodi haifunguki inakwama kwenye loading",
+"how do i print the dashboard for the meeting",
+"how many applications did we get last week in total"
 ]
 },
 "portfolio-call": {
@@ -178,7 +250,15 @@
 "same number called 5 times a day counts as 1 or 5",
 "why r some of my calls marked nje ya portfolio",
 "guarantor akipigiwa ni portfolio call au nje",
-"what is nje ya portfolio naomba maana"
+"what is nje ya portfolio naomba maana",
+"portfolio call ni simu gani hasa",
+"simu kwa mdhamini wa mteja inahesabiwa portfolio?",
+"NJE YA PORTFOLIO NI NINI",
+"nikimpigia mteja mmoja mara 5 leo inahesabiwa simu ngapi",
+"simu isiyopokelewa inahesabiwa kama ya portfolio",
+"what counts as a portfolio call",
+"if i dial the same number 3 times is it 3 calls",
+"if i call a customer wa timu nyingine, ni portfolio au nje"
 ],
 "near": [
 "portfolio yangu ina wateja wangapi",
@@ -186,7 +266,11 @@
 "nimempigia mteja huyu mara ngapi mwezi huu",
 "can i make portfolio calls after 6pm",
 "mdhamini wa mteja anabadilishwa wapi",
-"can i download list ya wateja wa portfolio"
+"can i download list ya wateja wa portfolio",
+"simu zangu za portfolio leo zimefika ngapi",
+"naweza kutumia simu yangu binafsi kupiga wateja",
+"how many customers are in my portfolio",
+"does hope pay for airtime nikipiga wateja"
 ]
 },
 "targets": {
@@ -204,7 +288,15 @@
 "collecton target pls",
 "what numbers must each team hit daily",
 "target ya sales kwa siku ni ngapi",
-"tell me malengo ya early col na recovery"
+"tell me malengo ya early col na recovery",
+"target zetu ni zipi",
+"early col ya siku inatakiwa asilimia ngapi",
+"malengo ya timu ni nn",
+"urejeshaji unatakiwa ufike asilimia ngapi na kiasi gani",
+"mauzo ya siku kwa kila timu ni wateja wangapi na kiasi gani cha pesa",
+"wat is daily sales target for a team",
+"how many calls a day am i suppose to make",
+"targets za collection na recovery ni ngapi this month"
 ],
 "near": [
 "NIMEFIKIA ASILIMIA NGAPI YA LENGO LANGU LEO",
@@ -212,7 +304,11 @@
 "admin anabadilishaje malengo kwenye settings",
 "what happens if i miss my targets",
 "bonus ya kufikia lengo la mauzo ni kiasi gani",
-"makusanyo ya leo yamefika tzs ngapi so far"
+"makusanyo ya leo yamefika tzs ngapi so far",
+"nimefikia target yangu ya leo au bado",
+"bonasi ya kufikia lengo la mwezi ni kiasi gani",
+"who decides the targets for each team",
+"team yangu iko wapi against target wiki hii"
 ]
 },
 "improve": {
@@ -230,7 +326,15 @@
 "im behind on targets what do i do",
 "tips to get recovery up",
 "nifanye nini ili ku improve collection yangu",
-"any advice za kufikia target ya leo"
+"any advice za kufikia target ya leo",
+"mimi ni mpya nifanye nini kufikia target za mwezi",
+"makusanyo chini nifanye nn",
+"TIMU IKO NYUMA TUANZIE WAPI",
+"ushauri wa kuongeza urejeshaji wa madeni ni upi",
+"kuna njia gani ya kuboresha ukusanyaji kwa wateja wanaochelewa kulipa kila mwezi",
+"how can i hit my targets this month",
+"any tips to improve my colection rate",
+"what should i do ili ku improve recovery yangu this week"
 ],
 "near": [
 "niko wa ngapi kwenye timu kwa makusanyo",
@@ -238,7 +342,11 @@
 "orodha ya leo ina wateja wangapi",
 "customer is not picking up what do i do",
 "nawezaje kupata wateja wapya wengi kwa wiki",
-"kuna training yoyote to improve my skills"
+"kuna training yoyote to improve my skills",
+"makusanyo yangu ya wiki hii ni asilimia ngapi",
+"mafunzo ya kuongea na wateja wakaidi yatakuwa lini",
+"why did the targets go up this month",
+"kuna script ya kupigia wateja? i want a template"
 ]
 },
 "reached": {
@@ -256,7 +364,15 @@
 "if customer doesnt pick up is it reached",
 "how many seconds talk time to count as reached",
 "reached ni nini exactly",
-"call ya sekunde chache tu ni reached au hapana"
+"call ya sekunde chache tu ni reached au hapana",
+"reached% inamaanisha nini sijaelewa",
+"mbona nimepiga simu nyingi lkn reached ni ndogo",
+"REACHED NI NN",
+"simu ikiita tu haipokelewi inahesabiwa kama reached?",
+"mm nikiongea na mteja sekunde chache tu ni reached?",
+"is reached % out of numbers called or total calls",
+"how long must i talk for a call to count as reached pls",
+"reached % exactly ni nini, is it only answered calls?"
 ],
 "near": [
 "reached % yangu ya leo ni ngapi",
@@ -264,7 +380,11 @@
 "ni wateja gani sijawafikia leo",
 "who sets how many seconds count as reached",
 "target ya reached ni asilimia ngapi",
-"reached ya last month ilikuwa ngapi"
+"reached ya last month ilikuwa ngapi",
+"REACHED % YANGU YA LEO NI NGAPI",
+"simu zinakatika ovyo nikiongea na mteja nifanyeje",
+"what is my teams reached % this week",
+"why do customers never pick up when i call"
 ]
 },
 "percentages": {
@@ -282,7 +402,15 @@
 "sales % is divided by what",
 "recovery pct formula",
 "collection % na sales % ni nini hasa",
-"what is makusanyo % na urejeshaji %"
+"what is makusanyo % na urejeshaji %",
+"makusanyo asilimia inahesabiwa vp",
+"urejeshaji % ni nn tofauti na makusanyo",
+"formula ya mauzo %",
+"urejeshaji unagawanywa kwa deni lote au kiasi kilichotarajiwa",
+"mauzo % yanalinganishwa na lengo la siku au la wiki",
+"how do u calculate collection %",
+"whats the difference between collection and recovery percent",
+"collection % is collected over expected au deni lote"
 ],
 "near": [
 "makusanyo % yangu ya leo ni ngapi",
@@ -290,7 +418,11 @@
 "early col % inahesabiwaje",
 "what does par percent mean",
 "mauzo % ya timu zote nitaipata wapi",
-"what is my teams weekly sales target in tzs"
+"what is my teams weekly sales target in tzs",
+"makusanyo % yangu ya wiki hii ni ngapi",
+"kwa nini urejeshaji % wa timu yetu umeshuka",
+"what is par % and how do we get it",
+"can i change my collection target"
 ]
 },
 "dc-ds": {
@@ -308,7 +440,15 @@
 "meaning of dc on customer list pls",
 "d.c stands for what",
 "dc ina maana missed installments?",
-"d.s 4-6 means nini hasa"
+"d.s 4-6 means nini hasa",
+"nimeona dc na ds kwenye kadi ya mteja ni nini hizo",
+"dc ni nn",
+"d.c ni siku za kuchelewa au malipo yaliyokosa",
+"tofauti ya dc na ds ni ipi",
+"mteja mwenye ds 8-12 amelipa mangapi na amebakiza mangapi",
+"what does dc 2 mean on a customer",
+"what dose ds 6-12 mean",
+"customer ana dc 3 does that mean amekosa 3 malipo"
 ],
 "near": [
 "MTEJA HUYU ANA DC NGAPI KWA SASA",
@@ -316,7 +456,11 @@
 "mteja anakuwa chronic akifika dc ngapi",
 "can dc go back to 0 after the customer pays",
 "tarehe ya malipo ya mwisho ya mteja naiona wapi",
-"where do i see list ya wateja wenye dc zaidi ya 2"
+"where do i see list ya wateja wenye dc zaidi ya 2",
+"mteja mwenye dc 3 anatakiwa kulipa kiasi gani leo",
+"dc ikifika ngapi mteja anapewa notisi ya madai",
+"which of my customers have dc above 2",
+"customer akilipa today dc inashuka mara moja au kesho"
 ]
 },
 "no-access": {
@@ -334,7 +478,15 @@
 "i dont see the reports tab",
 "who gives permission to see more screens",
 "sioni page ya calls report nifanyeje",
-"why sioni customers wa timu yangu wote"
+"why sioni customers wa timu yangu wote",
+"mm ni FO mpya sioni wateja wangu kwn",
+"sioni promise to pay kwene menu",
+"nimepewa timu mbili lkn naona moja tu kwanini",
+"kwanini sioni ukurasa wa idhini ya advance kwenye menu yangu",
+"kwa kazi ya uchambuzi wa mikopo nahitaji kuona kurasa zaidi nimwombe nani",
+"why cant i see some customers on the app",
+"need access to more pages on portal who do i ask",
+"i was told i have access lakini dashboard haionekani kwangu"
 ],
 "near": [
 "msimbo wangu wa kuingia unakataliwa",
@@ -342,7 +494,11 @@
 "admin wa kanda yangu ni nani",
 "ukurasa unachukua muda mrefu kufunguka",
 "how many customers are assigned to me",
-"portal inasema session expired kila mara"
+"portal inasema session expired kila mara",
+"naomba ruhusa ya kutoka kazini mapema kesho",
+"admin amenitikia ukurasa lakini unaleta error ninapoufungua",
+"how many customers does my team have in total",
+"i changed my phone na sasa siwezi ku login kwenye app"
 ]
 },
 "advance-ask": {
@@ -360,7 +516,15 @@
 "my advance got rejected do i have to wait till next month",
 "what amounts can i pick when requestng advance",
 "naomba salary advance which menu nibonyeze",
-"advance request iko wapi kwenye menu"
+"advance request iko wapi kwenye menu",
+"mm nataka advance ya mshahara nifanyeje",
+"nmeomba advance ikakataliwa naweza omba tena",
+"ADVANCE NAOMBA WAPI",
+"mtu anaruhusiwa kuomba advance mara ngapi kwa mwezi",
+"nahitaji pesa kabla ya mshahara naombaje na ni kiasi gani naruhusiwa",
+"how do i apply for a salary advnce",
+"can i request advance twice in one month",
+"where do i make advance request kwenye portal ya hope"
 ],
 "near": [
 "advance yangu ya mwezi huu imeidhinishwa au bado",
@@ -368,7 +532,11 @@
 "kwa nini advance yangu ilikataliwa",
 "how much will be deducted from my salary for the advance",
 "how can i approve advance requests from my staff",
-"nimechukua advance ngapi mwaka huu"
+"nimechukua advance ngapi mwaka huu",
+"advance niliyoomba imekubaliwa au bado",
+"advance inakatwa vipi kwenye mshahara wa mwezi ujao",
+"who approves my advance request",
+"my name is not on the advance list nani anaweza kuliongeza"
 ]
 },
 "advance-approve": {
@@ -386,7 +554,15 @@
 "how to reject an advance request and leave a comment",
 "pls how do i aprove advance in the portal",
 "nataka ku-approve advance requests za timu yangu",
-"naweza ku-reject advance na kuandika comment?"
+"naweza ku-reject advance na kuandika comment?",
+"naidhinisha vipi maombi ya advance ya timu yangu",
+"advance nakubali wapi",
+"naweza kuidhinisha advance zote kwa pamoja",
+"mwezi umefungwa siwezi kuidhinisha advance kwanini",
+"nataka kukataa ombi la advance la mfanyakazi na kuweka sababu ya kukataa nitafanyaje",
+"how can i approve advance requests for my zone",
+"can i approve many advances at once",
+"i want to approve advance requests za wafanyakazi wangu"
 ],
 "near": [
 "naweza kuidhinisha advance yangu mwenyewe",
@@ -394,7 +570,11 @@
 "nimeidhinisha advance ngapi mwezi huu",
 "how do i put in my own advance request",
 "nani anaidhinisha advance ya kiongozi wa kanda",
-"finalize ikifanyika advance zinalipwa lini"
+"finalize ikifanyika advance zinalipwa lini",
+"ombi la advance la mfanyakazi wangu liko hatua gani",
+"advance ikishakubaliwa pesa inatumwa lini",
+"how many advance requests are still pending in my zone",
+"when does finance finalize mwezi nina ombi moja bado"
 ]
 },
 "advance-finalize": {
@@ -412,7 +592,15 @@
 "wat does the finalize button do",
 "is finalize only for the finance team",
 "mwezi ukifinalize new requests na approvals zinafungwa?",
-"how do i reopen mwezi uliofungwa"
+"how do i reopen mwezi uliofungwa",
+"nikibonyeza finalize kwenye advance nini kinatokea",
+"finalize ni kazi ya nani",
+"advance nimeambiwa mwezi umefungwa, finalize ndo nn",
+"nikitaka kufungua tena mwezi wa advance reopen inafanya hivyo",
+"finalize na reopen maana yake nn",
+"what does finalise do on advances",
+"after finalize can anyone still send or aprove advance requests",
+"who can reopen the month? ni finance tu au admin pia"
 ],
 "near": [
 "advance ya mwezi huu itafungwa tarehe ngapi",
@@ -420,7 +608,11 @@
 "how do i approve a salary advance request",
 "can finance change an amount after the month is closed",
 "ni advance ngapi zimelipwa mwezi uliopita",
-"finalize ya payroll inafanyikaje"
+"finalize ya payroll inafanyikaje",
+"advance yangu itaingia kwenye akaunti lini",
+"nimebonyeza finalize ikatoa error nifanyeje",
+"how do i cancel an advance request i sent by mistake",
+"how many advance requests were approved this month"
 ]
 },
 "leave-ask": {
@@ -438,7 +630,15 @@
 "do my leave days reset every calendar year",
 "who can change the annual leave days",
 "naomba leave nifanyeje kwenye system",
-"leave days per year ni ngapi"
+"leave days per year ni ngapi",
+"nataka kuomba likizo nifanyeje kwenye mfumo",
+"likizo naombea wapi jmn",
+"likizo ya mwaka ni siku ngapi kwa kila mfanyakazi",
+"likizo ya mwaka inaanza upya lini",
+"idhini ya likizo inapitia wapi, ni kama ya advance?",
+"how do i apply for leave",
+"what details do i fill in when requesting leave",
+"can the admin change annual leave days? ni kwenye leave report?"
 ],
 "near": [
 "nimebakiza siku ngapi za likizo mwaka huu",
@@ -446,7 +646,11 @@
 "when is the next public holiday",
 "likizo ya uzazi ni siku ngapi",
 "who in my team is on leave today",
-"leave report inaonyesha nini"
+"leave report inaonyesha nini",
+"nimebakiza siku ngapi za likizo mwaka huu",
+"likizo ya uzazi ni siku ngapi",
+"how do i cancel a leave request i already sent",
+"can i take unpaid leave"
 ]
 },
 "teams-leaders": {
@@ -464,7 +668,15 @@
 "can i edit the leader directly in teams & staff",
 "new team lead replaced the old one where do i update it",
 "access code ya team leader nibadilishe jina wapi",
-"leader wa team amebadilika nibadilishe wapi on the portal"
+"leader wa team amebadilika nibadilishe wapi on the portal",
+"nawezaje kubadilisha kiongozi wa timu",
+"team leader mpya naweka wapi",
+"kiongozi wa timu amehama, nimbadilishe vipi kwenye teams & staff",
+"jina la kiongozi kwenye teams halijabadilika nifanyeje",
+"viongozi wa timu wanatoka wapi kwenye mfumo",
+"how do i change who leads a team",
+"where does teams & staff get the leader names from",
+"kiongozi mpya ameteuliwa, how do i update it kwenye settings"
 ],
 "near": [
 "naongezaje afisa mpya kwenye timu",
@@ -472,7 +684,11 @@
 "who is the leader of my team right now",
 "how do i create a new team in teams & staff",
 "kiongozi wa timu yangu amekusanya kiasi gani leo",
-"naweza ku-move officer kutoka team moja kwenda nyingine"
+"naweza ku-move officer kutoka team moja kwenda nyingine",
+"nimhamishie afisa timu nyingine nafanyaje",
+"msimbo mpya wa kuingia kwa kiongozi naundaje",
+"how many officers are in my team",
+"how do i add a new team"
 ]
 },
 "settings-claudian": {
@@ -490,7 +706,15 @@
 "where do i set the daily question limit for the ai",
 "does claudian need an api key",
 "claudian is OFF nawasha vipi kwenye settings",
-"watu hawawezi ku-type swali wanaona options tu"
+"watu hawawezi ku-type swali wanaona options tu",
+"claudian inawashwa wapi kwenye settings",
+"claudian imezimwa nawashaje",
+"kuwasha AI kwa staff wote nafanyaje",
+"kikomo cha maswali kwa siku kwa kila mtu naweka wapi",
+"watu wanaona maswali ya kawaida tu hakuna AI je imezimwa",
+"how do i swich claudian on",
+"does claudian need an api key to work",
+"nataka ku enable claudian for everyone ni wapi"
 ],
 "near": [
 "naweza kuuliza claudian kuhusu mteja mmoja",
@@ -498,7 +722,11 @@
 "how much does claudian cost per month",
 "naweza kubadilisha lugha ya claudian kuwa kiingereza",
 "how do i change the daily call target in settings",
-"claudian inatumia AI model gani"
+"claudian inatumia AI model gani",
+"claudian inajibu kwa lugha gani",
+"gharama ya claudian kwa mwezi ni shilingi ngapi",
+"how many questions did staff ask claudian this week",
+"claudian says i reached the limit for today itafunguka lini"
 ]
 },
 "hopeai-read": {
@@ -516,7 +744,15 @@
 "is there a report of ai questions by team",
 "see wat peple typed to claudian",
 "i want to see maswali ya staff kwa claudian leo",
-"staff wanauliza nini kwa claudian where is the chat list"
+"staff wanauliza nini kwa claudian where is the chat list",
+"naona wapi maswali ambayo watu wameuliza claudian",
+"mazungumzo ya wafanyakazi na hope ai nayasomaje",
+"kichupo cha hopeai kinaonyesha nn",
+"nataka kuona majibu aliyopewa mtu na claudian nifanyeje",
+"ripot ya maswali ya claudian kwa timu na siku ipo wapi",
+"where can i see what staff have asked claudian",
+"how do i check claudian chats",
+"in hope ai tab each row ni mtu mmoja au siku nzima"
 ],
 "near": [
 "naweza kufuta mazungumzo ya claudian",
@@ -524,7 +760,11 @@
 "can i export the claudian chats to excel",
 "what is the daily question limit for each person",
 "naweza kusikiliza rekodi ya simu ya afisa na mteja",
-"claudian ina-access data gani kujibu maswali"
+"claudian ina-access data gani kujibu maswali",
+"claudian-pmo anajibu kwa lugha gani",
+"naweza kufuta mazungumzo ya mtu kwenye hope ai",
+"which ai model is behind claudian",
+"can claudian see salio la mkopo la mteja"
 ]
 },
 "expdef-list": {
@@ -542,7 +782,15 @@
 "why do customers who alredy paid still show on exp def",
 "recovered shows 0 on exp def until wat time",
 "exp def list inatoka kwenye initial file ya asubuhi?",
-"evening file inapakiwa saa ngapi, recovered inabaki 0 mpaka lini"
+"evening file inapakiwa saa ngapi, recovered inabaki 0 mpaka lini",
+"wateja wanaokuwa kwenye exp def ya leo wanatoka wapi na kwa utaratibu gani",
+"exp def marejesho 0 kwn",
+"mteja amelipa lkn bado yupo kwenye exp def kwanini",
+"file la jioni la exp def linapakiwa saa ngapi",
+"neno CLEARED kwenye orodha ya expected defaulters linamaanisha nini",
+"why does exp def show 0 recovered",
+"which customers appear on the exp def list today",
+"is the exp def list ni file ya asubuhi au ya jioni"
 ],
 "near": [
 "NINA WATEJA WANGAPI KWENYE EXP DEF LEO",
@@ -550,7 +798,11 @@
 "exp def ya wiki iliyopita naiona wapi",
 "how much has my team recovered on exp def today",
 "file la jioni likichelewa kupakiwa nimwambie nani",
-"mteja yupo exp def lkn hapokei simu nifanyeje"
+"mteja yupo exp def lkn hapokei simu nifanyeje",
+"exp def ya mwezi uliopita naipata wapi",
+"mteja huyu amerejesha shilingi ngapi leo kwenye exp def",
+"how do i download the exp def list to excel",
+"nani anaupload evening file ya exp def"
 ]
 },
 "expdef-report": {
@@ -568,7 +820,15 @@
 "can i see exp def report for a whole month",
 "exp def report whch file does a day come from",
 "exp def report inaonyesha recovered na rec % kwa kila leader?",
-"report ya exp def ni ya day, week au month?"
+"report ya exp def ni ya day, week au month?",
+"exp def report ni nn",
+"rec % kwenye exp def ni ya kiongozi au ya mteja",
+"expdef report nitaona nini kwa kila kiongozi",
+"ripoti ya expected defaulters ina madeni na marejesho ya kila kiongozi?",
+"naweza kuona exp def ya wiki au mwezi kwenye report",
+"whats in the exp def report",
+"can i see monthly recovery per leader on exp def report",
+"exp.def report inaonyesha arrears na recovered kwa kila leader"
 ],
 "near": [
 "REC % YA TIMU YANGU WIKI HII NI NGAPI",
@@ -576,7 +836,11 @@
 "nataka kuona deni la kila mteja si la kiongozi, naipata wapi",
 "how is rec % worked out",
 "ripoti ya simu za maafisa inaonyesha nini",
-"target ya rec % per leader ni ngapi"
+"target ya rec % per leader ni ngapi",
+"kiongozi wangu hayupo kwenye exp def report kwa nini",
+"nawezaje kupakua exp def report kwenye excel",
+"how much did my leader recover yesterday",
+"exp def ya jana inaonyesha recovered 0 kwa nini"
 ]
 },
 "followup-record": {
@@ -594,7 +858,15 @@
 "customer promised to pay on friday what do i do in the system",
 "where do promises to pay show up",
 "nataka ku-record followup ya mteja, nianzie wapi",
-"customer ameahidi kulipa wiki ijayo, promise naweka wapi"
+"customer ameahidi kulipa wiki ijayo, promise naweka wapi",
+"mteja ameahidi kulipa nimwekeje kwenye system",
+"ahadi ya mteja naiwekaje",
+"followup naweka wapi",
+"baada ya kumpigia mteja aliyechelewa nataka kuandika maoni na hali yake nitafanyaje",
+"tarehe ya ahadi na kiasi naziingiza kwenye ukurasa gani",
+"how do i log a promise to pay from a customer",
+"where do i write notes after calling a defaulter",
+"how do i record followup ya mteja status na comment"
 ],
 "near": [
 "ahadi ngapi zimevunjwa wiki hii kwenye timu yangu",
@@ -602,7 +874,11 @@
 "MTEJA AKIVUNJA AHADI YA KULIPA NINI KINAFUATA",
 "who can see the comments i write on followups",
 "nimefuatilia wateja wangapi leo",
-"naweza kutuma sms ya reminder kwa customer aliyeahidi kulipa"
+"naweza kutuma sms ya reminder kwa customer aliyeahidi kulipa",
+"ahadi za leo ni ngapi kwenye timu yangu",
+"mteja amevunja ahadi mara mbili nifanyeje",
+"can i edit a follow up after i save it",
+"who can see my followup comments manager peke yake"
 ]
 },
 "calls-report": {
@@ -620,7 +896,15 @@
 "call report shows non portfolio calls too?",
 "wat columns are in calls report",
 "call report inaonyesha calls na talk time za kila officer?",
-"kwenye call reports kuna reached % na portfolio share?"
+"kwenye call reports kuna reached % na portfolio share?",
+"call reports ina nini",
+"kwenye portal ripoti ya simu inaonesha muda wa maongezi",
+"callreports nitaona nini kwa kila afisa",
+"asilimia ya portfolio kwenye call reports ni ya nini",
+"naweza kuona simu za nje ya portfolio za kila afisa wapi kwenye ripoti",
+"what info is on the call reports page",
+"does the call reports show talk time per officer",
+"call reports inaonyesha non-portfolio calls za kila officer"
 ],
 "near": [
 "reached % yangu leo ni ngapi",
@@ -628,7 +912,11 @@
 "afisa gani amepiga simu nyingi zaidi wiki hii",
 "kwa nini simu zangu hazionekani kwenye call report",
 "can i listen to the recordings of the calls",
-"how many calls should an officer make a day"
+"how many calls should an officer make a day",
+"nimepiga simu ngapi leo",
+"naweza kupakua call reports kwenye excel",
+"which officer made the most calls last week",
+"my calls are not showing kwenye call reports kwa nini"
 ]
 },
 "legal-notice": {
@@ -646,7 +934,15 @@
 "can i issue a second notice if the first one is still open",
 "what dc or ds is needed for a notice",
 "legal notice inatolewa lini kwa customer?",
-"customer mwenye d.c 2 anapata demand notice?"
+"customer mwenye d.c 2 anapata demand notice?",
+"mteja anastahili kupewa notisi ya madai akifikia D.C ngapi",
+"mteja amekosa malipo mara 2 anapewa notisi?",
+"mbona mteja mwenye dc 3 hajatolewa notisi mpya",
+"masharti ya notisiya madai",
+"mm sijui notisi ya madai hutolewa kwa mteja wa aina gani",
+"when do we send a demand notice to a customer",
+"can a customer get a 2nd notice if the 1st one is unpaid",
+"is it D.C 2 au D.S 11 ndio mteja anapewa demand notice"
 ],
 "near": [
 "notisi ya madai inaandikwa vipi",
@@ -654,7 +950,11 @@
 "mteja wangu amepewa notisi ngapi mpaka sasa",
 "where can i see all the notices issued this month",
 "ds 11-12 maana yake ni nini",
-"legal notice ya customer inatumwa kwa sms au barua"
+"legal notice ya customer inatumwa kwa sms au barua",
+"mteja akipata notisi ana siku ngapi kulipa",
+"mteja wangu ameshapewa notisi ya madai bado",
+"how many demand notices were issued this month",
+"does the demand notice cost the customer any fee"
 ]
 },
 "deduct-earners": {
@@ -672,7 +972,15 @@
 "same case reported twice pays double?",
 "does the deduct table show role and zone",
 "reporter analipwa per case kwa kiwango cha siku ipi",
-"earnings za reporters zinaanzia tarehe gani, admin ndo anaweka?"
+"earnings za reporters zinaanzia tarehe gani, admin ndo anaweka?",
+"malipo ya wanaoripoti kesi yanakokotolewaje",
+"kiasi cha malipo kwa kila kesi kinawekwa na nani",
+"nikiripoti kesi nitalipwa vipi",
+"kesi ileile ikiripotiwa mara mbili inalipa mara ngapi",
+"kiasi kikibadilishwa leo kesi za jana zitalipwa kwa kiasi gani",
+"how is reporter pay calculated",
+"if the rate changes do old cases get the new rate",
+"does the deduct table show zone na role ya aliyeripoti"
 ],
 "near": [
 "nimeripoti kesi ngapi mwezi huu",
@@ -680,7 +988,11 @@
 "naripoti kesi mpya wapi",
 "what is the current amount paid per case in shillings",
 "NANI AMERIPOTI KESI NYINGI ZAIDI MWEZI HUU",
-"case yangu ya deduct imekataliwa, reason ni nini"
+"case yangu ya deduct imekataliwa, reason ni nini",
+"nimepata kiasi gani kwa kesi nilizoripoti mwezi huu",
+"malipo ya kesi yanalipwa siku gani ya mwezi",
+"how many cases did my zone report this week",
+"do reporters pay tax on what they earn"
 ]
 }
 },
@@ -716,7 +1028,27 @@
 "akiba ya mteja iko shilingi ngapi sasa hivi",
 "likizo ya uzazi ni siku ngapi",
 "my work phone is broken who do i tell",
-"nawezaje ku-register customer mpya kwenye system"
+"nawezaje ku-register customer mpya kwenye system",
+"MSHAHARA UNAINGIA TAREHE NGAPI MWEZI HUU",
+"nimesahau password ya portal nifanyeje",
+"salio la akiba ya mteja naliona wapi",
+"ofisi itafungwa lini kwa sikukuu za mwisho wa mwaka",
+"riba ya mkopo wa kikundi ni asilimia ngapi kwa mwezi",
+"how do i claim transport money for field visits",
+"what documents does a new customer need for a first loan",
+"what time does the office close on fridays",
+"payslip ya last month nitaipata wapi",
+"customer akitaka kufunga loan mapema kuna penalty gani",
+"when is pay day this month",
+"NIMESAHAU PASSWORD YANGU NIFANYEJE",
+"mteja ameuliza salio lake la mkopo nimwambie ngapi",
+"ofisi inafungwa sikukuu za mwisho wa mwaka tarehe ngapi",
+"riba ya mkopo wa kikundi ni asilimia ngapi",
+"what is the maximum first loan a new customer can get",
+"how do i claim transport allowance for field visits",
+"bonus ya mwisho wa mwaka inalipwa kwa vigezo gani",
+"where do i get my payslip ya mwezi uliopita",
+"what happens to the loan if the customer passes away"
 ],
 "offtopic": [
 "habari za asubuhi",
@@ -750,6 +1082,26 @@
 "tell me a joke",
 "12 mara 15 ni ngapi",
 "whats the capital of france",
-"niandikie shairi fupi kuhusu bahari"
+"niandikie shairi fupi kuhusu bahari",
+"HABARI ZA ASUBUHI",
+"kesho kutakuwa na mvua?",
+"nani atashinda mechi ya simba na yanga leo",
+"nipe mapishi ya pilau ya nazi",
+"15 mara 12 ni ngapi",
+"tell me a joke",
+"what is the capital of australia",
+"write a short poem about the sea",
+"who won the 2018 world cup",
+"hi bro mambo vipi leo",
+"mambo vipi bro",
+"kesho mvua itanyesha dar es salaam",
+"nani anaongoza ligi kuu ya tanzania msimu huu",
+"TELL ME A JOKE",
+"nipe mapishi ya pilau nyama",
+"what is 15 times 12",
+"mji mkuu wa kenya ni upi",
+"write me a short poem about the sea",
+"hi mkuu good morning habari za leo",
+"how many legs does a spider have"
 ]
 }

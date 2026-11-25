@@ -47,12 +47,13 @@ function harNote_(note) {
 }
 /** The note of a typed question the ready answers handled (kinds MATCH and NO ANSWER): "agent off" or "no key or sdk", a score, "tie", "near: id, id". */
 function harReadyNote_(note) {
-  var o = { why: '', score: '', tie: false, near: [] };
+  var o = { why: '', score: '', tie: false, figure: false, near: [] };
   String(note == null ? '' : note).split(' \u00b7 ').forEach(function(p){
     p = harOne_(p);
     if (p === 'agent off' || p === 'no key or sdk') o.why = p;
     else if (p.indexOf('score ') === 0) o.score = p.slice(6);
     else if (p === 'tie') o.tie = true;
+    else if (p === 'figure') o.figure = true;
     else if (p.indexOf('near: ') === 0) o.near = p.slice(6).split(',').map(harOne_).filter(function(x){ return x; });
   });
   return o;
@@ -238,7 +239,7 @@ function harBuild_(rows, meta) {
         if (r.mode === 'match' || r.mode === 'nomatch') {
           var rn = harReadyNote_(r.note), f = r.faq ? faq[r.faq] : null;
           if (r.mode === 'match') L.push('     A (ready answer to: ' + harClip_(f ? f.en : (r.faq || '?'), 90) + '): ' + harBlock_(r.a || '(no answer text)', HAR_CAP.answer));
-          else L.push('     A: (no ready answer fitted)' + (rn.tie ? ' (two ready answers weighed alike)' : ''));
+          else L.push('     A: (no ready answer fitted)' + (rn.tie ? ' (two ready answers weighed alike)' : '') + (rn.figure ? ' (the question asks for a figure of the person\'s own: a ready answer is a rule and cannot give one)' : ''));
           if (rn.near.length) L.push('     nearest ready questions: ' + rn.near.map(function(id){ return harClip_(faq[id] ? faq[id].en : id, 60); }).join('; '));
           return;
         }

@@ -245,10 +245,16 @@ test('TYPING WITH THE AI OFF (handbook Part 163): a typed question is answered f
   assert.equal(calls.length, 0, 'no model call, whatever was typed');
   // the log: a row of each kind, the answer kept for a match, nothing spent
   const rows = db._dump('claudian_chats');
-  assert.deepEqual(rows.map(r => r.mode), ['match', 'match', 'nomatch', 'nomatch', 'nomatch']);
+  assert.deepEqual(rows.slice(0, 5).map(r => r.mode), ['match', 'match', 'nomatch', 'nomatch', 'nomatch']);
   assert.equal(rows[0].faq_id, 'dash-arrows'); assert.match(rows[0].answer, /compare this week/); assert.equal(rows[0].question, 'what do the arrows on the dashboard mean'); assert.equal(rows[0].tokens_in, 0); assert.equal(rows[0].tokens_out, 0);
   assert.match(rows[0].note, /^agent off \u00b7 score \d+(\.\d+)?$/); assert.equal(rows[2].faq_id, undefined); assert.equal(rows[2].answer, null); assert.equal(rows[2].note, 'agent off');
   assert.match(rows[4].note, /^agent off \u00b7 near: (targets, improve|improve, targets)$/, 'the nearest are in the note, for the owner to read');
+  // a question that asks for the person's own figure is not answered with a rule: told so, the nearest ready questions offered, and the note says it
+  const fig = await ask(db, person, 'what is my reached % today, how many', withClient);
+  assert.equal(fig.mode, 'nomatch'); assert.equal(fig.answer, 'A ready answer cannot give a figure of yours. Pick a ready question below.'); assert.ok(fig.near.some(x => x.id === 'reached'));
+  const figSw = await ask(db, person, 'reached % yangu ya leo ni ngapi', withClient, { lang: 'sw' });
+  assert.equal(figSw.answer, 'Jibu la kawaida haliwezi kukupa namba zako mwenyewe. Chagua swali la kawaida hapa chini.');
+  assert.match(db._dump('claudian_chats').filter(r => /reached/.test(r.question)).pop().note, /^agent off \u00b7 figure \u00b7 near: reached/);
   // ON with no key says why in the note
   const noKey = fakeDb(book());
   const nk = await C.claudianHandle(noKey, person, { op: 'ask', q: 'tell me a joke', lang: 'en' }, { nowMs: NOW, noGap: true });
