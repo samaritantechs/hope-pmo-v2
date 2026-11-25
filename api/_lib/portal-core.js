@@ -1687,15 +1687,17 @@ function dedRateOn_(rates, base, day) {
   for (const r of rates) { if (r.from <= day) tzs = r.tzs; else break; }
   return tzs;
 }
-/* THE EARNERS' ROLE AND BRANCH, ONE COLUMN (handbook Part 154) -- "In pmo deductions at Wapataji wa malipo / Earners ... add branch and role
-   column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c" (the owner, 25 Nov 2026). Read as ONE column,
-   ROLE.BRANCH, between the reporter and the cases (the owner's own examples are written that way; two columns would be one line).
+/* THE EARNERS' ROLE AND ZONE, ONE COLUMN (handbook Part 154) -- "In pmo deductions at Wapataji wa malipo / Earners ... add branch and role
+   column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c" and, the same day, "Sorry it's zone not
+   branch" · "For the role.zone" (the owner, 25 Nov 2026). Read as ONE column, ROLE.ZONE, between the reporter and the cases (the owner's own
+   examples are written that way; two columns would be one line). The first build called it Role.Branch; the value was right (the zone) and
+   only the name was wrong, so the name is zone everywhere it is shown and in the answer (`zone`).
    WHO THE REPORTER IS comes from the access code that carries their name (the reporter of a case is the signed-in person's name, copied from
-   that code): its ROLE, and its BRANCH by the rule the portal already uses for the zone beside a name (zoneAnswer in zone.js: the zones of the
+   that code): its ROLE, and its ZONE by the rule the portal already uses for the zone beside a name (zoneAnswer in zone.js: the zones of the
    teams that name the person on Teams & Staff, else of the teams the code holds, a team's zone being its GMO's when its own cell is empty).
    A code over every team that is named nowhere holds every zone, which reads HQ here: the head office (PMO, Credit, Legal ...). A field
    officer signed in on a team's own code ("KONGOWE · F.O") has the team's zone. A name no code carries (a sheet-imported case, somebody
-   who has left) keeps the role the case itself was filed under (`dept`) and a dash for the branch: nothing is guessed. Two codes of one
+   who has left) keeps the role the case itself was filed under (`dept`) and a dash for the zone: nothing is guessed. Two codes of one
    name that disagree about the role: the case's own role decides, else both. NO READ IS ADDED: the codes are the memoised read the teams
    table already lays over itself (readTeamsAll). */
 const DED_ACRONYMS_ = new Set(['PMO', 'GMO', 'OPM', 'HR', 'HQ', 'CEO', 'MD', 'GM', 'IT', 'CS', 'FO', 'F.O', 'TL']);
@@ -1705,7 +1707,7 @@ function dedTitle_(v) {
     .map(w => (DED_ACRONYMS_.has(w.toUpperCase()) ? w.toUpperCase()
       : w.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('-'))).join(' ');
 }
-/** { role, branch, who } of one reporter: `who` is what the column prints, ROLE.BRANCH, a dash where a part is not known. */
+/** { role, zone, who } of one reporter: `who` is what the column prints, ROLE.ZONE, a dash where a part is not known. */
 function dedWho_(reporter, deptHint, codes, teamRows) {
   const me = K(reporter);
   const mine = me ? (codes || []).filter(c => c && K(c.name) === me) : [];
@@ -1724,8 +1726,8 @@ function dedWho_(reporter, deptHint, codes, teamRows) {
     const m = /^(.+?)\s*·\s*F\.O$/i.exec(String(reporter || '').trim());
     if (m) zones = zoneAnswer({ name: '', teamCode: true, teams: [m[1].trim()] }, teamRows).zones || [];
   }
-  const branch = zones.length ? zoneLabel(zones.map(dedTitle_)) : (all ? 'HQ' : '');
-  return { role, branch, who: role || branch ? (role || '—') + '.' + (branch || '—') : '—' };
+  const zone = zones.length ? zoneLabel(zones.map(dedTitle_)) : (all ? 'HQ' : '');
+  return { role, zone, who: role || zone ? (role || '—') + '.' + (zone || '—') : '—' };
 }
 const dedMoney_ = v => (v == null || v === '' ? null : Math.max(0, Math.round(num(v) * 100) / 100));
 /** The table read, null when RUN-ME-043 has not been run -- the tab says so, nothing fails. */
@@ -1749,7 +1751,7 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
       .lt('submitted_at', fromKey).gt('remaining', 0), user.teams)),
     readTeamsAll(db, nowMs),
     settingsMany(db, [DED_REPORTER_TZS_KEY, DED_RATES_KEY, DED_HR_ROLES_KEY]),
-    // The access codes, for the earners' ROLE.BRANCH column (Part 154): the memoised read readTeamsAll lays over the teams, so it is the
+    // The access codes, for the earners' ROLE.ZONE column (Part 154): the memoised read readTeamsAll lays over the teams, so it is the
     // SAME read in flight, never a second one (a test counts the reads of the table).
     readCodesAll(db, nowMs),
   ]);

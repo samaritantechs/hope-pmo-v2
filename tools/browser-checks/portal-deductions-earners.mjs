@@ -16,10 +16,11 @@
         rewrites from then (the card says so); taking an entry out puts the cases back; with none, the base applies to every case;
      5. a view-only admin sees the card and is refused on Save, said as NOT saved; a hand-damaged setting never stops the tab opening;
      6. the earners' board survives a table search, and no page error in any world;
-     7. ROLE.BRANCH ("add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza ... GMO.Dar Center", the owner, 25 Nov
-        2026; handbook Part 154): the column sits between the reporter and the cases on the table under the list AND in the report's section 2,
-        reads PMO.HQ for the head office and Manager.<zone> for a manager, is in the Excel, and reads Recovery.— (the role the case was
-        filed under, a dash for the branch) where no access code carries the reporter's name.
+     7. ROLE.ZONE ("add branch and role column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza ... GMO.Dar Center", then "Sorry it's
+        zone not branch" · "For the role.zone", the owner, 25 Nov 2026; handbook Part 154): the column sits between the reporter and the
+        cases on the table under the list AND in the report's section 2, reads PMO.HQ for the head office and Manager.<zone> for a manager,
+        is in the Excel, and reads Recovery.— (the role the case was filed under, a dash for the zone) where no access code carries the
+        reporter's name; nothing on the page says Role.Branch any more.
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -134,7 +135,7 @@ let E = await earnOf(page);
 check('2 the earners\' table is under the cases list', await page.evaluate(() => { const m = document.getElementById('mainCard'), e = document.getElementById('dedEarn'); return !!m && !!e && m.nextElementSibling === e; }));
 check('2 it names its window and the amount per case', !!E && /Wapataji wa malipo/.test(E.title) && E.title.includes(W1 + ' → ' + TODAY) && /TZS 10,000 kwa kila kesi/.test(E.title), JSON.stringify(E && E.title));
 check('2 a row for each reporter with their unique cases and earnings at 10,000 a case, then the total', JSON.stringify(E && E.rows) === JSON.stringify(rowsOf(20000, 10000, 30000)), JSON.stringify(E && E.rows));
-check('7 the column sits between the reporter and the cases: Aliyeripoti, Cheo.Tawi / Role.Branch, Kesi, Malipo', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#dedEarn thead th')].map(th => (th.textContent || '').replace(/\s+/g, ' ').trim()))) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']));
+check('7 the column sits between the reporter and the cases: Aliyeripoti, Cheo.Zone / Role.Zone, Kesi, Malipo', JSON.stringify(await page.evaluate(() => [...document.querySelectorAll('#dedEarn thead th')].map(th => (th.textContent || '').replace(/\s+/g, ' ').trim()))) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Zone / Role.Zone', 'Kesi / Unique cases', 'Malipo / Earnings']));
 check('7 the head office reads PMO.HQ and a manager Manager.<their team\'s zone>', !!E && E.rows[0][2] === 'PMO.HQ' && E.rows[1][2] === 'Manager.Dar', JSON.stringify(E && E.rows.map(r => r[2])));
 // a card narrows the cases list and leaves the earners where they are
 await page.click('[data-arg="show"][data-val="taken"]'); await page.waitForTimeout(400);
@@ -145,7 +146,7 @@ await page.fill('#tblQ', 'MTEJA 1'); await page.waitForTimeout(400);
 check('6 a table search keeps the earners\' table (the buttons in it still work)', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000)));
 const x1 = await sheet(await Promise.all([page.waitForEvent('download', { timeout: 30000 }), page.click('#dedEarn [data-xls]')]).then(r => r[0]));
 check('2 its Excel, like every board\'s: the reporters, their unique cases and what they earned', /Wapataji/.test(x1.name) && /MTOA A/.test(x1.text) && /MTOA B/.test(x1.text) && />20000</.test(x1.text) && />10000</.test(x1.text) && /<td x:num>2<\/td>/.test(x1.text), x1.name);
-check('7 and its Excel carries the column too: PMO.HQ, Manager.Dar, between the reporter and the cases', /Cheo\.Tawi \/ Role\.Branch/.test(x1.text) && />PMO\.HQ</.test(x1.text) && />Manager\.Dar</.test(x1.text) && x1.text.indexOf('PMO.HQ') > x1.text.indexOf('MTOA A') && x1.text.indexOf('PMO.HQ') < x1.text.indexOf('>20000<'), x1.text.slice(0, 200));
+check('7 and its Excel carries the column too: PMO.HQ, Manager.Dar, between the reporter and the cases', /Cheo\.Zone \/ Role\.Zone/.test(x1.text) && !/Role\.Branch/.test(x1.text) && />PMO\.HQ</.test(x1.text) && />Manager\.Dar</.test(x1.text) && x1.text.indexOf('PMO.HQ') > x1.text.indexOf('MTOA A') && x1.text.indexOf('PMO.HQ') < x1.text.indexOf('>20000<'), x1.text.slice(0, 200));
 await page.fill('#tblQ', ''); await page.waitForTimeout(300);
 
 // the commission settings
@@ -180,12 +181,12 @@ check('4 the base setting itself was never touched by any of it', db._dump('sett
 await page.click('#dedReport'); await page.waitForSelector('#dedRep');
 const rep2 = await page.evaluate(() => { const c = document.getElementById('dedRep'); const t = e => (e.textContent || '').replace(/\s+/g, ' ').trim();
   return { heads: [...c.querySelectorAll('thead th')].map(t), rows: [...c.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(t)) }; });
-check('7 the report\'s section 2 has the same column in the same place', JSON.stringify(rep2.heads) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']) && rep2.rows[0][2] === 'PMO.HQ' && rep2.rows[1][2] === 'Manager.Dar', JSON.stringify(rep2));
+check('7 the report\'s section 2 has the same column in the same place', JSON.stringify(rep2.heads) === JSON.stringify(['S/N', 'Aliyeripoti / Reporter', 'Cheo.Zone / Role.Zone', 'Kesi / Unique cases', 'Malipo / Earnings']) && rep2.rows[0][2] === 'PMO.HQ' && rep2.rows[1][2] === 'Manager.Dar', JSON.stringify(rep2));
 await page.close();
 
-// ---- no access code carries the reporters' names (a sheet-imported case, somebody who left): the case's own role, a dash for the branch
+// ---- no access code carries the reporters' names (a sheet-imported case, somebody who left): the case's own role, a dash for the zone
 page = await open(fakeDb(tables([], false)), ADMIN);
-check('7 no code carries the name: the role the case was filed under and a dash, never a guessed branch', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000, 'Recovery.—', 'Recovery.—')), JSON.stringify((await earnOf(page) || {}).rows));
+check('7 no code carries the name: the role the case was filed under and a dash, never a guessed zone', JSON.stringify((await earnOf(page) || {}).rows) === JSON.stringify(rowsOf(20000, 10000, 30000, 'Recovery.—', 'Recovery.—')), JSON.stringify((await earnOf(page) || {}).rows));
 await page.close();
 
 // ---- not an admin
