@@ -108,12 +108,20 @@ function presSlides(){
        are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). The six that were here keep their
        places (row one and the first two of row two); the six that join them are figures the dashboard's own answer already carries,
        worked out by the server and only printed here, so the wall and the dashboard can never say two different things:
-         Initial arrears and Cleared today   the cards beside Current arrears and Defaulters (d.cards);
+         Recovered this week and Cleared today   the week's recovery in shillings (the Weekly recovery trend's own TOTAL, d.recTrendTotal,
+         added up from its days the way the dashboard does when the server did not send it) and the card beside Defaulters (d.cards);
          Sales %, Early Collection %, Collection %, Recovery %   the four strip tiles of the dashboard (d.perf), this week's, in the strip's
          own order -- whole numbers, as everywhere (pct), a dash where the week has nothing to measure.
+       THE SEVENTH TILE WAS INITIAL ARREARS, AND THE OWNER REPLACED IT -- "replace initial arreas widget with anything else thats crucial in
+       the presentation hope pmo day slide summary" (25 Nov 2026, handbook Part 164, addendum 1). The choice of what is crucial was left to
+       us: the week's recovery in shillings, because the slide held it only as a percentage (Recovery % (week)) and as the day's figure
+       (Recovered), never the money that percentage is a percentage OF, and because the morning's total arrears is, once the day's two
+       files are in, Current arrears plus Recovered: the tile said nothing the two before it did not. The owner can name another and it
+       is one line here.
        Nothing is read for them: the answer is the one this slide already stood on. The grid is `grid:'4x3'` (a class and a fit in
        presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
     var pf = d.perf || {};
+    var weekRecovered = d.recTrendTotal ? d.recTrendTotal.recovered : (d.recTrend || []).reduce(function(s, x){ return s + (Number(x && x.recovered) || 0); }, 0);
     slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
       { l:'Recovered', v:'TZS '+money(c.recovered) },
@@ -121,7 +129,7 @@ function presSlides(){
       { l:'Sales this week', v:'TZS '+money(c.salesWeek) },
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
       { l:'Abnormal', v:money(c.abnormal) },
-      { l:'Initial arrears', v:'TZS '+money(c.initArrears) },
+      { l:'Recovered this week', v:'TZS '+money(weekRecovered) },
       { l:'Cleared today', v:money(c.cleared) },
       { l:'Sales % (week)', v:pct(pf.salesPct) },
       { l:'Early Collection % (week)', v:pct(pf.ecolPct) },

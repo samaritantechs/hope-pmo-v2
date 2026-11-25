@@ -7,8 +7,10 @@
    What it proves, at the sizes a TV and a laptop really are (3840x2160, 1920x1080, 1366x768, 1280x720, 1024x768) and on a phone-width window:
 
      1. the slide has TWELVE tiles, the six it always had in their places and the six that joined them after, each reading what the dashboard's
-        answer says (the arrears and the customers from its cards, the four percentages from its strip, whole numbers, a dash where the week
-        has nothing to measure);
+        answer says (the week's recovery from its weekly recovery total, the cleared customers from its cards, the four percentages from its
+        strip, whole numbers, a dash where the week has nothing to measure); the seventh tile is the week's recovery in shillings and the
+        Initial arrears tile the owner replaced (25 Nov: "replace initial arreas widget with anything else thats crucial in the presentation
+        hope pmo day slide summary") is gone;
      2. on a TV-sized screen they stand FOUR in a row and THREE in a column, every tile the same size, the grid reaching the bottom of the
         screen (it FILLS the TV: no band of empty wall under it) and the slide never scrolls;
      3. no figure runs past its tile, however long (a billion-shilling arrears at the smallest laptop), and every tile's figure has one size;
@@ -37,7 +39,8 @@ const MOD_DIR = process.env.MOD_DIR || path.join(ROOT, 'public/mod');
 let CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321,
   uncollectedToday: 456789012, abnormal: 37 };
 let PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 };
-const DASH = () => ({ ok: true, weekday: 'WED', weekOf: '2026-11-23', weekEnd: '2026-11-29', pastWeek: false, asOfDate: '2026-11-25', cards: CARDS, perf: PERF,
+let RECTOT = { recovered: 94338048, uncollected: 120000000, adjusted: 0, unrecovered: 25661952, pct: 78.6 };
+const DASH = () => ({ ok: true, weekday: 'WED', weekOf: '2026-11-23', weekEnd: '2026-11-29', pastWeek: false, asOfDate: '2026-11-25', cards: CARDS, perf: PERF, recTrendTotal: RECTOT,
   teamPerf: [{ branch: 'DAR', team: 'KONGOWE', salesMonth: 1000, curArrears: 5000, defaulters: 3, uncollected: 100, collPct: 90, recPctMon: 80, recPctYest: 70, recPctWeek: 60, basis: 'today' }],
   colTrend: [], workspace: 'hopepmo' });
 const warn = console.warn; console.warn = () => {};
@@ -123,11 +126,12 @@ for (const [w, h] of SIZES) {
 // ---- 1. what the twelve say
 const T = first.tiles, L = T.map(x => x[0]), V = Object.fromEntries(T);
 check('1 the six it always had keep their places, then the six that joined: arrears, customers, then the four percentages of the strip',
-  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Initial arrears', 'Cleared today',
+  JSON.stringify(L) === JSON.stringify(['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Cleared today',
     'Sales % (week)', 'Early Collection % (week)', 'Collection % (week)', 'Recovery % (week)']), JSON.stringify(L));
 check('1 the old six read what they read before', V['Current arrears'] === 'TZS 3,412,547,121' && V['Recovered'] === 'TZS 1,234,567,890' && V['Defaulters'] === '10,372'
   && V['Sales this week'] === 'TZS 987,654,321' && V['Uncollected today'] === 'TZS 456,789,012' && V['Abnormal'] === '37', JSON.stringify(V));
-check('1 the new money and customers are the dashboard cards\': Initial arrears, Cleared today', V['Initial arrears'] === 'TZS 23,760,795,812' && V['Cleared today'] === '4,321', JSON.stringify(V));
+check('1 the week\'s recovery is the weekly recovery trend\'s own total and the cleared customers are the dashboard card\'s', V['Recovered this week'] === 'TZS 94,338,048' && V['Cleared today'] === '4,321', JSON.stringify(V));
+check('1 the Initial arrears tile the owner replaced is not on the slide, whatever the cards still carry', !('Initial arrears' in V) && CARDS.initArrears > 0, JSON.stringify(L));
 check('1 the four percentages are the strip\'s, in whole numbers (84.4 reads 84, 91.2 reads 91, 96.7 reads 97, 118.4 reads 118)',
   V['Sales % (week)'] === '84%' && V['Early Collection % (week)'] === '91%' && V['Collection % (week)'] === '97%' && V['Recovery % (week)'] === '118%', JSON.stringify(V));
 // ---- a week with nothing to measure: a dash, never a nought
@@ -139,6 +143,7 @@ await page.close();
 PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4 };
 // ---- 3. the longest figures at the smallest screens
 CARDS = { ...CARDS, curArrears: 98765432109, initArrears: 123456789012, recovered: 98765432109, salesWeek: 98765432109, uncollectedToday: 98765432109 };
+RECTOT = { ...RECTOT, recovered: 98765432109 };
 for (const [w, h] of [[1366, 768], [1024, 768], [1280, 720]]) {
   page = await openDeck({ width: w, height: h });
   const G = await geo(page);
