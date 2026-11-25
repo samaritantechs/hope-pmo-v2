@@ -3,6 +3,7 @@
      "Add 6 widgets to hope pmo overall slide at presentation so that they are 4x3 full on our tv (HOPE PMO - DAY slide)" -- the owner, 25 Nov 2026
      "replace initial arreas widget with anything else thats crucial in the presentation hope pmo day slide summary"      -- the owner, 25 Nov 2026 (addendum 1)
      "combine % of sales, and of recovered at their amounts and replace with any other meaningful widgets"                -- the owner, 25 Nov 2026 (addendum 2)
+     "also cleared today to defaulters, add another meaningful widget" · "col% and uncollected today also in a single widget. add another meaningful one"   -- the owner, 25 Nov 2026 (addendum 3)
 
    What is held here (the picture and the geometry at TV sizes are in tools/browser-checks/portal-present-day-slide.mjs, a real browser):
      * the slide builds TWELVE tiles, every one read from the dashboard's own answer (d.cards, d.perf, d.recTrendTotal, d.edrTrendTotal) and only printed here (a percentage in whole
@@ -10,7 +11,9 @@
      * the owner changed it twice and left the choices to a chat: Initial arrears is gone and the WEEK'S RECOVERY in shillings is the seventh tile (the weekly recovery trend's own TOTAL,
        added up from its days exactly as the dashboard does when the server did not send the total); the Sales % and the Recovery % are a LINE UNDER Sales this week and Recovered this week
        (the percentage is printed with its amount, not on a tile of its own), and the two tiles that were left are the week's Expected Defaulters recovery (a dash while the database has
-       not answered it) and the Performance average of the strip;
+       not answered it) and the Performance average of the strip; then Cleared today is a line under Defaulters ("4,321 cleared today") and the strip's Collection % a line under
+       Uncollected today ("97% collected this week"), and the two tiles left free are the week's Loan applications (the strip's own count and the amount asked) and the week's Legal
+       recovery (the dashboard's Legal card figure, notices and calls together: a dash while either side cannot be read);
      * the line under a figure is part of the figure's own box (so the fit that sizes the figure sizes the line with it), every tile of the slide reserves it when any has it (so a row
        stands level), and a slide with no such line is drawn exactly as it was;
      * the slide declares its grid (`grid: '4x3'`), presDraw gives the tile grid the class the CSS and the fit look for, and a slide that asks for nothing is drawn as before;
@@ -39,45 +42,49 @@ const slideOf = (c, perf, weekday = 'WED', extra = {}) => {
   return slides[0];
 };
 const CARDS = { curArrears: 3412547121, initArrears: 23760795812, recovered: 1234567890, defaulters: 10372, cleared: 4321, salesWeek: 987654321, uncollectedToday: 456789012, abnormal: 37 };
-const PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8 };
+const PERF = { salesPct: 84.4, ecolPct: 91.2, colPct: 96.7, recPct: 118.4, avgPct: 99.8, appsCount: 486, appsAmount: 1234000000 };
 const WEEK = {
   recTrendTotal: { recovered: 94338048, uncollected: 120000000, adjusted: 0, unrecovered: 25661952, pct: 78.6 },
   edrTrendTotal: { initial: 120000000, current: 116400000, recovered: 3600000, pct: 3 },
-  edrTrend: [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }] };
+  edrTrend: [{ weekday: 'MON', uploaded: true, recovered: 1800000 }, { weekday: 'TUE', uploaded: true, recovered: 1800000 }, { weekday: 'WED', uploaded: false, recovered: 0 }],
+  legal: { grand: { on: true, nOn: true, pOn: true, rows: [], total: { nOwed: 40000000, nRec: 30000000, nPct: 75, cOwed: 12000000, cRec: 11000000, cPct: 91.7, owed: 52000000, recovered: 41000000, pct: 78.8, tRecovered: 2000000 } } } };
 const tiles = s => ({ v: Object.fromEntries(s.items.map(i => [i.l, i.v])), s: Object.fromEntries(s.items.map(i => [i.l, i.s || ''])) });
-const LABELS = ['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Cleared today',
-  'Early Collection % (week)', 'Collection % (week)', 'Exp.Def recovery (week)', 'Performance (average)'];
+const LABELS = ['Current arrears', 'Recovered', 'Defaulters', 'Sales this week', 'Uncollected today', 'Abnormal', 'Recovered this week', 'Loan applications (week)',
+  'Early Collection % (week)', 'Legal recovery (week)', 'Exp.Def recovery (week)', 'Performance (average)'];
 
-test('the day slide has TWELVE tiles in their places: the first eight as they were (the seventh is the week\'s recovery, not the morning\'s arrears), then the two collection percentages, the Expected Defaulters recovery and the Performance average', () => {
+test('the day slide has TWELVE tiles in their places: the week\'s recovery (not the morning\'s arrears) seventh, the loan applications and the Legal recovery in the places Cleared today and Collection % left, the Expected Defaulters recovery and the Performance average', () => {
   const s = slideOf(CARDS, PERF, 'WED', WEEK);
   assert.equal(s.id, 'kpi'); assert.equal(s.kind, 'kpi'); assert.equal(s.title, 'HOPE PMO — WED');
   assert.deepEqual(s.items.map(i => i.l), LABELS);
   assert.equal(s.items.length, 12, 'four across and three down is twelve');
   assert.ok(!s.items.some(i => /Initial arrears/.test(i.l)), 'the owner replaced the Initial arrears tile (25 Nov): it is not on the slide');
-  assert.ok(!s.items.some(i => /^Sales %|^Recovery %/.test(i.l)), 'Sales % and Recovery % are printed under their amounts (25 Nov): they are not tiles of their own');
+  assert.ok(!s.items.some(i => /^Sales %|^Recovery %|^Cleared today|^Collection %/.test(i.l)), 'Sales %, Recovery %, Cleared today and Collection % are printed under their amounts and Defaulters (25 Nov): they are not tiles of their own');
 });
 
-test('every figure is the dashboard\'s own, and the percentage of an amount is printed UNDER it: sales % under sales, recovery % under the week\'s recovery, the card\'s own percentage under the Expected Defaulters recovery', () => {
+test('every figure is the dashboard\'s own, and what belongs to an amount is printed UNDER it: sales % under sales, collection % under the day\'s uncollected, cleared customers under the defaulters, recovery % under the week\'s recovery, a percentage under each of the Expected Defaulters, Legal and applications figures', () => {
   const { v, s } = tiles(slideOf(CARDS, PERF, 'WED', WEEK));
   assert.deepEqual(v, {
     'Current arrears': 'TZS 3,412,547,121', 'Recovered': 'TZS 1,234,567,890', 'Defaulters': '10,372', 'Sales this week': 'TZS 987,654,321', 'Uncollected today': 'TZS 456,789,012', 'Abnormal': '37',
-    'Recovered this week': 'TZS 94,338,048', 'Cleared today': '4,321',
-    'Early Collection % (week)': '91%', 'Collection % (week)': '97%', 'Exp.Def recovery (week)': 'TZS 3,600,000', 'Performance (average)': '100%' });
+    'Recovered this week': 'TZS 94,338,048', 'Loan applications (week)': '486',
+    'Early Collection % (week)': '91%', 'Legal recovery (week)': 'TZS 41,000,000', 'Exp.Def recovery (week)': 'TZS 3,600,000', 'Performance (average)': '100%' });
   assert.deepEqual(s, {
-    'Current arrears': '', 'Recovered': '', 'Defaulters': '', 'Sales this week': '84% of target', 'Uncollected today': '', 'Abnormal': '',
-    'Recovered this week': '118% of uncollected', 'Cleared today': '',
-    'Early Collection % (week)': '', 'Collection % (week)': '', 'Exp.Def recovery (week)': '3.0% of their arrears', 'Performance (average)': 'sales · collection · recovery' });
+    'Current arrears': '', 'Recovered': '', 'Defaulters': '4,321 cleared today', 'Sales this week': '84% of target', 'Uncollected today': '97% collected this week', 'Abnormal': '',
+    'Recovered this week': '118% of uncollected', 'Loan applications (week)': 'TZS 1,234,000,000 requested',
+    'Early Collection % (week)': '', 'Legal recovery (week)': '79% of owed', 'Exp.Def recovery (week)': '3.0% of their arrears', 'Performance (average)': 'sales · collection · recovery' });
 });
 
 test('a percentage the week cannot measure is a dash, never a nought; a real nought is a nought; a dash stands alone under an amount (never "— of target"); a dashboard with no strip at all still draws twelve tiles', () => {
-  const { v, s } = tiles(slideOf(CARDS, { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null }, 'WED', WEEK));
-  assert.equal(v['Early Collection % (week)'], '—'); assert.equal(v['Collection % (week)'], '100%'); assert.equal(v['Performance (average)'], '—');
+  const { v, s } = tiles(slideOf(CARDS, { salesPct: null, ecolPct: null, colPct: 100, recPct: 0, avgPct: null, appsCount: 0, appsAmount: 0 }, 'WED', WEEK));
+  assert.equal(v['Early Collection % (week)'], '—'); assert.equal(v['Performance (average)'], '—');
   assert.equal(s['Sales this week'], '—', 'nothing to measure: a dash alone');
   assert.equal(s['Recovered this week'], '0% of uncollected', 'a real nought is a nought, with its words');
+  assert.equal(s['Uncollected today'], '100% collected this week', 'a real 100% is 100%');
+  assert.equal(v['Loan applications (week)'], '0', 'no application this week is a real nought: a count, never a dash'); assert.equal(s['Loan applications (week)'], 'TZS 0 requested');
   const bare = tiles(slideOf(CARDS, undefined));
   assert.equal(Object.keys(bare.v).length, 12);
-  assert.deepEqual([bare.v['Early Collection % (week)'], bare.v['Collection % (week)'], bare.v['Exp.Def recovery (week)'], bare.v['Performance (average)']], ['—', '—', '—', '—'], 'no strip, no Expected Defaulters answer: four dashes');
-  assert.equal(bare.s['Sales this week'], '—'); assert.equal(bare.s['Recovered this week'], '—');
+  assert.deepEqual([bare.v['Early Collection % (week)'], bare.v['Legal recovery (week)'], bare.v['Exp.Def recovery (week)'], bare.v['Performance (average)'], bare.v['Loan applications (week)']], ['—', '—', '—', '—', '—'], 'no strip, no Expected Defaulters answer, no Legal card, no applications count: five dashes');
+  assert.equal(bare.s['Sales this week'], '—'); assert.equal(bare.s['Recovered this week'], '—'); assert.equal(bare.s['Uncollected today'], '—');
+  assert.equal(bare.s['Legal recovery (week)'], ''); assert.equal(bare.s['Loan applications (week)'], '');
 });
 
 test('THE WEEK\'S RECOVERY: the server\'s own total when it sent one, else the days added up exactly as the dashboard adds them, else nought; a damaged day counts nothing and never breaks the slide', () => {
@@ -126,6 +133,41 @@ test('THE PERFORMANCE AVERAGE is the strip\'s own (the average of sales %, colle
   assert.deepEqual(tile({ ...PERF, avgPct: null }), ['—', 'sales · collection · recovery'], 'nothing measured: a dash (the line still says what it would be the average of)');
 });
 
+test('CLEARED TODAY is the line under the Defaulters: the dashboard card\'s own count, a real nought is "0 cleared today", and it is never a tile of its own', () => {
+  const line = (c) => tiles(slideOf(c, PERF, 'WED', WEEK)).s['Defaulters'];
+  assert.equal(line(CARDS), '4,321 cleared today');
+  assert.equal(line({ ...CARDS, cleared: 0 }), '0 cleared today');
+  assert.equal(line({ ...CARDS, cleared: 1234567 }), '1,234,567 cleared today');
+  assert.equal(tiles(slideOf({ ...CARDS, cleared: 7 }, PERF, 'WED', WEEK)).v['Defaulters'], '10,372', 'the figure itself is the defaulters');
+});
+
+test('THE WEEK\'S LOAN APPLICATIONS are the strip\'s own count with the amount asked under it; a count is a count (no application is a nought, never a dash) and an answer with no count at all is a dash', () => {
+  const tile = (perf) => { const t = tiles(slideOf(CARDS, perf, 'WED', WEEK)); return [t.v['Loan applications (week)'], t.s['Loan applications (week)']]; };
+  assert.deepEqual(tile(PERF), ['486', 'TZS 1,234,000,000 requested']);
+  assert.deepEqual(tile({ ...PERF, appsCount: 0, appsAmount: 0 }), ['0', 'TZS 0 requested']);
+  assert.deepEqual(tile({ ...PERF, appsCount: 12345, appsAmount: 98765432109 }), ['12,345', 'TZS 98,765,432,109 requested']);
+  assert.deepEqual(tile({ ...PERF, appsCount: undefined }), ['—', ''], 'an older answer with no count');
+  assert.deepEqual(tile({ ...PERF, appsCount: null }), ['—', '']);
+  assert.deepEqual(tile({ ...PERF, appsAmount: undefined }), ['486', 'TZS 0 requested'], 'a count with no amount: the amount reads nought, as the dashboard\'s own money does');
+});
+
+test('THE WEEK\'S LEGAL RECOVERY is the dashboard\'s Legal card figure, notices and calls TOGETHER with the percentage of what the two were owed under it; a dash, and no line, while either side cannot be read; a damaged answer never breaks the slide', () => {
+  const tile = (legal) => { const t = tiles(slideOf(CARDS, PERF, 'WED', { ...WEEK, legal })); return [t.v['Legal recovery (week)'], t.s['Legal recovery (week)']]; };
+  const g = (over) => ({ grand: { ...WEEK.legal.grand, ...over, total: { ...WEEK.legal.grand.total, ...(over && over.total) } } });
+  assert.deepEqual(tile(WEEK.legal), ['TZS 41,000,000', '79% of owed']);
+  // the grand total (notices + calls), never one side of it
+  assert.deepEqual(tile(g({ total: { recovered: 55000000, nRec: 1, cRec: 2 } })), ['TZS 55,000,000', '79% of owed']);
+  // a side that cannot be read (the ledger not there, RUN-ME-089 not run, a phone read that failed or was late): a dash, never the other side alone
+  assert.deepEqual(tile(g({ on: false, pOn: false, total: { recovered: null, pct: null } })), ['—', '']);
+  assert.deepEqual(tile(g({ on: false })), ['—', ''], 'the grand total says it is not whole');
+  assert.deepEqual(tile(g({ on: true, total: { recovered: null } })), ['—', ''], 'on, but no figure');
+  // no Legal card at all, no grand total, no total row
+  assert.deepEqual(tile(undefined), ['—', '']); assert.deepEqual(tile({}), ['—', '']); assert.deepEqual(tile({ grand: null }), ['—', '']); assert.deepEqual(tile({ grand: { on: true } }), ['—', '']);
+  // owed nothing: the money, and a dash for the percentage; a real nought is a nought
+  assert.deepEqual(tile(g({ total: { recovered: 41000000, pct: null } })), ['TZS 41,000,000', '—']);
+  assert.deepEqual(tile(g({ total: { recovered: 0, pct: 0 } })), ['TZS 0', '0% of owed']);
+});
+
 test('the tiles come from the answer the slide already has: no read of its own, no call, and nothing of the officer boards (the day slide still plays when they do not load)', () => {
   const from = PRESENT.indexOf("var pf = d.perf || {};"), to = PRESENT.indexOf('/* TEAM PERFORMANCE.');
   const code = PRESENT.slice(from, to).replace(/\/\*[\s\S]*?\*\//g, '');
@@ -144,6 +186,10 @@ test('the tiles come from the answer the slide already has: no read of its own, 
   assert.match(core, /return \{ weekday: wd, date: d, initial, current, recovered, customers, undated, uploaded, pct, dEdr, lwEdr:/, 'and each of its days says whether it was uploaded');
   for (const f of ['cleared', 'curArrears', 'recovered', 'defaulters', 'salesWeek', 'uncollectedToday', 'abnormal']) assert.ok(new RegExp('\\b' + f + ': ').test(core.slice(core.indexOf('cards: {\n      curArrears'), core.indexOf('cards: {\n      curArrears') + 2600)), 'dashboardFull answers cards.' + f);
   for (const f of ['salesPct', 'ecolPct', 'colPct', 'recPct', 'avgPct']) assert.ok(core.includes('perf.' + f) || new RegExp('\\b' + f + ': wkNow\\.' + f).test(core), 'dashboardFull answers perf.' + f);
+  assert.match(core, /appsCount: wkNow\.appsCount, appsAmount: wkNow\.appsAmount, appsPrevCount/, 'the strip answers the week\'s applications: the count and the amount asked');
+  assert.match(core, /legal: legalDash_,/, 'dashboardFull answers the Legal card'); assert.match(core, /\.\.\.\(grand \? \{ grand \} : \{\}\)/, 'with the grand total (notices and calls) beside it');
+  const gt = core.slice(core.indexOf('function legalGrand_('), core.indexOf('function legalGrand_(') + 3200);
+  assert.match(gt, /return \{ on: nOn && pOn, nOn, pOn,/, 'the grand total says whether BOTH sides were read'); assert.match(gt, /owed: both \? r\.nOwed \+ r\.cOwed : null, recovered: both \? r\.nRec \+ r\.cRec : null, pct: both \?/, 'and its total row carries recovered and pct, null unless both sides were read');
 });
 
 test('presDraw gives the tile grid its class only when the slide asks for the 4x3 grid; a tile\'s line under its figure is ESCAPED text inside the figure\'s box; when any tile has one every tile reserves it; a slide with none is drawn exactly as it was', () => {

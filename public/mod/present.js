@@ -108,15 +108,19 @@ function presSlides(){
        are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). Every figure is one the dashboard's own
        answer already carries, worked out by the server and only printed here, so the wall and the dashboard can never say two different
        things. Nothing is read for them: the answer is the one this slide already stood on.
-       THE OWNER HAS CHANGED THREE OF THE TWELVE, AND LEFT US THE CHOICE EACH TIME (handbook Part 164, addenda 1 and 2):
-         "replace initial arreas widget with anything else thats crucial in the presentation hope pmo day slide summary" (25 Nov): Initial
-         arrears went; the week's recovery in shillings took its place (the Weekly recovery trend's own TOTAL, d.recTrendTotal, added up from
-         its days the way the dashboard does when the server did not send it).
-         "combine % of sales, and of recovered at their amounts and replace with any other meaningful widgets" (25 Nov): the strip's Sales %
-         is printed UNDER Sales this week and Recovery % UNDER Recovered this week (the week's, which is the percentage's own week), each as a
-         line `s` beneath the figure; the two tiles that were left free became the week's Expected Defaulters recovery (d.edrTrendTotal: the
-         dashboard's own card, a dash while the database has not answered it, and on no other slide of the deck) and the strip's Performance
-         average (d.perf.avgPct: sales, collection and recovery together).
+       THE OWNER HAS CHANGED THE SLIDE FOUR TIMES THE SAME DAY, AND LEFT US THE CHOICE EACH TIME (handbook Part 164, addenda 1 to 3):
+         "replace initial arreas widget with anything else thats crucial in the presentation hope pmo day slide summary": Initial arrears went;
+         the week's recovery in shillings took its place (the Weekly recovery trend's own TOTAL, d.recTrendTotal, added up from its days the
+         way the dashboard does when the server did not send it).
+         "combine % of sales, and of recovered at their amounts and replace with any other meaningful widgets": the strip's Sales % is
+         printed UNDER Sales this week and Recovery % UNDER Recovered this week (the week's, the percentage's own week), each as a line `s`
+         beneath the figure; the two tiles left free became the week's Expected Defaulters recovery (d.edrTrendTotal: the dashboard's own
+         card, a dash while the database has not answered it) and the strip's Performance average (d.perf.avgPct).
+         "also cleared today to defaulters, add another meaningful widget" and "col% and uncollected today also in a single widget. add
+         another meaningful one": Cleared today is printed UNDER Defaulters ("4,321 cleared today") and the strip's Collection % UNDER
+         Uncollected today ("97% collected this week"); the two tiles left free became the week's Loan applications (d.perf.appsCount, with
+         the amount asked, d.perf.appsAmount) and the week's Legal recovery (d.legal.grand.total: notices and calls together, the
+         dashboard's own Legal card figure, a dash while either side cannot be read).
        A percentage the week cannot measure is a dash, never a nought. The owner can name other widgets and each is one line here. The grid
        is `grid:'4x3'` (a class and a fit in presDraw / presFit_), so a slide that asks for nothing is drawn exactly as before. */
     var pf = d.perf || {};
@@ -127,17 +131,23 @@ function presSlides(){
     /* the week's Expected Defaulters recovery: the dashboard's own total, and only when the database answered it (edrNote says it did not)
        and at least one day of the week has its two files (a week with none reads "not uploaded yet" on the dashboard, never a nought) */
     var edr = d.edrTrendTotal, edrOn = !!edr && !d.edrNote && (d.edrTrend || []).some(function(x){ return !!(x && x.uploaded); });
+    /* the week's Legal recovery: the dashboard's own Legal card figure, notices AND calls together (legalGrand_'s total row: a customer served
+       a notice and phoned counts once). Null on a side that cannot be read (the ledger not there, db/RUN-ME-089 not run, a phone read that
+       failed or was late), and a grand figure that silently left a side out would read as a result: a dash, and no line, then */
+    var lg = d.legal && d.legal.grand, lgOn = !!lg && lg.on === true && !!lg.total && lg.total.recovered != null;
+    /* the week's loan applications: the strip's own count (every application that ARRIVED this week, whatever stage it is at now) */
+    var appsOn = pf.appsCount != null;
     slides.push({ id:'kpi', kind:'kpi', grid:'4x3', title:'HOPE PMO — ' + d.weekday, items:[
       { l:'Current arrears', v:'TZS '+money(c.curArrears) },
       { l:'Recovered', v:'TZS '+money(c.recovered) },
-      { l:'Defaulters', v:money(c.defaulters) },
+      { l:'Defaulters', v:money(c.defaulters), s:money(c.cleared)+' cleared today' },
       { l:'Sales this week', v:'TZS '+money(c.salesWeek), s:under(pct, pf.salesPct, 'of target') },
-      { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday) },
+      { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday), s:under(pct, pf.colPct, 'collected this week') },
       { l:'Abnormal', v:money(c.abnormal) },
       { l:'Recovered this week', v:'TZS '+money(weekRecovered), s:under(pct, pf.recPct, 'of uncollected') },
-      { l:'Cleared today', v:money(c.cleared) },
+      { l:'Loan applications (week)', v:appsOn ? money(pf.appsCount) : DASH_, s:appsOn ? 'TZS '+money(pf.appsAmount)+' requested' : '' },
       { l:'Early Collection % (week)', v:pct(pf.ecolPct) },
-      { l:'Collection % (week)', v:pct(pf.colPct) },
+      { l:'Legal recovery (week)', v:lgOn ? 'TZS '+money(lg.total.recovered) : DASH_, s:lgOn ? under(pct, lg.total.pct, 'of owed') : '' },
       { l:'Exp.Def recovery (week)', v:edrOn ? 'TZS '+money(edr.recovered) : DASH_, s:edrOn ? under(pct1, edr.pct, 'of their arrears') : '' },
       { l:'Performance (average)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
     /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
