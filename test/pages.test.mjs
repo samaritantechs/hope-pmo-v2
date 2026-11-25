@@ -742,7 +742,8 @@ test('the presentation asks for the dashboard first, the boards after, and plays
   const view = app.slice(app.indexOf('VIEWS.present = function'), app.indexOf('var PRES_REFRESH_MS'));
   assert.ok(!/Promise\.all\(\[srv/.test(view), 'the two heaviest reads are never fired side by side');
   assert.ok(/srv\('dashboardFull', wk\)\.then\(function\(d\)\{/.test(view), 'the dashboard comes first');
-  assert.ok(/presRender\(\);\s*presBoards_\(wk\);/.test(view), 'the page is drawn from it, then the boards are asked for');
+  assert.ok(/presRender\(\);\s*(?:\/\/[^\n]*\n\s*)?presBoards_\(wk\)\.then\(function\(\)\{ return presDed_\(wk\); \}\);/.test(view),
+    'the page is drawn from it, then the boards are asked for, then (the third and smallest) the week\'s deduction cases (addendum 6)');
   assert.ok(/srv\('officerBoards', wk\)\.then\(function\(b\)\{ mine\.b = b; mine\.bWhy = ''; \},\s*function\(e\)\{ mine\.bWhy = String/.test(view),
     'a boards failure is kept with its reason instead of thrown');
   assert.ok(/if \(S\.presData !== mine \|\| S\.view !== 'present'\) return;/.test(view), 'nothing is drawn over a tab the person has left');
@@ -752,8 +753,8 @@ test('the presentation asks for the dashboard first, the boards after, and plays
   assert.ok((slides.match(/slides\.push\(coltrend\)/g) || []).length === 2, 'the collection trend plays either way');
   const refetch = app.slice(app.indexOf('function presRefetch'), app.indexOf('function presSlides'));
   assert.ok(!/Promise\.all\(\[srv/.test(refetch), 'the three-minute refresh follows the same order');
-  assert.ok(/return srv\('officerBoards', wk\)\.then\(function\(b\)\{ mine\.b = b; mine\.bWhy = ''; \}, function\(\)\{\}\);/.test(refetch),
-    'a missed boards refresh keeps the last boards');
+  assert.ok(/return srv\('officerBoards', wk\)\.then\(function\(b\)\{ mine\.b = b; mine\.bWhy = ''; \}, function\(\)\{\}\)\s*\.then\(function\(\)\{ return presDedAgain_\(wk, mine\); \}\);/.test(refetch),
+    'a missed boards refresh keeps the last boards, and the week\'s deduction cases are asked for after them (never beside them)');
   const draw = app.slice(app.indexOf('function presDraw'), app.indexOf('function presProgGroup_'));
   assert.ok(/s\.kind === 'note'/.test(draw), 'presDraw draws the note');
   assert.ok(/id="presBoardsRetry"/.test(app) && /getElementById\('presBoardsRetry'\)/.test(app), 'the page offers a retry, and it is wired');

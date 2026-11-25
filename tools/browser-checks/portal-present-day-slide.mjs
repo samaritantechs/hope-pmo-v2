@@ -91,7 +91,10 @@ const ok = [], fail = [], errs = [];
 const check = (name, cond, extra) => (cond ? ok : fail).push(name + (extra ? ' -- ' + extra : ''));
 const BENIGN = /favicon|status of 404|ERR_FAILED|brand|status of 500|status of 403/;
 const UI = { presentSeconds: 3600, refreshSeconds: 6000, hintIntervalSeconds: 3600, hintLifetimeSeconds: 5 };
-const USER = { name: 'THE ADMIN', role: 'ADMIN', teams: null, tabs: ['present', 'dashboard', 'settings'] };
+/* NOT AN ADMIN, and without the PMO Deduction tab, ON PURPOSE (addendum 6): the Abnormal tile carries the week's deduction cases and the deck carries a per-team slide for
+   whoever holds that tab, and this check is about the day slide as it was. For a person who does not hold the tab the slide is exactly what it was before that change (the check
+   proves it: eleven lines under the figures, the team table second); the card's own line is tools/browser-checks/portal-present-abnormal-deductions.mjs. */
+const USER = { name: 'THE GM', role: 'GM', teams: null, tabs: ['present', 'dashboard', 'settings'] };
 
 async function openDeck(size) {
   const page = await browser.newPage({ viewport: size });

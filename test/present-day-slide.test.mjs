@@ -38,12 +38,15 @@ const APP = read('public/app.html');
 const money = n => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
 const pct = v => (v == null || v === '' || isNaN(v)) ? '—' : Math.round(Number(v)) + '%';
 const pct1 = v => (v == null || v === '' || isNaN(v)) ? '—' : Number(v).toFixed(1) + '%';
-const slideOf = (c, perf, weekday = 'WED', extra = {}) => {
+/* THE DAY SLIDE'S CODE ENDS WHERE THE ABNORMAL CARD'S PER-TEAM SLIDE BEGINS (addendum 6): that block is the next slide's, and it has its own test file
+   (test/present-abnormal-deductions.test.mjs). The Abnormal tile's line is made ABOVE the slide (presDedLine_, in presSlides' head) and handed in, as the page does. */
+const DAY_END = "/* THE ABNORMAL CARD'S PER-TEAM VIEW";
+const slideOf = (c, perf, weekday = 'WED', extra = {}, dedLine = '') => {
   const from = PRESENT.indexOf("var pf = d.perf || {};");
-  const to = PRESENT.indexOf('/* TEAM PERFORMANCE.');
+  const to = PRESENT.indexOf(DAY_END);
   assert.ok(from > 0 && to > from, 'the day slide\'s code is where it was');
   const slides = [];
-  new Function('d', 'c', 'slides', 'money', 'pct', 'pct1', PRESENT.slice(from, to))({ weekday, perf, ...extra }, c, slides, money, pct, pct1);
+  new Function('d', 'c', 'slides', 'money', 'pct', 'pct1', 'dedLine', PRESENT.slice(from, to))({ weekday, perf, ...extra }, c, slides, money, pct, pct1, dedLine);
   assert.equal(slides.length, 1, 'it builds one slide');
   return slides[0];
 };
@@ -256,7 +259,7 @@ test('THE EARLY COLLECTION % AND THE COLLECTION % (WEEK) STAND SIDE BY SIDE ON A
 });
 
 test('the tiles come from the answer the slide already has: no read of its own, no call, and nothing of the officer boards (the day slide still plays when they do not load)', () => {
-  const from = PRESENT.indexOf("var pf = d.perf || {};"), to = PRESENT.indexOf('/* TEAM PERFORMANCE.');
+  const from = PRESENT.indexOf("var pf = d.perf || {};"), to = PRESENT.indexOf(DAY_END);
   const code = PRESENT.slice(from, to).replace(/\/\*[\s\S]*?\*\//g, '');
   assert.doesNotMatch(code, /\bsrv\(|\bfetch\(|XMLHttpRequest/, 'no request is made to fill a tile');
   assert.ok(!/\bb\./.test(code), 'the officer boards (b) are not read: the slide is built before the check for them');

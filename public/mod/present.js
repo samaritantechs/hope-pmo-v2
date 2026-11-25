@@ -33,10 +33,11 @@ VIEWS.present = function(){
        the most expensive thing the system does -- the dashboard AND the officer boards, a
        hundred-odd round trips -- and it was being done again on every tick of every checkbox.
        The figures do not change because somebody chose not to project a slide. */
-    S.presData = { d: d, b: null, bWhy: '', bLoading: false };
+    S.presData = { d: d, b: null, bWhy: '', bLoading: false, ded: null, dedWhy: '', dedLoading: false };
     S.presUpdated = new Date();
     presRender();
-    presBoards_(wk);
+    // The boards, THEN the week's deduction cases: three answers one after another, the small one last (presDed_).
+    presBoards_(wk).then(function(){ return presDed_(wk); });
   });
 };
 
@@ -55,6 +56,31 @@ function presBoards_(wk){
       if (S.presData !== mine || S.view !== 'present') return;
       presRedraw_();
     });
+}
+
+/** THE WEEK'S DEDUCTION CASES, PER TEAM -- "at abnormal card in presentation - show weekly deduction case counts per team counts too. so that i get the impact
+    from that view" (the owner, 25 Nov 2026; handbook Part 164, addendum 6). Asked for on their own AFTER the officer boards have answered, the same week as the other
+    two (`wk`), and only for a person who holds the PMO Deduction tab: the server's gate says the same (FN_TAB `deduct`), so nobody else is even asked. One narrow read of
+    a week's lines, nothing like the two before it. A miss never takes anything else with it: it is said on the page (presRender) and on the slide that needs it
+    (presAbnDedSlide_), and the tile's line says "—". */
+function presDed_(wk){
+  var mine = S.presData;
+  if (!mine || !allowed('deduct')) return Promise.resolve();
+  mine.dedLoading = true; mine.dedWhy = '';
+  return srv('deductionsWeek', wk).then(function(x){ mine.ded = x; mine.dedWhy = ''; },
+    function(e){ mine.dedWhy = String((e && e.message) || e); })
+    .then(function(){
+      mine.dedLoading = false;
+      if (S.presData !== mine || S.view !== 'present') return;
+      presRedraw_();
+    });
+}
+
+/** The same read on the deck's refresh (presRefetch): a miss keeps the last answer drawn, and says so only when there never was one. */
+function presDedAgain_(wk, mine){
+  if (!mine || !allowed('deduct')) return Promise.resolve();
+  return srv('deductionsWeek', wk).then(function(x){ mine.ded = x; mine.dedWhy = ''; },
+    function(e){ if (!mine.ded) mine.dedWhy = String((e && e.message) || e); });
 }
 
 /** Rebuild the segment page and, if the deck is playing, the slide on the wall -- staying on
@@ -88,7 +114,8 @@ function presRefetch(){
   srv('dashboardFull', wk).then(function(d){
     if (S.presData !== mine) return;
     mine.d = d;
-    return srv('officerBoards', wk).then(function(b){ mine.b = b; mine.bWhy = ''; }, function(){});
+    return srv('officerBoards', wk).then(function(b){ mine.b = b; mine.bWhy = ''; }, function(){})
+      .then(function(){ return presDedAgain_(wk, mine); });
   }).then(function(){
     if (S.presData !== mine || !mine.d) return;
     S.presUpdated = new Date();
@@ -99,10 +126,65 @@ function presRefetch(){
   }).catch(function(){ /* a missed refresh keeps the last figures; the stamp says how old they are */ });
 }
 
+/** THE ABNORMAL CARD'S LINE: the week's deduction cases, under the figure (handbook Part 164, addendum 6). "N deduction cases this week" when the server has answered, "— deduction
+    cases this week" when it was asked and did not (a dash is "not known", never a nought: a real nought reads "0 deduction cases"), and NO line at all while the answer is on its
+    way, when the table is not there (RUN-ME-043: the PMO Deduction tab itself says so) and for a person who does not hold the PMO Deduction tab -- who is not even told there is
+    such a figure. Pure: it reads only what it is handed. */
+function presDedLine_(pd){
+  if (!pd || !allowed('deduct')) return '';
+  var x = pd.ded;
+  if (x && x.on === false) return '';
+  // an answer with no count (damaged, or an older server) is "not known", the same dash as a failed read: never a nought
+  if (x){ var n = x.cases; return typeof n === 'number' && isFinite(n) ? money(n) + ' deduction case' + (n === 1 ? '' : 's') + ' this week' : '\u2014 deduction cases this week'; }
+  return pd.dedWhy ? '\u2014 deduction cases this week' : '';
+}
+
+/** THE ABNORMAL CARD'S PER-TEAM VIEW -- "show weekly deduction case counts per team counts too. so that i get the impact from that view" (the owner, 25 Nov 2026).
+    One row for each team that has an abnormal payment flagged or a deduction case this week: the abnormal payments the Abnormal card counts (the dashboard's own per-team count,
+    d.teamPerf[].abnormal, so the card's figure is the sum of the column) beside the week's deduction cases (deductionsWeek: the cases the PMO Deduction tab counts, a case once
+    however many staff it names), the teams with most cases first, then the most abnormal payments. Twelve rows and, when there are more teams, ONE last row for all the others,
+    so that the JUMLA row is always the whole of what the card says and never the whole of what fitted. While the cases are on their way, or if they did not come, their column is
+    BLANK (not known, never a nought) and the caption says which; for a person who does not hold the PMO Deduction tab there is no such slide. Pure: it reads only what it is
+    handed, and the rows carry `team`, so the deck's own team filter (presApply) scopes it like every other board. */
+function presAbnDedSlide_(d, pd){
+  if (!allowed('deduct')) return null;
+  var x = pd && pd.ded, on = !!x && x.on !== false;
+  var key = function(t){ return String(t == null ? '' : t).trim().toUpperCase(); };
+  var by = {}, order = [];
+  var row = function(team){
+    var k = key(team);
+    if (!by[k]){ by[k] = { team: String(team == null || team === '' ? '\u2014' : team), abnormal: 0, dedCases: on ? 0 : null }; order.push(k); }
+    return by[k]; };
+  // a damaged answer (a list that is not a list) never takes the deck down with it: it is read as no rows
+  (Array.isArray(d.teamPerf) ? d.teamPerf : []).forEach(function(t){ if (t) row(t.team).abnormal = Number(t.abnormal) || 0; });
+  if (on) (Array.isArray(x.teams) ? x.teams : []).forEach(function(t){ if (t) row(t.team).dedCases = Number(t.cases) || 0; });
+  var list = order.map(function(k){ return by[k]; }).filter(function(r){ return r.abnormal > 0 || r.dedCases > 0; });
+  list.sort(function(a, b){ return ((b.dedCases || 0) - (a.dedCases || 0)) || (b.abnormal - a.abnormal) || String(a.team).localeCompare(String(b.team)); });
+  var SHOW = 12, rows = list.slice(0, SHOW), rest = list.slice(SHOW);
+  if (rest.length) rows.push({ team: 'Timu nyingine / Other teams (' + rest.length + ')',
+    abnormal: rest.reduce(function(s2, r){ return s2 + r.abnormal; }, 0),
+    dedCases: on ? rest.reduce(function(s2, r){ return s2 + (r.dedCases || 0); }, 0) : null });
+  var state = on ? ''
+    : x ? '<div>\u26a0 Jedwali la makato halipo / the deductions table is not there yet \u2014 ' + esc(x.note || '') + '</div>'
+    : pd && pd.dedWhy ? '<div>\u26a0 Kesi za makato hazikupakia / the deduction cases did not load \u2014 ' + esc(pd.dedWhy) + '</div>'
+    : '<div>\u23f3 Kesi za makato zinapakia / the deduction cases are loading</div>';
+  var wk = on ? '<div>Wiki / Week: ' + esc(x.weekOf) + ' \u2192 ' + esc(x.weekEnd) + ' \u00b7 Timu zenye kesi / teams with a deduction case: '
+      + money(Array.isArray(x.teams) ? x.teams.length : 0) + ' / ' + money(Array.isArray(d.teamPerf) ? d.teamPerf.length : 0) + '</div>'
+      + (list.length ? '' : '<div>Hakuna kesi za makato wala malipo yasiyo ya kawaida wiki hii / no deduction cases and no abnormal payments this week</div>') : '';
+  return { id:'abndeduct', kind:'table', tcls:'pcolabn',
+    title:'Abnormal payments & deduction cases \u2014 kwa timu / per team \u00b7 wiki hii / this week',
+    caption: state + wk
+      + '<div>Abnormal = malipo yaliyowekwa alama kwenye kadi ya Abnormal (jumla ni namba ya kadi) \u00b7 Deduction cases = kesi za kipekee za makato za PMO zilizoripotiwa wiki hii, kesi moja mara moja hata ikiwa na wafanyakazi wengi'
+      + ' / Abnormal = the payments flagged on the Abnormal card (the total is the card\'s own number) \u00b7 Deduction cases = unique PMO deduction cases reported this week, a case counted once however many staff it names</div>',
+    rows: rows,
+    cols:[col('team','Team'), col('abnormal','Abnormal payments','num'), col('dedCases','Deduction cases (week)','num')] };
+}
+
 /** Build every slide from the figures already in hand. Filtering (which segments, which team)
     happens afterwards in presApply, so a choice never costs a request. */
 function presSlides(){
     var d = S.presData.d, b = S.presData.b, c = d.cards;
+    var dedLine = presDedLine_(S.presData);
     var slides = [];
     /* THE DAY'S TWELVE: FOUR ACROSS, THREE DOWN, FILLING THE TV -- "Add 6 widgets to hope pmo overall slide at presentation so that they
        are 4x3 full on our tv (HOPE PMO - DAY slide)" (the owner, 25 Nov 2026; handbook Part 164). Every figure is one the dashboard's own
@@ -170,7 +252,10 @@ function presSlides(){
       /* COLLECTION TODAY % AT UNCOLLECTED TODAY ("show collection today% at uncollected today"): the Weekly expected trend card's own percentage
          for today (collected over expected, the day's sheet), where the week's used to be */
       { l:'Uncollected today', v:'TZS '+money(c.uncollectedToday), s:under(pct, colNow ? colNow.pct : null, 'collected today') },
-      { l:'Abnormal', v:money(c.abnormal) },
+      /* AND THE WEEK'S DEDUCTION CASES UNDER IT ("at abnormal card in presentation - show weekly deduction case counts per team counts too. so that i get the
+         impact from that view", the owner, 25 Nov 2026; addendum 6): the line is made above (presDedLine_), because the cases are a read of their own and not a field
+         of the dashboard's answer; nothing is read here. Their per-team counts are the slide that follows this one. */
+      { l:'Abnormal', v:money(c.abnormal), s:dedLine },
       { l:'Sales today', v:salesNow ? 'TZS '+money(salesNow.amount) : DASH_, s:salesTodayLine() },
       { l:'Loan applications (week)', v:appsOn ? money(pf.appsCount) : DASH_, s:appsOn ? 'TZS '+money(pf.appsAmount)+' requested' : '' },
       /* EARLY COL % AND COL % (WEEK) ON THEIR OWN WIDGET ("ealry col% and col% week on their own widget"): the strip's two collection percentages
@@ -183,6 +268,10 @@ function presSlides(){
       { l:'Legal recovery (week)', v:lgOn ? 'TZS '+money(lg.total.recovered) : DASH_, s:lgOn ? [under(pct, lg.total.pct, 'of owed'), 'by phone ' + (lg.total.cRec != null ? 'TZS '+money(lg.total.cRec) : DASH_)] : '' },
       { l:'Exp.Def recovery (week)', v:edrOn ? 'TZS '+money(edr.recovered) : DASH_, s:edrOn ? under(pct1, edr.pct, 'of their arrears') : '' },
       { l:'Performance (average)', v:pct(pf.avgPct), s:'sales · collection · recovery' }]});
+    /* THE ABNORMAL CARD'S PER-TEAM VIEW: the slide right after the day's, whose Abnormal tile it explains. Built from the dashboard's answer and the deduction read,
+       never from the officer boards, so it is in the deck whether or not they arrive; absent for a person who does not hold the PMO Deduction tab. */
+    var abnDed = presAbnDedSlide_(d, S.presData);
+    if (abnDed) slides.push(abnDed);
     /* TEAM PERFORMANCE. Ranked on the average of sales and collection, highest first -- a team
        that sells well and collects badly is not a good team, and neither is the reverse.
 
@@ -606,7 +695,12 @@ function presRender(){
         : '<div class="note bad" style="display:block">Bodi za maafisa hazikupakia / the officer boards did not load'
           + ' — ' + esc(S.presData.bWhy || '') + ' <button class="btn sm" id="presBoardsRetry">Jaribu tena / Retry</button></div>';
 
-    HEAD = weekBar(d) + boardsNote + '<div class="kpis">'
+    /* The deduction cases' own state, on the page, the way the boards' is: only when they did not come (and for a person who is asked for them at all). */
+    var dedNote = !allowed('deduct') || S.presData.ded || S.presData.dedLoading || !S.presData.dedWhy ? ''
+      : '<div class="note bad" style="display:block">Kesi za makato hazikupakia / the deduction cases did not load'
+        + ' \u2014 ' + esc(S.presData.dedWhy) + ' <button class="btn sm" id="presDedRetry">Jaribu tena / Retry</button></div>';
+
+    HEAD = weekBar(d) + boardsNote + dedNote + '<div class="kpis">'
       + kpi('Slides', money(S.slides.length), (S.presOff.length? money(S.presOff.length)+' hidden' : 'live figures, not a screenshot'), '', 'presCount')
       + kpi('Seconds per slide', String(S.presSecs || PRES_SECS_DEFAULT), 'change below')
       + kpi('Weekday', esc(d.weekday), d.weekOf) + '</div>'
