@@ -3968,9 +3968,9 @@ const dedStand_ = () => ({
   board: (id, title, sub, rows, cols, total) => '[board ' + JSON.stringify({ id, title, sub, rows: rows.length, cols: cols.map(c => c.label), total }) + ']',
 });
 const dedBuilders_ = () => {
-  const src = [['dedRateNote_', 'd'], ['dedEarnBoard_', 'd, reps'], ['dedRatesPanel_', 'd']].map(([n, a]) => lgFn_(page('deduct'), n, a)).join('\n');
+  const src = [['dedRateNote_', 'd'], ['dedEarnCols_', ''], ['dedEarnBoard_', 'd, reps'], ['dedRatesPanel_', 'd']].map(([n, a]) => lgFn_(page('deduct'), n, a)).join('\n');
   const s = dedStand_();
-  return new Function('esc', 'money', 'board', 'col', 'sumRow', 'today', src + '\nreturn { dedRateNote_, dedEarnBoard_, dedRatesPanel_ };')(lgEsc_, lgMoney_, s.board, s.col, s.sumRow, () => '2026-07-24');
+  return new Function('esc', 'money', 'board', 'col', 'sumRow', 'today', src + '\nreturn { dedRateNote_, dedEarnCols_, dedEarnBoard_, dedRatesPanel_ };')(lgEsc_, lgMoney_, s.board, s.col, s.sumRow, () => '2026-07-24');
 };
 
 test('the earners\' table and the commission settings are drawn from the server\'s answer: a board under the cases, and for the admin a card with the form and the dated amounts (Part 152)', () => {
@@ -3982,11 +3982,13 @@ test('the earners\' table and the commission settings are drawn from the server\
     'TZS 10,000 kuanzia / from 2026-07-01 · TZS 15,000 kuanzia / from 2026-07-17 kwa kila kesi / per unique case', 'two amounts: each with the day it began');
   // The board: its id, the window in its title, the amount note, one row for each reporter, the three columns, a total row.
   const d = { on: true, from: '2026-07-01', to: '2026-07-24', rate: 15000, rateSteps: [{ from: '2026-07-01', tzs: 15000 }] };
-  const reps = [{ reporter: 'R ONE', cases: 3, earnings: 35000 }, { reporter: 'R TWO', cases: 1, earnings: 15000 }];
+  const reps = [{ reporter: 'R ONE', who: 'PMO.HQ', cases: 3, earnings: 35000 }, { reporter: 'R TWO', who: 'Manager.Mwanza', cases: 1, earnings: 15000 }];
   const html = m.dedEarnBoard_(d, reps), b = JSON.parse(html.slice('[board '.length, -1));
   assert.equal(b.id, 'dedEarn'); assert.ok(b.title.includes('Wapataji wa malipo / Earners') && b.title.includes('2026-07-01') && b.title.includes('2026-07-24'));
   assert.equal(b.sub, m.dedRateNote_(d)); assert.equal(b.rows, 2);
-  assert.deepEqual(b.cols, ['Aliyeripoti / Reporter', 'Kesi / Unique cases', 'Malipo / Earnings']);
+  // Part 154: ROLE.BRANCH sits between the reporter and the cases ("add branch and role column between aliyereport and kesi").
+  assert.deepEqual(b.cols, ['Aliyeripoti / Reporter', 'Cheo.Tawi / Role.Branch', 'Kesi / Unique cases', 'Malipo / Earnings']);
+  assert.deepEqual(m.dedEarnCols_().map(c => [c.key, c.kind]), [['reporter', undefined], ['who', undefined], ['cases', 'num'], ['earnings', 'money']], 'the columns, by their answer\'s own keys: the page never works the role or the branch out');
   assert.deepEqual(b.total.sum, [4, 50000], 'the total row adds the cases and the earnings');
   assert.equal(m.dedEarnBoard_({ ...d, on: false }, reps), '', 'the deductions table is not there (RUN-ME-043): nothing drawn');
   assert.match(m.dedEarnBoard_(d, []), /Hakuna kesi katika kipindi hiki[\s\S]*No cases in this window/, 'no cases: said, not an empty table');
@@ -4062,6 +4064,8 @@ test('the earners\' table is drawn under the list by BOTH painters and kept with
   assert.match(app, /querySelectorAll\('\[data-dedrate-del\]'\)[\s\S]{0,140}el\.onclick = function\(\)\{ dedRateDel_\(el\.getAttribute\('data-dedrate-del'\)\); \};/, 'and each way out of a dated amount');
   assert.match(view, /S\.tail = dedEarnBoard_\(d, reps\) \+ \(d\.canRates \? dedRatesPanel_\(d\) : ''\);/, 'the board always; the settings card only where the server says the person is the admin');
   assert.match(view, /board\('dedRep', '2\. Malipo ya walioripoti \/ Reporter earnings', dedRateNote_\(d\)/, 'the report\'s section 2 says the amount the same way');
+  assert.match(view, /dedRateNote_\(d\), d\.reporters \|\| \[\],\s*dedEarnCols_\(\), sumRow\(d\.reporters \|\| \[\], \['cases','earnings'\]\)\);/, 'and has the same columns as the table under the cases: ONE list (dedEarnCols_), role and branch included');
+  assert.equal((view.match(/col\('who'/g) || []).length, 1, 'the ROLE.BRANCH column is defined once');
   assert.doesNotMatch(view, /TZS ' \+ money\(d\.rate\) \+ ' kwa kila kesi \/ per unique case \(DEDUCTION_REPORTER_TZS\)/, 'no amount typed into a title: the one note says it');
   assert.equal((app.match(/dedRateSave_\(\)/g) || []).length, 1, 'wired once, in wireForms, never inline');
 });

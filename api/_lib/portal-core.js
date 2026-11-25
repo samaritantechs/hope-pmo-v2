@@ -7,7 +7,7 @@ import { ADV_APPROVALS } from './importers.js';
 import { generatePasscode, hashPasscode } from './passcode.js';
 import { todayKey, currentWeekday, isoWeekday, weekMondayKey, addDaysKey, weekdayOfKey, TZ_OFFSET_MS } from './time.js';
 import { latestSnapshot, snapshotsInRange, upperTeams, pickLatestBatch, pickFirstBatch, latestDeckAnyWeekday , withBatchKeys, teamMatchList, registrySpellings } from './snapshots.js';
-import { zonesOfTeams, teamsZoned } from './zone.js';
+import { zonesOfTeams, teamsZoned, zoneAnswer, zoneLabel } from './zone.js';
 import { expectedTotalsInRange, expectedTotalsLatest, defaulterTotalsInRange,
   totalsAggSlice, monthSummaryRows,
   tCustomers, tExpected, tCollected, tUncollected, tArrears, tPaidOver,
@@ -1687,6 +1687,46 @@ function dedRateOn_(rates, base, day) {
   for (const r of rates) { if (r.from <= day) tzs = r.tzs; else break; }
   return tzs;
 }
+/* THE EARNERS' ROLE AND BRANCH, ONE COLUMN (handbook Part 154) -- "In pmo deductions at Wapataji wa malipo / Earners ... add branch and role
+   column between aliyereport and kesi e.g PMO.HQ, Manager.Mwanza Credit.HQ GMO.Dar Center e t c" (the owner, 25 Nov 2026). Read as ONE column,
+   ROLE.BRANCH, between the reporter and the cases (the owner's own examples are written that way; two columns would be one line).
+   WHO THE REPORTER IS comes from the access code that carries their name (the reporter of a case is the signed-in person's name, copied from
+   that code): its ROLE, and its BRANCH by the rule the portal already uses for the zone beside a name (zoneAnswer in zone.js: the zones of the
+   teams that name the person on Teams & Staff, else of the teams the code holds, a team's zone being its GMO's when its own cell is empty).
+   A code over every team that is named nowhere holds every zone, which reads HQ here: the head office (PMO, Credit, Legal ...). A field
+   officer signed in on a team's own code ("KONGOWE · F.O") has the team's zone. A name no code carries (a sheet-imported case, somebody
+   who has left) keeps the role the case itself was filed under (`dept`) and a dash for the branch: nothing is guessed. Two codes of one
+   name that disagree about the role: the case's own role decides, else both. NO READ IS ADDED: the codes are the memoised read the teams
+   table already lays over itself (readTeamsAll). */
+const DED_ACRONYMS_ = new Set(['PMO', 'GMO', 'OPM', 'HR', 'HQ', 'CEO', 'MD', 'GM', 'IT', 'CS', 'FO', 'F.O', 'TL']);
+/** A role or a zone as the owner writes it: capitals only for the known short forms (PMO, GMO, HQ ...), the rest in Title Case. */
+function dedTitle_(v) {
+  return String(v == null ? '' : v).trim().replace(/\s+/g, ' ').split(' ').filter(Boolean)
+    .map(w => (DED_ACRONYMS_.has(w.toUpperCase()) ? w.toUpperCase()
+      : w.split('-').map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase()).join('-'))).join(' ');
+}
+/** { role, branch, who } of one reporter: `who` is what the column prints, ROLE.BRANCH, a dash where a part is not known. */
+function dedWho_(reporter, deptHint, codes, teamRows) {
+  const me = K(reporter);
+  const mine = me ? (codes || []).filter(c => c && K(c.name) === me) : [];
+  const roles = [...new Set(mine.map(c => dedTitle_(c.role)).filter(Boolean))];
+  const role = roles.length === 1 ? roles[0] : (dedTitle_(deptHint) || roles.join('/'));
+  let zones = [], all = false;
+  if (mine.length) {
+    const set = new Set();
+    for (const c of mine) {
+      const a = zoneAnswer({ name: c.name, teams: Array.isArray(c.teams) && c.teams.length ? c.teams : null }, teamRows);
+      for (const z of a.zones || []) set.add(z);
+      if (a.zoneAll) all = true;
+    }
+    zones = [...set].sort();
+  } else {
+    const m = /^(.+?)\s*·\s*F\.O$/i.exec(String(reporter || '').trim());
+    if (m) zones = zoneAnswer({ name: '', teamCode: true, teams: [m[1].trim()] }, teamRows).zones || [];
+  }
+  const branch = zones.length ? zoneLabel(zones.map(dedTitle_)) : (all ? 'HQ' : '');
+  return { role, branch, who: role || branch ? (role || '—') + '.' + (branch || '—') : '—' };
+}
 const dedMoney_ = v => (v == null || v === '' ? null : Math.max(0, Math.round(num(v) * 100) / 100));
 /** The table read, null when RUN-ME-043 has not been run -- the tab says so, nothing fails. */
 async function dedRead_(q) {
@@ -1700,7 +1740,7 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   // The window defaults to THIS MONTH: the sheet's report was monthly, by submission date.
   const fromKey = dedDate_(from) || today.slice(0, 8) + '01';
   const toKey = dedDate_(to) || today;
-  const [rows0, prev0, teamRows, cfg] = await Promise.all([
+  const [rows0, prev0, teamRows, cfg, codes] = await Promise.all([
     dedRead_(() => onTeams(db.from('pmo_deductions').select('*')
       .gte('submitted_at', fromKey).lte('submitted_at', toKey + 'T23:59:59.999Z')
       .order('submitted_at', { ascending: false }), user.teams)),
@@ -1709,6 +1749,9 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
       .lt('submitted_at', fromKey).gt('remaining', 0), user.teams)),
     readTeamsAll(db, nowMs),
     settingsMany(db, [DED_REPORTER_TZS_KEY, DED_RATES_KEY, DED_HR_ROLES_KEY]),
+    // The access codes, for the earners' ROLE.BRANCH column (Part 154): the memoised read readTeamsAll lays over the teams, so it is the
+    // SAME read in flight, never a second one (a test counts the reads of the table).
+    readCodesAll(db, nowMs),
   ]);
   const on = Array.isArray(rows0);
   const teamBranch = new Map(teamRows.map(t => [K(t.team), t.branch || null]));
@@ -1720,7 +1763,8 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   const cases = new Map();
   for (const r of rows) {
     const k = r.case_id || r.id;
-    if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay), day: dayOf(r.submitted_at) });
+    if (!cases.has(k)) cases.set(k, { team: r.team || '', reporter: r.reporter || '', toPay: num(r.to_pay), day: dayOf(r.submitted_at),
+      dept: String(r.dept || '').trim(), at: String(r.submitted_at || '') });
   }
   const byTeam = new Map();
   for (const r of rows) {
@@ -1736,10 +1780,12 @@ async function deductions(db, user, { from, to } = {}, nowMs = Date.now()) {
   const byReporter = new Map();
   for (const [k, c] of cases) {
     const name = c.reporter || '—';
-    const s = byReporter.get(name) || { reporter: name, cases: new Set(), earnings: 0 };
+    const s = byReporter.get(name) || { reporter: name, cases: new Set(), earnings: 0, dept: '', deptAt: '' };
     s.cases.add(k); s.earnings += dedRateOn_(rates, base, c.day); byReporter.set(name, s);
+    if (c.dept && c.at >= s.deptAt) { s.dept = c.dept; s.deptAt = c.at; }       // the role of their LATEST case in the window
   }
-  const reporters = [...byReporter.values()].map(s => ({ reporter: s.reporter, cases: s.cases.size, earnings: s.earnings }))
+  const reporters = [...byReporter.values()].map(s => ({ reporter: s.reporter, ...dedWho_(s.reporter, s.dept, codes, teamRows),
+    cases: s.cases.size, earnings: s.earnings }))
     .sort((a, b) => b.cases - a.cases || a.reporter.localeCompare(b.reporter));
   const byStaff = new Map();
   for (const r of scoped(user, prev0 || [])) {
