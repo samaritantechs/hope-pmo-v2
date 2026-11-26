@@ -258,6 +258,20 @@ test('THE WAIT FOR A REPORT IS FIFTEEN SECONDS, AND A DEAD READING IS NOT WAITED
   assert.match(r4.notes[0], /^calls by team \d+\.\ds kept$/); assert.equal(n.users, 2, 'the new reading is kept like any other');
 });
 
+test('A DEAD READING THAT FAILS AT LAST DOES NOT TAKE THE NEWER ONE OUT FROM UNDER IT: the reading that replaced it stays kept', async () => {
+  const db = fakeDb(book()); const f = db.from.bind(db); const n = { users: 0 }; let failFirst = null;
+  const hang = new Proxy(function () {}, { get: (t, p) => (p === 'then' ? (res, rej) => { failFirst = rej; } : hang), apply: () => hang });   // answered only when the test says: with a failure
+  db.from = t => { if (t === 'call_users' && ++n.users === 1) return hang; return f(t); };
+  const r1 = await D.readViews(db, ADMIN, ['calls'], NOW, fmt, 20); assert.match(r1.notes[0], /\(late\)/);
+  const r2 = await D.readViews(db, ADMIN, ['calls'], NOW + 91 * 1000, fmt, 20); assert.match(r2.notes[0], /^calls by team \d+\.\ds$/); assert.equal(n.users, 2);
+  assert.equal(typeof failFirst, 'function', 'the first reading was waiting');
+  failFirst(new Error('the first reading fails at last'));
+  await new Promise(r => setTimeout(r, 30));
+  const r3 = await D.readViews(db, ADMIN, ['calls'], NOW + 92 * 1000, fmt, 20);
+  assert.match(r3.notes[0], /^calls by team \d+\.\ds kept$/, 'the newer reading is still there');
+  assert.equal(n.users, 2, 'and nobody read the book a third time');
+});
+
 /* ---------------- the upload and the call app never know this file ---------------- */
 test('NOTHING ON THE UPLOAD OR THE CALL APP KNOWS THE HELPER\'S DATA: /api/upload, /api/call and the call core do not mention it, and the portal core loads the helper only when a Settings function is called', () => {
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.ok(!/claudian/i.test(fs.readFileSync(path.join(ROOT, f), 'utf8').replace(/^.*scopedUser.*$/m, '')), f + ' mentions the helper');
