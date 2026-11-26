@@ -35,15 +35,43 @@ function harTeams_(s) {
   return String(s == null ? '' : s).split(',').map(function(x){ return x.replace(/\s*\+\d+\s*$/, '').trim(); }).filter(function(x){ return x; });
 }
 function harNote_(note) {
-  var o = { cards: '', data: '', other: [] };
+  var o = { cards: '', data: '', dataRaw: '', other: [] };
   String(note == null ? '' : note).split(' \u00b7 ').forEach(function(p){
     p = harOne_(p);
     if (!p) return;
+    if (p.indexOf('data: ') === 0) o.dataRaw = p.slice(6);                    // every state, for the seconds the reports took (harReads_)
     if (p.indexOf('cards: ') === 0) o.cards = p.slice(7);
     else if (p.indexOf('data: ') === 0 && !/\((late|failed)\)/.test(p)) o.data = p.slice(6);
     else o.other.push(p);
   });
   return o;
+}
+/** Two notes that differ only in how many seconds a report took are one kind of note ("data: calls by team (late) 15.0s" and "... 15.2s"): the seconds and the word kept are left out of the key they are grouped by. */
+function harKind_(t) { return t.indexOf('data: ') === 0 ? t.replace(/ \d+(?:\.\d+)?s(?= kept|,|$)/g, '').replace(/ kept(?=,|$)/g, '') : t; }
+/** The reports the helper read for a question (handbook Part 160), from the notes "data: calls by team 5.1s", "... 5.1s kept", "... (late) 15.0s", "... (failed) 1.2s". For each report: how many were made,
+    how long they took, how many were kept from an earlier question, late or failed. A note of an earlier build has no seconds: it counts as made, with no time. */
+function harReads_(map, dataRaw) {
+  if (!dataRaw) return;
+  String(dataRaw).split(', ').forEach(function(part){
+    var m = /^(.+?)(?: \((late|failed)\))?(?: (\d+(?:\.\d+)?)s)?( kept)?$/.exec(harOne_(part));
+    if (!m) return;
+    var o = map[m[1]] || (map[m[1]] = { made: 0, kept: 0, late: 0, failed: 0, secs: [], longestLate: 0 });
+    var secs = m[3] == null ? null : Number(m[3]);
+    if (m[2] === 'late') { o.late++; if (secs != null && secs > o.longestLate) o.longestLate = secs; }
+    else if (m[2] === 'failed') o.failed++;
+    else if (m[4]) o.kept++;
+    else { o.made++; if (secs != null) o.secs.push(secs); }
+  });
+}
+function harReadsLine_(map) {
+  var names = Object.keys(map).sort();
+  if (!names.length) return '';
+  return 'Reports the helper read for the person\'s own teams (Part 160), with the seconds each took: ' + names.map(function(k){
+    var o = map[k], s = o.secs.slice().sort(function(a, b){ return a - b; }), n = s.length;
+    var med = n ? (s[(n - 1) >> 1] + s[n >> 1]) / 2 : 0;
+    return k + ' ' + harNum_(o.made) + ' made' + (n ? ' (median ' + med.toFixed(1) + ' s, longest ' + s[n - 1].toFixed(1) + ' s)' : '') + (o.kept ? ', ' + harNum_(o.kept) + ' kept' : '')
+      + (o.late ? ', ' + harNum_(o.late) + ' late' + (o.longestLate ? ' (waited ' + o.longestLate.toFixed(1) + ' s)' : '') : '') + (o.failed ? ', ' + harNum_(o.failed) + ' failed' : '');
+  }).join('; ') + '.';
 }
 /** The note of a typed question the ready answers handled (kinds MATCH and NO ANSWER): "agent off" or "no key or sdk", a score, "tie", "near: id, id". */
 function harReadyNote_(note) {
@@ -71,7 +99,7 @@ function harTop_(map, n, by) {
 /** Everything the report counts, in one pass over the rows (oldest first, as the server pages them). */
 function harModel_(rows) {
   var m = { n: rows.length, kind: { ai: 0, faq: 0, match: 0, nomatch: 0, canned: 0, limit: 0, busy: 0 }, tin: 0, tout: 0, cache: 0, ms: 0, msN: 0, first: '', last: '', typed: 0,
-    chats: {}, people: {}, days: {}, roles: {}, teams: {}, source: { portal: 0, call: 0 }, held: [], other: {}, gaps: {}, idk: [], noans: {}, noansNear: {}, noansFig: {}, matched: [], asked: {}, risky: [], who: {}, taps: {}, behindChats: {}, knownBehind: {} };
+    chats: {}, people: {}, days: {}, roles: {}, teams: {}, source: { portal: 0, call: 0 }, held: [], other: {}, gaps: {}, idk: [], noans: {}, noansNear: {}, noansFig: {}, matched: [], asked: {}, risky: [], who: {}, taps: {}, behindChats: {}, knownBehind: {}, reads: {} };
   rows.forEach(function(r){
     var mode = HAR_KIND[r.mode] ? r.mode : 'ai', day = String(r.day || '').slice(0, 10), thread = r.thread || (harOne_(r.name) + ':' + day), person = harPerson_(thread);
     m.kind[mode]++;
@@ -112,7 +140,8 @@ function harModel_(rows) {
       return;
     }
     var note = harNote_(r.note);
-    note.other.forEach(function(t){ var o = harBump_(m.other, t, function(){ return { n: 0, ex: r }; }); o.n++; });
+    harReads_(m.reads, note.dataRaw);
+    note.other.forEach(function(t){ var o = harBump_(m.other, harKind_(t), function(){ return { n: 0, ex: r }; }); o.n++; });
     if (mode === 'ai' && !note.cards && !note.data) {
       var g = harBump_(m.gaps, q || '(empty)', function(){ return { n: 0, people: {}, q: r.q, ex: r }; });
       g.n++; g.people[person] = 1;
@@ -167,6 +196,8 @@ function harBuild_(rows, meta) {
   L.push('  Rows ' + harNum_(m.n) + ': AI ' + harNum_(m.kind.ai) + ', READY ' + harNum_(m.kind.faq) + ', MATCH ' + harNum_(m.kind.match) + ', NO ANSWER ' + harNum_(m.kind.nomatch) + ', FIXED ' + harNum_(m.kind.canned) + ', LIMIT ' + harNum_(m.kind.limit) + ', BUSY ' + harNum_(m.kind.busy)
     + '. Where: Portal ' + harNum_(m.source.portal) + ', HOPE Calls ' + harNum_(m.source.call) + '.');
   L.push('  Tokens: ' + harNum_(m.tin) + ' in, ' + harNum_(m.tout) + ' out, ' + harNum_(m.cache) + ' read from cache.' + (m.msN ? ' Average answer time ' + harNum_(m.ms / m.msN) + ' ms.' : ''));
+  var readsLine = harReadsLine_(m.reads);
+  if (readsLine) L.push('  ' + readsLine);
   var noansTotal = function(o){ return Object.keys(o).reduce(function(s, k){ return s + o[k].n; }, 0); };
   L.push('  NO ANSWER ' + harNum_(m.kind.nomatch) + ' = nothing came near ' + harNum_(noansTotal(m.noans)) + ', a ready answer was only offered ' + harNum_(noansTotal(m.noansNear)) + ', a figure of the person\'s own ' + harNum_(noansTotal(m.noansFig)) + ' (B9, B9b, B9c).');
   var knownN = harSet_(m.knownBehind);

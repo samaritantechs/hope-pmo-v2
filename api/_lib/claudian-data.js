@@ -24,8 +24,8 @@
        officers or a ranking (team, nani, least, kidogo...). "How do I make a call?" reads nothing.
      - NEVER ON THE UPLOAD OR THE CALL APP. This file is loaded by the helper's own function, nothing in /api/upload or
        /api/call imports it (a test fails if one does), and a view is read once for each set of teams and day in five
-       minutes (the answer is kept, a read in flight is shared), under a budget of a few seconds: past it the model is
-       told the report did not answer, and the person still gets an answer.
+       minutes (the answer is kept, a read in flight is shared), under a budget (DATA_BUDGET_MS, fifteen seconds): past it the
+       model is told the report did not answer, and the person still gets an answer.
      - A failure is an answer, never an error: "could not be read now".
 
    TO ADD A VIEW: one object in VIEWS (its topic words, who may have it, how it is read) and one test. Not before the
@@ -36,9 +36,16 @@ import { todayKey, weekMondayKey, addDaysKey } from './time.js';
 import { wholePct } from './recovery.js';
 import { reportCoreForPortal, scopedUser, scopeFor } from './call-core.js';
 
-/** The longest the helper waits for the reports before it answers without them, and how long a reading is kept. */
-export const DATA_BUDGET_MS = 4000;
+/** The longest the helper waits for the reports before it answers without them, and how long a reading is kept.
+    FOUR SECONDS WAS TOO SHORT (26 Nov, the first live question, "team gani hazipigi simu kabisa", asked by the admin): the Calls report of EVERY team is the
+    heaviest read of the Calls tab, and the model was told it "did not answer in time". The wait is fifteen seconds now, and it comes out of the model's allowance
+    (modelWaitMs in claudian.js), so the page, which gives up at 35 seconds, never gives up before the server has answered. How long each report really took
+    is written into the chat's note (see readViews), so the next number is read, not guessed. */
+export const DATA_BUDGET_MS = 15000;
 export const DATA_TTL_MS = 5 * 60 * 1000;
+/** A reading still unfinished after this long has outlived the host's own sixty seconds: an instance that was paused after its answer never finishes it. The next question
+    makes a new reading instead of waiting on a dead one for the rest of the five minutes (with a longer wait, a dead reading would cost every question fifteen seconds). */
+export const DATA_STUCK_MS = 90 * 1000;
 /** How much of a view reaches the model: the few lowest and highest, never the whole company. */
 const SHOW_LOW = 8, SHOW_HIGH = 3, SHOW_ZERO = 16, SHOW_NAMES = 12, SHOW_ALL_UP_TO = 14;
 
@@ -171,34 +178,47 @@ const LABEL = { calls: 'calls by team', standing: 'last week by team' };
 /* ---------- the answer kept for five minutes, and the one in flight shared ---------- */
 const kept = new Map();
 export function resetClaudianDataForTests() { kept.clear(); }
-async function readOne(db, subject, id, nowMs, fmt) {
+/** One view for one set of teams: from the kept reading, or one being made, or a new one. `clock` only measures (how many seconds the reading took); it decides nothing. */
+async function readOne(db, subject, id, nowMs, fmt, clock) {
   const teams = await teamsOf(db, subject, nowMs);
-  if (Array.isArray(teams) && !teams.length) return { lines: ['No teams are in this person\'s scope, so there is nothing to report.'], teams };
+  if (Array.isArray(teams) && !teams.length) return { lines: ['No teams are in this person\'s scope, so there is nothing to report.'], teams, ms: 0 };
   const key = id + '|' + todayKey(nowMs) + '|' + scopeKey(teams) + '|' + (id === 'standing' ? fmt.std.sales + '/' + fmt.std.col + '/' + fmt.std.rec : '');
   const c = kept.get(key);
-  if (c && nowMs - c.at < DATA_TTL_MS) return c.p;
-  const p = Promise.resolve().then(() => READ[id](db, teams, nowMs, fmt)).then(lines => ({ lines, teams }));
-  kept.set(key, { at: nowMs, p });
-  // a reading that failed is not kept: the next question tries again
-  p.catch(() => { if (kept.get(key) && kept.get(key).p === p) kept.delete(key); });
+  // A finished reading is kept five minutes; one still being made is shared (twelve people asking in the same minute are one read), unless it has outlived the host's own sixty seconds: that one is dead.
+  if (c && nowMs - c.at < (c.done ? DATA_TTL_MS : DATA_STUCK_MS)) return c.done ? c.p.then(v => ({ ...v, kept: true })) : c.p;
+  const t0 = clock();
+  const p = Promise.resolve().then(() => READ[id](db, teams, nowMs, fmt)).then(lines => ({ lines, teams, ms: clock() - t0 }));
+  const e = { at: nowMs, p, done: false };
+  kept.set(key, e);
+  // a reading that failed is not kept: the next question tries again (and a dead one replaced by a newer reading is not taken out from under it)
+  p.then(() => { e.done = true; }, () => { if (kept.get(key) === e) kept.delete(key); });
   if (kept.size > 400) for (const [k, v] of kept) if (nowMs - v.at >= DATA_TTL_MS) kept.delete(k);
   return p;
 }
 
+const secs = ms => (Math.max(0, Number(ms) || 0) / 1000).toFixed(1) + 's';
+
 /** Reads the views a question needs, all together, within the budget. `fmt` carries what a view needs from the helper's settings: { std, names }.
-    Answers { lines, notes }: the lines for the model, and what the chat log keeps ("data: calls by team"; "(late)" or "(failed)" when it did not come). */
-export async function readViews(db, subject, ids, nowMs, fmt, budgetMs = DATA_BUDGET_MS) {
+    Answers { lines, notes }: the lines for the model, and what the chat log keeps, with the SECONDS each report took, so that the owner reads how long a report really is on the live book:
+      "calls by team 5.1s"              a report made for this question (or one already being made, joined)
+      "calls by team 5.1s kept"         a report kept from an earlier question (its own seconds)
+      "calls by team (late) 15.0s"      not there when the budget ran out (the reading goes on and is kept for the next question)
+      "calls by team (failed) 1.2s"     could not be read.
+    The "(late)" and "(failed)" words are the ones the Hope Ai tab and its report look for (they colour such a note red); the seconds come after them. `clock` is for tests. */
+export async function readViews(db, subject, ids, nowMs, fmt, budgetMs = DATA_BUDGET_MS, clock = Date.now) {
   const lines = [], notes = [];
-  const results = await Promise.all(ids.map(id => {
+  const results = await Promise.all(ids.map(async id => {
     let t;
+    const s0 = clock();
     const late = new Promise(resolve => { t = setTimeout(() => resolve({ late: true }), budgetMs); });
-    return Promise.race([readOne(db, subject, id, nowMs, fmt).then(v => ({ v }), e => ({ failed: e })), late]).finally(() => clearTimeout(t));
+    const r = await Promise.race([readOne(db, subject, id, nowMs, fmt, clock).then(v => ({ v }), e => ({ failed: e })), late]).finally(() => clearTimeout(t));
+    return { ...r, waited: clock() - s0 };
   }));
   ids.forEach((id, i) => {
     const r = results[i];
-    if (r.v) { lines.push(...r.v.lines); notes.push(LABEL[id]); }
-    else if (r.late) { lines.push(LABEL[id].toUpperCase() + ': the report did not answer in time; say you cannot see these figures now.'); notes.push(LABEL[id] + ' (late)'); }
-    else { lines.push(LABEL[id].toUpperCase() + ': the report could not be read now; say you cannot see these figures now.'); notes.push(LABEL[id] + ' (failed)'); }
+    if (r.v) { lines.push(...r.v.lines); notes.push(LABEL[id] + ' ' + secs(r.v.ms) + (r.v.kept ? ' kept' : '')); }
+    else if (r.late) { lines.push(LABEL[id].toUpperCase() + ': the report did not answer in time (it may still be loading); say you cannot see these figures yet and that asking again in a minute may work.'); notes.push(LABEL[id] + ' (late) ' + secs(r.waited)); }
+    else { lines.push(LABEL[id].toUpperCase() + ': the report could not be read now; say you cannot see these figures now.'); notes.push(LABEL[id] + ' (failed) ' + secs(r.waited)); }
   });
   return { lines, notes };
 }

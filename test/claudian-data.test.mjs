@@ -71,7 +71,7 @@ test('NOTHING IS READ FOR A QUESTION THAT IS NOT ABOUT TEAMS OR OFFICERS COMPARE
 test('THE CALLS VIEW IS THE CALLS REPORT, BY TEAM: the teams with no call today first, the lowest, the officers with none, this week, and the word that a team can read 0 until its phones sync', async () => {
   const { lines, notes } = await D.readViews(fakeDb(book()), ADMIN, ['calls'], NOW, fmt);
   const text = lines.join('\n');
-  assert.deepEqual(notes, ['calls by team']);
+  assert.equal(notes.length, 1); assert.match(notes[0], /^calls by team \d+\.\ds$/, 'the note names the report and the seconds it took');
   assert.match(text, /CALLS BY TEAM, today \(2026-11-25\) and this week so far \(2026-11-23 to 2026-11-25\)/);
   assert.match(text, /a team can read 0 early in the day or when its officers have not opened the app/);
   assert.match(text, /Teams in view: 3; registered active officers: 4; officers with no call today: 3\./, 'the switched-off account is not an officer to be chased');
@@ -147,7 +147,7 @@ test('LAST WEEK\'S RESULTS ARE THE PERFORMANCE RECORD, BY TEAM: the lowest in ea
   ];
   const { lines, notes } = await D.readViews(fakeDb(book({ performance_records: pr })), ADMIN, ['standing'], NOW, fmt);
   const text = lines.join('\n');
-  assert.deepEqual(notes, ['last week by team']);
+  assert.equal(notes.length, 1); assert.match(notes[0], /^last week by team \d+\.\ds$/);
   assert.match(text, /STANDING, last full week \(week of 2026-11-16\), by team, whole % of target\. Company targets: sales 100%, collection 100%, recovery 120%\./);
   assert.match(text, /Teams with a record: 3\./);
   assert.match(text, /Lowest sales: GAMMA 20%, ALPHA 50%, BETA 120%\./);
@@ -177,11 +177,12 @@ test('A READING IS KEPT FIVE MINUTES FOR THE SAME TEAMS AND DAY, AND SHARED WHIL
   assert.equal(n.logs, 4);
 });
 
-/** A table whose every read takes `ms` to answer (the builder is a thenable: awaiting it waits first). */
-const slowTable = (db, table, ms) => {
+/** A table whose every read takes `ms` to answer (the builder is a thenable: awaiting it waits first). `onRead`, when given, runs ONCE, the first time a read of the table is answered
+    (a test moves its own clock there: a report then "takes" the seconds the test says, with nothing waited for). */
+const slowTable = (db, table, ms, onRead) => {
   const f = db.from.bind(db);
   const wrap = o => new Proxy(o, { get(target, prop) {
-    if (prop === 'then') return (res, rej) => new Promise(r => setTimeout(r, ms)).then(() => target.then(res, rej));
+    if (prop === 'then') return (res, rej) => new Promise(r => setTimeout(r, ms)).then(() => { if (onRead) { const g = onRead; onRead = null; g(); } return target.then(res, rej); });
     const v = target[prop];
     return typeof v === 'function' ? (...a) => { const out = v.apply(target, a); return out && typeof out === 'object' ? wrap(out) : out; } : v;
   } });
@@ -191,20 +192,70 @@ const slowTable = (db, table, ms) => {
 test('A SLOW REPORT IS SAID TO BE LATE AND THE ANSWER GOES ON WITHOUT IT (and the reading it was making is kept for the next question); A FAILED ONE IS SAID TOO AND IS NOT KEPT', async () => {
   const slow = slowTable(fakeDb(book()), 'call_users', 80);
   const late = await D.readViews(slow, ADMIN, ['calls'], NOW, fmt, 10);
-  assert.deepEqual(late.notes, ['calls by team (late)']);
-  assert.match(late.lines.join('\n'), /CALLS BY TEAM: the report did not answer in time; say you cannot see these figures now\./);
+  assert.equal(late.notes.length, 1); assert.match(late.notes[0], /^calls by team \(late\) \d+\.\ds$/);
+  assert.match(late.lines.join('\n'), /CALLS BY TEAM: the report did not answer in time \(it may still be loading\); say you cannot see these figures yet and that asking again in a minute may work\./,
+    'the model is told the report may still be loading, and that asking again may work: the reading goes on and is kept');
   await new Promise(r => setTimeout(r, 200));
   const next = await D.readViews(slow, ADMIN, ['calls'], NOW + 1000, fmt, 10);
-  assert.deepEqual(next.notes, ['calls by team'], 'the slow reading finished and was kept: the next question has it at once');
+  assert.equal(next.notes.length, 1); assert.match(next.notes[0], /^calls by team \d+\.\ds kept$/, 'the slow reading finished and was kept: the next question has it at once');
   const bad = fakeDb(book()); const g = bad.from.bind(bad); let fail = true;
   bad.from = t => { if (t === 'performance_records' && fail) throw new Error('down'); return g(t); };
   const failed = await D.readViews(bad, ADMIN, ['standing'], NOW, fmt);
-  assert.deepEqual(failed.notes, ['last week by team (failed)']);
+  assert.equal(failed.notes.length, 1); assert.match(failed.notes[0], /^last week by team \(failed\) \d+\.\ds$/);
   assert.match(failed.lines.join('\n'), /LAST WEEK BY TEAM: the report could not be read now; say you cannot see these figures now\./);
   fail = false;
   const again = await D.readViews(bad, ADMIN, ['standing'], NOW + 1000, fmt);
-  assert.deepEqual(again.notes, ['last week by team'], 'a failure is not kept: the next question tries again');
+  assert.match(again.notes[0], /^last week by team \d+\.\ds$/, 'a failure is not kept: the next question tries again');
   const none = await D.readViews(fakeDb(book()), ADMIN, [], NOW, fmt); assert.deepEqual(none, { lines: [], notes: [] });
+});
+
+/* ---------------- the first live question found the report late at four seconds (26 Nov): the wait, the seconds in the note, a dead reading ---------------- */
+/** A clock the test moves by hand. */
+const handClock = () => { const c = { t: 0, now: () => c.t }; return c; };
+test('THE NOTE SAYS HOW LONG EACH REPORT TOOK: a report made now, one kept from before, one that was late and one that failed; the words the Hope Ai tab colours red stay where it looks for them', async () => {
+  const c = handClock();
+  const db = slowTable(fakeDb(book()), 'call_users', 0, () => { c.t += 5100; });
+  const first = await D.readViews(db, ADMIN, ['calls'], NOW, fmt, undefined, c.now);
+  assert.deepEqual(first.notes, ['calls by team 5.1s'], 'the seconds the reading took');
+  c.t += 60000;
+  const again = await D.readViews(db, ADMIN, ['calls'], NOW + 60000, fmt, undefined, c.now);
+  assert.deepEqual(again.notes, ['calls by team 5.1s kept'], 'a kept reading says so, with the seconds it took when it was made');
+  assert.equal(again.lines.join('\n'), first.lines.join('\n'), 'the same lines');
+  // late: the seconds waited, and the page\'s own test for "this one did not come" still matches
+  D.resetClaudianDataForTests();
+  const slow = slowTable(fakeDb(book()), 'call_users', 80);
+  const late = await D.readViews(slow, ADMIN, ['calls'], NOW, fmt, 10, () => c.t++ * 1000);
+  const note = 'data: ' + late.notes.join(', ');
+  assert.ok(/\((late|failed)\)/.test(note), 'the regexp of public/mod/hopeai.js and hopeai-report.js: ' + note);
+  assert.match(late.notes[0], /^calls by team \(late\) \d+\.\ds$/);
+  // failed
+  const bad = fakeDb(book()); const g = bad.from.bind(bad);
+  bad.from = t => { if (t === 'performance_records') throw new Error('down'); return g(t); };
+  const failed = await D.readViews(bad, ADMIN, ['standing'], NOW, fmt, undefined, () => c.t++ * 1000);
+  assert.ok(/\((late|failed)\)/.test('data: ' + failed.notes.join(', ')), failed.notes.join(', '));
+  // two reports at once: each has its own seconds
+  D.resetClaudianDataForTests();
+  const both = await D.readViews(fakeDb(book({ performance_records: [PM('sales', 'ALPHA', 50, 100)] })), ADMIN, ['calls', 'standing'], NOW, fmt, undefined, c.now);
+  assert.deepEqual(both.notes, ['calls by team 0.0s', 'last week by team 0.0s']);
+});
+
+test('THE WAIT FOR A REPORT IS FIFTEEN SECONDS, AND A DEAD READING IS NOT WAITED ON FOR EVER: a reading still unfinished after ninety seconds (an instance paused after its answer) is made again; before that it is shared', async () => {
+  assert.equal(D.DATA_BUDGET_MS, 15000, 'the first live question found four seconds too short');
+  const maxSeconds = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8')).functions['api/**/*.js'].maxDuration;
+  assert.ok(D.DATA_STUCK_MS > maxSeconds * 1000, 'a reading older than the host allows a request to run has outlived it: it is dead');
+  assert.ok(D.DATA_STUCK_MS < D.DATA_TTL_MS, 'and a dead reading is not kept for the whole five minutes');
+  const db = fakeDb(book()); const f = db.from.bind(db); const n = { users: 0 };
+  const never = new Proxy(function () {}, { get: (t, p) => (p === 'then' ? () => {} : never), apply: () => never });   // a builder that is never answered
+  db.from = t => { if (t === 'call_users' && ++n.users === 1) return never; return f(t); };
+  const r1 = await D.readViews(db, ADMIN, ['calls'], NOW, fmt, 20);
+  assert.match(r1.notes[0], /\(late\)/, 'the first reading never finishes: late');
+  const r2 = await D.readViews(db, ADMIN, ['calls'], NOW + 30 * 1000, fmt, 20);
+  assert.match(r2.notes[0], /\(late\)/); assert.equal(n.users, 1, 'thirty seconds later it is still shared, not made again');
+  const r3 = await D.readViews(db, ADMIN, ['calls'], NOW + 91 * 1000, fmt, 20);
+  assert.equal(n.users, 2, 'ninety-one seconds later: a new reading');
+  assert.match(r3.notes[0], /^calls by team \d+\.\ds$/, 'and it answers');
+  const r4 = await D.readViews(db, ADMIN, ['calls'], NOW + 92 * 1000, fmt, 20);
+  assert.match(r4.notes[0], /^calls by team \d+\.\ds kept$/); assert.equal(n.users, 2, 'the new reading is kept like any other');
 });
 
 /* ---------------- the upload and the call app never know this file ---------------- */

@@ -13,7 +13,7 @@ it falls behind the code.
 **If you are a new chat: this is where the last one stopped. Read all of it, do section 1, and
 carry on. Do not ask the owner to repeat anything that is written here.**
 
-**As of 26 November 2026** — portal `BUILD 2026-11-26-a` · call app `CALL_BUILD 2026-11-25-d` ·
+**As of 26 November 2026** — portal `BUILD 2026-11-26-b` · call app `CALL_BUILD 2026-11-25-d` ·
 Android app `versionCode 19` · handbook `docs/HANDOFF.md` up to **Part 164**.
 
 ---

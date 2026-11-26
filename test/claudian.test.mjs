@@ -676,7 +676,7 @@ test('THE OWNER\'S QUESTION, TYPED ON A LEADER\'S PHONE: the Calls report of the
   assert.match(msg, /Officers with no call today: BEN \(ALPHA\)\./);
   assert.ok(!/BETA|GAMMA|CECI|DENIS/.test(msg), 'no team and no officer the leader does not hold');
   assert.ok(msg.indexOf('DATA (figures') < msg.indexOf('Company targets for EACH team') && msg.indexOf('DATA (figures') > msg.indexOf('Using: HOPE Calls'), 'in CONTEXT, before the targets');
-  assert.equal(db._dump('claudian_chats')[0].note, 'data: calls by team');
+  assert.match(db._dump('claudian_chats')[0].note, /^data: calls by team \d+\.\ds$/, 'the log keeps which report and how many seconds it took');
   assert.match(C.SYSTEM_PROMPT, /REPORTS YOU MAY HAVE BEEN GIVEN/); assert.match(C.SYSTEM_PROMPT, /Never invent a figure or a name that DATA does not hold/);
   assert.match(C.SYSTEM_PROMPT, /A team can read 0 only because its officers' phones have not synced yet/);
   assert.match(C.SYSTEM_PROMPT, /no access to customers, loans, phone numbers, staff records or the figures of teams outside the person's own/);
@@ -698,7 +698,7 @@ test('THE SAME QUESTION IN THE PORTAL: a holder of the Calls tab for every team 
   C.resetClaudianForTests();
   const one = await askData(holding(['calls'], { teams: ['ALPHA'] }), OWNER_Q);
   assert.ok(/ALPHA/.test(one.msg.split('DATA (figures')[1]) && !/BETA|GAMMA|CECI|DENIS/.test(one.msg), 'only the teams the code holds');
-  assert.equal(all.db._dump('claudian_chats')[0].note, 'data: calls by team');
+  assert.match(all.db._dump('claudian_chats')[0].note, /^data: calls by team \d+\.\ds$/);
 });
 
 test('WHO IS NEVER READ A REPORT: a phone officer, a person without the Calls tab, a how-to question, the switch OFF; and the database is not asked', async () => {
@@ -726,7 +726,29 @@ test('A REPORT THAT DOES NOT COME NEVER STOPS AN ANSWER: a failing read is said 
   const r = await ask(db, holding(['calls']), OWNER_Q, { client: client(text('Siwezi kuona sasa.'), calls) }, { lang: 'sw' });
   assert.equal(r.mode, 'ai'); assert.equal(r.answer, 'Siwezi kuona sasa.');
   assert.match(calls[0].messages[0].content, /CALLS BY TEAM: the report could not be read now; say you cannot see these figures now\./);
-  assert.equal(db._dump('claudian_chats')[0].note, 'data: calls by team (failed)');
+  assert.match(db._dump('claudian_chats')[0].note, /^data: calls by team \(failed\) \d+\.\ds$/);
+});
+
+/* ---------------- the first live question (26 Nov): the report was late at four seconds; the wait comes out of the model's time, inside the page's patience ---------------- */
+test('THE WAIT FOR THE REPORTS COMES OUT OF THE MODEL\'S TIME, INSIDE THE PAGE\'S PATIENCE: the page gives up at 35 seconds, so the server has answered by then, whatever the reports took', async () => {
+  const page = await readFile(new URL('../public/mod/claudian.js', import.meta.url), 'utf8');
+  const m = /var TIMEOUT_MS = (\d+);/.exec(page);
+  assert.ok(m, 'the bubble has a limit');
+  assert.equal(C.PAGE_PATIENCE_MS, Number(m[1]), 'the server\'s idea of the page\'s patience is the page\'s own number (public/mod/claudian.js)');
+  const data = await import('../api/_lib/claudian-data.js');
+  assert.equal(C.modelWaitMs(0), C.REQUEST_TIMEOUT_MS + 2000, 'a question that has used nothing: the usual allowance');
+  assert.equal(C.modelWaitMs(3000), 27000);
+  assert.equal(C.modelWaitMs(18000), C.PAGE_PATIENCE_MS - 1500 - 18000, 'after fifteen seconds of reports and three of the rest: what is left of the page\'s patience, less a second and a half to answer in');
+  assert.equal(C.modelWaitMs(40000), 10000, 'never under ten seconds');
+  for (const bad of [NaN, undefined, null, -5, 'x']) assert.equal(C.modelWaitMs(bad), 27000, 'a bad figure is no elapsed time at all: ' + String(bad));
+  // whatever has been used, the wait ends inside what the page gives (unless the ten-second floor holds it), so the page never gives up on an answer the server is still making
+  for (let e = 0; e <= 22000; e += 250) assert.ok(e + C.modelWaitMs(e) <= C.PAGE_PATIENCE_MS - 1500, 'elapsed ' + e + ': ' + (e + C.modelWaitMs(e)));
+  // and the longest a report is waited for, with the usual pace of the rest of a question and the floor, fits
+  assert.ok(data.DATA_BUDGET_MS + 3000 + 10000 + 1500 <= C.PAGE_PATIENCE_MS, 'fifteen seconds of reports, three of the rest, ten for the model and the answer\'s way back: ' + (data.DATA_BUDGET_MS + 14500));
+  const core = (await readFile(new URL('../api/_lib/claudian.js', import.meta.url), 'utf8')).replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.match(core, /const askedAt = Date\.now\(\);/, 'the question\'s start is taken before anything is read for it');
+  assert.match(core, /raceTimeout\(client\.messages\.create\(req\), modelWaitMs\(Date\.now\(\) - askedAt\)\)/, 'the model is waited for by what the question has used');
+  assert.ok(!/raceTimeout\(client\.messages\.create\(req\), REQUEST_TIMEOUT_MS/.test(core), 'not the old fixed wait');
 });
 
 test('LAST WEEK\'S RESULTS REACH A HOLDER OF THE WEEKLY SCREENS, AND THE COST OF A DATA ASK IS CAPPED: a company of ninety teams adds a few hundred tokens, never the whole book', async () => {
@@ -742,14 +764,14 @@ test('LAST WEEK\'S RESULTS REACH A HOLDER OF THE WEEKLY SCREENS, AND THE COST OF
   assert.match(data, /Lowest sales: TEAM01 1%, TEAM02 2%, TEAM03 3%/); assert.match(data, /Lowest collection: TEAM90 10%, TEAM89 11%/);
   assert.ok(data.length < 1600, 'a few hundred tokens: ' + data.length);
   assert.ok(!/TEAM45/.test(data), 'the middle of ninety teams is not sent');
-  assert.match(db._dump('claudian_chats')[0].note, /data: last week by team$/);
+  assert.match(db._dump('claudian_chats')[0].note, /data: last week by team \d+\.\ds$/);
 });
 
 test('A QUESTION THAT TOUCHES CALLS AND LAST WEEK\'S RESULTS GETS BOTH REPORTS, in a fixed order, beside the cards it also touches', async () => {
   const admin = C.portalSubject({ code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
   const { msg, db } = await askData(admin, 'timu gani zinapiga simu kidogo na pia makusanyo ni madogo', dataBook({ performance_records: [{ period: 'week', period_start: '2026-11-16', metric: 'collection', scope: 'team', name: 'ALPHA', value: 10, basis: 100, pct: null }] }));
   assert.ok(msg.indexOf('CALLS BY TEAM') > 0 && msg.indexOf('STANDING, last full week') > msg.indexOf('CALLS BY TEAM'));
-  assert.match(db._dump('claudian_chats')[0].note, /data: calls by team, last week by team$/);
+  assert.match(db._dump('claudian_chats')[0].note, /data: calls by team \d+\.\ds, last week by team \d+\.\ds$/);
 });
 
 /* ---------------- the second reader of Part 163: what a typed question may cost (handbook Part 163, addendum 1) ---------------- */

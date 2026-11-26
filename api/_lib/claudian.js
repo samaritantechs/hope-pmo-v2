@@ -96,6 +96,16 @@ export const MAX_INFLIGHT = 8;
     script that floods the log the owner reads, never a limit a person doing their work will meet. The first question over it writes one row that says so; the rest write none. */
 export const FREE_TYPED_DAILY = 300;
 export const REQUEST_TIMEOUT_MS = 25000;
+/** How long the person's own page waits for an answer before it gives up (TIMEOUT_MS in public/mod/claudian.js; a test holds the two equal). Everything the server does for ONE question has to fit
+    inside it, the reports it waits for (DATA_BUDGET_MS, handbook Part 160) included, or the page gives up on an answer the server is still making. */
+export const PAGE_PATIENCE_MS = 35000;
+const MODEL_WAIT_FLOOR_MS = 10000;
+/** How long the model is waited for when `elapsedMs` of the question have already gone on reading the person's reports and the rest: the usual allowance (the request's own limit and two seconds)
+    less what has been used, never under ten seconds, and never so late that the page has given up before the answer reaches it (a second and a half is kept for that). The model answers in a few
+    seconds; this only matters on the day it does not. The wait for the reports comes out of the model's time, not on top of it. */
+export function modelWaitMs(elapsedMs) {
+  return Math.max(MODEL_WAIT_FLOOR_MS, Math.min(REQUEST_TIMEOUT_MS + 2000, PAGE_PATIENCE_MS - 1500 - (Number(elapsedMs) || 0)));
+}
 export const STANDING_BUDGET_MS = 1500;
 const CFG_TTL_MS = 20000, ROWS_TTL_MS = 60000, STANDING_TTL_MS = 600000;
 
@@ -575,6 +585,7 @@ export async function claudianHandle(db, subject, body, deps = {}) {
   }
 
   // ---- op === 'ask' ----
+  const askedAt = Date.now();                                  // what the model is waited for depends on how much of the page's patience the question has used (modelWaitMs)
   const q = cleanQuestion(b.q);
   if (!q) return { ...base, mode: 'faq', answer: FIXED.empty[lang], faq: choices() };
   // THE PERSON'S OWN PACE, whether the AI is answering or not: the page waits for each answer, so only a script asks twice in two seconds. (It used to be asked only of a question the model
@@ -638,7 +649,7 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     try {
       const client = deps.client || await defaultClient();
       if (!client) throw Object.assign(new Error('SDK not installed'), { status: 0 });
-      res = await raceTimeout(client.messages.create(req), REQUEST_TIMEOUT_MS + 2000);
+      res = await raceTimeout(client.messages.create(req), modelWaitMs(Date.now() - askedAt));
     } catch (e) { fail = e; }
     const ms = Date.now() - t0;
 

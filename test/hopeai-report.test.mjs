@@ -76,6 +76,31 @@ test('PART B1 AND B2: what the person was told to try later, newest first, and e
   assert.match(section(report(failed), 'B2.', 'B3.'), /1x  "data: calls by team \(failed\)"/, 'a report that did not come is a failure, not "data"');
 });
 
+test('THE SECONDS THE REPORTS TOOK (handbook Part 160, addendum 1): part A says how long each report took, made, kept, late and failed; notes that differ only in seconds are ONE kind in B2; the chat\'s own lines keep the seconds', () => {
+  const rows = [
+    row({ q: 'a', note: 'data: calls by team 5.1s' }),
+    row({ at: '2026-11-25T06:11:00Z', q: 'b', note: 'data: calls by team 9.3s, last week by team 0.2s' }),
+    row({ at: '2026-11-25T06:12:00Z', q: 'c', note: 'data: calls by team 5.1s kept' }),
+    row({ at: '2026-11-25T06:13:00Z', q: 'd', note: 'data: calls by team (late) 15.0s' }),
+    row({ at: '2026-11-25T06:14:00Z', q: 'e', note: 'data: calls by team (late) 15.2s' }),
+    row({ at: '2026-11-25T06:15:00Z', q: 'f', note: 'data: last week by team (failed) 1.2s' }),
+    row({ at: '2026-11-25T06:16:00Z', q: 'g', note: 'data: calls by team' }),               // a note of the build before the seconds: made, with no time
+  ];
+  const t = report(rows);
+  assert.match(section(t, 'PART A', 'PART B'), /Reports the helper read for the person's own teams \(Part 160\), with the seconds each took: calls by team 3 made \(median 7\.2 s, longest 9\.3 s\), 1 kept, 2 late \(waited 15\.2 s\); last week by team 1 made \(median 0\.2 s, longest 0\.2 s\), 1 failed\./);
+  const b2 = section(t, 'B2.', 'B3.');
+  assert.match(b2, /1\. 2x  "data: calls by team \(late\)"/, 'two late notes that differ only in seconds are one kind');
+  assert.match(b2, /2\. 1x  "data: last week by team \(failed\)"/);
+  assert.ok(!/15\.0s|15\.2s|1\.2s/.test(b2), 'the seconds are not part of the kind');
+  const c = section(t, 'PART C');
+  assert.match(c, /NOTE: data: calls by team \(late\) 15\.0s/, 'the chat keeps what the note said');
+  assert.match(c, /     data: calls by team 9\.3s, last week by team 0\.2s\n/);
+  // the older notes alone (no seconds): counted as made, nothing invented
+  assert.match(section(report(), 'PART A', 'PART B'), /with the seconds each took: calls by team 1 made\.\n/);
+  // no report read at all: no line
+  assert.ok(!/Reports the helper read/.test(section(report(SAMPLE().filter(r => !/^data:/.test(r.note))), 'PART A', 'PART B')), 'nothing to say about reports when none was read');
+});
+
 test('PART B3: the AI answers with no card and no report behind them are the likeliest gaps: counted, grouped by the question\'s words, most asked first; taps and held rows are never gaps', () => {
   const rows = [row({ q: 'Nani anaidhinisha likizo?', note: '' }), row({ at: '2026-11-25T06:11:00Z', q: 'nani anaidhinisha likizo', note: '', thread: 'k-two:2026-11-25', name: 'TWO' }),
     row({ at: '2026-11-25T06:12:00Z', q: 'Nani anaidhinisha likizo???', note: '' }), row({ at: '2026-11-25T06:13:00Z', q: 'Swali lenye kadi', note: 'cards: leave-ask' }),
