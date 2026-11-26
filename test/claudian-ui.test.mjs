@@ -46,7 +46,47 @@ test('what a person is shown is TEXT: innerHTML is used for the icon and nothing
   assert.equal(uses.length, 2, 'innerHTML is written in ' + uses.length + ' places: ' + uses.join(' | '));
   for (const u of uses) assert.ok(/^ICON\.replace\(\/HEADID\/g, '\w+'\)$/.test(u), 'innerHTML is given something other than the fixed icon: ' + u);
   assert.ok(/function el\(tag, cls, text\) \{[^}]*n\.textContent = text;/.test(CODE), 'el() no longer sets text with textContent');
-  assert.ok(/addMsg\(kind, text\)[\s\S]{0,200}el\('div', 'm ' \+ kind, text\)/.test(CODE), 'a line of the panel is made with el()');
+  assert.ok(/function drawMsg\(kind, text\) \{\s*var m = el\('div', 'm ' \+ kind\);\s*fillText\(m, text\);/.test(CODE), 'a line of the panel is made with el() and filled by fillText()');
+  // fillText: text with textContent or text nodes; the ONE anchor it makes takes its address from the constant, never from the answer
+  const ft = CODE.slice(CODE.indexOf('function fillText('), CODE.indexOf('function drawMsg('));
+  assert.ok(ft.length > 200 && !/innerHTML|insertAdjacentHTML|outerHTML/.test(ft), 'fillText writes markup');
+  assert.equal((ft.match(/createElement\(/g) || []).length, 1, 'fillText makes one kind of element');
+  assert.ok(/a = document\.createElement\('a'\);\s*a\.href = APK_URL; a\.target = '_blank'; a\.rel = 'noopener noreferrer'; a\.textContent = APK_URL;/.test(ft), 'the link points at the constant, opens elsewhere and shows the constant');
+  assert.ok(!/\.href = (?!APK_URL;)/.test(ft) && !/setAttribute\(/.test(ft), 'an href made of anything else');
+});
+
+test('THE KEPT CONVERSATION is wired as the owner ordered (26 Nov): drawn again when the module is mounted with nothing asked of the server, the panel opens on the latest question, the failures the module draws itself are not kept, and the exchange rides only while it is young', () => {
+  assert.ok(/st\.mounted = true;\s*paintTheme\(\);\s*restore\(\);/.test(CODE), 'the kept conversation is drawn when the module is mounted');
+  const keptCode = CODE.slice(CODE.indexOf('function chatKey('), CODE.indexOf('function setHist('));
+  assert.ok(keptCode.length > 1500 && !/\bapi\(|\bfetch\(|XMLHttpRequest|sendBeacon|loadStatus\(/.test(keptCode), 'keeping and drawing the conversation touches the network, or moved: update the slice');
+  assert.ok(/function openPanel\(\)[\s\S]{0,1400}loadStatus\(false\)\.then\(function \(\) \{\s*if \(st\.open\) showLatest\(\);/.test(CODE), 'the panel opens on the latest question once the list is in (a hidden element forgets its scroll)');
+  assert.ok(/addMsg\(gone \? 'e' : 'h', gone \? tr\('gone'\) : srv \? tr\('srv'\) : tr\('net'\), true\);/.test(CODE), 'the failure lines the module draws itself are shown and not kept');
+  assert.ok(/addMsg\(r && r\.mode === 'faq' && r\.id \? 'a' : 'h', r && r\.answer \? String\(r\.answer\) : tr\('net'\), !\(r && r\.answer\)\);/.test(CODE) && /addMsg\(ok \? 'a' : 'h', text, !\(r && r\.answer\)\);/.test(CODE), 'an answer of the server is kept, the module\'s own "no connection" is not');
+  assert.ok(/api\('ask', \{ q: q, hist: st\.hist && Date\.now\(\) - st\.histAt < HIST_FRESH_MS \? \[st\.hist\] : \[\] \}\)/.test(CODE), 'the last exchange is sent with the next question only while it is under thirty minutes old');
+  assert.ok(/setHist\(\{ q: q, a: text\.slice\(0, 240\) \}\); else if \(r && r\.mode !== 'canned'\) setHist\(null\);\s*persist\(\);/.test(CODE), 'the exchange is kept with the conversation');
+  assert.ok(/function forget\(\) \{[^}]*dropChat\(true\);/.test(CODE), 'signing out forgets what was kept, on both pages');
+  assert.equal(T.HIST_DAYS, 30); assert.equal(T.HIST_FRESH_MS, 1800000); assert.equal(T.HIST_LINE, 2000); assert.equal(T.HIST_BYTES, 60000); assert.equal(T.MAX_MSGS, 40);
+});
+
+test('THE APK LINK (the owner, 26 Nov: the instruction ends with the release link): the one address is a real link, nothing else ever is, and the three copies of the address are one', () => {
+  const server = fs.readFileSync(path.join(ROOT, 'api/_lib/claudian-faq.js'), 'utf8').match(/export const APK_URL = '([^']+)'/);
+  const manifest = JSON.parse(read('app-version.json'));
+  assert.ok(server && T.APK_URL === server[1] && T.APK_URL === manifest.apkUrl, 'the module, the server\'s hint and app-version.json name three addresses: ' + J([T.APK_URL, server && server[1], manifest.apkUrl]));
+  const A = T.APK_URL;
+  const parts = x => J(T.linkParts(x));
+  assert.equal(parts('plain words, no address'), J([{ t: 'plain words, no address' }]));
+  assert.equal(parts(''), J([{ t: '' }]), 'an empty line is one empty text');
+  assert.equal(parts('Install it again from here: ' + A), J([{ t: 'Install it again from here: ' }, { a: A }]), 'the link at the end of the instruction');
+  assert.equal(parts(A), J([{ a: A }]));
+  assert.equal(parts('a ' + A + ' b ' + A + ' c'), J([{ t: 'a ' }, { a: A }, { t: ' b ' }, { a: A }, { t: ' c' }]), 'twice in one answer');
+  // an address that is not the one is TEXT: another site, another file, a look-alike, markup, a script
+  for (const x of ['https://evil.example/HOPE-Calls.apk', 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/Other.apk', 'http://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk', 'https://github.com.evil.example/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk', '<a href="https://evil.example">x</a>', 'javascript:alert(1)', '<img src=x onerror=alert(1)>']) {
+    assert.equal(parts(x), J([{ t: x }]), 'made a link out of ' + x);
+  }
+  // what follows the address stays text: a link to the real file with the rest of a hostile address as words beside it
+  const tail = T.linkParts(A + '.evil.example/x');
+  assert.equal(J(tail), J([{ a: A }, { t: '.evil.example/x' }]), 'only the exact address is the link');
+  for (const p of T.linkParts('x ' + A + ' y')) assert.ok(p.a === undefined || p.a === A, 'a link to anything but the constant');
 });
 
 test('it asks the server for NOTHING when it is mounted: only a tap on the bubble does, and the only address is /api/claudian', () => {
@@ -59,15 +99,23 @@ test('it asks the server for NOTHING when it is mounted: only a tap on the bubbl
   assert.ok(/function openPanel\(\)[\s\S]{0,700}loadStatus\(false\)/.test(CODE), 'opening the panel is what asks for the ready questions');
 });
 
-test('nothing the person types or is shown is kept: the only thing written to storage is the bubble\'s place, inside a try', () => {
-  const all = CODE.match(/localStorage\./g) || [];
-  const mine = CODE.match(/localStorage\.(getItem|setItem|removeItem)\(posKey\(\)/g) || [];
-  assert.equal(all.length, 3, 'localStorage is touched in ' + all.length + ' places');
-  assert.deepEqual(mine.map(x => x.split('.')[1].split('(')[0]).sort(), ['getItem', 'removeItem', 'setItem'], 'and every one of them is the bubble\'s own place');
-  assert.ok(/JSON\.stringify\(\{ fx: [^}]*fy: [^}]*\}\)/.test(CODE) && !/setItem\([^)]*(code|device|answer|question)/i.test(CODE), 'what is stored is the two fractions and nothing a person said');
-  for (const fn of ['readFrac', 'writeFrac', 'dropFrac']) assert.ok(new RegExp('function ' + fn + '\\([^)]*\\) \\{[\\s\\S]{0,160}try \\{').test(CODE), fn + ' reads or writes storage outside a try');
+test('what is kept in the browser: the bubble\'s place, and the person\'s own conversation (handbook Part 167) -- each inside a try, the conversation under a mark of who it is, never the access code or the device id', () => {
+  const uses = [...CODE.matchAll(/localStorage\.(getItem|setItem|removeItem)\(([^)]*)\)/g)].map(m => m[1] + '(' + m[2].split(',')[0] + ')');
+  const place = uses.filter(u => /posKey\(\)/.test(u)), kept = uses.filter(u => !/posKey\(\)/.test(u));
+  assert.deepEqual(place.map(x => x.split('(')[0]).sort(), ['getItem', 'removeItem', 'setItem'], 'the bubble\'s place is read, written and dropped: ' + uses.join(' '));
+  assert.deepEqual(kept.sort(), ['getItem(chatKey()', 'removeItem(keys[i])', 'setItem(chatKey()'].sort(), 'the conversation is read, written and dropped in one place each: ' + kept.join(' '));
+  assert.equal(uses.length, 6, 'storage is touched in ' + uses.length + ' places: ' + uses.join(' '));
+  assert.ok(/JSON\.stringify\(\{ fx: [^}]*fy: [^}]*\}\)/.test(CODE), 'the place is the two fractions');
+  for (const fn of ['readFrac', 'writeFrac', 'dropFrac', 'readChat', 'dropChat', 'persist']) assert.ok(new RegExp('function ' + fn + '\\([^)]*\\) \\{[\\s\\S]{0,260}try \\{').test(CODE), fn + ' reads or writes storage outside a try');
   assert.ok(!/sessionStorage|indexedDB|document\.cookie/.test(CODE), 'another store');
   assert.ok(/'claudianPos\.' \+ \(\(st\.opts && st\.opts\.host\) \|\| 'portal'\)/.test(CODE), 'the portal and the call app each keep their own place');
+  assert.ok(/return 'claudianChat\.' \+ \(host \|\| \(st\.opts && st\.opts\.host\) \|\| 'portal'\);/.test(CODE) || /function chatKey\(host\) \{ return 'claudianChat\.' \+ \(host \|\| \(st\.opts && st\.opts\.host\) \|\| 'portal'\); \}/.test(CODE), 'and each its own conversation');
+  // the record is made of the mark and the lines: the access code and the device id are never given to it
+  const persist = CODE.slice(CODE.indexOf('function persist()'), CODE.indexOf('function restore()'));
+  assert.ok(/rec = \{ v: 1, who: w, at: Date\.now\(\)/.test(persist) && /w = who\(\)/.test(persist), 'the record names who it belongs to by the mark');
+  assert.ok(!/\.code\(|\.device\(|opts\.code|opts\.device/.test(persist), 'persist reads the code or the device id');
+  const who = CODE.slice(CODE.indexOf('function who()'), CODE.indexOf('function readChat()'));
+  assert.ok(/return id \? mark\(id\) : ''/.test(who), 'who() answers the mark and never the id');
 });
 
 test('the words: both languages have the same names, {n} is in both, none is empty, and none is an offer or a question back (the owner\'s order)', () => {
@@ -131,8 +179,10 @@ test('the portal loads it late and only once, by BUILD, in a try, and nothing wa
   assert.equal((strip(APP).match(/claudianLater_/g) || []).length, 2, 'the function and ONE call');
   assert.ok(/setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'the one call is a seven-second timer, after the first screen\'s own reads (2.5 s)');
   assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); pushAsk_\(\); \}, 2500\);\s*setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'it follows the first screen\'s reads');
-  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export)');
-  assert.ok(!/var BUILD = '2026-11-25-a'/.test(APP), 'BUILD moved with the front-end change');
+  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export; since Part 167 the Toka tells it to forget the person)');
+  // the portal's own sign-out (the Toka) tells the helper, after the one sign-out has cleared what it keeps (handbook Part 167)
+  assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)[^}]*\}[^}]*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}[^}]*window\.location\.replace\('\/'\);/.test(strip(APP)), 'the Toka hides the helper, which forgets the person, before it leaves the page');
+  assert.ok(!/var BUILD = '2026-11-26-b'/.test(APP), 'BUILD moved with the front-end change');
 });
 
 test('HOPE Calls loads it eight seconds after the officer is in, at the very end of enterApp, in a try, and signing out takes it away', () => {
@@ -149,7 +199,7 @@ test('HOPE Calls loads it eight seconds after the officer is in, at the very end
   assert.ok(/\n  claudianLater_\(\);[^\n]*\n\}\n$/.test(enter), 'the call is the last statement of enterApp: nothing the app does on entry waits for it');
   assert.equal((code.match(/claudianLater_\(\)/g) || []).length, 2, 'one definition and ONE call');
   assert.ok(/function doLogout\(\)\{\s*\n(?:[^\n]*\n){1,2}\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/.test(code), 'signing out hides the bubble');
-  assert.ok(!/var CALL_BUILD = '2026-11-24-a'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
+  assert.ok(!/var CALL_BUILD = '2026-11-25-d'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
   // the sacred paths: nothing of the helper in the request that sends a day's calls, and nothing before the entry
   assert.ok(!/claudian/i.test(code.replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/claudianLater_\(\);[^\n]*\n/, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '').replace(/CLAUDIAN_ASKED_[^;]*;/g, '')), 'the call page knows the helper nowhere else');
 });
@@ -224,7 +274,7 @@ test('THE TYPING BOX IS THERE FOR EVERYBODY (the owner, 25 Nov: "People ain\'t s
   assert.ok(/r\.mode === 'ai' \|\| r\.mode === 'canned' \|\| r\.mode === 'match'/.test(ask), 'a ready answer found for the question is drawn as an answer, a failure as a hint');
   assert.ok(/r\.mode === 'match' && r\.q \? addMsg\('w', tr\('matched'\) \+ ' ' \+ String\(r\.q\)\)/.test(ask), 'a ready answer says which ready question it answers, so a wrong guess is seen for what it is');
   assert.ok(/r\.near && r\.near\.length\) addNear\(r\.near\)/.test(ask), 'the nearest ready questions are offered as choices');
-  const near = CODE.slice(CODE.indexOf('function addNear('), CODE.indexOf('function drawChips('));
+  const near = CODE.slice(CODE.indexOf('function drawNear('), CODE.indexOf('function drawChips('));
   assert.ok(/el\('button', 'chip', c\.q\)/.test(near) && /b\.onclick = function \(\) \{ askFaq\(c\); \}/.test(near) && !/innerHTML/.test(near), 'a nearest question is a button with text, and a tap asks it exactly as the list does');
   assert.ok(/querySelectorAll\('\.chip'\)/.test(CODE.slice(CODE.indexOf('function setBusy'), CODE.indexOf('function addNear'))), 'every chip, the nearest ones too, is held while a question is on its way');
   // the words

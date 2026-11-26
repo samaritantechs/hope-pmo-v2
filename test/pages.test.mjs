@@ -2692,7 +2692,7 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   const brand = readFileSync(join(PUBLIC, 'brand.js'), 'utf-8');
   const block = brand.slice(brand.indexOf('/* HOPESession:begin'), brand.indexOf('/* HOPESession:end */'));
   assert.ok(block.length > 200, 'HOPESession is in brand.js');
-  const store = new Map([['hopeCode', 'KON 123'], ['hcBoot_v1', '{}'], ['hcListCache_v1', 'x'], ['hcDaySummary_v1', 'x'], ['hcUi_v1', 'x'], ['hcLogo', 'keep'], ['other', 'keep']]);
+  const store = new Map([['hopeCode', 'KON 123'], ['hcBoot_v1', '{}'], ['hcListCache_v1', 'x'], ['hcDaySummary_v1', 'x'], ['hcUi_v1', 'x'], ['hcLogo', 'keep'], ['other', 'keep'], ['claudianChat.portal', '{}'], ['claudianChat.call', '{}'], ['claudianPos.portal', '{"fx":1,"fy":1}']]);
   const native = [];
   const win = { HopeCalls: { setOfficerCode: c => native.push(c) } };
   const ls = { getItem: k => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: k => store.delete(k) };
@@ -2702,10 +2702,14 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   assert.equal(store.has('hopeCode'), false, 'the portal code is gone'); assert.equal(store.get('hcLoggedOut'), '1', 'Calls is signed out');
   for (const k of ['hcBoot_v1', 'hcListCache_v1', 'hcDaySummary_v1', 'hcUi_v1']) assert.equal(store.has(k), false, k + ' is dropped');
   assert.equal(store.get('hcLogo'), 'keep'); assert.equal(store.get('other'), 'keep'); assert.deepEqual(native, [''], 'the native location service is told');
+  // ...and Claudian-PMO's kept conversations (handbook Part 167) go with the person: a computer and a handset are shared. The bubble's place is nobody's secret and stays.
+  assert.equal(store.has('claudianChat.portal'), false, 'the portal\'s kept conversation is gone'); assert.equal(store.has('claudianChat.call'), false, 'and the call app\'s');
+  assert.equal(store.get('claudianPos.portal'), '{"fx":1,"fy":1}', 'the bubble\'s place stays');
   // ...and Calls' own sign-out takes the portal's code (and nothing else of Calls', which doLogout clears itself).
-  store.set('hopeCode', 'KON 123'); store.delete('hcLoggedOut'); store.set('hcBoot_v1', '{}');
+  store.set('hopeCode', 'KON 123'); store.delete('hcLoggedOut'); store.set('hcBoot_v1', '{}'); store.set('claudianChat.call', '{}');
   win.HOPESession.clearPortal();
   assert.equal(store.has('hopeCode'), false); assert.equal(store.get('hcBoot_v1'), '{}', 'clearPortal leaves Calls\' own keys to Calls');
+  assert.equal(store.has('claudianChat.call'), false, 'Calls\' sign-out goes through clearPortal, so the helper\'s conversation is forgotten there too, even if the module never loaded');
   const app = appSrc(), call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8'), home = readFileSync(join(PUBLIC, 'home.html'), 'utf-8');
   assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)/.test(app), 'the portal\'s Toka signs out of both');
   assert.ok(/\$\('out'\)\.onclick = function\(\)\{ if \(window\.HOPESession\) HOPESession\.signOutAll\(\)/.test(home), 'the launcher\'s too');
