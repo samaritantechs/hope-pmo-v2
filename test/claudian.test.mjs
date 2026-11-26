@@ -996,3 +996,27 @@ test('THE ACCESS CODE NEVER LEAVES THE PERSON, on the REAL subject (F14): C.port
   for (const k of Reflect.ownKeys(s)) assert.ok(!String(s[k]).includes('SECRET-REAL-SUBJECT-CODE'), 'not in the property ' + String(k));
   assert.ok(!Object.getOwnPropertyNames(s).includes('user') && !Object.getOwnPropertySymbols(s).length, 'the raw user is kept beside the subject, not on it');
 });
+
+/* ---------------- STATS STAGE 3 (handbook Part 170): THE MONTH ---------------- */
+test('A QUESTION ABOUT THE MONTH REACHES THE MODEL WITH THE MONTH REPORT\'S LINES, through the real handler: the month alone is read for it (not the week, not last week), the kinds of figures name it, the access code is nowhere, and a phone leader and a person with neither screen are given none', async () => {
+  const gmo = C.portalSubject({ code: 'SECRET-MONTH-CODE', name: 'GMO ONE', role: 'GMO', teams: ['ALPHA'], tabs: ['dashboard'] });
+  const { r, msg, db, calls } = await askData(gmo, 'which team has the lowest sales this month?');
+  assert.equal(r.mode, 'ai');
+  assert.match(msg, /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): .*this month so far \(sales against the monthly target, collection and recovery, week by week, and how the teams stand\)/);
+  const data = msg.split('DATA (figures')[1] || '';
+  assert.match(data, /MONTH 2026-11 \(2026-11-01 to 2026-11-30\), as of 2026-11-25\./);
+  assert.match(data, /MONTH SO FAR: sales TZS /);
+  assert.match(data, /TEAMS \(\d+\), each one's average over the weeks of this month measured so far: sales \(each week against the weekly sales target\)/);
+  assert.ok(!/DASHBOARD, week/.test(data) && !/CALLS BY TEAM/.test(data), 'a question about the month alone does not read the dashboard\'s week or the calls');
+  assert.match(db._dump('claudian_chats')[0].note, /data: this month by week \d+\.\ds$/, 'one report read, named in the chat\'s note');
+  assert.ok(!JSON.stringify(calls[0]).includes('SECRET-MONTH-CODE'), 'the access code is not in the request');
+  C.resetClaudianForTests();
+  const weekly = await askData(C.portalSubject({ code: 'SECRET-WK', name: 'GMO TWO', role: 'GMO', teams: ['ALPHA'], tabs: ['weekly'] }), 'makusanyo ya mwezi huu ni kiasi gani?');
+  assert.match(weekly.msg, /MONTH 2026-11 /, 'a holder of the weekly report is given the month');
+  C.resetClaudianForTests();
+  const none = await askData(C.portalSubject({ code: 'X', name: 'T', role: 'CLERK', teams: ['ALPHA'], tabs: ['legal'] }), 'which team has the lowest sales this month?');
+  assert.ok(!none.msg.includes('MONTH 2026-11') && /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): none\./.test(none.msg), 'a person with neither screen is given no month');
+  C.resetClaudianForTests();
+  const phone = await askData(C.callSubject(leaderCu, { teams: ['ALPHA'], leader: true }, 'dev-month-1'), 'which team has the lowest sales this month?');
+  assert.ok(!phone.msg.includes('MONTH 2026-11'), 'a phone leader is not given the month report: the phone has no portal person for the door to be asked as');
+});

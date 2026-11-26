@@ -75,6 +75,18 @@ const TOPIC = {
   // a phone person's own calls
   mine: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'maongezi', 'talk', 'reach', 'nimefikia', 'my_target', 'my_targets', 'target_yangu', 'target_zangu', 'targets_zangu', 'lengo_langu', 'malengo_yangu', 'malengo_zangu'],
 };
+TOPIC.month = TOPIC.week;                                  // the same figures, for the month
+/** Words that say the question is about THE MONTH, and words that say it is about the week or a day: a question about the month alone reads the month and not the week or last week's record. */
+const MONTHISH = ['month', 'monthly', 'mwezi', 'mwezini', 'mtd'];
+const WEEKISH = ['week', 'weekly', 'wiki', 'today', 'leo', 'yesterday', 'jana'];
+/** "week by week", "each week", "kwa kila wiki": a month asked for in its weeks is still a question about the month (the month report carries its weeks), so these words do not put a month question on the week.
+    ("now" and "sasa" are not here either: "the month so far", "mwezi hadi sasa" is the month.) */
+const BYWEEK = [['week', 'by', 'week'], ['wiki', 'kwa', 'wiki'], ['kwa', 'kila', 'wiki'], ['each', 'week'], ['every', 'week'], ['per', 'week'], ['by', 'week'], ['kila', 'wiki'], ['kwa', 'wiki']];
+const withoutByWeek = tokens => {
+  const drop = new Set();
+  for (const ph of BYWEEK) for (let i = 0; i + ph.length <= tokens.length; i++) if (ph.every((w, k) => tokens[i + k] === w)) for (let k = 0; k < ph.length; k++) drop.add(i + k);
+  return drop.size ? tokens.filter((t, i) => !drop.has(i)) : tokens;
+};
 /** Words that say the person wants teams or officers compared, counted or ranked, not a rule explained. */
 const CUES = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa', 'nani', 'who', 'which', 'gani', 'ipi', 'wapi', 'least', 'most', 'lowest', 'highest', 'worst', 'best', 'bottom', 'top',
   'kidogo', 'chini', 'zaidi', 'juu', 'ngapi', 'many', 'hakuna', 'none', 'zero', 'sifuri', 'kabisa', 'wangu', 'yangu', 'zangu', 'wote', 'kila', 'each', 'everyone', 'ranking', 'compare', 'linganisha'];
@@ -86,7 +98,7 @@ const LAST = ['iliyopita', 'uliopita', 'iliopita', 'last', 'previous', 'prior'];
     (handbook Part 168: "mauzo ya jana" and "last month sales" were answered with last week's record, a different question). */
 const YESTERDAY = ['jana', 'yesterday'];
 const FAR = ['last_month', 'previous_month', 'prior_month', 'mwezi_uliopita', 'mwezi_jana', 'last_year', 'previous_year', 'mwaka_uliopita', 'mwaka_jana', 'last_quarter'];
-const WHEN = [...NOW, ...LAST, ...YESTERDAY, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly'];
+const WHEN = [...NOW, ...LAST, ...YESTERDAY, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly', 'mtd'];
 const QTY = ['ngapi', 'wangapi', 'kiasi', 'jumla', 'total', 'asilimia', 'percent', 'percentage', 'how_many', 'how_much', 'many', 'much', 'average', 'wastani', 'sum',
   'waiting', 'unassigned', 'remaining', 'osubiri', 'obaki', 'jagawiwa'];
 const PERSONAL = ['yangu', 'wangu', 'langu', 'zangu', 'changu', 'vyangu', 'nimepiga', 'nimepigia', 'nimefikia', 'nimeripoti', 'my', 'mine', 'nina', 'did_i', 'have_i', 'am_i'];
@@ -100,6 +112,8 @@ const hit = (tokens, words) => words.some(w => (WHOLE.has(w) ? tokens.includes(w
 /** Words of a question about HOW something works or what it MEANS, not about a figure. With no word of a day and none of the person's own, such a question reads nothing of the heavy views (the dashboard,
     last week's record, the Calls report of every team): "What does recovery percentage mean?", "How is the collection calculated?", "How many calls should I make per day?" (the second reader, 26 Nov: they read
     the heaviest reads in the book and the answer did not need a figure). The person's own calls are cheap and are not gated: "Where do I see how many calls I made?" is answered with the number. */
+/** A word that puts a question on a DAY or on now ("today", "this week", "so far"): not "weekly" or "monthly", which are adjectives of a target ("what does the monthly target mean"), and not "hii" ("asilimia hii inahesabiwaje"). */
+const DAYWORDS = ['leo', 'today', 'sasa', 'now', 'yesterday', 'jana', 'this_week', 'wiki_hii', 'this_month', 'mwezi_huu', 'so_far', 'hadi_sasa', 'this_morning', 'tonight', 'currently', 'current'];
 const RULEISH = ['mean', 'means', 'meaning', 'define', 'defined', 'definition', 'calculate', 'calculated', 'calculation', 'formula', 'explain', 'where_do', 'where_can', 'how_is', 'how_are', 'how_do', 'how_does', 'should',
   'maana', 'inamaanisha', 'hesabiwa', 'unahesabiwa', 'inahesabiwaje', 'inapatikanaje', 'jinsi', 'namna'];
 /** "gani" is "which" after a team or an officer ("timu gani") and "how much" after a quantity ("kiasi gani", "asilimia gani"): in the second use it does not make the question one about others
@@ -118,25 +132,28 @@ export function periodOf(question) {
 }
 
 /** The screens whose holders may be given each view (a portal person), and the phone's rule. The admin and a view-only code hold every screen. */
-const CALLS_TABS = ['calls'], STANDING_TABS = ['weekly', 'dashboard', 'perf', 'reports'], WEEK_TABS = ['dashboard', 'present'];
+const CALLS_TABS = ['calls'], STANDING_TABS = ['weekly', 'dashboard', 'perf', 'reports'], WEEK_TABS = ['dashboard', 'present'], MONTH_TABS = ['dashboard', 'weekly'];
 const tabsOk = (subject, tabs) => !!subject.allTabs || tabs.some(t => (subject.tabs || []).includes(t));
 const mayHave = {
   calls: s => (s.source === 'call' ? !!s.leader : tabsOk(s, CALLS_TABS)),
   standing: s => (s.source === 'call' ? !!s.leader : tabsOk(s, STANDING_TABS)),
   // the dashboard's own figures, for the teams the person's code holds: the portal door asks the same question of the tab (FN_TAB: dashboardFull is for the dashboard and the Presentation)
   week: s => s.source !== 'call' && tabsOk(s, WEEK_TABS),
+  // the month report: the door's own gate for it is the dashboard or the weekly report (FN_TAB monthReport), a different pair from the week's
+  month: s => s.source !== 'call' && tabsOk(s, MONTH_TABS),
   // a phone person's OWN calls: nobody else's, whatever their role (a leader's team figures are the calls view)
   mine: s => s.source === 'call',
 };
 /** What each view is called to the model's CONTEXT ("FIGURES YOU MAY GIVE THIS PERSON") and in the chat's note. */
-const LABEL = { calls: 'calls by team', standing: 'last week by team', week: 'this week by team', mine: 'own calls' };
+const LABEL = { calls: 'calls by team', standing: 'last week by team', week: 'this week by team', month: 'this month by week', mine: 'own calls' };
 const GIVES = {
   calls: 'calls by team (today and this week)',
   standing: 'last full week\'s sales, collection and recovery by team',
   week: 'this week\'s and today\'s dashboard figures (sales, collection, early collection, recovery, Expected Defaulters recovery, legal recovery, arrears, loan applications) and how the teams stand',
+  month: 'this month so far (sales against the monthly target, collection and recovery, week by week, and how the teams stand)',
   mine: 'their own calls (today and this week)',
 };
-const ORDER = ['calls', 'standing', 'week', 'mine'];
+const ORDER = ['calls', 'standing', 'week', 'month', 'mine'];
 /** The kinds of figures this person may be given, in words for the model: what their screens and their phone allow, nothing more. */
 export function figuresFor(subject) {
   if (!subject) return [];
@@ -147,6 +164,7 @@ const INTENT = {
   calls: c => c.asks && !(c.personal && !c.teamish),         // "how many calls did I make" is about the person, not about the teams (the Calls report of every team is the heaviest read there is)
   standing: c => c.asks || c.when || c.qty,
   week: c => c.asks || c.when || c.qty,
+  month: c => c.asks || c.when || c.qty,
   mine: c => !c.teamish && (c.qty || c.personal),            // "which of my teams calls least" is about teams
 };
 
@@ -159,9 +177,12 @@ export function viewsFor(subject, question) {
   const c = { asks: hit(others, CUES), when: hit(tokens, WHEN), qty: hit(tokens, QTY), personal: hit(tokens, PERSONAL), teamish: hit(others, TEAMISH) };
   const period = periodOf(question);
   if (period === 'far') return [];
-  const rule = hit(tokens, RULEISH) && !c.when && !c.personal;
+  const rule = hit(tokens, RULEISH) && !hit(tokens, DAYWORDS) && !c.personal;
+  const monthish = hit(tokens, MONTHISH), monthOnly = monthish && !hit(withoutByWeek(tokens), WEEKISH);
   return ORDER.filter(id => mayHave[id](subject) && hit(tokens, TOPIC[id]) && INTENT[id](c)
     && (id === 'mine' || !rule)
+    && (id !== 'month' || monthish)
+    && (!monthOnly || (id !== 'week' && id !== 'standing'))
     && (id !== 'standing' || period !== 'now') && (id !== 'week' || period !== 'last'));
 }
 
@@ -280,6 +301,50 @@ async function readWeek(db, teams, nowMs, fmt, subject) {
   const release = await portalSlot();
   try { return weekLines(await portalApi(db, user, 'dashboardFull', {}, nowMs)); } finally { release(); }
 }
+/** THIS MONTH, from the month report (handbook Part 170), asked of the portal's own door as the person, like the dashboard: the screens and the teams the person holds are what comes back. Only the totals and
+    the weeks of the month are kept as lines: the staff boards of the same answer (agents, leaders) are not, and nothing of a customer or a person's pay. */
+async function readMonth(db, teams, nowMs, fmt, subject) {
+  const user = userOf(subject);
+  if (!user) throw new Error('no portal person to ask the month report as');
+  const release = await portalSlot();
+  try { return monthLines(await portalApi(db, user, 'monthReport', {}, nowMs)); } finally { release(); }
+}
+export function monthLines(m) {
+  const o = m && typeof m === 'object' ? m : {};
+  const t = o.totals && typeof o.totals === 'object' ? o.totals : {};
+  const L = [];
+  L.push('MONTH ' + clean(o.month) + ' (' + clean(o.monthStart) + ' to ' + clean(o.monthEnd) + '), as of ' + clean(o.asOfDate) + '. Sales % is the share of the monthly sales target, collection % is collected / expected and recovery % is recovered / uncollected; "not measured" means it could not be worked out yet. Today\'s recovery is complete only once the day\'s later defaulter file is in (about 20:00 East Africa time, Monday to Saturday).');
+  if (o.recoveryRule === 'pairing') L.push('RECOVERY RULE: this book reads recovery by pairing each day\'s own two files (the latest-files rule is not installed here), so the recovery figures may differ from the dashboard\'s: say so when you give them.');
+  if (o.ledgerReady === false) L.push('The month\'s collection and recovery are not worked out yet (the month ledger is not ready): say you cannot see them yet, never that they are nil.');
+  L.push('MONTH SO FAR: sales ' + tzs(t.sales) + ' from ' + (num(t.loans) == null ? 'an unknown number of' : t.loans) + ' loans (' + pc(t.salesPct) + ' of the monthly target ' + tzs(t.monthTarget) + '); collection ' + tzs(t.collected) + ' of ' + tzs(t.expected)
+    + ' expected (' + pc(t.colPct) + '); recovery ' + tzs(t.recovered) + ' of ' + tzs(t.uncollected) + ' uncollected (' + pc(t.recPct) + '); the three together ' + pc(t.perfPct) + (num(t.perfOn) != null && t.perfOn < 3 ? ' (of the ' + t.perfOn + ' measured)' : '') + '.');
+  const rows = Array.isArray(o.rows) ? o.rows.filter(r => r && typeof r === 'object' && r.started !== false) : [];
+  if (rows.length) L.push('WEEK BY WEEK: ' + rows.map(r => 'week ' + (num(r.week) == null ? '?' : r.week) + ' (' + clean(r.from) + ' to ' + clean(r.to) + '): sales ' + tzs(r.sales) + ' (' + pc(r.salesPct) + '), collection ' + pc(r.colPct) + ', recovery ' + pc(r.recPct)).join('; ') + '.');
+  // THE TEAMS, from the month report's own team board (the GM's good-and-bad board: each team's weeks and the average of the weeks measured): the same answer, no read added. Without it a question
+  // about the month's lowest team would find nothing, now that a question about the month alone no longer reads the dashboard.
+  const tt = o.teamTrend && typeof o.teamTrend === 'object' ? o.teamTrend : null;
+  const board = k => (tt && Array.isArray(tt[k]) ? tt[k].filter(r => r && typeof r === 'object' && r.team) : []);
+  const sb = board('sales'), cb = board('collection'), rb = board('recovery');
+  if (sb.length || cb.length || rb.length) L.push('TEAMS (' + Math.max(sb.length, cb.length, rb.length) + '), each one\'s average over the weeks of this month measured so far: ' + rankLines(sb, 'avg', 'sales (each week against the weekly sales target)', 5, 2)
+    + ' ' + rankLines(cb, 'avg', 'collection', 5, 2) + ' ' + rankLines(rb, 'avg', 'recovery', 5, 2));
+  return L;
+}
+/** The lowest and the highest of one measure over a list of teams: all of them, lowest first, when they are few; else the lowest nLow and the highest nHigh. The teams with no figure are said, and so is how many share
+    the lowest and the highest value (twenty teams at 0% make the "lowest five" only the first five by name). One function for the week's and the month's team lines. Pure. */
+function rankLines(rows, key, label, nLow, nHigh) {
+  const list = rows.filter(r => num(r[key]) != null).sort((a, b) => a[key] - b[key] || String(a.team).localeCompare(String(b.team)));
+  if (!list.length) return label + ': not measured for any team.';
+  const show = r => clean(r.team) + ' ' + pc(r[key]);
+  // The teams with no figure are said, and so is how many share the lowest and the highest value: with twenty teams at 0% the "lowest five" are only the first five by name, and the "highest"
+  // can stand at the lowest value (found by the second reader, 26 Nov).
+  const miss = rows.length - list.length, missNote = miss ? ' (' + miss + ' team' + (miss === 1 ? ' has' : 's have') + ' no figure)' : '';
+  if (list.length <= SHOW_ALL_UP_TO) return label + ', lowest first: ' + list.map(show).join(', ') + '.' + missNote;
+  const lo = list[0][key], hi = list[list.length - 1][key];
+  const atLo = list.filter(r => r[key] === lo).length, atHi = list.filter(r => r[key] === hi).length;
+  if (lo === hi) return label + ': all ' + list.length + ' measured teams are at ' + pc(lo) + '.' + missNote;
+  return label + ': lowest ' + nLow + ': ' + list.slice(0, nLow).map(show).join(', ') + (atLo > nLow ? ' (' + atLo + ' teams are at ' + pc(lo) + ': these are the first ' + nLow + ' by name)' : '')
+    + '; highest ' + nHigh + ': ' + list.slice(-nHigh).reverse().map(show).join(', ') + (atHi > nHigh ? ' (' + atHi + ' teams are at ' + pc(hi) + ')' : '') + '.' + missNote;
+}
 /** The lines for the model from one dashboard answer: the week so far, today, the defaulters and, team by team, the lowest and highest of three measures. Pure. */
 export function weekLines(d) {
   const o = d && typeof d === 'object' ? d : {};
@@ -326,20 +391,7 @@ export function weekLines(d) {
       + (num(cards.abnormal) == null ? 'not known' : cards.abnormal) + (num(cards.abnormalAmount) ? ' (' + tzs(cards.abnormalAmount) + ')' : '') + '.');
   const rows = Array.isArray(o.teamPerf) ? o.teamPerf.filter(r => r && r.team) : [];
   if (rows.length) {
-    const lowHigh = (key, label, nLow, nHigh) => {
-      const list = rows.filter(r => num(r[key]) != null).sort((a, b) => a[key] - b[key] || String(a.team).localeCompare(String(b.team)));
-      if (!list.length) return label + ': not measured for any team.';
-      const show = r => clean(r.team) + ' ' + pc(r[key]);
-      // The teams with no figure are said, and so is how many share the lowest and the highest value: with twenty teams at 0% the "lowest five" are only the first five by name, and the "highest"
-      // can stand at the lowest value (found by the second reader, 26 Nov).
-      const miss = rows.length - list.length, missNote = miss ? ' (' + miss + ' team' + (miss === 1 ? ' has' : 's have') + ' no figure)' : '';
-      if (list.length <= SHOW_ALL_UP_TO) return label + ', lowest first: ' + list.map(show).join(', ') + '.' + missNote;
-      const lo = list[0][key], hi = list[list.length - 1][key];
-      const atLo = list.filter(r => r[key] === lo).length, atHi = list.filter(r => r[key] === hi).length;
-      if (lo === hi) return label + ': all ' + list.length + ' measured teams are at ' + pc(lo) + '.' + missNote;
-      return label + ': lowest ' + nLow + ': ' + list.slice(0, nLow).map(show).join(', ') + (atLo > nLow ? ' (' + atLo + ' teams are at ' + pc(lo) + ': these are the first ' + nLow + ' by name)' : '')
-        + '; highest ' + nHigh + ': ' + list.slice(-nHigh).reverse().map(show).join(', ') + (atHi > nHigh ? ' (' + atHi + ' teams are at ' + pc(hi) + ')' : '') + '.' + missNote;
-    };
+    const lowHigh = (key, label, nLow, nHigh) => rankLines(rows, key, label, nLow, nHigh);
     // a team's recovery of TODAY is nought for everybody until the later file is in: not a ranking (the week's, on a weekend, is not made of today alone)
     const recToday = laterOut && rows[0].recBasis !== 'week';
     L.push('TEAMS (' + rows.length + '): ' + lowHigh('collPctWeek', 'collection so far this week', 5, 2) + ' '
@@ -406,9 +458,9 @@ export function mineLines(rep, name, today, mon) {
   return L;
 }
 
-const READ = { calls: readCalls, standing: readStanding, week: readWeek, mine: readMine };
+const READ = { calls: readCalls, standing: readStanding, week: readWeek, month: readMonth, mine: readMine };
 /** How long a reading is kept: the calls and last week's results five minutes; the dashboard two (the door keeps its own answer a minute); a person's own calls one, because they are asking how they are doing NOW. */
-const TTL = { calls: DATA_TTL_MS, standing: DATA_TTL_MS, week: 2 * 60 * 1000, mine: 60 * 1000 };
+const TTL = { calls: DATA_TTL_MS, standing: DATA_TTL_MS, week: 2 * 60 * 1000, month: 2 * 60 * 1000, mine: 60 * 1000 };
 
 /* ---------- the answer kept for five minutes, and the one in flight shared ---------- */
 const kept = new Map();
