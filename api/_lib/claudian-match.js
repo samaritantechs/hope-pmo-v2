@@ -21,7 +21,7 @@
    about a screen the person does not hold cannot bring that screen's text back.
    ===================================================================================== */
 import { wordsOf, cardScore } from './claudian-cards.js';
-import { FAQ, faqAllowed } from './claudian-faq.js';
+import { FAQ, faqAllowed, APK_URL, ALWAYS_HINT } from './claudian-faq.js';
 
 /** An answer is given when the keys the question touches weigh at least this much (1 is one key that no other entry has; two ordinary words together reach it). */
 export const MATCH_MIN = 0.95;
@@ -113,4 +113,14 @@ export function faqMatch(subject, question) {
   if (!asksForFigure(question)) return r;
   const near = r.best ? [r.best, ...r.near].slice(0, MAX_NEAR_WITHOUT) : r.near;
   return { best: null, near, tie: false, tokens: r.tokens, figure: true };
+}
+
+/** THE INSTRUCTION THE OWNER ORDERED TO GO WITH EVERY ANSWER TO A CONCERN (handbook Part 165): for a typed question that clearly asks about one (the ready answer it matches is in ALWAYS_HINT),
+    the fixed text to put after whatever answered it, in the person's language; null when it is not such a question, or when the answer has it already (the link is in it). The model is not trusted
+    to repeat a link or an instruction exactly: it is added by the server, word for word. Never for a question that asks for the person's own figure (nothing is matched then). */
+export function concernHint(subject, question, lang, answer) {
+  const m = faqMatch(subject, question);
+  const h = m.best && ALWAYS_HINT[m.best.id];
+  if (!h) return null;
+  return String(answer == null ? '' : answer).includes(APK_URL) ? null : (h[lang] || h.en);
 }

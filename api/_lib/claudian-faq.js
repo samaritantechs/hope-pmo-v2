@@ -33,6 +33,26 @@
 
 import { FAQ_KEYS } from './claudian-faq-keys.js';
 
+/* =====================================================================================
+   WHAT A PERSON IS TOLD, ALWAYS, WHEN A CALL DID NOT TICK THE CUSTOMER (handbook Part 165).
+
+     "I called a customer but Amepigiwa leo did not appear" had 26 taps by 24 people ... always give them instructions of clossing app and re-opening so as to
+      allow permissions or re-install the app from https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk
+                                                                                                                                 -- the owner, 26 Nov 2026
+
+   The tick comes from a call that SYNCED, and a call reaches the system only when the app can read the phone's call log: a permission refused, never asked, or taken away by the
+   phone leaves the app running and every call unseen. So the answer to this concern ends with the same instruction every time, in the words the owner gave: close the app completely and open it
+   again so that it asks for its permissions (and allow them), or install it again from the release link. ONE DEFINITION: the ready answer below and the typed question the model answers
+   (claudian.js appends it, exactly, whatever the model wrote) both use PERMISSIONS_HINT; the link is the app's own (app-version.json apkUrl: a test holds the two equal).
+   ===================================================================================== */
+export const APK_URL = 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk';
+export const PERMISSIONS_HINT = {
+  sw: 'Ikiwa alama bado haionekani: funga programu kabisa kisha uifungue tena ili iombe ruhusa, na uzikubali. Ikiendelea, isakinishe upya kutoka hapa: ' + APK_URL,
+  en: 'If it still does not appear: close the app completely and open it again so it asks for its permissions, and allow them. If it still does not, install the app again from here: ' + APK_URL,
+};
+/** The ready answers whose instruction goes with EVERY answer to the same concern, a typed one answered by the model included (the entry's id: its hint). */
+export const ALWAYS_HINT = { 'call-not-ticked': PERMISSIONS_HINT };
+
 const ENTRIES = [
   // ---- for everybody ----
   { id: 'portfolio-call', any: true,
@@ -59,8 +79,8 @@ const ENTRIES = [
 
   // ---- the phone app ----
   { id: 'call-not-ticked', call: 'any',
-    sw: { q: 'Nimempigia mteja lakini hajapata alama ya "Amepigiwa leo"?', a: 'Alama inatokea simu iliyosawazishwa kwa namba ya mteja au ya mdhamini ikizidi sekunde {minSecs}, ikipigwa na mtu yeyote leo. Simu kwa "Ana namba nyingine" haileti alama hii, ingawa inahesabiwa kuwa simu ya portfolio. Fungua programu ili isawazishe, kisha angalia tena.' },
-    en: { q: 'I called a customer but "Amepigiwa leo" did not appear?', a: 'The tick shows once a synced call, by anyone today, to the customer\'s own number or the guarantor\'s lasted longer than {minSecs} seconds. A call to the "Ana namba nyingine" number does not tick the customer, though it still counts as a portfolio call. Open the app so it syncs, then look again.' } },
+    sw: { q: 'Nimempigia mteja lakini hajapata alama ya "Amepigiwa leo"?', a: 'Alama inatokea simu iliyosawazishwa kwa namba ya mteja au ya mdhamini ikizidi sekunde {minSecs}, ikipigwa na mtu yeyote leo. Simu kwa "Ana namba nyingine" haileti alama hii, ingawa inahesabiwa kuwa simu ya portfolio. Fungua programu ili isawazishe, kisha angalia tena.\n\n' + PERMISSIONS_HINT.sw },
+    en: { q: 'I called a customer but "Amepigiwa leo" did not appear?', a: 'The tick shows once a synced call, by anyone today, to the customer\'s own number or the guarantor\'s lasted longer than {minSecs} seconds. A call to the "Ana namba nyingine" number does not tick the customer, though it still counts as a portfolio call. Open the app so it syncs, then look again.\n\n' + PERMISSIONS_HINT.en } },
   { id: 'call-other-number', call: 'any',
     sw: { q: 'Nirekodi wapi namba nyingine ya mteja?', a: 'Kwenye kadi ya mteja (gusa jina lake) weka namba hiyo kwenye "Ana namba nyingine". Simu kwa namba hiyo zitahesabiwa kama simu za portfolio za mteja huyo.' },
     en: { q: 'Where do I record another number for a customer?', a: 'On the customer\'s card (tap the name) enter it under "Ana namba nyingine". Calls to that number then count as portfolio calls for that customer.' } },
