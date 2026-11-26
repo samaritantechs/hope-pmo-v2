@@ -220,11 +220,14 @@
    told too, because the officer's location service runs for whoever is signed in. ES5-plain. */
 (function () {
   var CALLS_KEYS = ['hcListCache_v1', 'hcBoot_v1', 'hcDaySummary_v1', 'hcUi_v1'];
+  // Claudian-PMO keeps each person's conversation in this browser so that it is found again (public/mod/claudian.js, handbook Part 167): whoever signs out, the next person does not meet it.
+  var HELPER_KEYS = ['claudianChat.portal', 'claudianChat.call'];
   function rm(k) { try { localStorage.removeItem(k); } catch (e) {} }
   var api = {
-    // The portal's side: the code every portal page signs in from, and the native copy of it.
+    // The portal's side: the code every portal page signs in from, and the native copy of it, and the helper's kept conversations (every sign-out goes through here).
     clearPortal: function () {
       rm('hopeCode');
+      for (var j = 0; j < HELPER_KEYS.length; j++) rm(HELPER_KEYS[j]);
       try { if (window.HopeCalls && window.HopeCalls.setOfficerCode) window.HopeCalls.setOfficerCode(''); } catch (e) {}
     },
     // Calls' side: signed out, with what it remembered about this handset's officer dropped.

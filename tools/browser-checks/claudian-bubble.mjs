@@ -20,6 +20,12 @@
         table search on the screen does not take the card's buttons away, and a code without the Settings tab never sees the card.
      C. HOPE CALLS: the module is asked for only after the late timer (8 seconds) and after the officer is in, the bubble speaks as the
         registered handset and the officer's own ready questions come back, and signing out takes the bubble away.
+     D. THE KEPT CONVERSATION (handbook Part 167; A22 to A24 and C5): a person's lines are kept in their own browser under a mark of who they
+        are (never the access code or the device id), drawn again after a reload with the server asked NOTHING, the panel opens on the latest
+        question, a restored choice is a live button, another person (or a person the record is not made for) finds an empty panel and the
+        record is deleted, a record over thirty days old or a damaged one is ignored, the last exchange rides to the model only while it is
+        under thirty minutes old, the portal's Toka and the call app's sign-out forget it, and the one release address in an answer is a real
+        link (the constant as its address) while every other address and every bit of markup stays text.
 
    Lives OUTSIDE test/ on purpose (see call-warmstart.mjs): it needs a browser. To run it:
 
@@ -79,7 +85,7 @@ const client = { messages: { create: async (req) => {
 } } };
 
 /* What the server was asked for, by the pages: so "nothing until the bubble is tapped" is a count, not a hope. */
-const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0 };
+const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0, brand: false };
 let DEVICE = 'dF';
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const REAL_PORTAL = new Set(['settings', 'accessCodes', 'officerAccounts', 'systemOpenGet', 'teams', 'claudianStatus', 'claudianSet', 'claudianTest', 'settingSet', 'storageUsage']);
@@ -93,6 +99,7 @@ const srv = http.createServer((req, res) => {
     if (seen.modules404) { res.writeHead(404); res.end(''); return; }
     res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(MODULE)); return;
   }
+  if (u.pathname === '/brand.js' && seen.brand) { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(path.join(ROOT, 'public/brand.js'))); return; }
   if (u.pathname.startsWith('/mod/')) {
     const f = path.join(ROOT, 'public/mod', path.basename(u.pathname));
     if (fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(f)); return; }
@@ -220,6 +227,33 @@ async function drag(page, dx, dy) {
   await page.mouse.up();
 }
 const waitAnswer = (page, n) => until(page, c => { const h = document.getElementById('claudianPMO'); return h && h.shadowRoot.querySelectorAll('.body .m:not(.w):not(.t)').length >= c; }, n);
+
+/* The kept conversation (handbook Part 167): the portal page again after a reload, signed in as `code` (what portal() does at its start); what is kept in the browser; the lines of the panel. */
+async function reenter(page, code, lang = 'sw') {
+  await page.reload();
+  const me = { name: USERS[code].name, role: USERS[code].role, teams: USERS[code].teams, teamCount: null, tabs: USERS[code].tabs, can: { dashboard: true, upload: false, admin: code === 'ADM' } };
+  await page.evaluate(([m, c, l]) => { S.code = c; start(m); S.lang = l; }, [me, code, lang]);
+  await page.waitForFunction(() => !!document.getElementById('claudianPMO'), null, { timeout: 12000 }).catch(() => {});
+}
+async function kept(page, key = 'claudianChat.portal') {
+  for (let i = 0; i < 3; i++) { try { return await page.evaluate(k => localStorage.getItem(k), key); } catch (e) { await page.waitForTimeout(250); } }
+  return 'UNREADABLE';
+}
+/** Every line of the conversation (not the welcome line, which is the panel's own): its kind, its text, and the links in it. */
+const convo = page => page.evaluate(() => {
+  const r = document.getElementById('claudianPMO').shadowRoot;
+  return [...r.querySelectorAll('.body .m')].slice(1).map(m => ({ kind: m.className.replace('m ', ''), text: m.textContent.replace(/\s+/g, ' ').trim(), links: [...m.querySelectorAll('a')].map(a => ({ href: a.getAttribute('href'), target: a.target, rel: a.rel, text: a.textContent })) }));
+});
+/** Is the person's latest question inside the part of the panel that shows? */
+const latestShown = page => page.evaluate(() => {
+  const r = document.getElementById('claudianPMO').shadowRoot, b = r.querySelector('.body').getBoundingClientRect(), us = [...r.querySelectorAll('.body .m.u')], l = us[us.length - 1];
+  if (!l) return null;
+  const x = l.getBoundingClientRect();
+  return { top: Math.round(x.top - b.top), bottom: Math.round(b.bottom - x.bottom), within: x.top >= b.top - 1 && x.bottom <= b.bottom + 1 };
+});
+const APK = 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk';
+/** Nothing is on its way: the panel's "Loading..." / "Thinking..." line is gone. (A restored conversation can hold choices, so "a chip exists" is no sign that the list has arrived.) */
+const idle = page => until(page, () => !document.getElementById('claudianPMO').shadowRoot.querySelector('.body .m.t'));
 
 /* ================================================= A. THE PORTAL ================================================= */
 setting('CLAUDIAN_AI', 'OFF'); setting('CLAUDIAN_USER_DAILY', '20');
@@ -690,6 +724,170 @@ await section('A21 (SW / EN while busy)', async () => {
   seen.delayAsk = 0; seen.delayStatus = 0;
 });
 
+// ---- the conversation is KEPT (handbook Part 167; the owner, 26 Nov: "could user always find their history without new chat whenever thry open Claudian-PMO")
+await section('A22 (history kept across a reload)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  const { page, ctx } = await portal('A22');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+  await page.locator('.chip').nth(1).click(); await waitAnswer(page, 4);
+  await page.locator('textarea').fill('target za timu');             // two ready answers weigh alike: the nearest are offered as choices
+  await page.keyboard.press('Enter');
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.body .m:not(.w):not(.t)').length >= 5);
+  const before = await convo(page);
+  const raw = await kept(page); let rec = null; try { rec = JSON.parse(raw); } catch (e) { /* reported below */ }
+  check('A22 every line of the conversation is kept in the browser, under a mark of who it is', !!rec && rec.v === 1 && typeof rec.who === 'string' && rec.who.length >= 6 && rec.m.length === before.length && before.length >= 5, JSON.stringify([rec && rec.v, rec && rec.who, rec && rec.m.length, before.length]));
+  check('A22 the access code is nowhere in what is kept', typeof raw === 'string' && !/ADM/.test(raw), String(raw).slice(0, 160));
+  const near = before.find(x => /near/.test(x.kind));
+  check('A22 the choices the panel offered are kept with their ids', !!near && rec.m.some(l => l[0] === 'n' && l[1].length >= 1 && typeof l[1][0].id === 'string'), JSON.stringify(rec && rec.m.map(l => l[0])));
+  const asked0 = seen.claudian.length;
+  await reenter(page, 'ADM');
+  await page.waitForTimeout(200);
+  check('A22 after a reload the server has been asked NOTHING: the conversation is drawn from the browser', seen.claudian.length === asked0, JSON.stringify(seen.claudian.slice(asked0)));
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await idle(page);
+  const after = await convo(page);
+  check('A22 the panel opens on the same conversation: the same lines in the same order, not a new empty chat', JSON.stringify(after.map(x => [x.kind, x.text])) === JSON.stringify(before.map(x => [x.kind, x.text])), JSON.stringify(after.map(x => x.kind)));
+  const vis = await latestShown(page);
+  check('A22 and it opens on the latest question, with its answer under it', vis && vis.within, JSON.stringify(vis));
+  // a restored choice is a live button: a tap asks its ready question by id
+  const nearBtn = page.locator('.m.near .chip').first();
+  const nid = await nearBtn.getAttribute('data-id');
+  const f0 = asks('faq').length;
+  await nearBtn.click(); await waitAnswer(page, after.length + 2);
+  check('A22 a choice restored from the browser asks its ready question as before', asks('faq').length === f0 + 1 && asks('faq')[f0].id === nid, JSON.stringify([nid, asks('faq').slice(f0)]));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-history.png') });
+  // the panel's own welcome line is still the first, once
+  const lines = await shape(page);
+  check('A22 the panel\'s welcome line is still the first line, once', lines.msgs.filter(m => /Andika swali lako/.test(m.text)).length === 1 && /Andika swali lako/.test(lines.msgs[0].text), JSON.stringify(lines.msgs[0]));
+  // another person on the same browser finds an empty panel, and the first person's conversation is deleted, not just hidden
+  await reenter(page, 'CLK');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  check('A22 another person on the same browser finds an EMPTY panel', (await convo(page)).length === 0);
+  check('A22 and the first person\'s conversation was deleted the moment it was met', (await kept(page)) === null, String(await kept(page)).slice(0, 80));
+  // a conversation more than thirty days old is not found
+  await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+  check('A22 the second person\'s own conversation is kept under their own mark', (await kept(page)) !== null && JSON.parse(await kept(page)).who !== rec.who);
+  await page.evaluate(() => { const r = JSON.parse(localStorage.getItem('claudianChat.portal')); r.at = Date.now() - 31 * 86400000; localStorage.setItem('claudianChat.portal', JSON.stringify(r)); });
+  await reenter(page, 'CLK');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  check('A22 thirty-one days old: not found, and deleted', (await convo(page)).length === 0 && (await kept(page)) === null);
+  // a damaged record is ignored without a word
+  await page.evaluate(() => localStorage.setItem('claudianChat.portal', '{oops'));
+  await reenter(page, 'CLK');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const st = await shape(page);
+  check('A22 a damaged record is ignored: the panel opens as it always did, with its choices', st.open && st.chips.length >= 5 && (await convo(page)).length === 0, JSON.stringify([st.open, st.chips.length, (await convo(page)).length]));
+  await ctx.close();
+});
+
+// ---- the Toka (the portal's sign-out) takes the kept conversation with the person
+await section('A22b (the portal sign-out forgets)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  for (const withBrand of [false, true]) {
+    // (false) the page has no brand.js (an old cached page, a failed fetch): the helper's own forget() does it; (true) the system's one sign-out, HOPESession, does it
+    seen.brand = withBrand;
+    const { page, ctx } = await portal('A22b' + (withBrand ? 'b' : 'a'));
+    const sessionKnown = await page.evaluate(() => typeof window.HOPESession === 'object');
+    check('A22b the page ' + (withBrand ? 'has' : 'has not') + ' the system\'s one sign-out (brand.js)', sessionKnown === withBrand, String(sessionKnown));
+    await tap(page);
+    await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+    await drag(page, -80, -60);                           // the bubble's place is kept too
+    check('A22b a conversation and a place are kept', (await kept(page)) !== null && (await kept(page, 'claudianPos.portal')) !== null);
+    await page.evaluate(() => { localStorage.setItem('claudianChat.call', '{"v":1}'); document.getElementById('outBtn').click(); });
+    await page.waitForTimeout(800);
+    check('A22b pressing Toka forgets the conversation, and the call app\'s copy as well (one storage, one sign-out) -- ' + (withBrand ? 'by HOPESession and by the helper' : 'by the helper alone'), (await kept(page)) === null && (await kept(page, 'claudianChat.call')) === null, JSON.stringify([await kept(page), await kept(page, 'claudianChat.call')]));
+    check('A22b and the bubble\'s place is nobody\'s secret and stays', (await kept(page, 'claudianPos.portal')) !== null);
+    await ctx.close();
+  }
+  seen.brand = false;
+});
+
+// ---- a long conversation: a hidden panel forgets its scroll, so every opening goes to the latest question
+await section('A22c (a long conversation opens on the latest question)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  const { page, ctx } = await portal('A22c');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+  const mine = JSON.parse(await kept(page));
+  const m = [];
+  for (let i = 1; i <= 18; i++) { m.push(['u', 'Swali la ' + i + ': timu yangu inafanyaje leo?']); m.push(['a', 'Jibu la ' + i + ': ' + 'Piga simu za portfolio kwa wateja wa leo kwanza, kisha ahadi, kisha waliokosa. '.repeat(4)]); }
+  await page.evaluate(v => localStorage.setItem('claudianChat.portal', JSON.stringify(v)), { v: 1, who: mine.who, at: Date.now(), ha: 0, hist: null, m });
+  await reenter(page, 'ADM');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const scroll1 = await page.evaluate(() => { const b = document.getElementById('claudianPMO').shadowRoot.querySelector('.body'); return { top: Math.round(b.scrollTop), room: b.scrollHeight - b.clientHeight }; });
+  const vis1 = await latestShown(page);
+  check('A22c thirty-six lines are drawn, and the panel is scrolled down to the latest question', (await convo(page)).length === 36 && scroll1.room > 200 && scroll1.top > 200 && vis1 && vis1.within, JSON.stringify([scroll1, vis1]));
+  // closed and opened again: the hidden panel forgot its scroll, and the opening goes back to the latest question
+  await page.keyboard.press('Escape');
+  await tap(page);
+  await page.waitForTimeout(300);
+  const scroll2 = await page.evaluate(() => { const b = document.getElementById('claudianPMO').shadowRoot.querySelector('.body'); return Math.round(b.scrollTop); });
+  const vis2 = await latestShown(page);
+  check('A22c closed and opened again, it is on the latest question again', scroll2 > 200 && vis2 && vis2.within, JSON.stringify([scroll2, vis2]));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-long.png') });
+  await ctx.close();
+});
+
+// ---- the exchange rides across a reload while it is young
+await section('A23 (the last exchange across a reload)', async () => {
+  setting('CLAUDIAN_AI', 'ON'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); PROV.text = 'Piga simu za portfolio kwa wateja wa leo.'; seen.claudian.length = 0;
+  const { page, ctx } = await portal('A23');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('textarea').fill('Nifanye nini leo kwa timu yangu?'); await page.keyboard.press('Enter'); await waitAnswer(page, 2);
+  await reenter(page, 'ADM');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  check('A23 after a reload the AI answer is there', (await convo(page)).some(x => x.kind === 'a' && /Piga simu za portfolio/.test(x.text)));
+  await page.locator('textarea').fill('Na kesho?'); await page.keyboard.press('Enter'); await waitAnswer(page, 4);
+  const q2 = asks('ask')[1];
+  check('A23 the next question carries the last exchange, kept across the reload (while it is under thirty minutes old)', !!q2 && Array.isArray(q2.hist) && q2.hist.length === 1 && q2.hist[0].q === 'Nifanye nini leo kwa timu yangu?' && /^Piga simu za portfolio/.test(q2.hist[0].a), JSON.stringify(q2 && q2.hist));
+  // thirty-one minutes later the lines are found and the exchange is not handed to the model
+  await page.evaluate(() => { const r = JSON.parse(localStorage.getItem('claudianChat.portal')); r.ha = Date.now() - 31 * 60000; localStorage.setItem('claudianChat.portal', JSON.stringify(r)); });
+  await reenter(page, 'ADM');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  check('A23 thirty-one minutes later the lines are still found', (await convo(page)).length >= 4);
+  await page.locator('textarea').fill('Na kesho kutwa?'); await page.keyboard.press('Enter'); await waitAnswer(page, 6);
+  const q3 = asks('ask')[2];
+  check('A23 but the exchange is no longer sent to the model as the previous one', !!q3 && Array.isArray(q3.hist) && q3.hist.length === 0, JSON.stringify(q3 && q3.hist));
+  await ctx.close();
+});
+
+// ---- a link in an answer: the release address is a real link, and nothing else is
+await section('A24 (the link)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  const seeded = { v: 1, who: 'x', at: Date.now(), ha: 0, hist: null, m: [['u', 'I called a customer but "Amepigiwa leo" did not appear'], ['a', 'Close the app completely and open it again so it asks for permissions.\n\nIf it still does not appear, install it again from here: ' + APK],
+    ['a', 'Do not use https://evil.example/HOPE-Calls.apk or <a href="https://evil.example">this</a>']] };
+  const { page, ctx } = await portal('A24');
+  const who = await page.evaluate(() => { /* the module's mark of the signed-in person: ask it by keeping one line first */ return null; });
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+  const mine = JSON.parse(await kept(page));
+  seeded.who = mine.who;
+  await page.evaluate(v => localStorage.setItem('claudianChat.portal', JSON.stringify(v)), seeded);
+  await reenter(page, 'ADM');
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const cv = await convo(page);
+  const install = cv[1], hostile = cv[2];
+  check('A24 the release address in an answer is a link, with the constant as its address, opening elsewhere', !!install && install.links.length === 1 && install.links[0].href === APK && install.links[0].target === '_blank' && /noopener/.test(install.links[0].rel) && install.links[0].text === APK, JSON.stringify(install));
+  check('A24 the words around it are all there', /Close the app completely and open it again/.test(install.text) && /install it again from here: https:\/\/github\.com/.test(install.text), install.text);
+  check('A24 any other address, and markup, is text and never a link', !!hostile && hostile.links.length === 0 && /evil\.example\/HOPE-Calls\.apk/.test(hostile.text) && /<a href=/.test(hostile.text), JSON.stringify(hostile));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-portal-link.png') });
+  await ctx.close();
+});
+
 await section('B (settings)', async () => {
   setting('CLAUDIAN_AI', 'OFF'); setting('CLAUDIAN_USER_DAILY', '20'); setting('CLAUDIAN_ALL_DAILY', '2000'); C.noteClaudianSettingsWritten(db);
   const { page, ctx } = await portal('B1');
@@ -856,8 +1054,10 @@ await section('C2 (sign-out forgets)', async () => {
   await page.locator('textarea').fill('Timu yangu inadaiwa kiasi gani?');
   await page.keyboard.press('Enter');
   await waitAnswer(page, 2);
+  const hadKept = await kept(page, 'claudianChat.call');
   await page.evaluate(() => { try { doLogout(); } catch (e) {} });
   await page.waitForTimeout(200);
+  check('C4 the conversation was kept for the next visit, and signing out deleted it (the handset is shared)', typeof hadKept === 'string' && hadKept.length > 20 && (await kept(page, 'claudianChat.call')) === null, JSON.stringify([String(hadKept).slice(0, 40), await kept(page, 'claudianChat.call')]));
   const after = await page.evaluate(() => { const h = document.getElementById('claudianPMO'), r = h.shadowRoot; return { host: h.style.display, open: /\bopen\b/.test(r.querySelector('.panel').className), lines: r.querySelectorAll('.body .m:not(.w)').length, box: r.querySelector('textarea').value }; });
   check('C4 signing out forgets the conversation: the panel is closed and holds no line of the officer who left', after.host === 'none' && !after.open && after.lines === 0 && after.box === '', JSON.stringify(after));
   await page.evaluate(() => window.ClaudianPMO.show());
@@ -871,6 +1071,55 @@ await section('C2 (sign-out forgets)', async () => {
   check('C4 the next officer\'s first question carries NO exchange of the one who left, and the list was asked for again', nxt.length === 1 && Array.isArray(nxt[0].hist) && nxt[0].hist.length === 0 && asks('status').length === 1, JSON.stringify([nxt.map(a => a.hist), asks('status').length]));
   const quoted = asked.filter(r => /Timu yangu inadaiwa/.test(r.messages[0].content) && /Na ahadi za leo/.test(r.messages[0].content));
   check('C4 and the model was never given the last officer\'s words as the previous exchange', quoted.length === 0, String(quoted.length));
+  await ctx.close();
+});
+
+// ---- HOPE Calls: the officer finds their conversation after the app is opened again, and the instruction's link is a link
+await section('C5 (history in HOPE Calls)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests();
+  seen.claudian.length = 0; DEVICE = 'dF';
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errs.push('C5: ' + String(e)));
+  page.on('console', m => { if (m.type() === 'error' && !BENIGN.test(m.text())) errs.push('C5 console: ' + m.text()); });
+  page.setDefaultTimeout(9000);
+  await page.addInitScript(SPEED, 1500);
+  const enter = async () => { await page.waitForFunction(() => typeof S === 'object' && S.entered === true, null, { timeout: 12000 }).catch(() => {}); await until(page, () => !!document.getElementById('claudianPMO'), null, 20000); };
+  await page.goto(base + '/call');
+  await enter();
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const concern = page.locator('.chip[data-id="call-not-ticked"]');
+  check('C5 the concern "Amepigiwa leo did not appear" is one of the officer\'s ready questions', (await concern.count()) === 1);
+  await concern.click(); await waitAnswer(page, 2);
+  let cv = await convo(page);
+  const ans = cv[cv.length - 1];
+  check('C5 its answer ends with the instruction to close the app and open it again so it asks for permissions', /close the app completely|funga programu kabisa/i.test(ans.text) && /permission|ruhusa/i.test(ans.text), ans.text.slice(-260));
+  check('C5 and the release address in it is a link a finger can tap, opening outside the app', ans.links.length === 1 && ans.links[0].href === APK && ans.links[0].target === '_blank' && /noopener/.test(ans.links[0].rel), JSON.stringify(ans.links));
+  const dev = await page.evaluate(() => (typeof DEV === 'string' ? DEV : ''));
+  const raw = await kept(page, 'claudianChat.call');
+  check('C5 the conversation is kept under the call app\'s own key, with a mark and not the handset\'s id', typeof raw === 'string' && JSON.parse(raw).v === 1 && (dev.length < 8 || !raw.includes(dev)) && (await kept(page, 'claudianChat.portal')) === null, JSON.stringify([dev.length, String(raw).slice(0, 60)]));
+  // the app is opened again (the page reloads, a handset brings it back from the background)
+  const asked0 = seen.claudian.length;
+  await page.reload();
+  await enter();
+  await page.waitForTimeout(200);
+  check('C5 after the reload the server has been asked nothing', seen.claudian.length === asked0, JSON.stringify(seen.claudian.slice(asked0)));
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const back = await convo(page);
+  check('C5 the officer finds the same conversation, the link included, and not a new empty chat', JSON.stringify(back.map(x => [x.kind, x.text])) === JSON.stringify(cv.map(x => [x.kind, x.text])) && back[back.length - 1].links.length === 1 && back[back.length - 1].links[0].href === APK, JSON.stringify(back.map(x => x.kind)));
+  const vis = await latestShown(page);
+  check('C5 the sheet opens on the latest question', vis && vis.within, JSON.stringify(vis));
+  check('C5 it stays inside the 390 pixel screen', (await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)) && panelInside(await shape(page)));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-call-history.png') });
+  // another officer on the same handset: the sign-out forgets (C2 above), and a record that is not theirs is never shown
+  await page.evaluate(() => { const r = JSON.parse(localStorage.getItem('claudianChat.call')); r.who = 'someone.else'; localStorage.setItem('claudianChat.call', JSON.stringify(r)); });
+  await page.reload();
+  await enter();
+  await tap(page);
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  check('C5 a conversation that is not this handset\'s officer\'s is not shown, and is deleted', (await convo(page)).length === 0 && (await kept(page, 'claudianChat.call')) === null);
   await ctx.close();
 });
 

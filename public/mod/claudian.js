@@ -34,6 +34,12 @@
   var STATUS_FRESH_MS = 60000;   // the ready questions and the switch are asked again when the panel is opened after this long
   var TAIL_MS = 450;             // after a touch tap toggles the panel, the mouse events and the click that follow it are swallowed for this long ...
   var TAIL_PX = 24;              // ... if they are aimed this near the place of the tap
+  var HIST_DAYS = 30;            // a person's conversation is found again for this many days after its last line (handbook Part 167)
+  var HIST_FRESH_MS = 30 * 60 * 1000;   // ... but only an exchange this young rides with the next question to the model as its context
+  var HIST_LINE = 2000;          // a kept line is cut here
+  var HIST_BYTES = 60000;        // and the whole record is kept under this many characters (the oldest lines go first)
+  /* The one address the helper may hand out as a link: the release the call app is installed from (api/_lib/claudian-faq.js APK_URL and app-version.json's apkUrl: a test holds the three equal). */
+  var APK_URL = 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk';
 
   /* THE WORDS. Swahili first; the panel follows the page's own language (and the SW / EN button in its header changes it for this sitting). */
   var T = {
@@ -139,6 +145,9 @@
     '.m.e{align-self:flex-start;background:var(--bad);color:var(--badink);border-bottom-left-radius:4px}',
     '.m.w{align-self:stretch;max-width:100%;background:none;color:var(--mut);padding:2px 2px 0;font-size:13px}',
     '.m.t{align-self:flex-start;background:none;color:var(--mut);font-style:italic}',
+    '.m a{color:var(--chipink);text-decoration:underline;font-weight:600;overflow-wrap:anywhere;word-break:break-all}',
+    '.m.u a{color:#fff}',
+    '.m a:focus-visible{outline:2px solid #3B82F6;outline-offset:1px}',
     '.m.near{display:flex;flex-direction:column;gap:6px}',
     'details.faq{flex:none;border-top:1px dashed var(--line);padding-top:6px}',
     'details.faq summary{cursor:pointer;color:var(--mut);font-size:12.5px;font-weight:700;padding:2px 0 6px;list-style-position:inside}',
@@ -177,7 +186,7 @@
   /* ---------------- the state ---------------- */
   var st = {
     mounted: false, opts: null, host: null, root: null, e: {}, pos: null, frac: null, open: false, busy: false,
-    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, ticket: 0, sess: 0, pulsed: false
+    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, histAt: 0, log: [], ticket: 0, sess: 0, pulsed: false
   };
 
   function posKey() { return 'claudianPos.' + ((st.opts && st.opts.host) || 'portal'); }
@@ -190,6 +199,92 @@
   }
   function writeFrac(f) { try { localStorage.setItem(posKey(), JSON.stringify({ fx: Math.round(f.fx * 10000) / 10000, fy: Math.round(f.fy * 10000) / 10000 })); } catch (e) { /* kept for this sitting only */ } }
   function dropFrac() { try { localStorage.removeItem(posKey()); } catch (e) { /* nothing to drop */ } }
+
+  /* ---------------- the conversation, kept (handbook Part 167) ----------------
+     "And could user always find their history without new chat whenever thry open Claudian-PMO" -- the owner, 26 Nov 2026.
+
+     A person's conversation is kept in THEIR OWN BROWSER (this page's storage, under one key for the portal and one for HOPE Calls) and drawn again when the
+     module is mounted: a reload, a new visit and the app coming back from the background find the lines where they were left, and the panel opens on the latest
+     question. It costs the server nothing (nothing is asked, nothing is written there) and it is the person's alone:
+       - the record carries a MARK of who it belongs to, never the access code or the device id (those already live in this browser's storage: copying them
+         into a second place would be a second copy of a password). The mark is a match key and not a safe: it decides that a conversation is shown only to the
+         person it belongs to. A record that is not this person's is DELETED the moment it is met, never shown;
+       - signing out forgets it (forget(), below, and brand.js HOPESession for a page that never loaded this module): a handset or a computer is shared;
+       - it expires HIST_DAYS days after its last line, holds at most MAX_MSGS lines, and every line is TEXT when it is drawn again;
+       - the lines the module draws itself about a failure (no connection, a fault) are not kept: they say nothing about the conversation.
+     Storage that is blocked or full is ignored: the panel then behaves as it always did, for this sitting only. */
+  function isList(x) { return Object.prototype.toString.call(x) === '[object Array]'; }
+  function chatKey(host) { return 'claudianChat.' + (host || (st.opts && st.opts.host) || 'portal'); }
+  /** A short mark of who is asking (two 32-bit hashes of the access code or the device id): the stored conversation is shown only when it matches. */
+  function mark(s) {
+    var a = 2166136261, b = 5381, i, c;
+    s = 'claudian|' + String(s);
+    for (i = 0; i < s.length; i++) {
+      c = s.charCodeAt(i);
+      a = (a ^ c) >>> 0;
+      a = (a + (a << 1) + (a << 4) + (a << 7) + (a << 8) + (a << 24)) >>> 0;      // a times the FNV prime, in 32 bits
+      b = (((b << 5) + b) ^ c) >>> 0;
+    }
+    return a.toString(36) + '.' + b.toString(36);
+  }
+  function who() {
+    try { var o = st.opts, id = o && (typeof o.device === 'function' ? o.device() : o.code && o.code()); return id ? mark(id) : ''; } catch (e) { return ''; }
+  }
+  function readChat() {
+    try {
+      var rec = JSON.parse(localStorage.getItem(chatKey()) || 'null');
+      if (rec && rec.v === 1 && typeof rec.who === 'string' && isFinite(rec.at) && isList(rec.m)) return rec;
+    } catch (e) { /* damaged or blocked storage: no history */ }
+    return null;
+  }
+  /** Forgotten: this host's kept conversation, or (everybody who signs out is signed out of both pages: they share one storage) the portal's and HOPE Calls'. */
+  function dropChat(both) {
+    var keys = both ? [chatKey('portal'), chatKey('call')] : [chatKey()], i;
+    for (i = 0; i < keys.length; i++) { try { localStorage.removeItem(keys[i]); } catch (e) { /* nothing to drop */ } }
+  }
+  function cleanNear(list) {
+    var out = [], i, c;
+    if (!isList(list)) return out;
+    for (i = 0; i < list.length && out.length < 6; i++) {
+      c = list[i];
+      if (c && typeof c.id === 'string' && typeof c.q === 'string' && c.id && c.q) out.push({ id: c.id.slice(0, 80), q: c.q.slice(0, 240) });
+    }
+    return out;
+  }
+  function trimLog() { while (st.log.length > MAX_MSGS) st.log.shift(); }
+  /** The whole conversation is written again after every line (it is a few kilobytes: the oldest lines go first when it is not). */
+  function persist() {
+    try {
+      var w = who(), rec, i, l, json;
+      if (!w) return;
+      if (!st.log.length) { dropChat(false); return; }
+      rec = { v: 1, who: w, at: Date.now(), ha: st.histAt || 0, hist: st.hist || null, m: [] };
+      for (i = 0; i < st.log.length; i++) { l = st.log[i]; rec.m.push(l.k === 'n' ? ['n', l.q] : [l.k, String(l.t).slice(0, HIST_LINE)]); }
+      json = JSON.stringify(rec);
+      while (json.length > HIST_BYTES && rec.m.length > 1) { rec.m.shift(); json = JSON.stringify(rec); }
+      localStorage.setItem(chatKey(), json);
+    } catch (e) { /* blocked or full: kept for this sitting only */ }
+  }
+  /** Draws the kept conversation again, if there is one and it is this person's and it has not expired. It draws and keeps nothing else and asks the server for nothing. */
+  function restore() {
+    var rec = readChat(), w = who(), now = Date.now(), i, l, k, c, text, from;
+    if (!rec || !w) return false;
+    if (rec.who !== w || now - rec.at > HIST_DAYS * 86400000 || rec.at - now > 86400000) { dropChat(false); return false; }
+    st.log = [];
+    from = Math.max(0, rec.m.length - MAX_MSGS);
+    for (i = from; i < rec.m.length; i++) {
+      l = rec.m[i];
+      if (!isList(l)) continue;
+      k = l[0];
+      if (k === 'n') { c = cleanNear(l[1]); if (c.length) { drawNear(c); st.log.push({ k: 'n', q: c }); } }
+      else if ((k === 'u' || k === 'a' || k === 'h' || k === 'w') && typeof l[1] === 'string' && l[1]) { text = l[1].slice(0, HIST_LINE); drawMsg(k, text); st.log.push({ k: k, t: text }); }
+    }
+    if (rec.hist && typeof rec.hist.q === 'string' && typeof rec.hist.a === 'string' && isFinite(rec.ha) && now >= rec.ha && now - rec.ha < HIST_FRESH_MS) {
+      st.hist = { q: trimQ(rec.hist.q), a: rec.hist.a.slice(0, 240) }; st.histAt = +rec.ha;
+    }
+    return st.log.length > 0;
+  }
+  function setHist(h) { st.hist = h; st.histAt = h ? Date.now() : 0; }
 
   function hostLang() { try { return st.opts && st.opts.lang && st.opts.lang() === 'en' ? 'en' : 'sw'; } catch (e) { return 'sw'; } }
   /** The page's own language, unless somebody pressed SW / EN in the panel and the page's language has not moved since. */
@@ -228,13 +323,56 @@
 
   /* ---------------- the panel's lines ---------------- */
   function lines() { var out = [], c = st.e.body.children, i; for (i = 0; i < c.length; i++) if (/(^| )m( |$)/.test(c[i].className)) out.push(c[i]); return out; }
-  function addMsg(kind, text) {
-    var m = el('div', 'm ' + kind, text);
+  /** The conversation's own lines: all of them but the welcome line, which is the panel's and is never counted, pruned or kept. */
+  function chat() { var out = [], all = lines(), i; for (i = 0; i < all.length; i++) if (all[i] !== st.e.welcome) out.push(all[i]); return out; }
+  /** A line's text as parts: plain text, and the one address the helper may hand out, the release the call app is installed from (the owner's order of 26 Nov: the instruction ends
+      with a link a person can tap). Pure: the tests run it. Nothing else in an answer is ever a link. */
+  function linkParts(text) {
+    var out = [], rest = String(text), i = rest.indexOf(APK_URL);
+    while (i >= 0) {
+      if (i > 0) out.push({ t: rest.slice(0, i) });
+      out.push({ a: APK_URL });
+      rest = rest.slice(i + APK_URL.length);
+      i = rest.indexOf(APK_URL);
+    }
+    if (rest || !out.length) out.push({ t: rest });
+    return out;
+  }
+  /** A line's text goes in as TEXT; the address above becomes a link whose href is the constant and never what the answer says, so an answer can never link anywhere else. */
+  function fillText(node, text) {
+    var parts = linkParts(text), i, a;
+    if (parts.length === 1 && parts[0].t !== undefined) { node.textContent = parts[0].t; return; }
+    node.textContent = '';
+    for (i = 0; i < parts.length; i++) {
+      if (parts[i].a) {
+        a = document.createElement('a');
+        a.href = APK_URL; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = APK_URL;
+        node.appendChild(a);
+      } else node.appendChild(document.createTextNode(parts[i].t));
+    }
+  }
+  /** One line drawn into the conversation (nothing kept, nothing scrolled). */
+  function drawMsg(kind, text) {
+    var m = el('div', 'm ' + kind);
+    fillText(m, text);
     st.e.body.insertBefore(m, st.e.faq);
-    var all = lines(); while (all.length > MAX_MSGS) st.e.body.removeChild(all.shift());
+    return m;
+  }
+  /** A line of the conversation. A line the module draws about a failure of its own is `transient`: it is shown and not kept. */
+  function addMsg(kind, text, transient) {
+    var m = drawMsg(kind, text);
+    if (!transient) { st.log.push({ k: kind, t: text }); trimLog(); persist(); }
+    var all = chat(); while (all.length > MAX_MSGS) st.e.body.removeChild(all.shift());
     // an answer is read from its first line; what somebody typed is shown at the bottom
     if (kind === 'u') st.e.body.scrollTop = st.e.body.scrollHeight; else st.e.body.scrollTop = Math.max(0, m.offsetTop - 12);
     return m;
+  }
+  /** The panel opens on the conversation's latest question, with its answer under it: a hidden element forgets its scroll, so this is done at every opening. */
+  function showLatest() {
+    var all = chat(), i, at = null;
+    if (!all.length) return;
+    for (i = all.length - 1; i >= 0; i--) if (/(^| )u( |$)/.test(all[i].className)) { at = all[i]; break; }
+    st.e.body.scrollTop = Math.max(0, (at || all[all.length - 1]).offsetTop - 12);
   }
   function thinking(on, text) {
     if (st.e.think && st.e.think.parentNode) st.e.think.parentNode.removeChild(st.e.think);
@@ -245,14 +383,16 @@
     st.e.body.scrollTop = st.e.body.scrollHeight;
   }
   /** Everything of one person's conversation, forgotten: the lines, what the server last said (the list of ready questions, the questions left), the last exchange that rides with the
-      next question, an answer still on its way (its callbacks see a new session and stay out of the panel). Signing out of HOPE Calls runs it: the handset is shared, and the next
-      officer must not meet the last one's questions and answers, or send them to the model as the PREVIOUS EXCHANGE (the second reader of Part 163). */
+      next question, an answer still on its way (its callbacks see a new session and stay out of the panel), and the copy kept for the next visit. Signing out runs it (HOPE Calls
+      through hide(), the portal's Toka too): the handset is shared, and the next officer must not meet the last one's questions and answers, or send them to the model as the
+      PREVIOUS EXCHANGE (the second reader of Part 163; handbook Part 167). */
   function forget() {
     st.sess++; st.ticket++;
-    st.hist = null; st.status = null; st.statusAt = 0;
+    st.hist = null; st.histAt = 0; st.status = null; st.statusAt = 0; st.log = [];
+    dropChat(true);        // and what was kept for the next visit (handbook Part 167): the person who signs out takes the conversation with them, on both pages
     if (!st.mounted) return;
     if (st.open) closePanel();
-    var all = lines(), i; for (i = 0; i < all.length; i++) if (all[i] !== st.e.welcome) st.e.body.removeChild(all[i]);
+    var all = chat(), i; for (i = 0; i < all.length; i++) st.e.body.removeChild(all[i]);
     thinking(false); setBusy(false);
     st.e.ta.value = ''; fitBox();
     paintMode();
@@ -274,7 +414,7 @@
     var c = st.e.body.querySelectorAll('.chip'), i; for (i = 0; i < c.length; i++) c[i].disabled = b;
   }
   /** The nearest ready questions to what was typed, as a line of their own in the conversation: a tap asks one of them, exactly as a tap on the list does. */
-  function addNear(list) {
+  function drawNear(list) {
     var box = el('div', 'm w near'), row = el('div', 'chips full');
     box.appendChild(el('div', null, tr('near')));
     (list || []).forEach(function (c) {
@@ -284,7 +424,12 @@
     });
     box.appendChild(row);
     st.e.body.insertBefore(box, st.e.faq);
-    var all = lines(); while (all.length > MAX_MSGS) st.e.body.removeChild(all.shift());
+    return box;
+  }
+  function addNear(list) {
+    var c = cleanNear(list), box = drawNear(c);
+    if (c.length) { st.log.push({ k: 'n', q: c }); trimLog(); persist(); }
+    var all = chat(); while (all.length > MAX_MSGS) st.e.body.removeChild(all.shift());
     return box;
   }
   function drawChips(list) {
@@ -317,7 +462,7 @@
   }
   function showFailure(e) {
     var gone = e && (e.status === 401 || e.status === 403), srv = e && e.status >= 500;
-    addMsg(gone ? 'e' : 'h', gone ? tr('gone') : srv ? tr('srv') : tr('net'));
+    addMsg(gone ? 'e' : 'h', gone ? tr('gone') : srv ? tr('srv') : tr('net'), true);      // a failure of the module's own is shown and not kept
   }
   /** A question that was not answered goes back into the box, if the person has not typed something else: on a phone a Swahili question of 400 characters is not retyped for a failed network. */
   function restoreQ(q) { if (q && !st.e.ta.value) { st.e.ta.value = q; fitBox(); } }
@@ -347,7 +492,7 @@
     api('faq', { id: c.id }).then(function (r) {
       if (sess !== st.sess) return;
       thinking(false);
-      addMsg(r && r.mode === 'faq' && r.id ? 'a' : 'h', r && r.answer ? String(r.answer) : tr('net'));
+      addMsg(r && r.mode === 'faq' && r.id ? 'a' : 'h', r && r.answer ? String(r.answer) : tr('net'), !(r && r.answer));
       followSwitch(r);
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
     }, function (e) { if (sess !== st.sess) return; thinking(false); showFailure(e); }).then(function () { if (sess !== st.sess) return; setBusy(false); regainFocus(); catchUpLang(); });
@@ -360,18 +505,19 @@
     addMsg('u', q);
     setBusy(true); thinking(true);
     var sess = st.sess, asked = lang();
-    api('ask', { q: q, hist: st.hist ? [st.hist] : [] }).then(function (r) {
+    api('ask', { q: q, hist: st.hist && Date.now() - st.histAt < HIST_FRESH_MS ? [st.hist] : [] }).then(function (r) {
       if (sess !== st.sess) return;
       thinking(false);
       var text = r && r.answer ? String(r.answer) : tr('net');
       var ok = r && (r.mode === 'ai' || r.mode === 'canned' || r.mode === 'match');
       // a ready answer found for what was typed says which ready question it answers, so a wrong guess is seen for what it is
       var top = r && r.mode === 'match' && r.q ? addMsg('w', tr('matched') + ' ' + String(r.q)) : null;
-      addMsg(ok ? 'a' : 'h', text);
+      addMsg(ok ? 'a' : 'h', text, !(r && r.answer));
       if (r && (r.mode === 'busy' || r.mode === 'limit')) restoreQ(q);
       if (top) st.e.body.scrollTop = Math.max(0, top.offsetTop - 12);
       if (r && r.near && r.near.length) addNear(r.near);
-      if (r && r.mode === 'ai') st.hist = { q: q, a: text.slice(0, 240) }; else if (r && r.mode !== 'canned') st.hist = null;
+      if (r && r.mode === 'ai') setHist({ q: q, a: text.slice(0, 240) }); else if (r && r.mode !== 'canned') setHist(null);
+      persist();
       followSwitch(r);
       if (r && r.left != null && st.status) { st.status.left = r.left; paintMode(); }
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
@@ -379,7 +525,7 @@
   }
   /** Every answer says whether the AI is ON (the switch on Settings): when the owner turns it off while a panel is open, the box goes away with the next answer, not a minute later. */
   function followSwitch(r) {
-    if (r && typeof r.ai === 'boolean' && st.status && !!st.status.ai !== r.ai) { st.status.ai = r.ai; if (!r.ai) st.hist = null; paintMode(); }
+    if (r && typeof r.ai === 'boolean' && st.status && !!st.status.ai !== r.ai) { st.status.ai = r.ai; if (!r.ai) { setHist(null); persist(); } paintMode(); }
   }
   function fitBox() { var t = st.e.ta; t.style.height = 'auto'; t.style.height = Math.min(96, t.scrollHeight) + 'px'; }
 
@@ -423,6 +569,7 @@
     layoutPanel();
     paintMode();
     loadStatus(false).then(function () {
+      if (st.open) showLatest();
       try {
         // A person who taps the box while the list is still on its way has the focus already (and, on a phone, the keyboard up): it is theirs, never moved.
         var sr = st.e.root.getRootNode ? st.e.root.getRootNode() : null, ae = sr && sr.activeElement;
@@ -556,6 +703,7 @@
 
     st.mounted = true;
     paintTheme();
+    restore();          // the person's kept conversation, if there is one (handbook Part 167): nothing is asked of the server
     try { if (window.MutationObserver) new MutationObserver(paintTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] }); } catch (x) { /* the look is re-read when the panel opens */ }
     paintMode();
     return true;
@@ -569,6 +717,9 @@
     close: function () { if (st.mounted) closePanel(); },
     mounted: function () { return st.mounted; },
     /* the pure parts, for the tests (test/claudian-ui.test.mjs): nothing here touches a page */
-    _t: { T: T, ICON: ICON, SIZE: SIZE, EDGE: EDGE, TAP_PX: TAP_PX, WIDE: WIDE, clampPos: clampPos, toFrac: toFrac, fromFrac: fromFrac, isTap: isTap, defaultPos: defaultPos, trimQ: trimQ, fillN: fillN }
+    _t: { T: T, ICON: ICON, SIZE: SIZE, EDGE: EDGE, TAP_PX: TAP_PX, WIDE: WIDE, clampPos: clampPos, toFrac: toFrac, fromFrac: fromFrac, isTap: isTap, defaultPos: defaultPos, trimQ: trimQ, fillN: fillN,
+      APK_URL: APK_URL, linkParts: linkParts, mark: mark, MAX_MSGS: MAX_MSGS, HIST_DAYS: HIST_DAYS, HIST_FRESH_MS: HIST_FRESH_MS, HIST_LINE: HIST_LINE, HIST_BYTES: HIST_BYTES },
+    /* the kept conversation, for the tests: run against a stand-in storage and a stand-in panel (test/claudian-kept.test.mjs); a page never calls it */
+    _k: { st: st, who: who, chatKey: chatKey, readChat: readChat, dropChat: dropChat, persist: persist, restore: restore, forget: forget, addMsg: addMsg, addNear: addNear, setHist: setHist, showLatest: showLatest }
   };
 })();
