@@ -71,7 +71,7 @@ import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGE
 import { faqChoices, faqAnswer, faqLabel } from './claudian-faq.js';
 import { faqMatch, concernHint } from './claudian-match.js';
 import { pickCards, tabKeyScore } from './claudian-cards.js';
-import { viewsFor, readViews, resetClaudianDataForTests } from './claudian-data.js';
+import { viewsFor, readViews, resetClaudianDataForTests, rememberUser, figuresFor } from './claudian-data.js';
 
 const K = s => String(s == null ? '' : s).trim().toUpperCase();
 
@@ -233,8 +233,10 @@ export function cleanReply(text) {
 /** A person signed in to the portal. `key` is a one-way fingerprint of the access code (the code is a password: never logged, never stored). */
 export function portalSubject(user) {
   const all = K(user.role) === 'ADMIN' || !!user.readOnly;
-  return { source: 'portal', key: 'p:' + hash(user.code), name: user.name || '', role: user.role || '', teams: user.teams && user.teams.length ? user.teams : null,
+  const s = { source: 'portal', key: 'p:' + hash(user.code), name: user.name || '', role: user.role || '', teams: user.teams && user.teams.length ? user.teams : null,
     tabs: (user.tabs || []).map(String), allTabs: all, leader: false, readOnly: !!user.readOnly };
+  // The raw user (it holds the access code) is kept BESIDE the subject, never on it: the data views ask the portal's own door as this person (claudian-data.js, handbook Part 166).
+  return rememberUser(s, user);
 }
 /** A registered handset (HOPE Calls): `cu` is its call_users row, `pseudo` the scope call-core works out for it. */
 export function callSubject(cu, pseudo, device) {
@@ -378,6 +380,8 @@ export function buildContext(subject, q, lang, cfg, zoneLabel, standing, nowMs, 
     L.push(CTX.screens(sc.labels));
     if (sc.notes.length) L.push(CTX.notes(sc.notes));
   }
+  // which KINDS of figures this person may be given: what their screens and their phone allow (claudian-data.js); the model answers a figure question with the figures, and says so when it is outside this list
+  L.push(CTX.figures(figuresFor(subject)));
   // how HOPE works, for the part of it the question touches: cards chosen in memory by claudian-cards.js, only those this person may be told
   if (cards && cards.length) L.push(CTX.rules(cards.map(c => '- ' + c.text)));
   // the figures the question needs, read from the screens' own reports for this person's own teams (claudian-data.js); the lines say what they are

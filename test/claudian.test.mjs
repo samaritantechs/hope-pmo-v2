@@ -117,7 +117,7 @@ test('THE INSTRUCTIONS TO THE MODEL carry every one of the owner\'s rules, and n
   assert.match(p, /Answer, then STOP\. Never end with an offer, an invitation or a question/, 'answers once and stops');
   assert.match(p, /no "anything else\?", no "let me know", no "would you like", no "feel free"/);
   assert.match(p, /SHORT: 2 to 4 short sentences, or at most 5 short bullet lines/);
-  assert.match(p, /You cannot change, approve, send, delete or look up anything/, 'read-only');
+  assert.match(p, /You explain, advise and GIVE FIGURES\. You cannot change, approve, send or delete anything/, 'read-only, and it gives figures (the owner, 26 Nov: answer with stats)');
   assert.match(p, /no access to customers, loans, phone numbers, staff records/, 'no data');
   assert.match(p, /Speak only about the screens in SCREENS/, 'only what the person may see');
   assert.match(p, /not a general assistant/, 'the helper is not a general AI');
@@ -780,7 +780,9 @@ test('A QUESTION THAT TOUCHES CALLS AND LAST WEEK\'S RESULTS GETS BOTH REPORTS, 
   const admin = C.portalSubject({ code: 'A', name: 'ADMIN', role: 'ADMIN', teams: null, tabs: ADMIN_TABS });
   const { msg, db } = await askData(admin, 'timu gani zinapiga simu kidogo na pia makusanyo ni madogo', dataBook({ performance_records: [{ period: 'week', period_start: '2026-11-16', metric: 'collection', scope: 'team', name: 'ALPHA', value: 10, basis: 100, pct: null }] }));
   assert.ok(msg.indexOf('CALLS BY TEAM') > 0 && msg.indexOf('STANDING, last full week') > msg.indexOf('CALLS BY TEAM'));
-  assert.match(db._dump('claudian_chats')[0].note, /data: calls by team \d+\.\ds, last week by team \d+\.\ds$/);
+  // a question that does not say which week gets this week's dashboard figures too (the admin holds the dashboard): three reports, in a fixed order
+  assert.ok(msg.indexOf('DASHBOARD, week') > msg.indexOf('STANDING, last full week'), 'this week\'s figures come after last week\'s');
+  assert.match(db._dump('claudian_chats')[0].note, /data: calls by team \d+\.\ds, last week by team \d+\.\ds, this week by team \d+\.\ds$/);
 });
 
 /* ---------------- the second reader of Part 163: what a typed question may cost (handbook Part 163, addendum 1) ---------------- */
@@ -911,4 +913,42 @@ test('THE ANSWER TO "AMEPIGIWA LEO DID NOT APPEAR" ALWAYS ENDS WITH THE SAME INS
   assert.ok(db._dump('claudian_chats')[0].answer.includes('HOPE-Calls.apk'), 'the Hope Ai tab shows the instruction too');
   // and the code adds it only after the model has answered, never before (it is not part of the request)
   assert.ok(!JSON.stringify(calls[0]).includes('HOPE-Calls.apk'), 'the link is not sent to the model: the server adds it');
+});
+
+/* ---------------- STATS BY WHAT THE PERSON HOLDS (handbook Part 166) ----------------
+     "Claudian PMO must be able to answer with stats as i primariry said when we started building it, not directing someone were to find them - as long as it should understand
+      scope of tabs access of the user who is inquiring"                                                                  -- the owner, 26 Nov 2026 */
+test('AN OFFICER ON A PHONE IS GIVEN THEIR OWN CALLS, not sent to a screen: "how many calls did I make today?" reaches the model with the officer\'s own figures, the kinds of figures they may be given, and nothing of a teammate', async () => {
+  const officer = C.callSubject({ user_id: 'u01', name: 'ASHA', role: 'FIELD OFFICER', is_leader: false, team: 'ALPHA' }, { teams: ['ALPHA'] }, 'dev-own-1');
+  const { r, msg, db } = await askData(officer, 'how many calls did I make today?', dataBook({ call_logs: [dL('c01', 'u01', 'ASHA', 'ALPHA', DATA_TODAY), dL('c09', 'u02', 'BEN', 'ALPHA', DATA_TODAY)] }));
+  assert.equal(r.mode, 'ai');
+  assert.match(msg, /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): their own calls \(today and this week\)\./);
+  const data = msg.split('DATA (figures')[1] || '';
+  assert.match(data, /YOUR CALLS \(ASHA\), today 2026-11-25: 1 call \(numbers rung\), 1 of them portfolio/, data.slice(0, 400));
+  assert.ok(!/BEN|CECI|DENIS/.test(data), 'nothing of a teammate');
+  assert.match(db._dump('claudian_chats')[0].note, /data: own calls \d+\.\ds/);
+});
+
+test('A HOLDER OF THE DASHBOARD IS GIVEN THIS WEEK\'S FIGURES FOR THEIR OWN TEAMS: "how is collection this week?" reaches the model with the dashboard\'s own lines for the one team their code holds; a person with no screen is told nothing is theirs to be given', async () => {
+  const gmo = C.portalSubject({ code: 'SECRET-DASH', name: 'GMO ONE', role: 'GMO', teams: ['ALPHA'], tabs: ['dashboard'] });
+  const { r, msg, db, calls } = await askData(gmo, 'how is the collection this week?');
+  assert.equal(r.mode, 'ai');
+  assert.match(msg, /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): last full week's sales, collection and recovery by team; this week's and today's dashboard figures/);
+  assert.match(msg, /DASHBOARD, week 2026-11-23 to 2026-11-29, as of 2026-11-25 \(WED\), 1 team in view\./, 'the one team the code holds');
+  assert.match(db._dump('claudian_chats')[0].note, /data: .*this week by team \d+\.\ds/);
+  assert.ok(!JSON.stringify(calls[0]).includes('SECRET-DASH'), 'the access code is not in the request');
+  C.resetClaudianForTests();
+  const none = await askData(C.portalSubject({ code: 'X', name: 'T', role: 'CLERK', teams: ['ALPHA'], tabs: ['legal'] }), 'how is the collection this week?');
+  assert.match(none.msg, /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): none\./);
+  assert.ok(!none.msg.includes('DASHBOARD, week'), 'a person who may not open the dashboard is read nothing of it');
+});
+
+test('THE INSTRUCTIONS NO LONGER SEND A PERSON TO A SCREEN FOR A FIGURE: the figures are the helper\'s to state, a kind that is not listed is outside the person\'s access, and a figure that did not come is said, not pointed at', () => {
+  const p = C.SYSTEM_PROMPT;
+  assert.match(p, /THEY ARE YOURS TO STATE: answer a question about figures with the figures, never by telling the person to open a screen and look\./);
+  assert.match(p, /"FIGURES YOU MAY GIVE THIS PERSON" in CONTEXT lists the kinds of figures this person may be given\. A figure of a kind that is not listed is outside their access: say so in one sentence\./);
+  assert.match(p, /Never end by sending the person to a screen to look a figure up\./);
+  assert.match(p, /if you do not know a RULE, say so in one sentence and name where to look; a FIGURE is never answered by sending the person to a screen/);
+  assert.ok(!/name the screen where they are/.test(p), 'the old instruction is gone');
+  assert.ok(!/look up anything/.test(p), 'the helper looks figures up');
 });
