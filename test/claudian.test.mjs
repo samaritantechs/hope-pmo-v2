@@ -751,6 +751,12 @@ test('THE WAIT FOR THE REPORTS COMES OUT OF THE MODEL\'S TIME, INSIDE THE PAGE\'
   assert.ok(!/raceTimeout\(client\.messages\.create\(req\), REQUEST_TIMEOUT_MS/.test(core), 'not the old fixed wait');
 });
 
+test('THE RETRY HINT OF A LATE REPORT SURVIVES THE CLOSING-OFFER FILTER: the model is told to say "trying again in a minute may work", and "try again" is not an offer of more help (while "ask again" is, and is cut)', () => {
+  for (const kept of ['Siwezi kuona namba za timu sasa kwa sababu ripoti bado inapakia. Jaribu tena baada ya dakika moja.', 'I cannot see the team figures yet because the report is still loading. Try again in a minute.'])
+    assert.equal(C.cleanReply(kept), kept, 'the hint is part of the answer: ' + kept);
+  assert.equal(C.cleanReply('I cannot see the figures yet. Please ask again in a minute and I will check.'), 'I cannot see the figures yet.', 'the filter itself is unchanged: an offer to be asked again is still cut');
+});
+
 test('LAST WEEK\'S RESULTS REACH A HOLDER OF THE WEEKLY SCREENS, AND THE COST OF A DATA ASK IS CAPPED: a company of ninety teams adds a few hundred tokens, never the whole book', async () => {
   const teams = [], pr = [];
   for (let i = 1; i <= 90; i++) {

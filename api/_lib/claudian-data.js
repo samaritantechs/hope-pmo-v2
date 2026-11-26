@@ -217,7 +217,7 @@ export async function readViews(db, subject, ids, nowMs, fmt, budgetMs = DATA_BU
   ids.forEach((id, i) => {
     const r = results[i];
     if (r.v) { lines.push(...r.v.lines); notes.push(LABEL[id] + ' ' + secs(r.v.ms) + (r.v.kept ? ' kept' : '')); }
-    else if (r.late) { lines.push(LABEL[id].toUpperCase() + ': the report did not answer in time (it may still be loading); say you cannot see these figures yet and that asking again in a minute may work.'); notes.push(LABEL[id] + ' (late) ' + secs(r.waited)); }
+    else if (r.late) { lines.push(LABEL[id].toUpperCase() + ': the report did not answer in time (it may still be loading); say you cannot see these figures yet and that trying again in a minute may work.'); notes.push(LABEL[id] + ' (late) ' + secs(r.waited)); }
     else { lines.push(LABEL[id].toUpperCase() + ': the report could not be read now; say you cannot see these figures now.'); notes.push(LABEL[id] + ' (failed) ' + secs(r.waited)); }
   });
   return { lines, notes };

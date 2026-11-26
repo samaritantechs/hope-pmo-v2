@@ -193,8 +193,8 @@ test('A SLOW REPORT IS SAID TO BE LATE AND THE ANSWER GOES ON WITHOUT IT (and th
   const slow = slowTable(fakeDb(book()), 'call_users', 80);
   const late = await D.readViews(slow, ADMIN, ['calls'], NOW, fmt, 10);
   assert.equal(late.notes.length, 1); assert.match(late.notes[0], /^calls by team \(late\) \d+\.\ds$/);
-  assert.match(late.lines.join('\n'), /CALLS BY TEAM: the report did not answer in time \(it may still be loading\); say you cannot see these figures yet and that asking again in a minute may work\./,
-    'the model is told the report may still be loading, and that asking again may work: the reading goes on and is kept');
+  assert.match(late.lines.join('\n'), /CALLS BY TEAM: the report did not answer in time \(it may still be loading\); say you cannot see these figures yet and that trying again in a minute may work\./,
+    'the model is told the report may still be loading, and that trying again may work: the reading goes on and is kept');
   await new Promise(r => setTimeout(r, 200));
   const next = await D.readViews(slow, ADMIN, ['calls'], NOW + 1000, fmt, 10);
   assert.equal(next.notes.length, 1); assert.match(next.notes[0], /^calls by team \d+\.\ds kept$/, 'the slow reading finished and was kept: the next question has it at once');
