@@ -33,7 +33,7 @@ function node(tag) {
 const textOf = n => (n.nodeType === 3 ? n.text : n.children && n.children.length ? n.children.map(textOf).join('') : n.textContent);
 
 /** One page: a module run in its own window over a storage that can be shared with the next page (a reload) and a clock the test moves. */
-function page({ store = new Map(), host = 'portal', id = 'KON-SECRET-CODE-123', clock = { t: 1_800_000_000_000 }, ls: lsOver = {} } = {}) {
+function page({ store = new Map(), host = 'portal', id = 'KON-SECRET-CODE-123', person = undefined, clock = { t: 1_800_000_000_000 }, ls: lsOver = {} } = {}) {
   const ls = {
     fail: false,
     getItem: k => { if (ls.failGet) throw new Error('blocked'); return store.has(k) ? store.get(k) : null; },
@@ -45,8 +45,9 @@ function page({ store = new Map(), host = 'portal', id = 'KON-SECRET-CODE-123', 
   const W = {};
   vm.runInNewContext(SRC, { window: W, document: doc, localStorage: ls, console, Date: { now: () => clock.t } });
   const M = W.ClaudianPMO, K = M._k, T = M._t;
-  const who = { id };
+  const who = { id, person };
   K.st.opts = host === 'call' ? { host, device: () => who.id } : { host, code: () => who.id };
+  if (person !== undefined) K.st.opts.person = () => who.person;          // HOPE Calls names the signed-in officer as well as the handset
   const body = node('div'), welcome = node('div'), faq = node('details');
   welcome.className = 'm w'; welcome.textContent = 'WELCOME LINE';
   body.appendChild(welcome); body.appendChild(faq);
@@ -107,6 +108,38 @@ test('the same person on HOPE Calls: the handset\'s device id is the mark, the c
   const a2 = page({ store, host: 'portal', id: 'ADM 442211' }), b2 = page({ store, host: 'call', id: 'DEVICE-ID-9f8e7d6c5b4a' });
   assert.equal(a2.K.restore(), true); assert.equal(b2.K.restore(), true);
   assert.equal(J(a2.texts()), J(['portal question'])); assert.equal(J(b2.texts()), J(['call question']));
+});
+
+test('ONE HANDSET, TWO OFFICERS (handbook Part 167, addendum 1): where the page names the officer, the mark is the handset AND the officer, so a handset that is de-registered or signed in again as somebody else never shows the last officer\'s conversation', () => {
+  const store = new Map(), DEV = 'DEVICE-ID-9f8e7d6c5b4a';
+  const a = page({ store, host: 'call', id: DEV, person: 'JUMA ISSA' });
+  a.K.addMsg('u', 'Timu yangu inadaiwa kiasi gani?'); a.K.addMsg('a', 'Timu yako inadaiwa TZS 1,200,000.');
+  assert.equal(a.rec().who, a.T.mark(DEV + '|JUMA ISSA'), 'the mark is made of the handset and the officer');
+  assert.notEqual(a.rec().who, a.T.mark(DEV), 'not of the handset alone'); assert.notEqual(a.rec().who, a.T.mark('JUMA ISSA'), 'nor of the name alone');
+  assert.ok(!store.get('claudianChat.call').includes(DEV) && !store.get('claudianChat.call').includes('JUMA ISSA'.replace(' ', '')) && !/"who":"[^"]*JUMA/.test(store.get('claudianChat.call')), 'neither the id nor the name is in the record\'s owner');
+  // the same officer opens the app again: their conversation is there
+  const again = page({ store, host: 'call', id: DEV, person: 'JUMA ISSA', clock: a.clock });
+  assert.equal(again.K.restore(), true); assert.equal(J(again.texts()), J(['Timu yangu inadaiwa kiasi gani?', 'Timu yako inadaiwa TZS 1,200,000.']));
+  // the SAME handset, another officer (re-registered: no log-out of ours was passed): not shown, and deleted
+  const b = page({ store, host: 'call', id: DEV, person: 'ASHA KOMBO', clock: a.clock });
+  assert.equal(b.K.restore(), false); assert.equal(b.texts().length, 0, 'the next officer meets an empty panel');
+  assert.equal(store.has('claudianChat.call'), false, 'and what the last one asked is deleted');
+  // an officer's name read with other letters, or another officer with a name that contains theirs, is somebody else
+  for (const other of ['juma issa', 'JUMA ISSA ', 'JUMA ISSAH', 'MAJUMA ISSA']) {
+    const k = page({ store: new Map(), host: 'call', id: DEV, person: 'JUMA ISSA' }); k.K.addMsg('u', 'q');
+    const o = page({ store: k.store, host: 'call', id: DEV, person: other, clock: k.clock });
+    assert.equal(o.K.restore(), false, 'shown to ' + J(other));
+  }
+  // the page does not yet know who is signed in (the officer\'s boot answer has not landed): nothing is written, shown or deleted
+  const kept = page({ store: new Map(), host: 'call', id: DEV, person: 'JUMA ISSA' }); kept.K.addMsg('u', 'a kept question');
+  const before = kept.store.get('claudianChat.call');
+  const unknown = page({ store: kept.store, host: 'call', id: DEV, person: '', clock: kept.clock });
+  unknown.K.addMsg('u', 'asked while nobody is known');
+  assert.equal(kept.store.get('claudianChat.call'), before, 'nothing written for nobody');
+  assert.equal(unknown.K.restore(), false); assert.equal(kept.store.get('claudianChat.call'), before, 'and what may be the officer\'s is not deleted by it');
+  // a page that never names a person (the portal: the access code IS the person) is made exactly as before
+  const portal = page({ id: 'ADM 442211' }); portal.K.addMsg('u', 'q');
+  assert.equal(portal.rec().who, portal.T.mark('ADM 442211'));
 });
 
 test('NOBODY ELSE\'S: a conversation that is not this person\'s is not shown, and it is deleted the moment it is met', () => {

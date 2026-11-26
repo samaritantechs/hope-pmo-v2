@@ -208,7 +208,9 @@
      question. It costs the server nothing (nothing is asked, nothing is written there) and it is the person's alone:
        - the record carries a MARK of who it belongs to, never the access code or the device id (those already live in this browser's storage: copying them
          into a second place would be a second copy of a password). The mark is a match key and not a safe: it decides that a conversation is shown only to the
-         person it belongs to. A record that is not this person's is DELETED the moment it is met, never shown;
+         person it belongs to. A record that is not this person's is DELETED the moment it is met, never shown. In HOPE Calls the mark is made of the handset AND
+         the signed-in officer (opts.person): one phone is handed from officer to officer, and a handset that is de-registered or re-registered passes through no
+         log-out of ours;
        - signing out forgets it (forget(), below, and brand.js HOPESession for a page that never loaded this module): a handset or a computer is shared;
        - it expires HIST_DAYS days after its last line, holds at most MAX_MSGS lines, and every line is TEXT when it is drawn again;
        - the lines the module draws itself about a failure (no connection, a fault) are not kept: they say nothing about the conversation.
@@ -227,8 +229,14 @@
     }
     return a.toString(36) + '.' + b.toString(36);
   }
+  /** Who is asking, as a mark. A page that names the PERSON as well (HOPE Calls: the handset's id is the same for every officer who ever signs in on it, so it names a phone and not an officer) hands over
+      person(): the mark is made of both, and while the page does not yet know who is signed in, nobody's conversation is kept, shown or deleted. */
   function who() {
-    try { var o = st.opts, id = o && (typeof o.device === 'function' ? o.device() : o.code && o.code()); return id ? mark(id) : ''; } catch (e) { return ''; }
+    try {
+      var o = st.opts, id = o && (typeof o.device === 'function' ? o.device() : o.code && o.code()), named = !!(o && typeof o.person === 'function'), p = named ? o.person() : '';
+      if (!id || (named && !p)) return '';
+      return mark(named ? id + '|' + p : id);
+    } catch (e) { return ''; }
   }
   function readChat() {
     try {

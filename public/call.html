@@ -854,7 +854,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-26-a';
+var CALL_BUILD = '2026-11-26-b';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1013,6 +1013,7 @@ function boot(){
     // and starting over lands them on the sign-in screen by the ordinary path, with no second
     // way in to keep correct: the next launch finds nothing saved, so this cannot loop.
     try { localStorage.removeItem(BOOT_LS_KEY); localStorage.removeItem(SUM_LS_KEY); localStorage.removeItem(UI_LS_KEY); } catch(e){}
+    claudianForget_();                                      // the officer who is gone takes their helper conversation with them
     // entered goes false FIRST: reload fires pagehide -> saveUi_, which must not write back
     // the place of an officer this handset no longer belongs to.
     if (S.entered){ S.entered = false; try { localStorage.removeItem(CACHE_LS_KEY); } catch(e2){} location.reload(); return; }
@@ -1125,6 +1126,7 @@ $('#regBtn').onclick = function(){
       // Remember who this handset is from the very first sign-in, so the NEXT launch -- and
       // every return from a phone call -- goes straight in instead of waiting on the network.
       try { localStorage.removeItem('hcLoggedOut'); localStorage.setItem(BOOT_LS_KEY, JSON.stringify(d)); } catch(e){}
+      claudianForget_();                                          // a new sign-in on this handset starts with an empty helper, whoever was here before
       buildNote_(d.callBuild);                                    // an older page than the server's reloads itself at a quiet moment
       /* AND THE CODE JUST TYPED IS THE PORTAL'S SIGN-IN TOO -- the team code opens the portal
          as a field officer, a leader's code as themselves -- so the switch to the system never
@@ -1325,6 +1327,12 @@ document.addEventListener('visibilitychange', function(){
    in, never before the first list has painted -- and a handset that cannot fetch it has no bubble and no complaint: nothing in this app waits
    for it, and it asks the server for nothing until somebody taps the bubble (what it asks is /api/claudian, a function of its own). */
 var CLAUDIAN_ASKED_ = false;
+/* A handset passes from officer to officer, and one that is de-registered, or signed in again as somebody else, passes through no log-out of ours: what the helper kept of the officer who
+   was here goes first, so the next one never meets their questions and answers (handbook Part 167, addendum 1). Safe to call at any time, whether or not the helper's file was ever loaded. */
+function claudianForget_(){
+  try { if (window.ClaudianPMO) ClaudianPMO.hide(); } catch(e){}
+  try { if (window.HOPESession && HOPESession.clearHelper) HOPESession.clearHelper(); else { localStorage.removeItem('claudianChat.call'); localStorage.removeItem('claudianChat.portal'); } } catch(e){}
+}
 function claudianLater_(){
   try {
     if (window.ClaudianPMO && ClaudianPMO.mounted && ClaudianPMO.mounted()) { ClaudianPMO.show(); return; }
@@ -1335,7 +1343,7 @@ function claudianLater_(){
         if (!S.entered) { CLAUDIAN_ASKED_ = false; return; }
         var sc = document.createElement('script');
         sc.src = (window.HC_API_BASE || '') + '/mod/claudian.js?v=' + encodeURIComponent(CALL_BUILD);
-        sc.onload = function(){ try { if (S.entered && window.ClaudianPMO) ClaudianPMO.mount({ host: 'call', z: 38, base: window.HC_API_BASE || '', device: function(){ return DEV; }, lang: function(){ return 'sw'; } }); } catch(e){} };
+        sc.onload = function(){ try { if (S.entered && window.ClaudianPMO) ClaudianPMO.mount({ host: 'call', z: 38, base: window.HC_API_BASE || '', device: function(){ return DEV; }, person: function(){ return S.boot && S.boot.name ? String(S.boot.name) : ''; }, lang: function(){ return 'sw'; } }); } catch(e){} };
         sc.onerror = function(){ CLAUDIAN_ASKED_ = false; };      // the next time the officer comes in, it asks again
         document.head.appendChild(sc);
       } catch(e){}

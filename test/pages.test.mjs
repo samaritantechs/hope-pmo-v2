@@ -2709,6 +2709,11 @@ test('one sign-out for the system and HOPE Calls: either side signs out both', (
   store.set('hopeCode', 'KON 123'); store.delete('hcLoggedOut'); store.set('hcBoot_v1', '{}'); store.set('claudianChat.call', '{}');
   win.HOPESession.clearPortal();
   assert.equal(store.has('hopeCode'), false); assert.equal(store.get('hcBoot_v1'), '{}', 'clearPortal leaves Calls\' own keys to Calls');
+  // the helper's conversations alone (a handset de-registered, or signed in again as another officer, is not a sign-out of the portal): both pages' keys, and nothing else
+  store.set('hopeCode', 'KON 123'); store.set('claudianChat.portal', '{}'); store.set('claudianChat.call', '{}');
+  win.HOPESession.clearHelper();
+  assert.equal(store.has('claudianChat.portal'), false); assert.equal(store.has('claudianChat.call'), false, 'clearHelper takes both conversations');
+  assert.equal(store.get('hopeCode'), 'KON 123', 'and leaves the portal\'s sign-in alone'); assert.equal(store.get('claudianPos.portal'), '{"fx":1,"fy":1}', 'and the bubble\'s place');
   assert.equal(store.has('claudianChat.call'), false, 'Calls\' sign-out goes through clearPortal, so the helper\'s conversation is forgotten there too, even if the module never loaded');
   const app = appSrc(), call = readFileSync(join(PUBLIC, 'call.html'), 'utf-8'), home = readFileSync(join(PUBLIC, 'home.html'), 'utf-8');
   assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)/.test(app), 'the portal\'s Toka signs out of both');

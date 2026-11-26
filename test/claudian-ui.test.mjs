@@ -115,7 +115,7 @@ test('what is kept in the browser: the bubble\'s place, and the person\'s own co
   assert.ok(/rec = \{ v: 1, who: w, at: Date\.now\(\)/.test(persist) && /w = who\(\)/.test(persist), 'the record names who it belongs to by the mark');
   assert.ok(!/\.code\(|\.device\(|opts\.code|opts\.device/.test(persist), 'persist reads the code or the device id');
   const who = CODE.slice(CODE.indexOf('function who()'), CODE.indexOf('function readChat()'));
-  assert.ok(/return id \? mark\(id\) : ''/.test(who), 'who() answers the mark and never the id');
+  assert.ok(/if \(!id \|\| \(named && !p\)\) return '';\s*return mark\(named \? id \+ '\|' \+ p : id\);/.test(who), 'who() answers the mark and never the id or the person\'s name; a page that names the person and does not yet know who it is has no mark');
 });
 
 test('the words: both languages have the same names, {n} is in both, none is empty, and none is an offer or a question back (the owner\'s order)', () => {
@@ -182,7 +182,7 @@ test('the portal loads it late and only once, by BUILD, in a try, and nothing wa
   assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export; since Part 167 the Toka tells it to forget the person)');
   // the portal's own sign-out (the Toka) tells the helper, after the one sign-out has cleared what it keeps (handbook Part 167)
   assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)[^}]*\}[^}]*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}[^}]*window\.location\.replace\('\/'\);/.test(strip(APP)), 'the Toka hides the helper, which forgets the person, before it leaves the page');
-  assert.ok(!/var BUILD = '2026-11-26-b'/.test(APP), 'BUILD moved with the front-end change');
+  assert.ok(!/var BUILD = '2026-11-26-c'/.test(APP), 'BUILD moved with the front-end change');
 });
 
 test('HOPE Calls loads it eight seconds after the officer is in, at the very end of enterApp, in a try, and signing out takes it away', () => {
@@ -192,16 +192,21 @@ test('HOPE Calls loads it eight seconds after the officer is in, at the very end
   assert.ok(/\}, 8000\);/.test(fn), 'eight seconds');
   assert.ok(/if \(!S\.entered\) \{ CLAUDIAN_ASKED_ = false; return; \}/.test(fn), 'an officer who signed out meanwhile gets nothing');
   assert.ok(/sc\.src = \(window\.HC_API_BASE \|\| ''\) \+ '\/mod\/claudian\.js\?v=' \+ encodeURIComponent\(CALL_BUILD\);/.test(fn), 'fetched by the CALL build, from the site the app is configured for');
-  assert.ok(/ClaudianPMO\.mount\(\{ host: 'call', z: 38, base: window\.HC_API_BASE \|\| '', device: function\(\)\{ return DEV; \}, lang: function\(\)\{ return 'sw'; \} \}\)/.test(fn), 'the handset speaks as itself, with no access code');
+  assert.ok(/ClaudianPMO\.mount\(\{ host: 'call', z: 38, base: window\.HC_API_BASE \|\| '', device: function\(\)\{ return DEV; \}, person: function\(\)\{ return S\.boot && S\.boot\.name \? String\(S\.boot\.name\) : ''; \}, lang: function\(\)\{ return 'sw'; \} \}\)/.test(fn), 'the handset speaks as itself, with no access code, and names the officer who is signed in (one phone is handed from officer to officer)');
   assert.ok(/sc\.onerror = function\(\)\{ CLAUDIAN_ASKED_ = false; \};/.test(fn), 'a failed fetch is asked for again at the next entry');
   const from = code.indexOf('function enterApp(d){');
   const enter = code.slice(from, code.indexOf('\n}\n', from) + 3);
   assert.ok(/\n  claudianLater_\(\);[^\n]*\n\}\n$/.test(enter), 'the call is the last statement of enterApp: nothing the app does on entry waits for it');
   assert.equal((code.match(/claudianLater_\(\)/g) || []).length, 2, 'one definition and ONE call');
   assert.ok(/function doLogout\(\)\{\s*\n(?:[^\n]*\n){1,2}\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/.test(code), 'signing out hides the bubble');
-  assert.ok(!/var CALL_BUILD = '2026-11-25-d'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
+  assert.ok(!/var CALL_BUILD = '2026-11-26-a'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
   // the sacred paths: nothing of the helper in the request that sends a day's calls, and nothing before the entry
-  assert.ok(!/claudian/i.test(code.replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/claudianLater_\(\);[^\n]*\n/, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '').replace(/CLAUDIAN_ASKED_[^;]*;/g, '')), 'the call page knows the helper nowhere else');
+  // a handset that is de-registered, or signed in again as another officer, passes through no log-out: the helper's kept conversation goes at both (handbook Part 167, addendum 1)
+  assert.ok(/function claudianForget_\(\)\{\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}\s*try \{ if \(window\.HOPESession && HOPESession\.clearHelper\) HOPESession\.clearHelper\(\); else \{ localStorage\.removeItem\('claudianChat\.call'\); localStorage\.removeItem\('claudianChat\.portal'\); \} \} catch\(e\)\{\}\s*\}/.test(code), 'claudianForget_ hides the helper (which forgets) and clears what was kept, with or without brand.js');
+  assert.ok(/localStorage\.removeItem\(BOOT_LS_KEY\); localStorage\.removeItem\(SUM_LS_KEY\); localStorage\.removeItem\(UI_LS_KEY\); \} catch\(e\)\{\}\s*claudianForget_\(\);/.test(code), 'the server saying "no longer signed in" forgets the officer\'s helper conversation before the page reloads');
+  assert.ok(/localStorage\.setItem\(BOOT_LS_KEY, JSON\.stringify\(d\)\); \} catch\(e\)\{\}\s*claudianForget_\(\);\s*buildNote_\(d\.callBuild\);/.test(code), 'a registration starts the helper empty, whoever was on the handset before');
+  assert.equal((code.match(/claudianForget_\(\)/g) || []).length, 3, 'one definition and TWO calls');
+  assert.ok(!/claudian/i.test(code.replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/function claudianForget_\(\)\{[\s\S]*?\n\}\n/, '').replace(/claudianForget_\(\);[^\n]*\n/g, '').replace(/claudianLater_\(\);[^\n]*\n/, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '').replace(/CLAUDIAN_ASKED_[^;]*;/g, '')), 'the call page knows the helper nowhere else');
 });
 
 test('the Settings card: the limits it offers are the limits the server accepts, its buttons are wired on every paint, and its status is a read', () => {

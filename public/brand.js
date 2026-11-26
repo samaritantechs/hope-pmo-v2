@@ -227,9 +227,11 @@
     // The portal's side: the code every portal page signs in from, and the native copy of it, and the helper's kept conversations (every sign-out goes through here).
     clearPortal: function () {
       rm('hopeCode');
-      for (var j = 0; j < HELPER_KEYS.length; j++) rm(HELPER_KEYS[j]);
+      api.clearHelper();
       try { if (window.HopeCalls && window.HopeCalls.setOfficerCode) window.HopeCalls.setOfficerCode(''); } catch (e) {}
     },
+    // The helper's kept conversations alone: a handset that is de-registered or signed in again as another officer (HOPE Calls) is not a sign-out of the portal, but the next officer must not meet the last one's questions.
+    clearHelper: function () { for (var j = 0; j < HELPER_KEYS.length; j++) rm(HELPER_KEYS[j]); },
     // Calls' side: signed out, with what it remembered about this handset's officer dropped.
     clearCalls: function () {
       try { localStorage.setItem('hcLoggedOut', '1'); } catch (e) {}
