@@ -101,6 +101,17 @@ test('THE SECONDS THE REPORTS TOOK (handbook Part 160, addendum 1): part A says 
   assert.ok(!/Reports the helper read/.test(section(report(SAMPLE().filter(r => !/^data:/.test(r.note))), 'PART A', 'PART B')), 'nothing to say about reports when none was read');
 });
 
+test('B2 GROUPS A NOTE THAT NAMES TWO REPORTS BY KIND, whatever the seconds of each: a report that came, one kept, and one that failed, three times with different seconds, is one kind', () => {
+  const rows = [
+    row({ q: 'a', note: 'data: calls by team 5.1s, last week by team (failed) 0.4s' }),
+    row({ at: '2026-11-25T06:11:00Z', q: 'b', note: 'data: calls by team 6.2s, last week by team (failed) 0.5s' }),
+    row({ at: '2026-11-25T06:12:00Z', q: 'c', note: 'data: calls by team 5.1s kept, last week by team (failed) 0.9s' }),
+  ];
+  const b2 = section(report(rows), 'B2.', 'B3.');
+  assert.match(b2, /1\. 3x  "data: calls by team, last week by team \(failed\)"/, b2);
+  assert.match(section(report(rows), 'PART A', 'PART B'), /calls by team 2 made \(median 5\.7 s, longest 6\.2 s\), 1 kept; last week by team 0 made, 3 failed\./);
+});
+
 test('PART B3: the AI answers with no card and no report behind them are the likeliest gaps: counted, grouped by the question\'s words, most asked first; taps and held rows are never gaps', () => {
   const rows = [row({ q: 'Nani anaidhinisha likizo?', note: '' }), row({ at: '2026-11-25T06:11:00Z', q: 'nani anaidhinisha likizo', note: '', thread: 'k-two:2026-11-25', name: 'TWO' }),
     row({ at: '2026-11-25T06:12:00Z', q: 'Nani anaidhinisha likizo???', note: '' }), row({ at: '2026-11-25T06:13:00Z', q: 'Swali lenye kadi', note: 'cards: leave-ask' }),

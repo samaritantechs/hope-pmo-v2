@@ -224,10 +224,11 @@ test('THE NOTE SAYS HOW LONG EACH REPORT TOOK: a report made now, one kept from 
   // late: the seconds waited, and the page\'s own test for "this one did not come" still matches
   D.resetClaudianDataForTests();
   const slow = slowTable(fakeDb(book()), 'call_users', 80);
-  const late = await D.readViews(slow, ADMIN, ['calls'], NOW, fmt, 10, () => c.t++ * 1000);
+  let k = 0; const stepClock = () => (k++) * 1000;                // 0 when the wait begins, 1000 when the reading begins, 2000 when the budget ends
+  const late = await D.readViews(slow, ADMIN, ['calls'], NOW, fmt, 10, stepClock);
+  assert.deepEqual(late.notes, ['calls by team (late) 2.0s'], 'the seconds waited are the clock\'s, from the moment the wait began to the moment the budget ended');
   const note = 'data: ' + late.notes.join(', ');
   assert.ok(/\((late|failed)\)/.test(note), 'the regexp of public/mod/hopeai.js and hopeai-report.js: ' + note);
-  assert.match(late.notes[0], /^calls by team \(late\) \d+\.\ds$/);
   // failed
   const bad = fakeDb(book()); const g = bad.from.bind(bad);
   bad.from = t => { if (t === 'performance_records') throw new Error('down'); return g(t); };
