@@ -47,6 +47,8 @@ export const AUDITED = new Set([
   'fuStatusesSave', 'leaveSetAnnualDays',
   // ... and Claudian-PMO's switch and limits: whether a helper that costs money is on, and for how many questions.
   'claudianSet',
+  // ... and its TEMPORARY test button (owner, 26 Nov 2026): it spends tokens, so it is a write: refused to a view-only code and on the record.
+  'claudianTest',
   // ... and the clearing of the helper's chat history (admin only): the one thing here that deletes what people asked.
   'claudianChatsClear',
   // the customer registers

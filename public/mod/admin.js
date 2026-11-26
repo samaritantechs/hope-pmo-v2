@@ -637,7 +637,7 @@ VIEWS.settings = function(){
     var hlOn = !/^(no|off|0|false|hapana)$/i.test(String(settingVal(st.rows, 'HOPELOAN_VISIBLE', 'YES') || '').trim());
     /* CLAUDIAN-PMO'S CARD (handbook Part 156): its state is the SERVER'S reading of its own settings (one definition of what the switch and the limits mean),
        asked for here without waiting for it, so the screen opens as fast as before and the card fills when the answer lands. */
-    S.claudian = null;
+    S.claudian = null; S.cpTest = null;
     srv('claudianStatus').then(function(d){ S.claudian = d; cpPaint_(); })
       .catch(function(e){ S.claudian = { error: String((e && e.message) || e) }; cpPaint_(); });
     S.officers = cu;
@@ -1258,8 +1258,44 @@ function cpNote_(c){
       + '% &middot; Col ' + esc(String(t.colPct)) + '% &middot; Rec ' + esc(String(t.recPct)) + '% / TZS ' + money(t.recAmount || 0) + '+ &middot; simu / calls ' + esc(String(t.callsDay)) + '+ kwa siku / a day'
     + (c.lastProblem && c.lastProblem.text ? '<br><span style="color:var(--bad)">Tatizo la mwisho / Last problem: ' + esc(c.lastProblem.text) + '</span>' : '');
 }
+/** WHAT THE TEST BUTTON FOUND, in words (TEMPORARY, owner 26 Nov 2026: "i think i need a temporary test button"; handbook Part 162, addendum 2). The server sends one
+    real request through the helper's own path and answers either with the answer and its cost or with the stage it stopped at and the provider's own words, and
+    always which host answered. Everything that came from the server or the provider is drawn as text. To remove the button: this function, the button and the
+    result box in cpCard_, the handler in wireClaudian_ and S.cpTest (here and in the Settings screen). */
+function cpTestHtml_(t){
+  if (!t) return '';
+  var head = function(ok, text){ return '<span class="chip ' + (ok ? 'ok' : 'bad') + '">' + (ok ? '&#10004; ' : '&#10008; ') + text + '</span>'; };
+  var wrap = function(h, rest){ return '<div class="note" id="cpTestBox" style="display:block">' + h + (rest ? '<br>' + rest : '') + '</div>'; };
+  if (t.busy) return wrap('Inajaribu… / Testing…', '');
+  if (t.error) return wrap(head(false, 'Jaribio halikuweza kuendeshwa / The test could not run'), esc(String(t.error)));
+  var h = t.host || {};
+  var hostLine = 'Seva iliyojibu / Host that answered: ' + (h.host === 'vercel'
+    ? '<b>Vercel</b>' + (h.env ? ' (' + esc(h.env) + ')' : '') + (h.commit ? ' &middot; commit ' + esc(h.commit) : '') + (h.region ? ' &middot; ' + esc(h.region) : '')
+    : '<b>si Vercel / not Vercel</b> (seva yetu au nyingine / our own server or another)');
+  if (t.ok) {
+    return wrap(head(true, 'AI inajibu / The AI answers'),
+      'Modeli / Model: <b>' + esc(t.model || '') + '</b>' + (t.served && t.served !== t.model ? ' (' + esc(t.served) + ')' : '') + ' &middot; ' + esc(String(t.ms | 0)) + ' ms &middot; tokeni / tokens: '
+      + esc(String(t.tokensIn | 0)) + ' ndani / in, ' + esc(String(t.tokensOut | 0)) + ' nje / out' + (t.cacheRead ? ' &middot; cache ' + esc(String(t.cacheRead | 0)) : '')
+      + '<br>Jibu / Answer: &ldquo;' + esc(t.answer || '') + '&rdquo;' + (t.stop && t.stop !== 'end_turn' ? ' (' + esc(t.stop) + ')' : '')
+      + '<br>' + hostLine);
+  }
+  if (t.stage === 'pace') return wrap(head(false, 'Subiri sekunde 5 kisha bonyeza tena / Wait 5 seconds and press again'), '');
+  if (t.stage === 'key') {
+    return wrap(head(false, 'Seva hii haina ufunguo / This host has no ANTHROPIC_API_KEY') + ' Hakuna ombi lililotumwa. / Nothing was sent.',
+      hostLine + '<br>Weka kwenye mipangilio ya seva hii (Vercel: Environment Variables, Production na Preview), kisha Redeploy. '
+      + '/ Set it in this host&rsquo;s settings (Vercel: Environment Variables, Production and Preview), then Redeploy.');
+  }
+  if (t.stage === 'sdk') return wrap(head(false, 'Maktaba ya Anthropic haipo kwenye seva hii / The Anthropic library is not installed on this host'), hostLine);
+  var why = t.kind === 'key' ? 'Mtoa huduma amekataa ufunguo / The provider refused the key'
+    : t.kind === 'limit' ? 'Kikomo au mkopo / Limit or credit (angalia Billing kwenye Console / check Billing in the Console)'
+    : t.kind === 'request' ? 'Mtoa huduma hakubali ombi letu / The provider rejects our request'
+    : 'Mtoa huduma hakujibu / The provider did not answer';
+  return wrap(head(false, why),
+    'Hali / Status: ' + esc(t.status == null ? '—' : String(t.status)) + (t.type ? ' &middot; ' + esc(t.type) : '') + ' &middot; ' + esc(String(t.ms | 0)) + ' ms' + (t.requestId ? ' &middot; ' + esc(t.requestId) : '')
+    + (t.words ? '<br>Maneno yake / Its words: &ldquo;' + esc(t.words) + '&rdquo;' : '') + '<br>' + hostLine);
+}
 function cpCard_(c){
-  var ready = !!(c && !c.error), on = ready && !!c.on, noKey = ready && on && !c.keyPresent;
+  var ready = !!(c && !c.error), on = ready && !!c.on, noKey = ready && on && !c.keyPresent, testing = !!(S.cpTest && S.cpTest.busy);
   return '<!--cpc--><div class="card" id="cpCard"><div class="card-h">Claudian-PMO &mdash; msaidizi wa AI / the AI helper'
     + '<span class="sub">kimbo kwenye kona ya skrini / the bubble in the corner of every screen</span></div>'
     + '<div class="cleanbox">'
@@ -1267,7 +1303,9 @@ function cpCard_(c){
     + '<span class="chip ' + (!ready ? 'mut' : noKey ? 'warn' : on ? 'ok' : 'mut') + '" id="cpState">'
       + (!ready ? '…' : noKey ? 'AI IMEWASHWA, HAKUNA UFUNGUO / AI ON, NO KEY' : on ? 'AI IMEWASHWA / AI ON' : 'MASWALI YA KAWAIDA TU / READY QUESTIONS ONLY') + '</span>'
     + '<button class="btn sm" id="cpToggle"' + (ready ? '' : ' disabled') + '>' + (on ? 'Zima AI / Turn the AI OFF' : 'Washa AI / Turn the AI ON') + '</button>'
+    + '<button class="btn sm ghost" id="cpTest"' + (ready && !testing ? '' : ' disabled') + '>' + (testing ? 'Inajaribu… / Testing…' : 'Jaribu AI (ya muda) / Test the AI (temporary)') + '</button>'
     + '</div>'
+    + '<div id="cpTestOut" style="margin-top:10px">' + cpTestHtml_(S.cpTest) + '</div>'
     + '<div class="note" id="cpNote" style="margin-top:10px;display:block">' + cpNote_(c) + '</div>'
     + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;align-items:flex-end">'
     + '<div class="fld" style="margin:0"><label>Maswali kwa mtu kwa siku / Questions per person per day (1-200)</label>'
@@ -1300,6 +1338,15 @@ function wireClaudian_(){
   if (tg) tg.onclick = function(){
     var on = !!(S.claudian && S.claudian.on);
     cpSave_({ on: !on }, tg, on ? 'AI imezimwa: maswali ya kawaida tu. / The AI is off: ready questions only.' : 'AI imewashwa. / The AI is on.');
+  };
+  var ts = document.getElementById('cpTest');
+  if (ts) ts.onclick = function(){
+    if (S.cpTest && S.cpTest.busy) return;
+    S.cpTest = { busy: true }; cpPaint_();
+    srv('claudianTest').then(function(r){
+      if (r && r.state) S.claudian = r.state;
+      S.cpTest = (r && r.test) || { error: 'Hakuna jibu / No answer' }; cpPaint_();
+    }).catch(function(e){ S.cpTest = { error: String((e && e.message) || e) }; cpPaint_(); });
   };
   var sv = document.getElementById('cpSave');
   if (sv) sv.onclick = function(){

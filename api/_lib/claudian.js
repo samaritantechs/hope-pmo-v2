@@ -407,7 +407,9 @@ async function defaultClient() {
   }
   return clientPromise;
 }
-export function resetClaudianForTests() { resetClaudianDataForTests(); clientPromise = null; inflight = 0; lastAsk.clear(); memFree.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; }
+export function resetClaudianForTests() { resetClaudianDataForTests(); clientPromise = null; inflight = 0; lastAsk.clear(); memFree.clear(); memUser.clear(); memAll.clear(); standingCache.clear(); lastNote.at = 0; lastNote.text = ''; lastTestAt = 0; }
+/** For the tests and the real-browser check only: the client the helper (and the test button) will use instead of the SDK's. */
+export function setClaudianClientForTests(client) { clientPromise = Promise.resolve(client); }
 
 /** What went wrong with the provider, in one of three kinds: the person's limit ("too many", billing), a busy provider, a setting wrong
     here (key). By status, never by words (a typed error class would need the SDK imported). */
@@ -417,6 +419,59 @@ export function classifyFailure(e) {
   if (status === 429 || status === 402 || /credit balance|rate.?limit|usage limit|quota/.test(msg)) return 'limit';
   if (status === 401 || status === 403) return 'key';
   return 'busy';
+}
+
+/* ---------- THE TEMPORARY TEST BUTTON (owner, 26 Nov 2026: "i think i need a temporary test button") ----------
+   The helper said "no key" and nobody could tell which host had been asked, what it saw, or what the provider would say to our request. The Settings card has a
+   button that sends ONE request through the very path a question takes (the same model, the same system block, thinking off, effort low: buildRequest), asking for
+   one word, and answers with what happened: the answer and what it cost, or the stage it stopped at and the provider's own words. Admin only (api/_lib/portal-core.js).
+   Nothing is written to the chat log, no person's count moves, and nothing here is read from a database. TEMPORARY: to remove it, delete this block, claudianTest in
+   portal-core.js (and its line in AUDITED), and the button and result in public/mod/admin.js. */
+export const TEST_GAP_MS = 5000;
+export const TEST_TIMEOUT_MS = 20000;
+const TEST_MESSAGE = 'CONNECTION TEST from the owner (Settings). Reply with the single word OK.';
+let lastTestAt = 0;
+/** The provider's own words, short, with anything that looks like a key taken out. */
+const KEYLIKE = new RegExp(['sk', 'ant', '[A-Za-z0-9_-]+'].join('-'), 'g');     // built, not written, so that no key-looking text is in the code (a test reads the source for one)
+const wordsOf = (s, n = 300) => String(s == null ? '' : s).replace(KEYLIKE, '[key]').replace(/\s+/g, ' ').trim().slice(0, n);
+const idOf = s => String(s == null ? '' : s).replace(/[^A-Za-z0-9_.:-]/g, '').slice(0, 64);
+/** Which host answered, never a secret: so that the owner knows WHICH settings to look in (Vercel, its environment, and the commit that deployment was made from). */
+export function hostOf(env) {
+  const e = env || process.env;
+  const vercel = !!(e.VERCEL || e.VERCEL_ENV || e.VERCEL_URL);
+  const sha = e.VERCEL_GIT_COMMIT_SHA ? idOf(e.VERCEL_GIT_COMMIT_SHA).slice(0, 7) : null;
+  return { host: vercel ? 'vercel' : 'other', env: e.VERCEL_ENV ? idOf(e.VERCEL_ENV).slice(0, 20) : null, commit: sha || null, region: e.VERCEL_REGION ? idOf(e.VERCEL_REGION).slice(0, 12) : null };
+}
+/** One real request, or the stage it stopped at: 'pace' (pressed again within five seconds), 'key' (no ANTHROPIC_API_KEY in this host's environment: nothing is sent),
+    'sdk' (the library is not installed), 'provider' (the provider refused, limited or did not answer: its status, its error type and its own words) or 'ok'. */
+export async function claudianTest(deps = {}) {
+  const nowMs = deps.nowMs || Date.now();
+  const host = hostOf(deps.env);
+  if (!deps.noGap && nowMs - lastTestAt < TEST_GAP_MS) return { ok: false, stage: 'pace', host };
+  lastTestAt = nowMs;
+  if (!deps.client && !keyPresent()) return { ok: false, stage: 'key', host };
+  const client = deps.client || await defaultClient();
+  if (!client) return { ok: false, stage: 'sdk', host };
+  const t0 = Date.now();
+  let res = null, fail = null;
+  try { res = await raceTimeout(client.messages.create(buildRequest(TEST_MESSAGE)), deps.timeoutMs || TEST_TIMEOUT_MS); } catch (e) { fail = e || new Error('failed'); }
+  if (!fail && !res) fail = new Error('the provider sent no answer');
+  const ms = Date.now() - t0;
+  if (fail) {
+    const status = Number(fail.status || (fail.response && fail.response.status)) || 0;
+    let kind = classifyFailure(fail);
+    if (kind === 'busy' && (status === 400 || status === 404 || status === 413 || status === 422)) kind = 'request';
+    lastNote.at = nowMs;
+    lastNote.text = kind === 'key' ? 'the provider refused the key' : kind === 'limit' ? 'the provider said limit or credit' : kind === 'request' ? 'the provider rejected our request' : 'the provider did not answer';
+    const body = fail.error && typeof fail.error === 'object' ? fail.error : null;
+    const type = body && body.error && body.error.type ? body.error.type : body && body.type && body.type !== 'error' ? body.type : '';
+    return { ok: false, stage: 'provider', kind, status: status || null, type: idOf(type) || null, requestId: idOf(fail.requestID || fail.request_id) || null, words: wordsOf(fail.message), ms, host };
+  }
+  const u = res.usage || {};
+  const text = Array.isArray(res.content) ? res.content.filter(c => c && c.type === 'text').map(c => c.text).join(' ') : '';
+  lastNote.at = 0; lastNote.text = '';
+  return { ok: true, stage: 'ok', ms, model: CLAUDIAN_MODEL, served: wordsOf(res.model, 60), answer: wordsOf(text, 160), stop: wordsOf(res.stop_reason, 30),
+    tokensIn: (u.input_tokens | 0) + (u.cache_creation_input_tokens | 0) + (u.cache_read_input_tokens | 0), tokensOut: u.output_tokens | 0, cacheRead: u.cache_read_input_tokens | 0, host };
 }
 
 /* ---------- the counts that limit a person, and the log ---------- */

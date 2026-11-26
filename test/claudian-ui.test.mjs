@@ -166,7 +166,7 @@ test('the Settings card: the limits it offers are the limits the server accepts,
   const card = ADMIN.slice(ADMIN.indexOf('function cpCard_(c)'), ADMIN.indexOf('/** Redraws the card'));
   assert.ok(card.startsWith('function cpCard_(c){') && /<!--cpc-->/.test(card) && /<!--\/cpc-->/.test(card), 'the card sits between markers so a repaint keeps it');
   const view = ADMIN.slice(ADMIN.indexOf("VIEWS.settings = function(){"), ADMIN.indexOf("VIEWS.settings = function(){") + 2600);
-  assert.ok(/S\.claudian = null;\s*srv\('claudianStatus'\)\.then\(function\(d\)\{ S\.claudian = d; cpPaint_\(\); \}\)/.test(view), 'the status is asked for without waiting for it, once per opening');
+  assert.ok(/S\.claudian = null; S\.cpTest = null;\s*srv\('claudianStatus'\)\.then\(function\(d\)\{ S\.claudian = d; cpPaint_\(\); \}\)/.test(view), 'the status is asked for without waiting for it, once per opening');
   assert.ok(!/Promise\.all\(\[[^\]]*claudianStatus/.test(view), 'and is not part of the screen\'s own wave of reads');
   assert.ok(/cpCard_\(S\.claudian\)/.test(ADMIN), 'the card is drawn into the screen');
 });

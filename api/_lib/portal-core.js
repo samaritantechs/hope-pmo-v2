@@ -8474,6 +8474,16 @@ async function claudianSet(db, user, p) {
   C.noteClaudianSettingsWritten(db);          // the helper's own memo of these rows: the next question sees the new switch, not the old one
   return { saved: rows.map(r => r.key), state: await C.claudianState(db) };
 }
+/** THE TEMPORARY TEST BUTTON (owner, 26 Nov 2026: "i think i need a temporary test button"; handbook Part 162, addendum 2). One real request through the helper's own
+    path, or the stage it stopped at; nothing is written to the chat log and no person's count moves. Admin only, audited, refused to a view-only code at the one door:
+    it spends a few thousand tokens. The card gets the helper's state back with the result, as claudianSet gives it. To remove it: this function, its name in the export
+    list below and in AUDITED (api/_lib/audit.js), claudianTest in api/_lib/claudian.js and the button in public/mod/admin.js. */
+async function claudianTest(db, user) {
+  requireAdmin(user);
+  const C = await import('./claudian.js');
+  const test = await C.claudianTest();
+  return { test, state: await C.claudianState(db) };
+}
 /* THE HOPE AI TAB (handbook Part 158) -- "Have a new tab called Hope Ai in the system with rows of user chats that I could open and see what the user
    is chatting.. like reports of Claudian-PMO chats per user roles, teams and dates" (the owner, 25 Nov 2026). Two reads, gated on the tab `hopeai` (FN_TAB):
    the list of chats of a window, and one chat in full. Their code lives in api/_lib/claudian-chats.js and is loaded when one of them is CALLED, never
@@ -11229,7 +11239,7 @@ const FN = {
   dashboardFull, orodhaJudge, dashboardProbe, monthReport, recoveryCustomers, expectedDay, saveTeam, deleteTeam, hints, officerBoards, legalWeekReport,
   staffRoster, saveStaffTeams,
   teams, saveRole, deleteRole, resetRoleTabs, resetApprovals, callAgents, saveCallAgent, settings: settingsList, settingSet,
-  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet, claudianChats, claudianThread, claudianChatsExport, claudianChatsClear,
+  systemOpenGet, systemOpenSet, settingDelete, claudianStatus, claudianSet, claudianTest, claudianChats, claudianThread, claudianChatsExport, claudianChatsClear,
   accessCodes, saveAccessCode, deleteAccessCode, leadersCheck, leadersSync, leadersSyncUndo, callUsers, removeCallUser,
   /* The company phone register -- two panes, one register. deviceToken is exported under a
      different internal name so it cannot be confused with the token HELPER beside it. */

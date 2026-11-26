@@ -82,7 +82,7 @@ const client = { messages: { create: async (req) => {
 const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0 };
 let DEVICE = 'dF';
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
-const REAL_PORTAL = new Set(['settings', 'accessCodes', 'officerAccounts', 'systemOpenGet', 'teams', 'claudianStatus', 'claudianSet', 'settingSet', 'storageUsage']);
+const REAL_PORTAL = new Set(['settings', 'accessCodes', 'officerAccounts', 'systemOpenGet', 'teams', 'claudianStatus', 'claudianSet', 'claudianTest', 'settingSet', 'storageUsage']);
 
 const srv = http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
@@ -728,6 +728,78 @@ await section('B (settings)', async () => {
   setting('CLAUDIAN_AI', 'OFF');
   if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-settings-card.png'), fullPage: false });
   await ctx.close();
+});
+
+/* ============================ B5. THE TEMPORARY TEST BUTTON (handbook Part 162, addendum 2) ============================ */
+await section('B5 (test button)', async () => {
+  const TP = { mode: 'ok', calls: 0 };
+  const tclient = { messages: { create: async (req) => {
+    TP.calls++; TP.last = req;
+    if (TP.mode === 'ok') return { id: 'm', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'OK' }], usage: { input_tokens: 2900, output_tokens: 4, cache_creation_input_tokens: 2800 }, stop_reason: 'end_turn' };
+    if (TP.mode === '401') throw Object.assign(new Error('401 invalid x-api-key'), { status: 401, requestID: 'req_011BROWSER', error: { type: 'error', error: { type: 'authentication_error', message: 'invalid x-api-key' } } });
+    if (TP.mode === '429') throw Object.assign(new Error('429 rate limited'), { status: 429, error: { type: 'error', error: { type: 'rate_limit_error', message: 'rate limited' } } });
+    if (TP.mode === '400') throw Object.assign(new Error('400 thinking is not supported'), { status: 400, error: { type: 'error', error: { type: 'invalid_request_error', message: 'thinking is not supported' } } });
+    if (TP.mode === 'evil') throw Object.assign(new Error('500 <img src=x onerror="window.__xss=1"><script>window.__xss=2</script> oops'), { status: 500 });
+    throw new Error('unknown mode');
+  } } };
+  const reset = (mode, withKey = true) => { TP.mode = mode; C.resetClaudianForTests(); C.setClaudianClientForTests(tclient); if (withKey) process.env.ANTHROPIC_API_KEY = 'sk-test-browser-must-never-appear'; else delete process.env.ANTHROPIC_API_KEY; };
+  setting('CLAUDIAN_AI', 'ON'); setting('CLAUDIAN_USER_DAILY', '20'); setting('CLAUDIAN_ALL_DAILY', '2000'); C.noteClaudianSettingsWritten(db);
+  reset('ok', false);
+  const { page, ctx } = await portal('B5a');
+  await page.evaluate(() => go('settings'));
+  await until(page, () => { const c = document.getElementById('cpCard'); return c && /AI ON|AI IMEWASHWA/.test((document.getElementById('cpState') || {}).textContent || ''); }, null, 12000);
+  const box = () => page.evaluate(() => { const b = document.getElementById('cpTestBox'); return b ? b.textContent.replace(/\s+/g, ' ').trim() : ''; });
+  const press = async (want) => { await page.click('#cpTest'); await until(page, w => { const b = document.getElementById('cpTestBox'); return b && !/Inajaribu/.test(b.textContent) && (!w || new RegExp(w).test(b.textContent)); }, want, 8000); return box(); };
+  check('B5 the card has the test button, marked temporary, enabled once the state has arrived', await page.evaluate(() => { const b = document.getElementById('cpTest'); return !!b && !b.disabled && /Jaribu AI \(ya muda\) \/ Test the AI \(temporary\)/.test(b.textContent); }));
+  check('B5 there is no result box before the first press', (await box()) === '');
+  // no key on this host: nothing is sent, and the host is named
+  let t = await press('no ANTHROPIC_API_KEY|haina ufunguo');
+  check('B5 NO KEY: the result says this host has no key, nothing was sent, and it names the host (not Vercel here)', /Seva hii haina ufunguo \/ This host has no ANTHROPIC_API_KEY/.test(t) && /Nothing was sent/.test(t) && /not Vercel/.test(t) && /Environment Variables, Production na Preview/.test(t) && TP.calls === 0, t.slice(0, 400));
+  check('B5 and it is a failure to the eye (red chip)', await page.evaluate(() => !!document.querySelector('#cpTestBox .chip.bad')));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-test-nokey.png'), fullPage: false });
+  // a key and a provider that answers
+  reset('ok');
+  t = await press('AI inajibu');
+  check('B5 ANSWERED: the result says the AI answers, with the model, the time, the tokens and the answer', /AI inajibu \/ The AI answers/.test(t) && /claude-haiku-5-5/.test(t) && /5700 ndani \/ in, 4 nje \/ out/.test(t) && /“OK”/.test(t) && TP.calls === 1, t.slice(0, 400));
+  check('B5 and it is a success to the eye (green chip)', await page.evaluate(() => !!document.querySelector('#cpTestBox .chip.ok')));
+  check('B5 the request the provider was sent is the helper\'s own: Haiku 5.5, thinking off, effort low, one cached system block, no sampling settings', TP.last && TP.last.model === 'claude-haiku-5-5' && TP.last.thinking.type === 'disabled' && TP.last.output_config.effort === 'low' && TP.last.system[0].cache_control.type === 'ephemeral' && !('temperature' in TP.last) && !('tools' in TP.last), JSON.stringify(TP.last && Object.keys(TP.last)));
+  check('B5 the key is nowhere on the page', !(await page.evaluate(() => document.documentElement.outerHTML)).includes('must-never-appear'));
+  check('B5 the chip now says the AI is on with a key (the state came back with the result)', await page.evaluate(() => /AI IMEWASHWA \/ AI ON$/.test((document.getElementById('cpState') || {}).textContent.trim())), await page.evaluate(() => (document.getElementById('cpState') || {}).textContent));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-test-ok.png'), fullPage: false });
+  // pressed again at once: told to wait, nothing sent
+  t = await press('Subiri|Wait 5 seconds');
+  check('B5 PRESSED AGAIN AT ONCE: told to wait five seconds, and nothing more was sent', /Subiri sekunde 5 kisha bonyeza tena \/ Wait 5 seconds and press again/.test(t) && TP.calls === 1, t);
+  // a repaint (a table search) keeps the result and the button still works
+  await page.evaluate(() => { var q = document.getElementById('q') || document.querySelector('input[type=search]'); if (q) { q.value = 'zzz'; q.dispatchEvent(new Event('input', { bubbles: true })); } else { paint(true); } });
+  await page.waitForTimeout(300);
+  check('B5 after a repaint the result is still there', /Wait 5 seconds/.test(await box()));
+  // each refusal, in words, with the provider's own
+  reset('401');
+  t = await press('refused the key');
+  check('B5 REFUSED KEY (401): the result says so with the status, the error type, the request id and the provider\'s words; the card\'s last problem says it too', /Mtoa huduma amekataa ufunguo \/ The provider refused the key/.test(t) && /Hali \/ Status: 401/.test(t) && /authentication_error/.test(t) && /req_011BROWSER/.test(t) && /invalid x-api-key/.test(t)
+    && /Last problem: the provider refused the key/.test(await text_()), t.slice(0, 400));
+  if (SHOTS) await page.screenshot({ path: path.join(SHOTS, 'claudian-test-refused.png'), fullPage: false });
+  reset('429');
+  t = await press('Limit or credit');
+  check('B5 LIMIT OR CREDIT (429): said, with where to look', /Kikomo au mkopo \/ Limit or credit/.test(t) && /Billing/.test(t) && /Hali \/ Status: 429/.test(t), t.slice(0, 300));
+  reset('400');
+  t = await press('rejects our request');
+  check('B5 OUR REQUEST REJECTED (400): said, with the provider\'s words', /Mtoa huduma hakubali ombi letu \/ The provider rejects our request/.test(t) && /thinking is not supported/.test(t), t.slice(0, 300));
+  // what a provider says is text, never markup
+  reset('evil');
+  t = await press('did not answer');
+  const xss = await page.evaluate(() => ({ img: !!document.querySelector('#cpTestBox img'), script: !!document.querySelector('#cpTestBox script'), flag: window.__xss || 0 }));
+  check('B5 A TAG IN THE PROVIDER\'S WORDS is shown as text and runs nothing', xss.img === false && xss.script === false && xss.flag === 0 && /<img src=x/.test(t), JSON.stringify(xss) + ' ' + t.slice(0, 200));
+  // the screen forgets an old result when it is opened again
+  await page.evaluate(() => go('dashboard'));
+  await page.waitForTimeout(200);
+  await page.evaluate(() => go('settings'));
+  await until(page, () => { const c = document.getElementById('cpCard'); return c && /AI ON|AI IMEWASHWA/.test((document.getElementById('cpState') || {}).textContent || ''); }, null, 12000);
+  check('B5 opening Settings again starts without an old result (a "no key" read before a redeploy must not outlive it)', (await box()) === '');
+  delete process.env.ANTHROPIC_API_KEY;
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests();
+  await ctx.close();
+  async function text_() { return page.evaluate(() => (document.getElementById('cpCard') || {}).textContent || ''); }
 });
 
 /* ================================================= C. HOPE CALLS ================================================= */
