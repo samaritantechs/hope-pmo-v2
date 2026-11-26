@@ -268,17 +268,19 @@ test('THE CARDS AN ANSWER STOOD ON ARE SHOWN IN GREY, NOT IN THE RED OF A PROBLE
 
 test('THE REPORTS AN ANSWER READ ARE SHOWN TOO (handbook Part 160): "data: calls by team" in grey, and a report that was late or failed in red; both beside the cards, all as text', async () => {
   const items = [
-    { at: '2026-11-25T05:50:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'team gani leo hawapigi simu kabisa', a: 'ALPHA.', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'cards: legal-phone-grand · data: calls by team, last week by team' },
-    { at: '2026-11-25T05:51:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: calls by team (late)' },
-    { at: '2026-11-25T05:52:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: last week by team (failed)' },
+    { at: '2026-11-25T05:50:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'team gani leo hawapigi simu kabisa', a: 'ALPHA.', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'cards: legal-phone-grand · data: calls by team 5.1s, last week by team 0.2s' },
+    { at: '2026-11-25T05:51:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: calls by team (late) 15.0s' },
+    { at: '2026-11-25T05:52:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: last week by team (failed) 1.2s' },
     { at: '2026-11-25T05:53:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: <b>x</b>' },
+    { at: '2026-11-25T05:54:00Z', mode: 'ai', faq: '', faqLabel: null, q: 'x', a: 'y', tokensIn: 1, tokensOut: 1, cacheRead: 0, ms: 5, behind: null, note: 'data: calls by team 5.1s kept' },
   ];
   const { win, drawn } = load({ claudianThread: { on: true, note: null, thread: 'k-1:2026-11-25', day: '2026-11-25', who: { name: 'JUMA G', role: 'MANAGER', zone: 'DAR CENTER', teams: 'KONGOWE', source: 'portal', lang: 'sw' }, items } });
   win.haOpen_('k-1:2026-11-25'); await new Promise(r => setImmediate(r));
   const h = drawn[0].html;
-  assert.ok(/color:var\(--mut\)[^>]*>Kadi \/ Cards: legal-phone-grand</.test(h) && /color:var\(--mut\)[^>]*>Takwimu \/ Data: calls by team, last week by team</.test(h), 'the cards and the reports in grey, in both languages');
-  assert.ok(/color:var\(--bad\)[^>]*>data: calls by team \(late\)</.test(h), 'a report that was late is red');
-  assert.ok(/color:var\(--bad\)[^>]*>data: last week by team \(failed\)</.test(h), 'a report that failed is red');
+  assert.ok(/color:var\(--mut\)[^>]*>Kadi \/ Cards: legal-phone-grand</.test(h) && /color:var\(--mut\)[^>]*>Takwimu \/ Data: calls by team 5\.1s, last week by team 0\.2s</.test(h), 'the cards and the reports, with the seconds they took, in grey, in both languages');
+  assert.ok(/color:var\(--mut\)[^>]*>Takwimu \/ Data: calls by team 5\.1s kept</.test(h), 'a report kept from an earlier question is grey too');
+  assert.ok(/color:var\(--bad\)[^>]*>data: calls by team \(late\) 15\.0s</.test(h), 'a report that was late is red, with the seconds waited');
+  assert.ok(/color:var\(--bad\)[^>]*>data: last week by team \(failed\) 1\.2s</.test(h), 'a report that failed is red');
   assert.ok(h.includes('Takwimu / Data: &lt;b&gt;x&lt;/b&gt;') && !h.includes('<b>x</b>'), 'text, never markup');
 });
 
