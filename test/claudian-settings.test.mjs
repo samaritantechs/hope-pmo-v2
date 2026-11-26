@@ -137,6 +137,6 @@ test('THE PERCENTAGE TARGETS ARE THE ROWS EVERY TABLE ALREADY COLOURS ITSELF BY:
 test('the upload function never loads the helper: portal-core reaches it only by an import made when the two functions are CALLED', () => {
   const src = fs.readFileSync(path.join(ROOT, 'api/_lib/portal-core.js'), 'utf8');
   assert.ok(!/^\s*import[^\n]*claudian/m.test(src), 'portal-core.js (imported by api/upload.js) must not import the helper statically');
-  assert.equal((src.match(/import\('\.\/claudian\.js'\)/g) || []).length, 2, 'one lazy import in each of the two functions');
+  assert.equal((src.match(/import\('\.\/claudian\.js'\)/g) || []).length, 3, 'one lazy import in each of the three functions: the card\'s state, its switch and limits, and the TEMPORARY test button (26 Nov 2026)');
   for (const f of ['api/upload.js', 'api/call.js', 'api/_lib/call-core.js']) assert.ok(!/claudian/i.test(fs.readFileSync(path.join(ROOT, f), 'utf8')), f + ' knows the helper');
 });
