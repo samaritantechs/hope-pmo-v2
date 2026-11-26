@@ -39,6 +39,7 @@ delete process.env.ANTHROPIC_API_KEY;
 import { chromium } from 'playwright-core';
 import http from 'node:http';
 import fs from 'node:fs';
+import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -252,6 +253,8 @@ const latestShown = page => page.evaluate(() => {
   return { top: Math.round(x.top - b.top), bottom: Math.round(b.bottom - x.bottom), within: x.top >= b.top - 1 && x.bottom <= b.bottom + 1 };
 });
 const APK = 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk';
+/** The module's own mark function, run in Node (the first form of the kept conversation marked a handset by its device id alone: a record made so is what a handset passed on would still hold). */
+const markOf = (() => { const W = {}; vm.runInNewContext(fs.readFileSync(MODULE, 'utf8'), { window: W }); return W.ClaudianPMO._t.mark; })();
 /** Nothing is on its way: the panel's "Loading..." / "Thinking..." line is gone. (A restored conversation can hold choices, so "a chip exists" is no sign that the list has arrived.) */
 const idle = page => until(page, () => !document.getElementById('claudianPMO').shadowRoot.querySelector('.body .m.t'));
 
@@ -1121,6 +1124,100 @@ await section('C5 (history in HOPE Calls)', async () => {
   await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
   check('C5 a conversation that is not this handset\'s officer\'s is not shown, and is deleted', (await convo(page)).length === 0 && (await kept(page, 'claudianChat.call')) === null);
   await ctx.close();
+});
+
+// ---- ONE HANDSET, TWO OFFICERS (handbook Part 167, addendum 1): a handset that is re-registered as another officer, de-registered, or registered afresh passes through no log-out
+const callPage = async (label, { seed = null } = {}) => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+  const page = await ctx.newPage();
+  page.on('pageerror', e => errs.push(label + ': ' + String(e)));
+  page.on('console', m => { if (m.type() === 'error' && !BENIGN.test(m.text())) errs.push(label + ' console: ' + m.text()); });
+  page.setDefaultTimeout(9000);
+  await page.addInitScript(SPEED, 1500);
+  await page.goto(base + '/call');
+  return { ctx, page };
+};
+const inCall = async page => { await page.waitForFunction(() => typeof S === 'object' && S.entered === true, null, { timeout: 12000 }).catch(() => {}); await until(page, () => !!document.getElementById('claudianPMO'), null, 20000); };
+const choicesIn = page => until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+
+await section('C6 (the handset is handed to another officer)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  const row = db._dump('call_users').find(r => r.device_id === 'dF');
+  const juma = row.name;
+  try {
+    // ONE page throughout: the same handset (its device id and its storage), reloaded, with another officer registered to it
+    const a = await callPage('C6');
+    await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    const raw = await kept(a.page, 'claudianChat.call');
+    check('C6 the first officer\'s conversation is kept', typeof raw === 'string' && JSON.parse(raw).m.length >= 2);
+    await a.page.reload(); await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    check('C6 the same officer, the app opened again, finds it', (await convo(a.page)).length >= 2, JSON.stringify((await convo(a.page)).map(x => x.kind)));
+    // the PMO registers ANOTHER officer to this handset: no log-out of ours is passed
+    row.name = 'ASHA KOMBO';
+    await a.page.reload(); await inCall(a.page);
+    check('C6 the page now names the new officer', (await a.page.evaluate(() => S.boot && S.boot.name)) === 'ASHA KOMBO');
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    check('C6 the next officer meets an EMPTY panel, not the last one\'s questions and answers', (await convo(a.page)).length === 0, JSON.stringify((await convo(a.page)).map(x => x.text.slice(0, 40))));
+    check('C6 and what the last officer asked is deleted from the handset', (await kept(a.page, 'claudianChat.call')) === null);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    const mine = await kept(a.page, 'claudianChat.call');
+    check('C6 the new officer\'s own conversation is kept under their own mark', mine !== null && JSON.parse(mine).who !== JSON.parse(raw).who);
+    await a.ctx.close();
+  } finally { row.name = juma; }
+});
+
+await section('C7 (the server says the handset is no longer signed in)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  try {
+    const a = await callPage('C7');
+    await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    check('C7 a conversation is kept while the officer is signed in', (await kept(a.page, 'claudianChat.call')) !== null);
+    // the PMO de-registers the handset: the next time the app asks the server it is told it is no longer signed in (the officer's helper is mounted)
+    DEVICE = 'dGone';
+    await Promise.all([a.page.waitForNavigation({ timeout: 9000 }).catch(() => {}), a.page.evaluate(() => { boot(); })]);
+    await a.page.waitForTimeout(500);
+    check('C7 the app is back on its sign-in screen', await a.page.evaluate(() => !document.getElementById('scrRegister').classList.contains('hide')));
+    check('C7 and the officer who is gone took their helper conversation with them', (await kept(a.page, 'claudianChat.call')) === null);
+    await a.ctx.close();
+  } finally { DEVICE = 'dF'; }
+});
+
+await section('C8 (a handset registered afresh starts with an empty helper)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  try {
+    // the officer who was here leaves a conversation; the handset reaches its sign-in screen by a road that forgets nothing (a state the other roads can leave behind: an app update, a restored backup)
+    const a = await callPage('C8');
+    await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    check('C8 the officer who was here left a conversation', (await kept(a.page, 'claudianChat.call')) !== null);
+    DEVICE = 'dNew';
+    await a.page.evaluate(() => { localStorage.setItem('hcLoggedOut', '1'); localStorage.removeItem('hcBoot_v1'); });
+    await a.page.reload();
+    await a.page.waitForFunction(() => !document.getElementById('scrRegister').classList.contains('hide'), null, { timeout: 12000 }).catch(() => {});
+    check('C8 a handset that is on its sign-in screen holds no helper conversation (nobody is signed in on it)', (await kept(a.page, 'claudianChat.call')) === null);
+    // what a handset passed on could still hold: a record marked by the device id alone (the first form of the mark), left by a road that forgets nothing
+    const dev = await a.page.evaluate(() => DEV);
+    await a.page.evaluate(v => localStorage.setItem('claudianChat.call', JSON.stringify(v)), { v: 1, who: markOf(dev), at: Date.now(), ha: 0, hist: null, m: [['u', 'a question of the last officer'], ['a', 'an answer for the last officer']] });
+    // a new officer registers
+    await a.page.fill('#regPhone', '0712123456'); await a.page.fill('#regName', 'NEW OFFICER'); await a.page.fill('#regPass', 'KON123');
+    await a.page.click('#regBtn');
+    await a.page.waitForFunction(() => typeof S === 'object' && S.entered === true, null, { timeout: 12000 }).catch(() => {});
+    check('C8 the new officer is in', (await a.page.evaluate(() => S.boot && S.boot.name)) === 'NEW OFFICER');
+    check('C8 registering started the helper empty: the last officer\'s conversation is gone from the handset at once, before the helper is even loaded', (await kept(a.page, 'claudianChat.call')) === null);
+    await until(a.page, () => !!document.getElementById('claudianPMO'), null, 20000);
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    check('C8 and the panel holds nothing of the last officer', (await convo(a.page)).length === 0);
+    await a.ctx.close();
+  } finally {
+    DEVICE = 'dF';
+    const users = db._dump('call_users'); const i = users.findIndex(r => r.device_id === 'dNew'); if (i >= 0) users.splice(i, 1);
+  }
 });
 
 await browser.close(); srv.close(); console.warn = warn;
