@@ -18,7 +18,7 @@ delete process.env.ANTHROPIC_API_KEY;                   // a developer's own key
 process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://test.invalid';
 process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-key';
 const C = await import('../api/_lib/claudian.js');
-const { FAQ, faqChoices, faqAnswer, faqAllowed, fill } = await import('../api/_lib/claudian-faq.js');
+const { FAQ, faqChoices, faqAnswer, faqAllowed, fill, ALWAYS_HINT } = await import('../api/_lib/claudian-faq.js');
 const { TAB_NOTES, GLOSSARY, TARGETS_DEFAULT, CALL_NOTES } = await import('../api/_lib/claudian-knowledge.js');
 const { ADMIN_TABS } = await import('../api/_lib/auth.js');
 const { callMinSecsOf } = await import('../api/_lib/call-core.js');
@@ -358,7 +358,10 @@ test('THE FAQ CATALOGUE IS SOUND: unique ids, both languages, short answers, onl
   for (const e of FAQ) {
     assert.ok(e.any || e.call || (e.tabs && e.tabs.length), e.id + ' says who it is for');
     for (const l of ['sw', 'en']) {
-      assert.ok(e[l] && e[l].q && e[l].a, e.id + ' has ' + l); assert.ok(e[l].a.length <= 420, e.id + ' ' + l + ' answer is short: ' + e[l].a.length);
+      // the explanation is short (420 characters); the instruction the owner ordered to go with a concern (handbook Part 165: ALWAYS_HINT, with a link) is on top of it, never inside the count
+      const hintLen = ALWAYS_HINT[e.id] ? ALWAYS_HINT[e.id][l].length + 2 : 0;
+      assert.ok(e[l] && e[l].q && e[l].a, e.id + ' has ' + l); assert.ok(e[l].a.length <= 420 + hintLen, e.id + ' ' + l + ' answer is short: ' + e[l].a.length);
+      if (hintLen) assert.ok(e[l].a.length - hintLen <= 420, e.id + ' ' + l + ' explanation is short: ' + (e[l].a.length - hintLen));
       assert.ok(e[l].q.length <= 90, e.id + ' ' + l + ' question is short'); assert.ok(!/\d{7,}/.test(e[l].a), e.id + ' carries no long number');
       for (const m of e[l].a.matchAll(/\{(\w+)\}/g)) assert.ok(known.has(m[1]), e.id + ' uses {' + m[1] + '}, which nothing fills');
       assert.ok(!OFFERISH.test(e[l].a), e.id + ' ' + l + ': a ready answer ends like Claudian does, with no offer');
@@ -863,4 +866,49 @@ test('A FLOOD OF TAPS ON A READY QUESTION IS STOPPED AT THE SAME CEILING (a tap 
   assert.equal(db._dump('claudian_chats').filter(r => r.mode === 'faq').length, C.FREE_TYPED_DAILY);
   const limit = db._dump('claudian_chats').filter(r => r.mode === 'limit');
   assert.equal(limit.length, 1); assert.match(limit[0].note, /tap ceiling/);
+});
+
+/* ---------------- the concern the owner ordered an instruction for (handbook Part 165) ----------------
+     "I called a customer but Amepigiwa leo did not appear" had 26 taps by 24 people ... always give them instructions of clossing app and re-opening so as to allow
+      permissions or re-install the app from https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk   -- the owner, 26 Nov 2026 */
+const concernPhone = () => C.callSubject({ user_id: 'o1', name: 'ASHA', role: 'FIELD OFFICER', is_leader: false, team: 'ALPHA' }, { teams: ['ALPHA'] }, 'dev-concern-1');
+test('THE ANSWER TO "AMEPIGIWA LEO DID NOT APPEAR" ALWAYS ENDS WITH THE SAME INSTRUCTION: close the app completely, open it again so it asks for permissions and allow them, or install it again from the release link; the tap, the ready answer a typed question finds, and the model\'s answer all carry it, word for word', async () => {
+  const F = await import('../api/_lib/claudian-faq.js');
+  const apk = JSON.parse(await readFile(new URL('../app-version.json', import.meta.url), 'utf8')).apkUrl;
+  assert.equal(F.APK_URL, apk, 'the link is the app\'s own download link (app-version.json), held equal by this test');
+  assert.equal(F.APK_URL, 'https://github.com/samaritantechs/hope-pmo-v2/releases/download/hope-calls-apk/HOPE-Calls.apk', 'and it is the link the owner gave');
+  assert.match(F.PERMISSIONS_HINT.en, /close the app completely and open it again so it asks for its permissions, and allow them\. If it still does not, install the app again from here: https:\/\/github\.com\/samaritantechs\/hope-pmo-v2\/releases\/download\/hope-calls-apk\/HOPE-Calls\.apk$/);
+  assert.match(F.PERMISSIONS_HINT.sw, /funga programu kabisa kisha uifungue tena ili iombe ruhusa, na uzikubali\. Ikiendelea, isakinishe upya kutoka hapa: https:\/\/github\.com\/samaritantechs\/hope-pmo-v2\/releases\/download\/hope-calls-apk\/HOPE-Calls\.apk$/);
+  assert.deepEqual(Object.keys(F.ALWAYS_HINT), ['call-not-ticked']);
+  // the tap: the ready answer itself, in both languages, with the instruction after the explanation
+  for (const lang of ['sw', 'en']) {
+    const r = await C.claudianHandle(fakeDb(book()), concernPhone(), { op: 'faq', id: 'call-not-ticked', lang }, { nowMs: NOW, noGap: true });
+    assert.equal(r.mode, 'faq'); assert.ok(r.answer.endsWith(F.PERMISSIONS_HINT[lang]), lang + ': ' + r.answer);
+    assert.equal(r.answer.split(F.APK_URL).length - 1, 1, 'the link once');
+  }
+  // typed, the AI off: the ready answer it finds carries it
+  const off = await C.claudianHandle(fakeDb(book({ settings: [] })), concernPhone(), { op: 'ask', q: 'Nimempigia mteja lakini hajapata alama ya "Amepigiwa leo"?', lang: 'sw' }, { nowMs: NOW, noGap: true });
+  assert.equal(off.mode, 'match'); assert.equal(off.id, 'call-not-ticked'); assert.ok(off.answer.endsWith(F.PERMISSIONS_HINT.sw));
+  // typed, the AI on: the model's own words, then the instruction, exactly once, in the person's language
+  const calls = [];
+  const modelSays = 'The tick needs a synced call longer than five seconds to the customer\'s own number or the guarantor\'s.';
+  const on = await ask(fakeDb(book()), concernPhone(), 'I called a customer but "Amepigiwa leo" did not appear?', { client: client(text(modelSays), calls) });
+  assert.equal(on.mode, 'ai'); assert.equal(on.answer, modelSays + '\n\n' + F.PERMISSIONS_HINT.en);
+  const onSw = await ask(fakeDb(book()), concernPhone(), 'Nimempigia mteja lakini Amepigiwa leo haionekani', { client: client(text('Simu lazima isawazishwe.')) }, { lang: 'sw' });
+  assert.equal(onSw.answer, 'Simu lazima isawazishwe.\n\n' + F.PERMISSIONS_HINT.sw);
+  // the model wrote the link itself: it is not added twice
+  const own = await ask(fakeDb(book()), concernPhone(), 'I called a customer but "Amepigiwa leo" did not appear?', { client: client(text('Close the app and reinstall it from ' + F.APK_URL + ' if it persists.')) });
+  assert.equal(own.answer.split(F.APK_URL).length - 1, 1, 'not repeated: ' + own.answer);
+  // a question that is not about it gets nothing added; nor does a person who is not offered the answer (a portal person); nor a refusal
+  const other = await ask(fakeDb(book()), concernPhone(), 'How do I record another number for a customer?', { client: client(text('Enter it under Ana namba nyingine on the customer card.')) });
+  assert.equal(other.answer, 'Enter it under Ana namba nyingine on the customer card.');
+  const portal = await ask(fakeDb(book()), PERSON(), 'I called a customer but "Amepigiwa leo" did not appear?', { client: client(text('Open the phone app so it syncs.')) });
+  assert.ok(!portal.answer.includes(F.APK_URL), 'the portal person is not told about the phone app\'s permissions');
+  const refused = await ask(fakeDb(book()), concernPhone(), 'I called a customer but "Amepigiwa leo" did not appear?', { client: client({ content: [{ type: 'text', text: '' }], stop_reason: 'refusal', usage: { input_tokens: 10, output_tokens: 1 } }) });
+  assert.ok(!refused.answer.includes(F.APK_URL), 'a refusal is a refusal');
+  // the log keeps what the person was told, the instruction included
+  const db = fakeDb(book()); await ask(db, concernPhone(), 'I called a customer but "Amepigiwa leo" did not appear?', { client: client(text(modelSays)) });
+  assert.ok(db._dump('claudian_chats')[0].answer.includes('HOPE-Calls.apk'), 'the Hope Ai tab shows the instruction too');
+  // and the code adds it only after the model has answered, never before (it is not part of the request)
+  assert.ok(!JSON.stringify(calls[0]).includes('HOPE-Calls.apk'), 'the link is not sent to the model: the server adds it');
 });

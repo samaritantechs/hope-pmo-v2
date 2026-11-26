@@ -69,7 +69,7 @@ import { registrySpellings } from './snapshots.js';
 import { wholePct } from './recovery.js';
 import { SYSTEM_PROMPT, CTX, TAB_NOTES, CALL_NOTES, TARGETS_DEFAULT, SALES_TARGET_DEFAULT, tabWords } from './claudian-knowledge.js';
 import { faqChoices, faqAnswer, faqLabel } from './claudian-faq.js';
-import { faqMatch } from './claudian-match.js';
+import { faqMatch, concernHint } from './claudian-match.js';
 import { pickCards, tabKeyScore } from './claudian-cards.js';
 import { viewsFor, readViews, resetClaudianDataForTests } from './claudian-data.js';
 
@@ -666,6 +666,9 @@ export async function claudianHandle(db, subject, body, deps = {}) {
     const text = res && Array.isArray(res.content) ? res.content.filter(c => c && c.type === 'text').map(c => c.text).join('\n') : '';
     let answer = res && res.stop_reason === 'refusal' ? FIXED.refused[lang] : cleanReply(text);
     if (!answer) answer = FIXED.refused[lang];
+    // A concern the owner ordered an instruction for (handbook Part 165): the instruction goes after the model's answer, word for word, whatever the model wrote.
+    const hint = res && res.stop_reason !== 'refusal' ? concernHint(subject, q, lang, answer) : null;
+    if (hint) answer = answer + '\n\n' + hint;
     bump(subject, nowMs);
     const allc = allCache.get(db); if (allc) allc.n++;
     await logChat(db, { ...row, mode: 'ai', question: q, answer: answer.slice(0, 1200), tokens_in: (u.input_tokens | 0) + (u.cache_creation_input_tokens | 0) + (u.cache_read_input_tokens | 0),
