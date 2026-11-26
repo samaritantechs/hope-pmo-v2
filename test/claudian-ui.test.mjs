@@ -56,7 +56,7 @@ test('what a person is shown is TEXT: innerHTML is used for the icon and nothing
 });
 
 test('THE KEPT CONVERSATION is wired as the owner ordered (26 Nov): drawn again when the module is mounted with nothing asked of the server, the panel opens on the latest question, the failures the module draws itself are not kept, and the exchange rides only while it is young', () => {
-  assert.ok(/st\.mounted = true;\s*paintTheme\(\);\s*restore\(\);/.test(CODE), 'the kept conversation is drawn when the module is mounted');
+  assert.ok(/st\.mounted = true;\s*paintTheme\(\);\s*sweepExpired\(\);[^\n]*\s*restore\(\);[^\n]*\s*st\.owner = who\(\);/.test(CODE), 'the expired records are swept, the kept conversation is drawn, and the panel notes whose lines it holds, when the module is mounted');
   const keptCode = CODE.slice(CODE.indexOf('function chatKey('), CODE.indexOf('function setHist('));
   assert.ok(keptCode.length > 1500 && !/\bapi\(|\bfetch\(|XMLHttpRequest|sendBeacon|loadStatus\(/.test(keptCode), 'keeping and drawing the conversation touches the network, or moved: update the slice');
   assert.ok(/function openPanel\(\)[\s\S]{0,1400}loadStatus\(false\)\.then\(function \(\) \{\s*if \(st\.open\) showLatest\(\);/.test(CODE), 'the panel opens on the latest question once the list is in (a hidden element forgets its scroll)');
@@ -103,10 +103,10 @@ test('what is kept in the browser: the bubble\'s place, and the person\'s own co
   const uses = [...CODE.matchAll(/localStorage\.(getItem|setItem|removeItem)\(([^)]*)\)/g)].map(m => m[1] + '(' + m[2].split(',')[0] + ')');
   const place = uses.filter(u => /posKey\(\)/.test(u)), kept = uses.filter(u => !/posKey\(\)/.test(u));
   assert.deepEqual(place.map(x => x.split('(')[0]).sort(), ['getItem', 'removeItem', 'setItem'], 'the bubble\'s place is read, written and dropped: ' + uses.join(' '));
-  assert.deepEqual(kept.sort(), ['getItem(chatKey()', 'removeItem(keys[i])', 'setItem(chatKey()'].sort(), 'the conversation is read, written and dropped in one place each: ' + kept.join(' '));
-  assert.equal(uses.length, 6, 'storage is touched in ' + uses.length + ' places: ' + uses.join(' '));
+  assert.deepEqual(kept.sort(), ['getItem(chatKey()', 'getItem(chatKey(hosts[i])', 'removeItem(chatKey(hosts[i])', 'removeItem(keys[i])', 'setItem(chatKey()'].sort(), 'the conversation is read, written and dropped in one place each (and the expiry sweep reads and drops the two pages\' records): ' + kept.join(' '));
+  assert.equal(uses.length, 8, 'storage is touched in ' + uses.length + ' places: ' + uses.join(' '));
   assert.ok(/JSON\.stringify\(\{ fx: [^}]*fy: [^}]*\}\)/.test(CODE), 'the place is the two fractions');
-  for (const fn of ['readFrac', 'writeFrac', 'dropFrac', 'readChat', 'dropChat', 'persist']) assert.ok(new RegExp('function ' + fn + '\\([^)]*\\) \\{[\\s\\S]{0,260}try \\{').test(CODE), fn + ' reads or writes storage outside a try');
+  for (const fn of ['readFrac', 'writeFrac', 'dropFrac', 'readChat', 'dropChat', 'persist', 'sweepExpired']) assert.ok(new RegExp('function ' + fn + '\\([^)]*\\) \\{[\\s\\S]{0,260}try \\{').test(CODE), fn + ' reads or writes storage outside a try');
   assert.ok(!/sessionStorage|indexedDB|document\.cookie/.test(CODE), 'another store');
   assert.ok(/'claudianPos\.' \+ \(\(st\.opts && st\.opts\.host\) \|\| 'portal'\)/.test(CODE), 'the portal and the call app each keep their own place');
   assert.ok(/return 'claudianChat\.' \+ \(host \|\| \(st\.opts && st\.opts\.host\) \|\| 'portal'\);/.test(CODE) || /function chatKey\(host\) \{ return 'claudianChat\.' \+ \(host \|\| \(st\.opts && st\.opts\.host\) \|\| 'portal'\); \}/.test(CODE), 'and each its own conversation');
@@ -171,6 +171,13 @@ test('a question is cut at what the server accepts, and whitespace is squeezed',
   assert.ok(/e\.ta\.maxLength = MAX_Q;/.test(CODE), 'the box itself stops at the same number');
 });
 
+test('EVERY ANSWER ON ITS WAY ASKS stale(sess), never the session alone (handbook Part 167, addendum 2): an answer for a person who is no longer here is dropped in every callback of the module', () => {
+  assert.equal((CODE.match(/if \(stale\(sess\)\) return;/g) || []).length, 9, 'nine callbacks (the status, the ready answers and the typed question: their answers, their failures and their ends)');
+  assert.ok(!/if \(sess !== st\.sess\) return;/.test(CODE), 'a callback that asks the session alone would draw an answer for the last person in the next person\'s panel');
+  assert.ok(/function stale\(sess\) \{ return sess !== st\.sess \|\| !keepOwner\(\); \}/.test(CODE), 'stale() is the session OR the person');
+  for (const fn of ['openPanel', 'ask', 'askFaq', 'loadStatus']) assert.ok(new RegExp('function ' + fn + '\\([^)]*\\) \\{(?:\\s*if \\([^\\n]*\\) return;)?\\s*keepOwner\\(').test(CODE), fn + ' settles whose panel it is before it does anything');
+});
+
 test('the portal loads it late and only once, by BUILD, in a try, and nothing waits for it', () => {
   const fn = strip(APP.slice(APP.indexOf('function claudianLater_()'), APP.indexOf('/* WHERE TO LAND NEXT TIME')));
   assert.ok(/if \(!S\.code \|\| window\.ClaudianPMO\) return;/.test(fn), 'not signed in, or already there: nothing');
@@ -179,10 +186,19 @@ test('the portal loads it late and only once, by BUILD, in a try, and nothing wa
   assert.equal((strip(APP).match(/claudianLater_/g) || []).length, 2, 'the function and ONE call');
   assert.ok(/setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'the one call is a seven-second timer, after the first screen\'s own reads (2.5 s)');
   assert.ok(/setTimeout\(function\(\)\{ tipsStart\(\); annCheck\(\); bellRefresh\(\); pushAsk_\(\); \}, 2500\);\s*setTimeout\(claudianLater_, 7000\);/.test(strip(APP)), 'it follows the first screen\'s reads');
-  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export; since Part 167 the Toka tells it to forget the person)');
+  assert.ok(!/ClaudianPMO|claudian/i.test(strip(APP).replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/setTimeout\(claudianLater_, 7000\);/, '').replace(/wireClaudian_[^;]*;/g, '').replace(/claudian(Status|Chats|Thread|ChatsExport):1,\s*/g, '').replace(/function helperForget_\(\)\{[\s\S]*?\n\}\n/, '').replace(/helperForget_\(\);\s*/g, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/g, '')), 'the portal page knows the helper nowhere else (its four reads in READ_FNS: the status of the Settings card, since Part 158 the two reads of the Hope Ai tab and, since Part 162, its export; since Part 167 the Toka tells it to forget the person)');
   // the portal's own sign-out (the Toka) tells the helper, after the one sign-out has cleared what it keeps (handbook Part 167)
   assert.ok(/\$\('#outBtn'\)\.onclick = function\(\)\{[^}]*HOPESession\.signOutAll\(\)[^}]*\}[^}]*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}[^}]*window\.location\.replace\('\/'\);/.test(strip(APP)), 'the Toka hides the helper, which forgets the person, before it leaves the page');
-  assert.ok(!/var BUILD = '2026-11-26-c'/.test(APP), 'BUILD moved with the front-end change');
+  assert.ok(!/var BUILD = '2026-11-26-d'/.test(APP), 'BUILD moved with the front-end change');
+  // every OTHER road that signs a person out by dropping the code (handbook Part 167, addendum 2, finding F3): the server refusing the code, the stored code refused at load, and a sign-out in another tab
+  const app = strip(APP);
+  assert.ok(/function helperForget_\(\)\{\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}\s*try \{ if \(window\.HOPESession && HOPESession\.clearHelper\) HOPESession\.clearHelper\(\); else \{ localStorage\.removeItem\('claudianChat\.portal'\); localStorage\.removeItem\('claudianChat\.call'\); \} \} catch\(e\)\{\}\s*\}/.test(app), 'helperForget_ hides the helper (which forgets) and clears both kept conversations, with or without brand.js');
+  assert.ok(/if \(x\.status === 401\)\{\s*helperForget_\(\);\s*store\('hopeCode', null\);/.test(app), 'a code the server refuses ("you have been signed out") forgets the helper\'s conversation before the page is replaced');
+  assert.ok(/else \{ helperForget_\(\); store\('hopeCode', null\); pushOfficerCode_\(''\);/.test(app), 'a stored code refused at load forgets it too');
+  assert.ok(/function signedOutElsewhere_\(\)\{\s*if \(S\.code && !load\('hopeCode'\)\) \{ try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\} pushOfficerCode_\(''\); window\.location\.replace\('\/'\); \}/.test(app), 'a sign-out in another tab ends the open helper before the page leaves');
+  assert.equal((app.match(/helperForget_\(\)/g) || []).length, 3, 'one definition and TWO calls');
+  const HOME = fs.readFileSync(path.join(ROOT, 'public/home.html'), 'utf8');
+  assert.ok(/else \{ try \{ if \(window\.HOPESession && HOPESession\.clearHelper\) HOPESession\.clearHelper\(\); \} catch\(e\)\{\} store\('hopeCode', null\); renderSignIn\(res\.body\.error \|\| ''\); \}/.test(HOME), 'the launcher forgets it when the stored code is refused');
 });
 
 test('HOPE Calls loads it eight seconds after the officer is in, at the very end of enterApp, in a try, and signing out takes it away', () => {
@@ -199,14 +215,17 @@ test('HOPE Calls loads it eight seconds after the officer is in, at the very end
   assert.ok(/\n  claudianLater_\(\);[^\n]*\n\}\n$/.test(enter), 'the call is the last statement of enterApp: nothing the app does on entry waits for it');
   assert.equal((code.match(/claudianLater_\(\)/g) || []).length, 2, 'one definition and ONE call');
   assert.ok(/function doLogout\(\)\{\s*\n(?:[^\n]*\n){1,2}\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/.test(code), 'signing out hides the bubble');
-  assert.ok(!/var CALL_BUILD = '2026-11-26-a'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
+  assert.ok(!/var CALL_BUILD = '2026-11-26-b'/.test(CALL), 'CALL_BUILD moved with the change to the call page');
   // the sacred paths: nothing of the helper in the request that sends a day's calls, and nothing before the entry
   // a handset that is de-registered, or signed in again as another officer, passes through no log-out: the helper's kept conversation goes at both (handbook Part 167, addendum 1)
   assert.ok(/function claudianForget_\(\)\{\s*try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}\s*try \{ if \(window\.HOPESession && HOPESession\.clearHelper\) HOPESession\.clearHelper\(\); else \{ localStorage\.removeItem\('claudianChat\.call'\); localStorage\.removeItem\('claudianChat\.portal'\); \} \} catch\(e\)\{\}\s*\}/.test(code), 'claudianForget_ hides the helper (which forgets) and clears what was kept, with or without brand.js');
   assert.ok(/localStorage\.removeItem\(BOOT_LS_KEY\); localStorage\.removeItem\(SUM_LS_KEY\); localStorage\.removeItem\(UI_LS_KEY\); \} catch\(e\)\{\}\s*claudianForget_\(\);/.test(code), 'the server saying "no longer signed in" forgets the officer\'s helper conversation before the page reloads');
   assert.ok(/localStorage\.setItem\(BOOT_LS_KEY, JSON\.stringify\(d\)\); \} catch\(e\)\{\}\s*claudianForget_\(\);\s*buildNote_\(d\.callBuild\);/.test(code), 'a registration starts the helper empty, whoever was on the handset before');
-  assert.equal((code.match(/claudianForget_\(\)/g) || []).length, 3, 'one definition and TWO calls');
-  assert.ok(!/claudian/i.test(code.replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/function claudianForget_\(\)\{[\s\S]*?\n\}\n/, '').replace(/claudianForget_\(\);[^\n]*\n/g, '').replace(/claudianLater_\(\);[^\n]*\n/, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '').replace(/CLAUDIAN_ASKED_[^;]*;/g, '')), 'the call page knows the helper nowhere else');
+  assert.equal((code.match(/claudianForget_\(\)/g) || []).length, 4, 'one definition and THREE calls (the server saying it is no longer signed in, a registration, and a boot answer that names another officer)');
+  // the boot answer names ANOTHER officer than the page was showing (handbook Part 167, addendum 2, findings F1 and F2): the first statement of enterApp, never able to throw
+  assert.ok(/function claudianWho_\(d\)\{\s*try \{\s*var p = S\.boot;\s*if \(!p \|\| !d\) return;\s*if \(String\(p\.userId \|\| ''\) === String\(d\.userId \|\| ''\) && String\(p\.name \|\| ''\) === String\(d\.name \|\| ''\)\) return;\s*claudianForget_\(\);\s*if \(window\.ClaudianPMO && ClaudianPMO\.mounted && ClaudianPMO\.mounted\(\)\) ClaudianPMO\.show\(\);\s*\} catch\(e\)\{\}\s*\}/.test(code), 'claudianWho_ compares the officer (user id and name) with the one the page was showing, forgets and gives the next officer an empty bubble; a try around all of it');
+  assert.ok(/function enterApp\(d\)\{\s*claudianWho_\(d\);\s*S\.boot = d;/.test(code), 'it runs before S.boot is replaced, as the first statement of enterApp');
+  assert.ok(!/claudian/i.test(code.replace(/function claudianLater_[\s\S]*?\n\}\n/, '').replace(/function claudianForget_\(\)\{[\s\S]*?\n\}\n/, '').replace(/function claudianWho_\(d\)\{[\s\S]*?\n\}\n/, '').replace(/claudianWho_\(d\);\s*/, '').replace(/claudianForget_\(\);[^\n]*\n/g, '').replace(/claudianLater_\(\);[^\n]*\n/, '').replace(/try \{ if \(window\.ClaudianPMO\) ClaudianPMO\.hide\(\); \} catch\(e\)\{\}/, '').replace(/CLAUDIAN_ASKED_[^;]*;/g, '')), 'the call page knows the helper nowhere else');
 });
 
 test('the Settings card: the limits it offers are the limits the server accepts, its buttons are wired on every paint, and its status is a read', () => {

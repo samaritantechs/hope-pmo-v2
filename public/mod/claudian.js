@@ -186,7 +186,7 @@
   /* ---------------- the state ---------------- */
   var st = {
     mounted: false, opts: null, host: null, root: null, e: {}, pos: null, frac: null, open: false, busy: false,
-    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, histAt: 0, log: [], ticket: 0, sess: 0, pulsed: false
+    status: null, statusAt: 0, statusLang: '', userLang: null, langAtToggle: '', hist: null, histAt: 0, log: [], ticket: 0, sess: 0, pulsed: false, owner: null
   };
 
   function posKey() { return 'claudianPos.' + ((st.opts && st.opts.host) || 'portal'); }
@@ -212,7 +212,12 @@
          the signed-in officer (opts.person): one phone is handed from officer to officer, and a handset that is de-registered or re-registered passes through no
          log-out of ours;
        - signing out forgets it (forget(), below, and brand.js HOPESession for a page that never loaded this module): a handset or a computer is shared;
-       - it expires HIST_DAYS days after its last line, holds at most MAX_MSGS lines, and every line is TEXT when it is drawn again;
+       - the panel remembers WHOSE lines it holds (st.owner, a mark): when the page comes to name another person than that one (a boot answer that lands after the module is mounted, a
+         code changed in the same page), everything of the last person is forgotten before the panel is opened, a question is asked or anything is written, and an answer that was on
+         its way for the last person is never drawn (keepOwner and stale, handbook Part 167, addendum 2);
+       - a record that is not this person's is deleted when it is met, and in HOPE Calls the portal's copy goes with it (a foreign call record means the handset changed hands);
+       - it expires HIST_DAYS days after its last line: the first mount of EITHER page in this browser after that deletes the record of either page (sweepExpired); it holds at most MAX_MSGS lines,
+         and every line is TEXT when it is drawn again;
        - the lines the module draws itself about a failure (no connection, a fault) are not kept: they say nothing about the conversation.
      Storage that is blocked or full is ignored: the panel then behaves as it always did, for this sitting only. */
   function isList(x) { return Object.prototype.toString.call(x) === '[object Array]'; }
@@ -260,11 +265,43 @@
     return out;
   }
   function trimLog() { while (st.log.length > MAX_MSGS) st.log.shift(); }
+  /** A record that has outlived HIST_DAYS (or is dated in the future, or is not a record at all) is deleted, whichever page wrote it: the portal and HOPE Calls share one storage, so the first mount of either
+      page in this browser clears both. Until then the expiry was only a filter on what is drawn (the second reader of Part 167, finding F4). */
+  function sweepExpired() {
+    var hosts = ['portal', 'call'], i, raw, rec, now = Date.now();
+    for (i = 0; i < hosts.length; i++) {
+      try {
+        raw = localStorage.getItem(chatKey(hosts[i]));
+        if (raw == null) continue;
+        rec = null;
+        try { rec = JSON.parse(raw); } catch (e1) { rec = null; }
+        if (!rec || rec.v !== 1 || typeof rec.who !== 'string' || !isFinite(rec.at) || !isList(rec.m) || now - rec.at > HIST_DAYS * 86400000 || rec.at - now > 86400000) localStorage.removeItem(chatKey(hosts[i]));
+      } catch (e) { /* blocked storage: nothing to sweep */ }
+    }
+  }
+  /** Does the panel still belong to the person the page names? If the page names ANOTHER person now (the boot answer of a handset the PMO re-pointed to another officer lands after the module was
+      mounted; a code changed in the same page), the last person's lines, their last exchange and the copy kept for the next visit are forgotten, and false is returned. A draft in the box is the new
+      person's own when they are the one asking (keepDraft). */
+  function keepOwner(keepDraft) {
+    var w = who(), draft, wasOpen;
+    if (st.owner === null) { st.owner = w; return true; }      // nobody recorded yet (mount() records the person it mounts for): whoever is asking is the owner
+    if (w === st.owner) return true;
+    draft = keepDraft && st.e && st.e.ta ? st.e.ta.value : '';
+    wasOpen = st.open;
+    forget();                                   // sets st.owner to the person the page names now, and closes the panel
+    if (draft && st.e && st.e.ta) { st.e.ta.value = draft; fitBox(); }
+    if (wasOpen && st.mounted) openPanel();     // the panel the new person had open stays open, empty (openPanel finds the owner settled)
+    return false;
+  }
+  /** An answer on its way back is dropped when the session it was asked in is over (a sign-out), or when the page now names ANOTHER person than the one who asked (everything of that person is forgotten first). */
+  function stale(sess) { return sess !== st.sess || !keepOwner(); }
   /** The whole conversation is written again after every line (it is a few kilobytes: the oldest lines go first when it is not). */
   function persist() {
     try {
       var w = who(), rec, i, l, json;
       if (!w) return;
+      if (st.owner === null) st.owner = w;
+      if (w !== st.owner) { keepOwner(); return; }      // the lines held are the last person's: never written again under the new person's mark
       if (!st.log.length) { dropChat(false); return; }
       rec = { v: 1, who: w, at: Date.now(), ha: st.histAt || 0, hist: st.hist || null, m: [] };
       for (i = 0; i < st.log.length; i++) { l = st.log[i]; rec.m.push(l.k === 'n' ? ['n', l.q] : [l.k, String(l.t).slice(0, HIST_LINE)]); }
@@ -277,7 +314,7 @@
   function restore() {
     var rec = readChat(), w = who(), now = Date.now(), i, l, k, c, text, from;
     if (!rec || !w) return false;
-    if (rec.who !== w || now - rec.at > HIST_DAYS * 86400000 || rec.at - now > 86400000) { dropChat(false); return false; }
+    if (rec.who !== w || now - rec.at > HIST_DAYS * 86400000 || rec.at - now > 86400000) { dropChat(rec.who !== w && !!st.opts && st.opts.host === 'call'); return false; }
     st.log = [];
     from = Math.max(0, rec.m.length - MAX_MSGS);
     for (i = from; i < rec.m.length; i++) {
@@ -398,6 +435,7 @@
     st.sess++; st.ticket++;
     st.hist = null; st.histAt = 0; st.status = null; st.statusAt = 0; st.log = [];
     dropChat(true);        // and what was kept for the next visit (handbook Part 167): the person who signs out takes the conversation with them, on both pages
+    st.owner = who();      // the panel holds nothing now: whoever the page names is the one it will hold lines for
     if (!st.mounted) return;
     if (st.open) closePanel();
     var all = chat(), i; for (i = 0; i < all.length; i++) st.e.body.removeChild(all[i]);
@@ -477,36 +515,39 @@
 
   /* ---------------- what a tap does ---------------- */
   function loadStatus(force) {
+    keepOwner();
     if (!force && st.status && st.statusLang === lang() && Date.now() - st.statusAt < STATUS_FRESH_MS) { paintMode(); return Promise.resolve(); }
     if (st.busy) return Promise.resolve();
     setBusy(true); thinking(true, tr('loading'));
     var mine = ++st.ticket, sess = st.sess, asked = lang();
     return api('status').then(function (r) {
-      if (sess !== st.sess) return;
+      if (stale(sess)) return;
       st.status = r; st.statusAt = Date.now(); st.statusLang = asked;   // the language it was ASKED in: SW / EN may have been pressed while it was on its way
     }, function (e) {
-      if (sess !== st.sess) return;
+      if (stale(sess)) return;
       st.status = null; if (mine === st.ticket) showFailure(e);
-    }).then(function () { if (sess !== st.sess) return; thinking(false); setBusy(false); paintMode(); catchUpLang(); });
+    }).then(function () { if (stale(sess)) return; thinking(false); setBusy(false); paintMode(); catchUpLang(); });
   }
   /** SW / EN pressed while something was on its way: loadStatus returns at once while busy, so the ready questions stayed in the old language until the panel was closed and opened a minute later
       (the second reader of Part 163). When nothing is on its way any more, the list is asked for again in the language now on the button. Bounded by the person's own presses. */
   function catchUpLang() { if (st.open && st.status && st.statusLang !== lang()) loadStatus(true); }
   function askFaq(c) {
     if (st.busy) return;
+    keepOwner(true);
     addMsg('u', c.q);
     setBusy(true); thinking(true);
     var sess = st.sess, asked = lang();
     api('faq', { id: c.id }).then(function (r) {
-      if (sess !== st.sess) return;
+      if (stale(sess)) return;
       thinking(false);
       addMsg(r && r.mode === 'faq' && r.id ? 'a' : 'h', r && r.answer ? String(r.answer) : tr('net'), !(r && r.answer));
       followSwitch(r);
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
-    }, function (e) { if (sess !== st.sess) return; thinking(false); showFailure(e); }).then(function () { if (sess !== st.sess) return; setBusy(false); regainFocus(); catchUpLang(); });
+    }, function (e) { if (stale(sess)) return; thinking(false); showFailure(e); }).then(function () { if (stale(sess)) return; setBusy(false); regainFocus(); catchUpLang(); });
   }
   function ask() {
     if (st.busy) return;
+    keepOwner(true);
     var q = trimQ(st.e.ta.value);
     if (!q) return;
     st.e.ta.value = ''; fitBox();
@@ -514,7 +555,7 @@
     setBusy(true); thinking(true);
     var sess = st.sess, asked = lang();
     api('ask', { q: q, hist: st.hist && Date.now() - st.histAt < HIST_FRESH_MS ? [st.hist] : [] }).then(function (r) {
-      if (sess !== st.sess) return;
+      if (stale(sess)) return;
       thinking(false);
       var text = r && r.answer ? String(r.answer) : tr('net');
       var ok = r && (r.mode === 'ai' || r.mode === 'canned' || r.mode === 'match');
@@ -529,7 +570,7 @@
       followSwitch(r);
       if (r && r.left != null && st.status) { st.status.left = r.left; paintMode(); }
       if (r && r.faq) { st.status = st.status || {}; st.status.faq = r.faq; st.statusLang = asked; drawChips(r.faq); }
-    }, function (e) { if (sess !== st.sess) return; thinking(false); showFailure(e); restoreQ(q); }).then(function () { if (sess !== st.sess) return; setBusy(false); regainFocus(); catchUpLang(); });
+    }, function (e) { if (stale(sess)) return; thinking(false); showFailure(e); restoreQ(q); }).then(function () { if (stale(sess)) return; setBusy(false); regainFocus(); catchUpLang(); });
   }
   /** Every answer says whether the AI is ON (the switch on Settings): when the owner turns it off while a panel is open, the box goes away with the next answer, not a minute later. */
   function followSwitch(r) {
@@ -570,6 +611,7 @@
   function paintTheme() { if (st.e.root) st.e.root.className = 'root' + (isDark() ? ' dark' : ''); }
   function openPanel() {
     if (st.open) return;
+    keepOwner();
     st.open = true;
     paintTheme();
     st.e.bub.setAttribute('aria-expanded', 'true');
@@ -711,7 +753,9 @@
 
     st.mounted = true;
     paintTheme();
+    sweepExpired();     // a record of either page that has outlived its days goes (handbook Part 167, addendum 2)
     restore();          // the person's kept conversation, if there is one (handbook Part 167): nothing is asked of the server
+    st.owner = who();   // whose lines the panel holds from here: when the page names somebody else, they are forgotten (keepOwner)
     try { if (window.MutationObserver) new MutationObserver(paintTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] }); } catch (x) { /* the look is re-read when the panel opens */ }
     paintMode();
     return true;
@@ -728,6 +772,6 @@
     _t: { T: T, ICON: ICON, SIZE: SIZE, EDGE: EDGE, TAP_PX: TAP_PX, WIDE: WIDE, clampPos: clampPos, toFrac: toFrac, fromFrac: fromFrac, isTap: isTap, defaultPos: defaultPos, trimQ: trimQ, fillN: fillN,
       APK_URL: APK_URL, linkParts: linkParts, mark: mark, MAX_MSGS: MAX_MSGS, HIST_DAYS: HIST_DAYS, HIST_FRESH_MS: HIST_FRESH_MS, HIST_LINE: HIST_LINE, HIST_BYTES: HIST_BYTES },
     /* the kept conversation, for the tests: run against a stand-in storage and a stand-in panel (test/claudian-kept.test.mjs); a page never calls it */
-    _k: { st: st, who: who, chatKey: chatKey, readChat: readChat, dropChat: dropChat, persist: persist, restore: restore, forget: forget, addMsg: addMsg, addNear: addNear, setHist: setHist, showLatest: showLatest }
+    _k: { st: st, who: who, chatKey: chatKey, readChat: readChat, dropChat: dropChat, persist: persist, restore: restore, forget: forget, keepOwner: keepOwner, stale: stale, sweepExpired: sweepExpired, addMsg: addMsg, addNear: addNear, setHist: setHist, showLatest: showLatest }
   };
 })();
