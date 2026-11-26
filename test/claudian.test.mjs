@@ -952,3 +952,18 @@ test('THE INSTRUCTIONS NO LONGER SEND A PERSON TO A SCREEN FOR A FIGURE: the fig
   assert.ok(!/name the screen where they are/.test(p), 'the old instruction is gone');
   assert.ok(!/look up anything/.test(p), 'the helper looks figures up');
 });
+
+
+/* ---------------- STATS STAGE 2 (handbook Part 168) ---------------- */
+test('A HOLDER OF THE DASHBOARD IS GIVEN THE DASHBOARD\'S OTHER CARDS, through the real handler: early collection, Expected Defaulters recovery, legal recovery and loan applications by day; and a person who does not hold the dashboard is given none of them', async () => {
+  const gmo = C.portalSubject({ code: 'SECRET-DASH-2', name: 'GMO ONE', role: 'GMO', teams: ['ALPHA'], tabs: ['dashboard'] });
+  const dash = await askData(gmo, 'how is the legal recovery and the early collection this week?');
+  const data = dash.msg.split('DATA (figures')[1] || '';
+  for (const re of [/EARLY COLLECTION this week /, /EXPECTED DEFAULTERS RECOVERY/, /LEGAL RECOVERY this week, the Legal tab's own cards: /, /LOAN APPLICATIONS BY DAY this week /]) assert.match(data, re);
+  assert.match(dash.msg, /FIGURES YOU MAY GIVE THIS PERSON \(their own teams only\): .*early collection, recovery, Expected Defaulters recovery, legal recovery/);
+  assert.ok(!JSON.stringify(dash.calls).includes('SECRET-DASH-2'), 'the access code is nowhere in the request');
+  // a person without the dashboard is not given the dashboard's cards, and nothing is read for them
+  C.resetClaudianForTests();
+  const none = await askData(C.portalSubject({ code: 'SECRET-LEGAL', name: 'LAWYER ONE', role: 'LEGAL', teams: ['ALPHA'], tabs: ['legal'] }), 'how is the legal recovery this week?');
+  assert.ok(!/LEGAL RECOVERY this week, the Legal tab's own cards/.test(none.msg), 'no dashboard figure for a person who does not hold the dashboard');
+});
