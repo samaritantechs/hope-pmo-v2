@@ -86,7 +86,7 @@ const LAST = ['iliyopita', 'uliopita', 'iliopita', 'last', 'previous', 'prior'];
     (handbook Part 168: "mauzo ya jana" and "last month sales" were answered with last week's record, a different question). */
 const YESTERDAY = ['jana', 'yesterday'];
 const FAR = ['last_month', 'previous_month', 'prior_month', 'mwezi_uliopita', 'mwezi_jana', 'last_year', 'previous_year', 'mwaka_uliopita', 'mwaka_jana', 'last_quarter'];
-const WHEN = [...NOW, ...LAST, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly'];
+const WHEN = [...NOW, ...LAST, ...YESTERDAY, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly'];
 const QTY = ['ngapi', 'wangapi', 'kiasi', 'jumla', 'total', 'asilimia', 'percent', 'percentage', 'how_many', 'how_much', 'many', 'much', 'average', 'wastani', 'sum',
   'waiting', 'unassigned', 'remaining', 'osubiri', 'obaki', 'jagawiwa'];
 const PERSONAL = ['yangu', 'wangu', 'langu', 'zangu', 'changu', 'vyangu', 'nimepiga', 'nimepigia', 'nimefikia', 'nimeripoti', 'my', 'mine', 'nina', 'did_i', 'have_i', 'am_i'];

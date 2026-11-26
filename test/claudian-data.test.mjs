@@ -652,6 +652,7 @@ test('PERIOD WORDS (F7): "priority" is not "prior", "elastic" is not "last", yes
   for (const q of ['last month sales', 'mauzo ya mwaka jana', 'makusanyo ya mwezi uliopita', 'collection last year']) { assert.equal(D.periodOf(q), 'far', q); assert.deepEqual(D.viewsFor(gmo, q), [], q + ': neither report keeps it'); }
   assert.equal(D.periodOf('how is the collection this week compared with last week'), 'both'); assert.deepEqual(D.viewsFor(gmo, 'how is the collection this week compared with last week'), ['standing', 'week']);
   assert.deepEqual(D.viewsFor(gmo, 'mauzo ya jana yalikuwa ngapi'), ['week'], 'yesterday is read from this week\'s cards, not from last week\'s record');
+  for (const q of ['collection yesterday', 'mauzo ya jana', 'sales yesterday', 'makusanyo jana']) assert.deepEqual(D.viewsFor(gmo, q), ['week'], q + ': "yesterday" is a word of a day on its own (it was one of "last week" until this change, and a question with no other word of a figure read nothing)');
   assert.equal(D.periodOf('collection last week'), 'last'); assert.equal(D.periodOf('makusanyo wiki iliyopita'), 'last');
   // the week's digest has yesterday's line, from the by-day cards; none on a Monday (the day before is last week's)
   const d = { weekOf: '2026-11-23', weekEnd: '2026-11-29', weekday: 'WED', asOfDate: '2026-11-25', teamCount: 1, deckToday: true,
