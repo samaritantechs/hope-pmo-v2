@@ -66,14 +66,14 @@ export const clean = v => String(v == null ? '' : v).replace(/[\u0000-\u001f\u00
     "hawapigi", "piga" in "nimepiga"); three letters or fewer are whole words. */
 const TOPIC = {
   calls: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'wapigaji'],
-  standing: ['makusanyo', 'kukusanya', 'collection', 'collected', 'urejeshaji', 'kurejesha', 'recovery', 'recovered', 'mauzo', 'sales', 'sold', 'asilimia', 'percent', 'malengo', 'lengo',
-    'target', 'targets', 'utendaji', 'matokeo', 'performance', 'standing', 'behind', 'nyuma'],
+  standing: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collection', 'collected', 'urejeshaji', 'kurejesha', 'recovery', 'recovered', 'recover', 'mauzo', 'sales', 'sold', 'asilimia', 'percent', 'malengo', 'lengo',
+    'target', 'targets', 'utendaji', 'matokeo', 'performance', 'performing', 'standing', 'behind', 'nyuma'],
   // this week's and today's dashboard figures: what is collected, recovered, sold, owed, applied for
-  week: ['makusanyo', 'kukusanya', 'collection', 'collected', 'rejesho', 'marejesho', 'urejeshaji', 'kurejesha', 'recovery', 'recovered', 'mauzo', 'kuuza', 'sales', 'sold', 'mikopo', 'loans', 'maombi',
+  week: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collection', 'collected', 'rejesho', 'marejesho', 'urejeshaji', 'kurejesha', 'merejesh', 'lirejesh', 'recovery', 'recovered', 'recover', 'mauzo', 'kuuza', 'sales', 'sold', 'mikopo', 'loans', 'maombi',
     'applications', 'apps', 'deni', 'madeni', 'arrears', 'wadaiwa', 'waliochelewa', 'defaulter', 'defaulters', 'expected', 'uncollected', 'asilimia', 'percent', 'percentage', 'utendaji', 'matokeo',
-    'performance', 'malengo', 'lengo', 'target', 'targets', 'standing', 'behind', 'nyuma', 'abnormal'],
+    'performance', 'performing', 'endeleaje', 'team_doing', 'we_doing', 'malengo', 'lengo', 'target', 'targets', 'standing', 'behind', 'nyuma', 'abnormal'],
   // a phone person's own calls
-  mine: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'reached', 'nimefikia'],
+  mine: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'reach', 'nimefikia', 'my_target', 'my_targets', 'target_yangu', 'target_zangu', 'targets_zangu', 'lengo_langu', 'malengo_yangu', 'malengo_zangu'],
 };
 /** Words that say the person wants teams or officers compared, counted or ranked, not a rule explained. */
 const CUES = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa', 'nani', 'who', 'which', 'gani', 'ipi', 'wapi', 'least', 'most', 'lowest', 'highest', 'worst', 'best', 'bottom', 'top',
@@ -83,11 +83,20 @@ const CUES = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa'
 const NOW = ['leo', 'today', 'sasa', 'now', 'hii', 'huu', 'current', 'currently', 'present', 'so_far', 'hadi_sasa', 'this_week', 'this_month', 'this_morning', 'tonight', 'mwezi_huu'];
 const LAST = ['iliyopita', 'uliopita', 'iliopita', 'jana', 'last', 'previous', 'prior'];
 const WHEN = [...NOW, ...LAST, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly'];
-const QTY = ['ngapi', 'wangapi', 'kiasi', 'jumla', 'total', 'asilimia', 'percent', 'percentage', 'how_many', 'how_much', 'many', 'much', 'average', 'wastani', 'sum'];
+const QTY = ['ngapi', 'wangapi', 'kiasi', 'jumla', 'total', 'asilimia', 'percent', 'percentage', 'how_many', 'how_much', 'many', 'much', 'average', 'wastani', 'sum',
+  'waiting', 'unassigned', 'remaining', 'osubiri', 'obaki', 'jagawiwa'];
 const PERSONAL = ['yangu', 'wangu', 'langu', 'zangu', 'changu', 'vyangu', 'nimepiga', 'nimepigia', 'nimefikia', 'nimeripoti', 'my', 'mine', 'nina', 'did_i', 'have_i', 'am_i'];
 /** Words that make a question about OTHERS: teams, officers, who and which, each and everyone, a ranking. A question about the person's own calls has none of them. */
 const TEAMISH = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa', 'nani', 'who', 'which', 'gani', 'ipi', 'wote', 'kila', 'each', 'everyone', 'ranking', 'compare', 'linganisha'];
-const hit = (tokens, words) => words.some(w => keyHit(tokens, w));
+/** A word of four letters or more is a stem and touches any word that holds it (keyHit): right for "pigi" in "hawapigi", wrong for these, which sit inside other words of the field:
+    "each" in "reach" and "reached" (the person's own "Reached %" became a question about others and was read nothing: found on 26 Nov), "most" in "almost", "none" in "nonetheless",
+    "best" in "bestow", "gani" in "organization". They are matched as whole words. */
+const WHOLE = new Set(['each', 'most', 'none', 'best', 'gani']);
+const hit = (tokens, words) => words.some(w => (WHOLE.has(w) ? tokens.includes(w) : keyHit(tokens, w)));
+/** "gani" is "which" after a team or an officer ("timu gani") and "how much" after a quantity ("kiasi gani", "asilimia gani"): in the second use it does not make the question one about others
+    (an officer's "nimefikia kiasi gani?" is about the officer). The tokens without such a "gani". */
+const QTY_NOUNS = ['kiasi', 'asilimia', 'jumla', 'idadi', 'wastani', 'muda'];
+const withoutQtyGani = tokens => tokens.filter((t, i) => !(t === 'gani' && i > 0 && QTY_NOUNS.includes(tokens[i - 1])));
 /** Which period the question is about: 'last' (last week's results), 'now' (this week and today) or 'both' (it does not say). */
 export function periodOf(question) {
   const t = wordsOf(question);
@@ -112,7 +121,7 @@ const LABEL = { calls: 'calls by team', standing: 'last week by team', week: 'th
 const GIVES = {
   calls: 'calls by team (today and this week)',
   standing: 'last full week\'s sales, collection and recovery by team',
-  week: 'this week\'s and today\'s dashboard figures (sales, collection, recovery, arrears, loan applications) and how the teams stand',
+  week: 'this week\'s and today\'s dashboard figures (sales, collection, early collection, recovery, Expected Defaulters recovery, legal recovery, arrears, loan applications) and how the teams stand',
   mine: 'their own calls (today and this week)',
 };
 const ORDER = ['calls', 'standing', 'week', 'mine'];
@@ -134,7 +143,8 @@ const INTENT = {
 export function viewsFor(subject, question) {
   const tokens = wordsOf(question);
   if (!tokens.length || !subject) return [];
-  const c = { asks: hit(tokens, CUES), when: hit(tokens, WHEN), qty: hit(tokens, QTY), personal: hit(tokens, PERSONAL), teamish: hit(tokens, TEAMISH) };
+  const others = withoutQtyGani(tokens);
+  const c = { asks: hit(others, CUES), when: hit(tokens, WHEN), qty: hit(tokens, QTY), personal: hit(tokens, PERSONAL), teamish: hit(others, TEAMISH) };
   const period = periodOf(question);
   return ORDER.filter(id => mayHave[id](subject) && hit(tokens, TOPIC[id]) && INTENT[id](c)
     && (id !== 'standing' || period !== 'now') && (id !== 'week' || period !== 'last'));
@@ -292,6 +302,33 @@ export function weekLines(d) {
     };
     L.push('TEAMS (' + rows.length + '): ' + lowHigh('collPctWeek', 'collection so far this week', 5, 2) + ' '
       + lowHigh('tRecPct', 'recovery (of ' + (rows[0].recBasis === 'week' ? 'the week\'s' : 'today\'s') + ' uncollected)', 5, 2) + ' ' + lowHigh('salesPct', 'sales this month (of the monthly target)', 5, 2));
+  }
+  /* THE DASHBOARD'S OTHER CARDS (handbook Part 168): the page draws every card to every holder of the dashboard, so the same people may be given the same figures, from the same answer: no read is added. */
+  const WD = x => clean(x && x.weekday);
+  L.push('EARLY COLLECTION this week (customers due the next working day, paid ahead of it): ' + pc(perf.ecolPct) + lwBit(perf.lwEcol) + '.');
+  const et = o.edrTrendTotal && typeof o.edrTrendTotal === 'object' ? o.edrTrendTotal : null, ed = Array.isArray(o.edrTrend) ? o.edrTrend.filter(x => x && typeof x === 'object') : [];
+  if (o.edrNote) L.push('EXPECTED DEFAULTERS RECOVERY: not measured now (the database did not answer for this card); say you cannot see it yet, never that it is nil.');
+  else if (et) {
+    const td = ed.find(x => String(x.date).slice(0, 10) === today), days = ed.filter(x => x.uploaded && num(x.pct) != null).map(x => WD(x) + ' ' + pc(x.pct)).join(', ');
+    L.push('EXPECTED DEFAULTERS RECOVERY (the customers whose cycle day each day is, from that day\'s initial file; recovered = initial less current): this week ' + tzs(et.recovered) + ' recovered of ' + tzs(et.initial)
+      + ' on those days\' initial files (' + pc(et.pct) + (num(et.lwEdr) == null ? '' : ', last week ' + pc(et.lwEdr)) + ')'
+      + (td ? '; today ' + (td.uploaded ? tzs(td.recovered) + ' of ' + tzs(td.initial) + ' (' + pc(td.pct) + ')' : 'has no file yet') : '') + (days ? '; by day: ' + days : '') + '.');
+  }
+  const lg = o.legal && typeof o.legal === 'object' ? o.legal : null;
+  if (lg) {
+    const nOn = lg.on !== false && num(lg.owed) != null, ph = lg.phone && lg.phone.on === true ? lg.phone : null, gt = lg.grand && lg.grand.on === true && lg.grand.total ? lg.grand.total : null;
+    const s = [];
+    s.push(nOn ? 'by demand notice: ' + (num(lg.customers) == null ? 'an unknown number of' : lg.customers) + ' customers served, ' + tzs(lg.owed) + ' owed at their latest notice, ' + tzs(lg.recovered) + ' recovered this week (' + pc(lg.pct) + '), ' + tzs(lg.tRecovered) + ' today'
+      : 'by demand notice: not measured (the recovery ledger is not there)');
+    s.push(ph ? 'by phone (customers at D.C 2 and above that a legal officer spoke to): ' + tzs(ph.recovered) + ' recovered this week of ' + tzs(ph.owed) + ' (' + pc(ph.pct) + '), ' + tzs(ph.tRecovered) + ' today' + (num(ph.waiting) ? '; today\'s customers wait for the day\'s later file' : '')
+      : 'by phone: not measured now');
+    if (gt) s.push('together (a customer served a notice and phoned counts once, under notices): ' + tzs(gt.recovered) + ' recovered this week of ' + tzs(gt.owed) + ' (' + pc(gt.pct) + '), ' + tzs(gt.tRecovered) + ' today');
+    L.push('LEGAL RECOVERY this week, the Legal tab\'s own cards: ' + s.join('; ') + '.');
+  }
+  const ap = Array.isArray(o.appsTrend) ? o.appsTrend.filter(x => x && typeof x === 'object' && num(x.apps) != null) : [];
+  if (ap.length) {
+    const sum = k => ap.reduce((t, x) => t + (num(x[k]) || 0), 0);
+    L.push('LOAN APPLICATIONS BY DAY this week (U still waiting to be assigned, A assigned): ' + ap.map(x => WD(x) + ' ' + x.apps + ' (U ' + (num(x.unassigned) || 0) + ', A ' + (num(x.assigned) || 0) + ')').join(', ') + '; in all ' + sum('unassigned') + ' waiting and ' + sum('assigned') + ' assigned.');
   }
   return L;
 }

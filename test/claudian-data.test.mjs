@@ -340,7 +340,7 @@ test('WHICH WEEK: last week, this week and today, or not said', () => {
 test('THE KINDS OF FIGURES A PERSON MAY BE GIVEN FOLLOW THEIR SCREENS AND THEIR PHONE: nothing else, and the admin all of the portal\'s', () => {
   assert.deepEqual(D.figuresFor(portal([])), [], 'a person with none of the screens');
   assert.deepEqual(D.figuresFor(portal(['calls'])), ['calls by team (today and this week)']);
-  assert.deepEqual(D.figuresFor(portal(['dashboard'])), ['last full week\'s sales, collection and recovery by team', 'this week\'s and today\'s dashboard figures (sales, collection, recovery, arrears, loan applications) and how the teams stand']);
+  assert.deepEqual(D.figuresFor(portal(['dashboard'])), ['last full week\'s sales, collection and recovery by team', 'this week\'s and today\'s dashboard figures (sales, collection, early collection, recovery, Expected Defaulters recovery, legal recovery, arrears, loan applications) and how the teams stand']);
   assert.equal(D.figuresFor(ADMIN).length, 3, 'calls, last week and this week');
   assert.deepEqual(D.figuresFor(PHONE_ASHA()), ['their own calls (today and this week)'], 'an officer: their own calls');
   assert.equal(D.figuresFor(PHONE_ASHA({ leader: true })).length, 3, 'a leader: the teams\' calls, last week by team and their own calls');
@@ -453,4 +453,103 @@ test('DASHBOARD READS ARE QUEUED, NOT PILED: eight leaders with eight different 
   assert.equal(out.length, 8); for (const r of out) assert.match(r.notes[0], /^this week by team \d+\.\ds$/, r.notes[0]);
   assert.ok(D.peakPortalReadsForTests() <= D.PORTAL_READS_MAX && D.PORTAL_READS_MAX === 3, 'peak ' + D.peakPortalReadsForTests());
   assert.ok(D.peakPortalReadsForTests() >= 2, 'and they did run side by side (the queue is not a lock of one): ' + D.peakPortalReadsForTests());
+});
+
+
+/* ---------------- STATS STAGE 2 (handbook Part 168): the dashboard's other cards, and finding them by the way people ask ---------------- */
+const CARDS = {
+  weekOf: '2026-11-23', weekEnd: '2026-11-29', weekday: 'WED', asOfDate: '2026-11-25', teamCount: 4, deckToday: true,
+  perf: { salesPct: 63.2, colPct: 91.5, recPct: 40, avgPct: 64.9, ecolPct: 92.4, lwEcol: 88.1, dEcol: 4.3, appsCount: 120 },
+  edrTrend: [
+    { weekday: 'MON', date: '2026-11-23', initial: 8000000, current: 6000000, recovered: 2000000, customers: 40, uploaded: true, pct: 25 },
+    { weekday: 'TUE', date: '2026-11-24', initial: 8000000, current: 7000000, recovered: 1000000, customers: 38, uploaded: true, pct: 12.5 },
+    { weekday: 'WED', date: '2026-11-25', initial: 5000000, current: 4000000, recovered: 1000000, customers: 20, uploaded: true, pct: 20 },
+    { weekday: 'THU', date: '2026-11-26', initial: 0, current: 0, recovered: 0, customers: 0, uploaded: false, pct: null }],
+  edrTrendTotal: { initial: 21000000, current: 17000000, recovered: 4000000, pct: 19, dEdr: -2.7, lwEdr: 21.7 },
+  legal: { on: true, customers: 1445, owed: 1142726246, recovered: 31000000, pct: 2.7, tRecovered: 4000000, tPct: 0.3,
+    phone: { on: true, recovered: 9000000, owed: 80000000, pct: 11.3, tRecovered: 1500000, waiting: 3 },
+    grand: { on: true, total: { recovered: 38000000, owed: 1200000000, pct: 3.2, tRecovered: 5200000 } } },
+  appsTrend: [{ weekday: 'MON', date: '2026-11-23', unassigned: 3, assigned: 9, apps: 12, amount: 1 }, { weekday: 'TUE', date: '2026-11-24', unassigned: 0, assigned: 15, apps: 15, amount: 2 }],
+};
+test('THE DASHBOARD\'S OTHER CARDS ARE IN THE LINES: early collection, Expected Defaulters recovery, legal recovery (notices, phone, together) and loan applications by day, each said as the page says it, from the same answer', () => {
+  const t = D.weekLines(CARDS).join('\n');
+  assert.match(t, /EARLY COLLECTION this week \(customers due the next working day, paid ahead of it\): 92\.4% \(last week 88\.1%\)\./);
+  assert.match(t, /EXPECTED DEFAULTERS RECOVERY \(the customers whose cycle day each day is, from that day's initial file; recovered = initial less current\): this week TZS 4,000,000 recovered of TZS 21,000,000 on those days' initial files \(19%, last week 21\.7%\); today TZS 1,000,000 of TZS 5,000,000 \(20%\); by day: MON 25%, TUE 12\.5%, WED 20%\./);
+  assert.match(t, /LEGAL RECOVERY this week, the Legal tab's own cards: by demand notice: 1445 customers served, TZS 1,142,726,246 owed at their latest notice, TZS 31,000,000 recovered this week \(2\.7%\), TZS 4,000,000 today; by phone \(customers at D\.C 2 and above that a legal officer spoke to\): TZS 9,000,000 recovered this week of TZS 80,000,000 \(11\.3%\), TZS 1,500,000 today; today's customers wait for the day's later file; together \(a customer served a notice and phoned counts once, under notices\): TZS 38,000,000 recovered this week of TZS 1,200,000,000 \(3\.2%\), TZS 5,200,000 today\./);
+  assert.match(t, /LOAN APPLICATIONS BY DAY this week \(U still waiting to be assigned, A assigned\): MON 12 \(U 3, A 9\), TUE 15 \(U 0, A 15\); in all 3 waiting and 24 assigned\./);
+  assert.ok(!/NaN|undefined|null/.test(t), 'no placeholder leaks: ' + t);
+  // the card's own refusals are said, never a nought: no answer from the database, a day with no file, a ledger that is not there, a phone read that failed
+  const noAnswer = D.weekLines({ ...CARDS, edrNote: 'Kadi ya Expected Defaulters haijajibiwa / The card got no answer' }).join('\n');
+  assert.match(noAnswer, /EXPECTED DEFAULTERS RECOVERY: not measured now \(the database did not answer for this card\); say you cannot see it yet, never that it is nil\./);
+  assert.ok(!/this week TZS 4,000,000 recovered/.test(noAnswer), 'the figures of a card with no answer are not said');
+  assert.match(D.weekLines({ ...CARDS, edrTrend: CARDS.edrTrend.slice(0, 2) }).join('\n'), /EXPECTED DEFAULTERS RECOVERY .*this week TZS 4,000,000 recovered of TZS 21,000,000 on those days' initial files \(19%, last week 21\.7%\); by day: MON 25%, TUE 12\.5%\./, 'no row for today: no sentence about today');
+  assert.match(D.weekLines({ ...CARDS, edrTrend: CARDS.edrTrend.map(x => (x.date === '2026-11-25' ? { ...x, uploaded: false, pct: null } : x)) }).join('\n'), /; today has no file yet;/);
+  const lg = x => D.weekLines({ ...CARDS, legal: x }).join('\n').split('\n').find(l => /^LEGAL RECOVERY/.test(l));
+  assert.match(lg({ ...CARDS.legal, on: false }), /by demand notice: not measured \(the recovery ledger is not there\)/);
+  assert.match(lg({ ...CARDS.legal, phone: { on: false, note: 'run db/RUN-ME-089' } }), /by phone: not measured now/);
+  for (const off of [false, null, undefined, 'yes', 1]) { const l = lg({ ...CARDS.legal, phone: { on: off, recovered: 9000000, owed: 80000000, pct: 11.3, tRecovered: 1500000 } }); assert.match(l, /by phone: not measured now/, 'on: ' + String(off)); assert.ok(!/9,000,000/.test(l), 'figures of a phone read that is not on are not said (on: ' + String(off) + ')'); }
+  assert.ok(!/together/.test(lg({ ...CARDS.legal, phone: { on: null }, grand: { on: false, total: { recovered: null } } })), 'no grand figure when a side cannot be read');
+  assert.ok(!/RUN-ME|db\//.test(lg({ ...CARDS.legal, phone: { on: false, note: 'run db/RUN-ME-089' } })), 'a file name is the page\'s to say, not the model\'s');
+  // nothing is invented when the answer is damaged or the cards are absent, and a weekday typed by a person is text
+  for (const bad of [{}, { legal: 'x', appsTrend: 5, edrTrend: 'y', edrTrendTotal: 7 }, { legal: null }, { appsTrend: [null, 3, {}], edrTrend: [null, 'x', {}] }]) assert.doesNotThrow(() => D.weekLines(bad), JSON.stringify(bad));
+  assert.ok(!/<b>/.test(D.weekLines({ ...CARDS, appsTrend: [{ weekday: '<b>EVIL</b>', unassigned: 1, assigned: 1, apps: 2 }], edrTrend: [{ weekday: '<i>x</i>', date: '2026-11-25', uploaded: true, pct: 5, initial: 1, recovered: 0 }] }).join('\n')), 'a weekday is text');
+  // early collection when it cannot be measured, and without last week
+  assert.match(D.weekLines({ ...CARDS, perf: { ...CARDS.perf, ecolPct: null, lwEcol: null } }).join('\n'), /EARLY COLLECTION this week \(customers due the next working day, paid ahead of it\): not measured\./);
+  assert.match(D.weekLines({ ...CARDS, perf: { ...CARDS.perf, lwEcol: null } }).join('\n'), /ahead of it\): 92\.4%\./);
+});
+
+test('THE NEW CARDS AND TARGETS ARE FOUND BY THE WAY PEOPLE ASK, in both languages: a figure question reads, a rule question reads nothing', () => {
+  const gmo = portal(['dashboard']), asha = PHONE_ASHA(), lead = PHONE_ASHA({ leader: true });
+  // the dashboard's other cards, and "how are my teams doing"
+  for (const q of ['how much did legal recover this week?', 'legal wamerejesha kiasi gani wiki hii', 'how many loan applications are waiting to be assigned', 'applications zipi hazijagawiwa wiki hii',
+    'early collection this week', 'early collection ya wiki hii ni asilimia ngapi', 'expected defaulters recovery today', 'how are my teams doing?', 'how is my team doing this week', 'how are we doing today',
+    'timu zangu zinaendeleaje wiki hii', 'which team is performing worst this week?', 'tumekusanya kiasi gani leo', 'wamekusanya kiasi gani wiki hii', 'kiongozi wa timu yangu amekusanya kiasi gani leo', 'deni lote ni kiasi gani'])
+    assert.deepEqual(D.viewsFor(gmo, q), ['week'], q);
+  // a word of "what is still to do" is a word of quantity on its own (there is no "how many" or "this week" in these): the relative forms of "remain" and "wait" ("lililobaki", "yanayosubiri"), not every word that holds them
+  for (const q of ['loan applications waiting to be assigned', 'applications unassigned', 'maombi yanayosubiri', 'maombi hayajagawiwa', 'deni lililobaki', 'remaining defaulters', 'mikopo iliyobaki', 'wateja waliobaki wa deni'])
+    assert.deepEqual(D.viewsFor(gmo, q), ['week'], q);
+  for (const q of ['wakishalipa wanabaki au wanatoka kwenye orodha ya wadaiwa', 'mteja amebakiza rejesho moja tu faini inatozwa au la', 'nisubiri hadi lini mikopo ikaguliwe'])
+    assert.deepEqual(D.viewsFor(gmo, q), [], q);
+  assert.deepEqual(D.viewsFor(asha, 'nmempigia mteja dk 10 zilizopita tick ya amepigiwa leo bado haijaja, nisubiri hadi lini?'), [], 'a question about the tick is the ready answer\'s, not the person\'s calls');
+  // a rule or a how-to about the same words reads nothing
+  for (const q of ['how do I recover a password', 'how do I approve a loan application', 'how is the collection calculated?', 'what are the company targets?', 'legal notice demand how is it generated', 'kuna njia gani ya kuboresha ukusanyaji kwa wateja wanaochelewa kulipa kila mwezi'])
+    assert.deepEqual(D.viewsFor(gmo, q), [], q);
+  // an officer's own calls and the distance to the target: "kiasi gani" is "how much", not "which team"
+  for (const q of ['target yangu ya simu leo ni ngapi na nimefikia kiasi gani', 'nimefikia kiasi gani leo', 'how far am I from my target today', 'my target for today', 'malengo yangu ya leo', 'target zangu za leo ni zipi', 'nimebakiwa na simu ngapi leo', 'how many calls do I have left today?',
+    'nimepiga simu leo kwa muda gani', 'idadi gani ya simu nimepiga leo', 'jumla gani ya simu nimepiga leo', 'reached yangu ya leo ni asilimia gani'])
+    assert.ok(D.viewsFor(asha, q).includes('mine'), q + ' -> ' + D.viewsFor(asha, q));
+  assert.deepEqual(D.viewsFor(asha, 'what is the company target for calls'), [], 'the company\'s target is a rule: the ready answer says it');
+  assert.deepEqual(D.viewsFor(asha, 'what are the company targets?'), []);
+  assert.deepEqual(D.viewsFor(lead, 'team gani leo hawapigi simu kabisa'), ['calls'], 'a question of teams is still the teams\' report');
+  assert.deepEqual(D.viewsFor(lead, 'timu gani ina simu nyingi'), ['calls'], '"gani" after a team is still "which"');
+  assert.ok(D.viewsFor(gmo, 'makusanyo gani yameshuka').includes('week'), '"gani" on its own is still "which" (it is only "how much" after a quantity)');
+  assert.deepEqual(D.viewsFor(lead, 'how many calls did each officer make'), ['calls'], '"each" as a word is still a question of others');
+});
+
+test('"REACHED" IS NOT "EACH": a person\'s own Reached % is read, and a rule about what counts as reached reads nothing (it woke the Calls report of every team, the heaviest read there is, for the question what counts as reached)', () => {
+  const asha = PHONE_ASHA(), lead = PHONE_ASHA({ leader: true });
+  for (const q of ['what is my Reached % today', 'Reached % yangu ya leo ni ngapi', 'how many numbers have I reached today', 'REACHED % YANGU YA LEO NI NGAPI', 'my reached today', 'how much is left to reach today', 'how many customers did I reach today'])
+    assert.deepEqual(D.viewsFor(asha, q), ['mine'], q);
+  for (const q of ['what does reached mean in the call report', 'SIMU IKIKATIKA HARAKA INAHESABIWA REACHED', 'kwa nini simu niliyopiga haijahesabiwa kama reached', 'how long must i talk for a call to count as reached pls', 'reached % exactly ni nini, is it only answered calls?']) {
+    assert.deepEqual(D.viewsFor(ADMIN, q), [], 'the admin: ' + q);
+    assert.deepEqual(D.viewsFor(lead, q).filter(v => v === 'calls'), [], 'a leader: ' + q);
+  }
+});
+
+test('A WORD INSIDE ANOTHER WORD IS NOT THAT WORD: "most" in "almost", "none" in "nonetheless", "gani" in "organization" and "linganishwa" ask nothing, so a rule about the collection reads nothing', () => {
+  const gmo = portal(['dashboard']);
+  for (const q of ['the collection is almost done', 'nonetheless the collection rule applies', 'the organization collection rule', 'makusanyo yanalinganishwa vipi'])
+    assert.deepEqual(D.viewsFor(gmo, q), [], q);
+  for (const q of ['which team has the most collection today', 'none of the teams collected today', 'timu gani imekusanya kidogo leo']) assert.deepEqual(D.viewsFor(gmo, q), ['week'], q + ' (the word on its own still asks)');
+});
+
+test('THE REAL DOOR GIVES THE NEW LINES TOO: a holder of the dashboard is given the cards, and a person without the screen none of it', async () => {
+  const gmo = await D.readViews(fakeDb(book()), asPerson(GMO_USER, ['dashboard']), ['week'], NOW, fmt);
+  const text = gmo.lines.join('\n');
+  for (const re of [/^EARLY COLLECTION this week /m, /^EXPECTED DEFAULTERS RECOVERY: not measured now/m, /^LEGAL RECOVERY this week, the Legal tab's own cards: by demand notice: 0 customers served/m, /^LOAN APPLICATIONS BY DAY this week .*MON 0 \(U 0, A 0\)/m]) assert.match(text, re);
+  assert.ok(!/SECRET-GMO-CODE/.test(text));
+  // a person without the dashboard is refused by the door, and none of the new lines is read
+  D.resetClaudianDataForTests();
+  const none = await D.readViews(fakeDb(book()), asPerson({ ...GMO_USER, tabs: ['legal'] }, ['legal']), ['week'], NOW, fmt);
+  assert.ok(!/LEGAL RECOVERY|EXPECTED DEFAULTERS/.test(none.lines.join('\n')));
 });
