@@ -967,3 +967,32 @@ test('A HOLDER OF THE DASHBOARD IS GIVEN THE DASHBOARD\'S OTHER CARDS, through t
   const none = await askData(C.portalSubject({ code: 'SECRET-LEGAL', name: 'LAWYER ONE', role: 'LEGAL', teams: ['ALPHA'], tabs: ['legal'] }), 'how is the legal recovery this week?');
   assert.ok(!/LEGAL RECOVERY this week, the Legal tab's own cards/.test(none.msg), 'no dashboard figure for a person who does not hold the dashboard');
 });
+
+
+/* ---------------- THE SECOND READER'S FINDINGS ON STAGE 1 (handbook Part 169) ---------------- */
+const D_ = await import('../api/_lib/claudian-data.js');
+test('THE PROMPT SAYS WHAT MAY BE QUOTED TO ANYONE (F3, F16): the STANDING line and the targets are not a kind in the FIGURES list, so the clause that refuses figures of screens the person does not hold does not contradict them', () => {
+  const p = C.SYSTEM_PROMPT;
+  assert.match(p, /nor to figures of screens they do not hold: the only figures you may use are the ones given in CONTEXT \(under DATA, read from the person's own teams' reports, and the STANDING and targets lines, which may be quoted to anyone for their own teams\)/);
+  assert.match(p, /A figure of a kind that is not listed is outside their access: say so in one sentence\. The STANDING line \(last full week, their own teams together\) and the company's targets are not a kind in that list: they may be quoted to anyone, for their own teams\./);
+  assert.match(p, /Only sales %, collection % and recovery % of last week are measured \(STANDING\)/);
+});
+
+test('RECOVERY % IS RECOVERED OVER THE UNCOLLECTED, in every place that says it (F5): the glossary, the ready answer in both languages and the digest header; the knowledge card says the same', () => {
+  assert.match(GLOSSARY, /Recovery % = recovered \/ the uncollected \(the dashboard divides each day's recovery by that day's own uncollected, the weekly report by the week's\)/);
+  assert.ok(!/recovered \/ arrears|recovered ÷ arrears|kilichorejeshwa ÷ deni/.test(GLOSSARY + JSON.stringify(FAQ)), 'the old definition is nowhere');
+  const e = FAQ.find(f => f.id === 'percentages');
+  assert.match(e.en.a, /Recovery % = recovered ÷ the uncollected \(expected and not collected\)/); assert.match(e.sw.a, /Urejeshaji % = kilichorejeshwa ÷ kisichokusanywa/);
+  assert.ok(e.en.a.length <= 420 && e.sw.a.length <= 420, 'a ready answer stays short');
+  const data = D_.weekLines({}).join('\n');
+  assert.match(data, /Sales % is the share of the weekly sales target, collection % is collected \/ expected and recovery % is recovered \/ uncollected; "not measured" means it could not be worked out yet\./);
+  assert.ok(!/Percentages are of target/.test(data), 'a percentage is not "of target" when it is a ratio');
+});
+
+test('THE ACCESS CODE NEVER LEAVES THE PERSON, on the REAL subject (F14): C.portalSubject keeps no access code anywhere in what it returns', () => {
+  const user = { code: 'SECRET-REAL-SUBJECT-CODE', name: 'GMO ONE', role: 'GMO', teams: ['ALPHA'], tabs: ['dashboard'] };
+  const s = C.portalSubject(user);
+  assert.ok(!JSON.stringify(s).includes('SECRET-REAL-SUBJECT-CODE'), 'not in the subject\'s JSON');
+  for (const k of Reflect.ownKeys(s)) assert.ok(!String(s[k]).includes('SECRET-REAL-SUBJECT-CODE'), 'not in the property ' + String(k));
+  assert.ok(!Object.getOwnPropertyNames(s).includes('user') && !Object.getOwnPropertySymbols(s).length, 'the raw user is kept beside the subject, not on it');
+});
