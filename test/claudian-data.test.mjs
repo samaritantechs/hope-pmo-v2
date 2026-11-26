@@ -332,8 +332,8 @@ test('A QUESTION THAT ASKS FOR FIGURES READS THE FIGURES: this week and today fo
 });
 
 test('WHICH WEEK: last week, this week and today, or not said', () => {
-  for (const q of ['collection last week', 'wiki iliyopita makusanyo', 'jana', 'previous week sales']) assert.equal(D.periodOf(q), 'last', q);
-  for (const q of ['collection today', 'leo makusanyo', 'sales now', 'wiki hii', 'so far this week']) assert.equal(D.periodOf(q), 'now', q);
+  for (const q of ['collection last week', 'wiki iliyopita makusanyo', 'previous week sales']) assert.equal(D.periodOf(q), 'last', q);
+  for (const q of ['collection today', 'leo makusanyo', 'sales now', 'wiki hii', 'so far this week', 'mauzo ya jana', 'collection yesterday']) assert.equal(D.periodOf(q), 'now', q);
   for (const q of ['which team is behind', 'timu gani ipo nyuma', '']) assert.equal(D.periodOf(q), 'both', q);
 });
 
@@ -425,7 +425,6 @@ test('A PHONE PERSON\'S OWN CALLS ARE THEIR OWN ROW OF THE CALLS REPORT: today a
   // the reading is the person's own: a teammate asking does not get Asha's figures, and is read separately
   const ben = await D.readViews(db, PHONE_ASHA({ key: 'c:ben', name: 'BEN', cu: U('u02', 'BEN', 'ALPHA') }), ['mine'], NOW + 1000, fmt);
   assert.match(ben.lines.join('\n'), /YOUR CALLS \(BEN\), today 2026-11-25: 1 call /); assert.ok(!/ASHA/.test(ben.lines.join('\n')));
-  assert.equal(n.logs, 0 + n.logs, 'counted');
   // kept for one minute: a minute later it is read again (a person asking how they are doing NOW)
   const again = await D.readViews(db, PHONE_ASHA(), ['mine'], NOW + 30 * 1000, fmt); assert.match(again.notes[0], / kept$/);
   const later = await D.readViews(db, PHONE_ASHA(), ['mine'], NOW + 61 * 1000, fmt); assert.ok(!/ kept$/.test(later.notes[0]), 'a minute on: read again');
@@ -506,8 +505,10 @@ test('THE NEW CARDS AND TARGETS ARE FOUND BY THE WAY PEOPLE ASK, in both languag
     'timu zangu zinaendeleaje wiki hii', 'which team is performing worst this week?', 'tumekusanya kiasi gani leo', 'wamekusanya kiasi gani wiki hii', 'kiongozi wa timu yangu amekusanya kiasi gani leo', 'deni lote ni kiasi gani'])
     assert.deepEqual(D.viewsFor(gmo, q), ['week'], q);
   // a word of "what is still to do" is a word of quantity on its own (there is no "how many" or "this week" in these): the relative forms of "remain" and "wait" ("lililobaki", "yanayosubiri"), not every word that holds them
-  for (const q of ['loan applications waiting to be assigned', 'applications unassigned', 'maombi yanayosubiri', 'maombi hayajagawiwa', 'deni lililobaki', 'remaining defaulters', 'mikopo iliyobaki', 'wateja waliobaki wa deni'])
+  for (const q of ['loan applications waiting to be assigned', 'applications unassigned', 'maombi ya mkopo yanayosubiri', 'maombi ya mkopo hayajagawiwa', 'deni lililobaki', 'remaining defaulters', 'mikopo iliyobaki', 'wateja waliobaki wa deni'])
     assert.deepEqual(D.viewsFor(gmo, q), ['week'], q);
+  // "maombi" is also an advance request and a leave request: only a LOAN application is the dashboard's
+  for (const q of ['maombi yangu ya likizo yamefika wapi', 'maombi yangu ya advance yako wapi', 'Advance yangu ilikataliwa jana, naweza kuomba tena mwezi huu? Na maombi ya timu yangu yamekwama wapi?']) assert.deepEqual(D.viewsFor(gmo, q), [], q);
   for (const q of ['wakishalipa wanabaki au wanatoka kwenye orodha ya wadaiwa', 'mteja amebakiza rejesho moja tu faini inatozwa au la', 'nisubiri hadi lini mikopo ikaguliwe'])
     assert.deepEqual(D.viewsFor(gmo, q), [], q);
   assert.deepEqual(D.viewsFor(asha, 'nmempigia mteja dk 10 zilizopita tick ya amepigiwa leo bado haijaja, nisubiri hadi lini?'), [], 'a question about the tick is the ready answer\'s, not the person\'s calls');
@@ -552,4 +553,159 @@ test('THE REAL DOOR GIVES THE NEW LINES TOO: a holder of the dashboard is given 
   D.resetClaudianDataForTests();
   const none = await D.readViews(fakeDb(book()), asPerson({ ...GMO_USER, tabs: ['legal'] }, ['legal']), ['week'], NOW, fmt);
   assert.ok(!/LEGAL RECOVERY|EXPECTED DEFAULTERS/.test(none.lines.join('\n')));
+});
+
+
+/* ---------------- THE SECOND READER'S FINDINGS ON STAGE 1 (handbook Part 169) ---------------- */
+const J = (id, phone) => ({ user_id: id, name: 'JUMA', team: 'ALPHA', phone, role: 'OFFICER', active: true });
+test('OWN CALLS (F1): two officers of one name in a team are never merged, and neither is given a figure with a teammate\'s calls in it', async () => {
+  const cfg = book({ call_users: [J('u11', '0711000011'), J('u12', '0711000012'), U('u02', 'BEN', 'ALPHA')],
+    call_logs: [L('c11', 'u11', 'JUMA', 'ALPHA', TODAY), L('c12', 'u11', 'JUMA', 'ALPHA', TODAY, { ref: 'Ra', phone: '0700000012' }),
+      ...[3, 4, 5, 6, 7, 8, 9].map(n => L('c2' + n, 'u12', 'JUMA', 'ALPHA', TODAY, { ref: 'Rb' + n, phone: '07000001' + n })), L('c31', 'u02', 'BEN', 'ALPHA', TODAY, { ref: 'Rc', phone: '0700000031' })] });
+  for (const [uid, phone] of [['u11', '0711000011'], ['u12', '0711000012']]) {
+    D.resetClaudianDataForTests();
+    const out = await D.readViews(fakeDb(cfg), PHONE_ASHA({ key: 'c:' + uid, name: 'JUMA', cu: J(uid, phone) }), ['mine'], NOW, fmt);
+    const text = out.lines.join('\n');
+    assert.match(text, /^YOUR CALLS: two officers of your team are registered under the name JUMA, so your calls cannot be told apart from theirs: say you cannot give your own figures until the PMO gives one of the two a different name\.$/, uid);
+    assert.ok(!/\d+ calls?\b|THIS WEEK|portfolio talk time/.test(text), 'no figure, neither a teammate\'s nor the sum: ' + text);
+  }
+  D.resetClaudianDataForTests();
+  const ben = await D.readViews(fakeDb(cfg), PHONE_ASHA({ key: 'c:u02', name: 'BEN', cu: U('u02', 'BEN', 'ALPHA') }), ['mine'], NOW, fmt);
+  assert.match(ben.lines.join('\n'), /YOUR CALLS \(BEN\), today 2026-11-25: 1 call /, 'a teammate of another name is read as ever');
+  // the pure function: one row is the person, two are nobody's
+  const row = (name, phone) => ({ name, team: 'ALPHA', phone, calls: 3, portfolio: 3, days: 1, duration: 60, connected: 3 });
+  assert.match(D.mineLines({ users: [row('JUMA', '1'), row('JUMA', '2')], byDay: [] }, 'JUMA', TODAY, MON).join('\n'), /^YOUR CALLS: two officers of your team/);
+  assert.match(D.mineLines({ users: [row('JUMA', '1'), row('juma ', '2')], byDay: [] }, 'Juma', TODAY, MON).join('\n'), /^YOUR CALLS: two officers of your team/, 'a name in another case or with a space is the same name');
+  assert.match(D.mineLines({ users: [row('JUMA', '1'), row('JUMA M', '2')], byDay: [] }, 'JUMA', TODAY, MON).join('\n'), /^YOUR CALLS \(JUMA\), today/, 'a name that differs by a word is another person');
+});
+
+test('OWN CALLS (F2, F14): a handset handed to another officer is never served the last officer\'s name or calls, and the second officer asking is told their own week', async () => {
+  const cfg = book({ call_logs: [L('c01', 'u01', 'ASHA', 'ALPHA', TODAY), L('c02', 'u01', 'ASHA', 'ALPHA', TODAY, { ref: 'R2', phone: '0700000002' }),
+    ...[3, 4, 5].map(n => L('c0' + n, 'u02', 'BEN', 'ALPHA', TODAY, { ref: 'Rb' + n, phone: '0700000' + n + '0' }))] });
+  const db = fakeDb(cfg);
+  const on = (uid, name) => PHONE_ASHA({ key: 'c:SAME-HANDSET', name, cu: U(uid, name, 'ALPHA') });
+  const first = await D.readViews(db, on('u01', 'ASHA'), ['mine'], NOW, fmt);
+  assert.match(first.lines.join('\n'), /YOUR CALLS \(ASHA\), today 2026-11-25: 2 calls /);
+  const next = await D.readViews(db, on('u02', 'BEN'), ['mine'], NOW + 20000, fmt);          // the same handset, another officer, inside the minute the first reading is kept
+  const text = next.lines.join('\n');
+  assert.match(text, /YOUR CALLS \(BEN\), today 2026-11-25: 3 calls /); assert.ok(!/ASHA/.test(text), 'the last officer\'s name is not served');
+  assert.match(text, /THIS WEEK \(2026-11-23 to 2026-11-25\): 3 calls, 3 portfolio, on 1 day;/, 'and the week is Ben\'s own row, not the first officer of the report');
+  assert.ok(!/ kept$/.test(next.notes[0]), 'a new officer is a new reading');
+  const again = await D.readViews(db, on('u02', 'BEN'), ['mine'], NOW + 30000, fmt); assert.match(again.notes[0], / kept$/, 'the same officer on the same handset: kept for the minute');
+});
+
+test('OWN CALLS (F15): an officer\'s question reads the Calls report of their own team and no other, and a teammate\'s question reads it again (the reading is the person\'s)', async () => {
+  const db = fakeDb(book({ call_logs: [L('c01', 'u01', 'ASHA', 'ALPHA', TODAY), L('c03', 'u03', 'CECI', 'BETA', TODAY, { ref: 'R3' })] }));
+  const asked = []; const f = db.from.bind(db);
+  db.from = t => { const q = f(t); if (t !== 'call_logs') return q;
+    return new Proxy(q, { get(target, prop, recv) { const v = Reflect.get(target, prop, recv); if (typeof v !== 'function') return v;
+      return (...args) => { if (prop === 'in' && args[0] === 'team') asked.push(args[1]); const r = v.apply(target, args); return r === target ? recv : r; }; } }); };
+  await D.readViews(db, PHONE_ASHA(), ['mine'], NOW, fmt);
+  assert.ok(asked.length >= 1, 'the read names the team it asks for (a read that names none reads every team): ' + JSON.stringify(asked));
+  for (const t of asked) assert.deepEqual(t, ['ALPHA'], 'only the officer\'s own team: ' + JSON.stringify(asked));
+});
+
+test('THE DAY\'S LATER FILE IS NOT IN (F4): through the working day the digest says so and states no recovered-today figure, no cleared-today figure and no ranking of the teams by today\'s recovery', () => {
+  const base = { weekOf: '2026-11-23', weekEnd: '2026-11-29', weekday: 'WED', asOfDate: '2026-11-25', teamCount: 3, deckToday: true,
+    perf: { salesPct: 63.2, colPct: 91.5, recPct: 40, avgPct: 64.9 },
+    cards: { curArrears: 1500000000, initArrears: 1520000000, recovered: 20000000, defaulters: 4100, defaultersInitial: 4200, cleared: 100, abnormal: 9, abnormalAmount: 4500000 },
+    colTrend: [{ date: '2026-11-25', expected: 90000000, collected: 80000000, uncollected: 10000000, uploaded: true, pct: 88.9 }],
+    recTrend: [{ date: '2026-11-25', recovered: 20000000, uploaded: true, pct: 41.2 }], salesTrend: [{ date: '2026-11-25', amount: 120000000, loans: 8, pct: 96 }],
+    teamPerf: [{ team: 'ALPHA', collPctWeek: 70, tRecPct: 10, salesPct: 50, recBasis: 'today' }, { team: 'BETA', collPctWeek: 95, tRecPct: 20, salesPct: 80, recBasis: 'today' }, { team: 'GAMMA', collPctWeek: 40, tRecPct: 30, salesPct: 100, recBasis: 'today' }] };
+  const out = latest => D.weekLines({ ...base, totals: { recovery: { latest } } }).join('\n');
+  const morning = out({ recovered: 0, day: 'TUE', date: '2026-11-24', isToday: false });
+  assert.match(morning, /today's recovery is not measured yet: the day's later defaulter file \(about 20:00\) is not in yet; the latest day measured is 2026-11-24 with TZS 0 recovered;/);
+  assert.match(morning, /DEFAULTERS: this morning's file has 4200 customers owing TZS 1,520,000,000; the day's later defaulter file \(about 20:00\) is not in yet, so who has paid or cleared today is not known\. Abnormal payments flagged: 9 \(TZS 4,500,000\)\./);
+  assert.match(morning, /recovery today by team: not measured until the day's later file is in\./);
+  assert.ok(!/20,000,000 \(41\.2|recovered today TZS|cleared today 100|4100 customers|ALPHA 10%|GAMMA 30%/.test(morning), 'none of the figures the morning cannot know: ' + morning);
+  assert.match(morning, /collection so far this week, lowest first: GAMMA 40%/, 'the week\'s collection and the month\'s sales are not made of today\'s later file');
+  // the evening: the later file is in, the figures are said as the dashboard says them
+  const evening = out({ recovered: 20000000, day: 'WED', date: '2026-11-25', isToday: true });
+  assert.match(evening, /recovered TZS 20,000,000 \(41\.2% of the uncollected it is measured against\)/); assert.match(evening, /DEFAULTERS \(today's files\): 4100 customers owing/); assert.match(evening, /recovery \(of today's uncollected\), lowest first: ALPHA 10%, BETA 20%, GAMMA 30%\./);
+  // an answer that does not say (an older shape, or no pair at all) is read as before; no defaulter file today keeps its own words; a weekend's ranking is the week's
+  for (const none of [undefined, null, {}, { recovery: null }, { recovery: { latest: null } }, { recovery: { latest: { isToday: null } } }]) {
+    const t = D.weekLines({ ...base, totals: none }).join('\n'); assert.match(t, /recovered TZS 20,000,000 \(41\.2%/, JSON.stringify(none)); assert.ok(!/is not in yet/.test(t), JSON.stringify(none));
+  }
+  assert.match(D.weekLines({ ...base, deckToday: false, totals: { recovery: { latest: { isToday: false, date: '2026-11-24', recovered: 0 } } } }).join('\n'), /no defaulter file has been uploaded today, so today's recovery is not measured yet; sales/);
+  const weekend = D.weekLines({ ...base, teamPerf: base.teamPerf.map(r => ({ ...r, recBasis: 'week' })), totals: { recovery: { latest: { isToday: false, date: '2026-11-24', recovered: 0 } } } }).join('\n');
+  assert.match(weekend, /recovery \(of the week's uncollected\), lowest first: ALPHA 10%/, 'a weekend ranks the week, which is not made of today alone');
+  // the date of the latest day is text
+  assert.ok(!/<b>/.test(out({ recovered: 0, date: '<b>x</b>', isToday: false })));
+});
+
+test('TEAM RANKINGS SAY WHEN THEY ARE CUT (F6): how many teams share the lowest and the highest value, how many have no figure, and no "highest" that stands at the lowest value', () => {
+  const mk = (n, f, g = () => 0) => Array.from({ length: n }, (_, i) => ({ team: 'T' + String(i + 1).padStart(2, '0'), collPctWeek: f(i), tRecPct: g(i), salesPct: g(i), recBasis: 'week' }));
+  const base = { weekOf: '2026-11-23', weekEnd: '2026-11-29', asOfDate: '2026-11-25', teamCount: 30, deckToday: true };
+  const ties = D.weekLines({ ...base, teamPerf: mk(30, i => (i < 20 ? 0 : 50)) }).join('\n');
+  assert.match(ties, /collection so far this week: lowest 5: T01 0%, T02 0%, T03 0%, T04 0%, T05 0% \(20 teams are at 0%: these are the first 5 by name\); highest 2: T30 50%, T29 50% \(10 teams are at 50%\)\./);
+  assert.match(ties, /sales this month \(of the monthly target\): all 30 measured teams are at 0%\./, 'when every team stands at one value there is no lowest and no highest');
+  assert.ok(!/highest 2: T30 0%/.test(ties));
+  const gaps = D.weekLines({ ...base, teamPerf: mk(30, i => (i < 4 ? null : i)) }).join('\n');
+  assert.match(gaps, /\(4 teams have no figure\)/, 'teams with no figure are said, not dropped');
+  assert.match(D.weekLines({ ...base, teamCount: 3, teamPerf: mk(3, i => (i === 0 ? null : i * 10)) }).join('\n'), /lowest first: T02 10%, T03 20%\. \(1 team has no figure\)/);
+  assert.ok(!/these are the first|teams are at/.test(D.weekLines({ ...base, teamPerf: mk(30, i => i + 1, i => i + 1) }).join('\n')), 'no note when nobody ties');
+});
+
+test('PERIOD WORDS (F7): "priority" is not "prior", "elastic" is not "last", yesterday is a day of this week, last month is not last week, and a question that says both gets both', () => {
+  const gmo = portal(['dashboard']);
+  for (const q of ['which teams are the priority this week for collection', 'priorities for recovery today', 'elastic collection this week']) { assert.equal(D.periodOf(q), 'now', q); assert.deepEqual(D.viewsFor(gmo, q), ['week'], q); }
+  for (const q of ['last month sales', 'mauzo ya mwaka jana', 'makusanyo ya mwezi uliopita', 'collection last year']) { assert.equal(D.periodOf(q), 'far', q); assert.deepEqual(D.viewsFor(gmo, q), [], q + ': neither report keeps it'); }
+  assert.equal(D.periodOf('how is the collection this week compared with last week'), 'both'); assert.deepEqual(D.viewsFor(gmo, 'how is the collection this week compared with last week'), ['standing', 'week']);
+  assert.deepEqual(D.viewsFor(gmo, 'mauzo ya jana yalikuwa ngapi'), ['week'], 'yesterday is read from this week\'s cards, not from last week\'s record');
+  assert.equal(D.periodOf('collection last week'), 'last'); assert.equal(D.periodOf('makusanyo wiki iliyopita'), 'last');
+  // the week's digest has yesterday's line, from the by-day cards; none on a Monday (the day before is last week's)
+  const d = { weekOf: '2026-11-23', weekEnd: '2026-11-29', weekday: 'WED', asOfDate: '2026-11-25', teamCount: 1, deckToday: true,
+    colTrend: [{ date: '2026-11-24', expected: 90000000, collected: 81000000, uncollected: 9000000, uploaded: true, pct: 90 }, { date: '2026-11-25', expected: 1, collected: 1, uncollected: 0, uploaded: true, pct: 100 }],
+    recTrend: [{ date: '2026-11-24', recovered: 5000000, uploaded: true, pct: 55.6 }], salesTrend: [{ date: '2026-11-24', amount: 70000000, loans: 5, pct: 70 }] };
+  assert.match(D.weekLines(d).join('\n'), /YESTERDAY \(2026-11-24\): collection expected TZS 90,000,000, collected TZS 81,000,000 \(90%\); recovered TZS 5,000,000 \(55\.6%\); sales TZS 70,000,000 from 5 loans \(70% of the day's target\)\./);
+  assert.ok(!/YESTERDAY/.test(D.weekLines({ ...d, asOfDate: '2026-11-23', weekday: 'MON' }).join('\n')), 'Monday: yesterday was Sunday of last week');
+  assert.ok(!/YESTERDAY/.test(D.weekLines({ ...d, colTrend: [], recTrend: [], salesTrend: [] }).join('\n')), 'no card for yesterday, no line');
+  assert.doesNotThrow(() => D.weekLines({ ...d, asOfDate: 'x' }));
+});
+
+test('A RULE OR A DEFINITION READS NOTHING OF THE HEAVY VIEWS (F9): what a percentage means, how it is calculated, how many calls an officer should make; the same words with a day or the person\'s own are figures, and the person\'s own calls stay cheap', () => {
+  const gmo = portal(['dashboard']), asha = PHONE_ASHA(), lead = PHONE_ASHA({ leader: true });
+  for (const q of ['What does recovery percentage mean?', 'asilimia ya makusanyo inahesabiwaje', 'How is the collection calculated?', 'how is reached percent calculated', 'formula ya makusanyo na urejeshaji ni ipi',
+    'what does par percent mean', 'makusanyo asilimia inahesabiwa vp', 'how many calls should an officer make a day', 'how is the dashboard sales percentage worked out for one day', 'calls kwenye ripoti zinahesabiwa vipi kwa kila kiongozi']) {
+    assert.deepEqual(D.viewsFor(ADMIN, q), [], 'the admin: ' + q); assert.deepEqual(D.viewsFor(gmo, q), [], 'a holder of the dashboard: ' + q); assert.deepEqual(D.viewsFor(lead, q).filter(v => v !== 'mine'), [], 'a leader: ' + q);
+  }
+  for (const q of ['what is the recovery percentage today', 'how is the collection percentage this week', 'asilimia ya makusanyo wiki hii ni ngapi', 'how are my teams doing?', 'how are we doing today'])
+    assert.ok(D.viewsFor(gmo, q).includes('week'), q + ' -> ' + D.viewsFor(gmo, q));
+  assert.deepEqual(D.viewsFor(asha, 'Where do I see how many calls I made?'), ['mine'], 'the person\'s own calls are read even when they ask where: the answer is the number');
+  assert.deepEqual(D.viewsFor(asha, 'how many calls should I make per day?'), ['mine'], 'and the officer is told their own number beside the company\'s target');
+});
+
+test('WORDS PEOPLE USE FOR A FIGURE (F12): collect, sell, tumeuza, and an officer\'s own talk time; and "mine" is not in "determine" nor "nina" in "ninaweza"', () => {
+  const gmo = portal(['dashboard']), asha = PHONE_ASHA();
+  for (const q of ['how much did we collect today', 'how much did we sell this week', 'tumeuza kiasi gani wiki hii', 'tumekusanya kiasi gani leo', 'waliuza kiasi gani leo', 'what is the sale this week']) assert.deepEqual(D.viewsFor(gmo, q), ['week'], q);
+  for (const q of ['muda wangu wa maongezi leo', 'my talk time today ni ngapi']) assert.ok(D.viewsFor(asha, q).includes('mine'), q + ' -> ' + D.viewsFor(asha, q));
+  for (const q of ['how to determine calls', 'ninaweza kupiga simu saa nyingine']) assert.deepEqual(D.viewsFor(asha, q), [], q + ': no word of the person\'s own in it');
+  assert.ok(D.viewsFor(asha, 'nina simu ngapi leo').includes('mine'), '"nina" on its own is "I have"');
+  assert.ok(D.viewsFor(asha, 'calls of mine today').includes('mine'), '"mine" on its own is the person\'s own');
+});
+
+
+test('A DASHBOARD READING THAT FAILS FREES ITS PLACE (F15): three failures in a row, then a good reading is made and answered; and the places are never more than three', async () => {
+  const db = fakeDb(book());
+  const f = db.from.bind(db); let broken = true;
+  db.from = t => { if (broken && t === 'teams') throw new Error('the database refused'); return f(t); };
+  const people = ['A', 'B', 'C'].map(n => asPerson({ code: 'CODE-' + n, name: 'LEADER ' + n, role: 'GMO', teams: ['T' + n], tabs: ['dashboard'] }, ['dashboard']));
+  for (const p of people) { const out = await D.readViews(db, p, ['week'], NOW, fmt); assert.match(out.notes[0], /\(failed\)/, 'a failed reading is said'); }
+  broken = false;                                                                    // (no reset of the helper's memory: if a failure had kept its place, these four would wait for a place until their two seconds were over)
+  const good = await Promise.all(['A', 'B', 'C', 'D'].map(n => D.readViews(db, asPerson({ code: 'CODE-' + n, name: 'LEADER ' + n, role: 'GMO', teams: ['ALPHA'], tabs: ['dashboard'] }, ['dashboard']), ['week'], NOW, fmt, 2000)));
+  for (const g of good) assert.ok(g.lines.length && !/failed|late/.test(g.notes[0]), 'every one answered: ' + g.notes[0]);
+  assert.ok(D.peakPortalReadsForTests() <= D.PORTAL_READS_MAX, 'never more than three at once');
+});
+
+test('A WEEK READING LIVES TWO MINUTES AND ONE DAY (F15, F16): the same person asking inside two minutes is served the kept reading, after two minutes it is made again, and across midnight it is made again even inside the two minutes', async () => {
+  const db = fakeDb(book()), gmo = asPerson(GMO_USER, ['dashboard']);
+  const at = ms => D.readViews(db, gmo, ['week'], ms, fmt);
+  await at(NOW);
+  assert.match((await at(NOW + 119 * 1000)).notes[0], / kept$/, 'at 119 seconds: kept');
+  assert.ok(!/ kept$/.test((await at(NOW + 121 * 1000)).notes[0]), 'at 121 seconds: made again');
+  assert.match((await at(NOW + 121 * 1000 + 119 * 1000)).notes[0], / kept$/, 'and kept again for its own two minutes');
+  D.resetClaudianDataForTests();
+  const late = Date.parse('2026-11-25T20:59:30Z'), after = late + 60 * 1000;          // 23:59:30 and 00:00:30 East Africa time
+  await at(late);
+  assert.ok(!/ kept$/.test((await at(after)).notes[0]), 'a minute later but another day: not the reading of the day before');
 });

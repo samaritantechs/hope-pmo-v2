@@ -66,14 +66,14 @@ export const clean = v => String(v == null ? '' : v).replace(/[\u0000-\u001f\u00
     "hawapigi", "piga" in "nimepiga"); three letters or fewer are whole words. */
 const TOPIC = {
   calls: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'wapigaji'],
-  standing: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collection', 'collected', 'urejeshaji', 'kurejesha', 'recovery', 'recovered', 'recover', 'mauzo', 'sales', 'sold', 'asilimia', 'percent', 'malengo', 'lengo',
+  standing: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collect', 'sell', 'sale', 'meuza', 'liuza', 'collection', 'collected', 'urejeshaji', 'kurejesha', 'recovery', 'recovered', 'recover', 'mauzo', 'sales', 'sold', 'asilimia', 'percent', 'malengo', 'lengo',
     'target', 'targets', 'utendaji', 'matokeo', 'performance', 'performing', 'standing', 'behind', 'nyuma'],
   // this week's and today's dashboard figures: what is collected, recovered, sold, owed, applied for
-  week: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collection', 'collected', 'rejesho', 'marejesho', 'urejeshaji', 'kurejesha', 'merejesh', 'lirejesh', 'recovery', 'recovered', 'recover', 'mauzo', 'kuuza', 'sales', 'sold', 'mikopo', 'loans', 'maombi',
+  week: ['makusanyo', 'kukusanya', 'mekusany', 'likusany', 'collect', 'sell', 'sale', 'meuza', 'liuza', 'collection', 'collected', 'rejesho', 'marejesho', 'urejeshaji', 'kurejesha', 'merejesh', 'lirejesh', 'recovery', 'recovered', 'recover', 'mauzo', 'kuuza', 'sales', 'sold', 'mikopo', 'loans', 'maombi_ya_mkopo', 'maombi_ya_mikopo',
     'applications', 'apps', 'deni', 'madeni', 'arrears', 'wadaiwa', 'waliochelewa', 'defaulter', 'defaulters', 'expected', 'uncollected', 'asilimia', 'percent', 'percentage', 'utendaji', 'matokeo',
     'performance', 'performing', 'endeleaje', 'team_doing', 'we_doing', 'malengo', 'lengo', 'target', 'targets', 'standing', 'behind', 'nyuma', 'abnormal'],
   // a phone person's own calls
-  mine: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'reach', 'nimefikia', 'my_target', 'my_targets', 'target_yangu', 'target_zangu', 'targets_zangu', 'lengo_langu', 'malengo_yangu', 'malengo_zangu'],
+  mine: ['simu', 'piga', 'pigia', 'pigi', 'pigo', 'pigiwa', 'call', 'calls', 'called', 'calling', 'dial', 'dials', 'portfolio', 'mazungumzo', 'maongezi', 'talk', 'reach', 'nimefikia', 'my_target', 'my_targets', 'target_yangu', 'target_zangu', 'targets_zangu', 'lengo_langu', 'malengo_yangu', 'malengo_zangu'],
 };
 /** Words that say the person wants teams or officers compared, counted or ranked, not a rule explained. */
 const CUES = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa', 'nani', 'who', 'which', 'gani', 'ipi', 'wapi', 'least', 'most', 'lowest', 'highest', 'worst', 'best', 'bottom', 'top',
@@ -81,7 +81,11 @@ const CUES = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa'
 /** WHEN: today and now, the week, the month, last week. QTY: a count, an amount, a percentage. PERSONAL: the person's own. They say a question wants a FIGURE and not a rule explained (a how-to
     question with none of these, or of the CUES, reads nothing). LAST says last week's, NOW this week's and today's: the two results the helper can give. */
 const NOW = ['leo', 'today', 'sasa', 'now', 'hii', 'huu', 'current', 'currently', 'present', 'so_far', 'hadi_sasa', 'this_week', 'this_month', 'this_morning', 'tonight', 'mwezi_huu'];
-const LAST = ['iliyopita', 'uliopita', 'iliopita', 'jana', 'last', 'previous', 'prior'];
+const LAST = ['iliyopita', 'uliopita', 'iliopita', 'last', 'previous', 'prior'];
+/** "jana" is YESTERDAY, not last week: a day of this week's cards (the week view says it). A month or a year ago is kept by neither report: such a question reads nothing, and the helper says which figure it does not have
+    (handbook Part 168: "mauzo ya jana" and "last month sales" were answered with last week's record, a different question). */
+const YESTERDAY = ['jana', 'yesterday'];
+const FAR = ['last_month', 'previous_month', 'prior_month', 'mwezi_uliopita', 'mwezi_jana', 'last_year', 'previous_year', 'mwaka_uliopita', 'mwaka_jana', 'last_quarter'];
 const WHEN = [...NOW, ...LAST, 'wiki', 'week', 'weekly', 'mwezi', 'month', 'monthly'];
 const QTY = ['ngapi', 'wangapi', 'kiasi', 'jumla', 'total', 'asilimia', 'percent', 'percentage', 'how_many', 'how_much', 'many', 'much', 'average', 'wastani', 'sum',
   'waiting', 'unassigned', 'remaining', 'osubiri', 'obaki', 'jagawiwa'];
@@ -90,18 +94,26 @@ const PERSONAL = ['yangu', 'wangu', 'langu', 'zangu', 'changu', 'vyangu', 'nimep
 const TEAMISH = ['team', 'teams', 'timu', 'officer', 'officers', 'afisa', 'maafisa', 'nani', 'who', 'which', 'gani', 'ipi', 'wote', 'kila', 'each', 'everyone', 'ranking', 'compare', 'linganisha'];
 /** A word of four letters or more is a stem and touches any word that holds it (keyHit): right for "pigi" in "hawapigi", wrong for these, which sit inside other words of the field:
     "each" in "reach" and "reached" (the person's own "Reached %" became a question about others and was read nothing: found on 26 Nov), "most" in "almost", "none" in "nonetheless",
-    "best" in "bestow", "gani" in "organization". They are matched as whole words. */
-const WHOLE = new Set(['each', 'most', 'none', 'best', 'gani']);
+    "best" in "bestow", "gani" in "organization", "last" in "elastic", "prior" in "priority", "mine" in "determine", "nina" in "ninaweza". They are matched as whole words. */
+const WHOLE = new Set(['each', 'most', 'none', 'best', 'gani', 'last', 'prior', 'mine', 'nina']);
 const hit = (tokens, words) => words.some(w => (WHOLE.has(w) ? tokens.includes(w) : keyHit(tokens, w)));
+/** Words of a question about HOW something works or what it MEANS, not about a figure. With no word of a day and none of the person's own, such a question reads nothing of the heavy views (the dashboard,
+    last week's record, the Calls report of every team): "What does recovery percentage mean?", "How is the collection calculated?", "How many calls should I make per day?" (the second reader, 26 Nov: they read
+    the heaviest reads in the book and the answer did not need a figure). The person's own calls are cheap and are not gated: "Where do I see how many calls I made?" is answered with the number. */
+const RULEISH = ['mean', 'means', 'meaning', 'define', 'defined', 'definition', 'calculate', 'calculated', 'calculation', 'formula', 'explain', 'where_do', 'where_can', 'how_is', 'how_are', 'how_do', 'how_does', 'should',
+  'maana', 'inamaanisha', 'hesabiwa', 'unahesabiwa', 'inahesabiwaje', 'inapatikanaje', 'jinsi', 'namna'];
 /** "gani" is "which" after a team or an officer ("timu gani") and "how much" after a quantity ("kiasi gani", "asilimia gani"): in the second use it does not make the question one about others
     (an officer's "nimefikia kiasi gani?" is about the officer). The tokens without such a "gani". */
 const QTY_NOUNS = ['kiasi', 'asilimia', 'jumla', 'idadi', 'wastani', 'muda'];
 const withoutQtyGani = tokens => tokens.filter((t, i) => !(t === 'gani' && i > 0 && QTY_NOUNS.includes(tokens[i - 1])));
-/** Which period the question is about: 'last' (last week's results), 'now' (this week and today) or 'both' (it does not say). */
+/** Which period the question is about: 'last' (last week's results), 'now' (this week, yesterday and today), 'far' (a month or a year ago: not kept) or 'both' (it does not say, or it says both). */
 export function periodOf(question) {
   const t = wordsOf(question);
-  if (hit(t, LAST) || hit(t, ['last_week', 'wiki_iliyopita', 'wiki_jana'])) return 'last';
-  if (hit(t, NOW)) return 'now';
+  if (hit(t, FAR)) return 'far';
+  const last = hit(t, LAST) || hit(t, ['last_week', 'wiki_iliyopita', 'wiki_jana']), now = hit(t, NOW) || hit(t, YESTERDAY);
+  if (last && now) return 'both';
+  if (last) return 'last';
+  if (now) return 'now';
   return 'both';
 }
 
@@ -146,7 +158,10 @@ export function viewsFor(subject, question) {
   const others = withoutQtyGani(tokens);
   const c = { asks: hit(others, CUES), when: hit(tokens, WHEN), qty: hit(tokens, QTY), personal: hit(tokens, PERSONAL), teamish: hit(others, TEAMISH) };
   const period = periodOf(question);
+  if (period === 'far') return [];
+  const rule = hit(tokens, RULEISH) && !c.when && !c.personal;
   return ORDER.filter(id => mayHave[id](subject) && hit(tokens, TOPIC[id]) && INTENT[id](c)
+    && (id === 'mine' || !rule)
     && (id !== 'standing' || period !== 'now') && (id !== 'week' || period !== 'last'));
 }
 
@@ -272,7 +287,7 @@ export function weekLines(d) {
   const L = [];
   const n = num(o.teamCount);
   L.push('DASHBOARD, week ' + clean(o.weekOf) + ' to ' + clean(o.weekEnd) + ', as of ' + clean(o.asOfDate) + (o.weekday ? ' (' + clean(o.weekday) + ')' : '') + (n != null ? ', ' + n + ' team' + (n === 1 ? '' : 's') + ' in view' : '')
-    + (o.pastWeek ? ' (a finished week)' : '') + '. Percentages are of target unless said; "not measured" means it could not be worked out yet.');
+    + (o.pastWeek ? ' (a finished week)' : '') + '. Sales % is the share of the weekly sales target, collection % is collected / expected and recovery % is recovered / uncollected; "not measured" means it could not be worked out yet.');
   L.push('THIS WEEK SO FAR: sales ' + pc(perf.salesPct) + lwBit(perf.lwSales) + ', collection ' + pc(perf.colPct) + lwBit(perf.lwCol) + ', recovery ' + pc(perf.recPct) + lwBit(perf.lwRec)
     + ', the three together ' + pc(perf.avgPct) + lwBit(perf.lwAvg) + '. Sales ' + tzs(cards.salesWeek) + ' from ' + (num(cards.salesLoans) == null ? 'an unknown number of' : cards.salesLoans)
     + ' loans. Loan applications this week: ' + (num(perf.appsCount) == null ? 'not known' : perf.appsCount) + (num(perf.appsAmount) ? ' (' + tzs(perf.appsAmount) + ')' : '')
@@ -280,13 +295,31 @@ export function weekLines(d) {
   const today = clean(o.asOfDate);
   const at = list => (Array.isArray(list) ? list.find(x => x && String(x.date).slice(0, 10) === today) || null : null);
   const col = at(o.colTrend), rec = at(o.recTrend), sal = at(o.salesTrend);
+  /* IS THE DAY'S LATER DEFAULTER FILE IN? The morning file stands alone from about 05:00 to about 20:00 (handbook Part 140): through those hours "recovered today" is nought and nobody has cleared, which is not a
+     result and must never be said as one (the rule of CHAT.md #788: every screen that shows a day's recovery says the later file is not in). The dashboard's own answer says which it is:
+     totals.recovery.latest.isToday is false while the latest day measured is an earlier day (found by the second reader, 26 Nov). Not said when the answer does not say (null: as before). */
+  const rl = o.totals && o.totals.recovery && o.totals.recovery.latest && typeof o.totals.recovery.latest === 'object' ? o.totals.recovery.latest : null;
+  const laterOut = o.deckToday !== false && !!rl && rl.isToday === false;
+  const laterShort = 'the day\'s later defaulter file (about 20:00) is not in yet';
+  const laterNote = laterShort + (rl && rl.date ? '; the latest day measured is ' + clean(rl.date) + ' with ' + tzs(rl.recovered) + ' recovered' : '');
   const t = [];
   t.push(col && col.uploaded ? 'collection expected ' + tzs(col.expected) + ', collected ' + tzs(col.collected) + ', uncollected ' + tzs(col.uncollected) + ' (' + pc(col.pct) + ')' : 'no collection sheet for today (a weekend, or not uploaded yet)');
   t.push(o.deckToday === false ? 'no defaulter file has been uploaded today, so today\'s recovery is not measured yet'
+    : laterOut ? 'today\'s recovery is not measured yet: ' + laterNote
     : rec && rec.uploaded ? 'recovered ' + tzs(rec.recovered) + ' (' + pc(rec.pct) + ' of the uncollected it is measured against)' : 'recovery not measured yet');
   t.push(sal ? 'sales ' + tzs(sal.amount) + ' from ' + (num(sal.loans) == null ? 'an unknown number of' : sal.loans) + ' loans (' + pc(sal.pct) + ' of the day\'s target)' : 'no sales figure for today');
   L.push('TODAY (' + today + '): ' + t.join('; ') + '.');
+  // YESTERDAY, from the same by-day cards of this week ("mauzo ya jana", "how much did we collect yesterday"): there is none on a Monday (the day before is last week's, which these cards do not hold)
+  const yKey = /^\d{4}-\d{2}-\d{2}$/.test(today) ? addDaysKey(today, -1) : '';
+  const atK = (list, k) => (k && Array.isArray(list) ? list.find(x => x && String(x.date).slice(0, 10) === k) || null : null);
+  const yc = atK(o.colTrend, yKey), yr = atK(o.recTrend, yKey), ys = atK(o.salesTrend, yKey), y = [];
+  if (yc && yc.uploaded) y.push('collection expected ' + tzs(yc.expected) + ', collected ' + tzs(yc.collected) + ' (' + pc(yc.pct) + ')');
+  if (yr && yr.uploaded) y.push('recovered ' + tzs(yr.recovered) + ' (' + pc(yr.pct) + ')');
+  if (ys) y.push('sales ' + tzs(ys.amount) + ' from ' + (num(ys.loans) == null ? 'an unknown number of' : ys.loans) + ' loans (' + pc(ys.pct) + ' of the day\'s target)');
+  if (y.length) L.push('YESTERDAY (' + yKey + '): ' + y.join('; ') + '.');
   L.push(o.deckToday === false ? 'DEFAULTERS: no defaulter file has been uploaded today, so there are no figures for today.'
+    : laterOut ? 'DEFAULTERS: this morning\'s file has ' + (num(cards.defaultersInitial) == null ? 'an unknown number of' : cards.defaultersInitial) + ' customers owing ' + tzs(cards.initArrears) + '; ' + laterShort
+      + ', so who has paid or cleared today is not known. Abnormal payments flagged: ' + (num(cards.abnormal) == null ? 'not known' : cards.abnormal) + (num(cards.abnormalAmount) ? ' (' + tzs(cards.abnormalAmount) + ')' : '') + '.'
     : 'DEFAULTERS (today\'s files): ' + (num(cards.defaulters) == null ? 'not known' : cards.defaulters + ' customers owing ' + tzs(cards.curArrears))
       + (num(cards.defaultersInitial) == null ? '' : ' (this morning\'s file: ' + cards.defaultersInitial + ' customers, ' + tzs(cards.initArrears) + ')')
       + '; recovered today ' + tzs(cards.recovered) + '; cleared today ' + (num(cards.cleared) == null ? 'not known' : cards.cleared) + '. Abnormal payments flagged: '
@@ -297,11 +330,20 @@ export function weekLines(d) {
       const list = rows.filter(r => num(r[key]) != null).sort((a, b) => a[key] - b[key] || String(a.team).localeCompare(String(b.team)));
       if (!list.length) return label + ': not measured for any team.';
       const show = r => clean(r.team) + ' ' + pc(r[key]);
-      if (list.length <= SHOW_ALL_UP_TO) return label + ', lowest first: ' + list.map(show).join(', ') + '.';
-      return label + ': lowest ' + nLow + ': ' + list.slice(0, nLow).map(show).join(', ') + '; highest ' + nHigh + ': ' + list.slice(-nHigh).reverse().map(show).join(', ') + '.';
+      // The teams with no figure are said, and so is how many share the lowest and the highest value: with twenty teams at 0% the "lowest five" are only the first five by name, and the "highest"
+      // can stand at the lowest value (found by the second reader, 26 Nov).
+      const miss = rows.length - list.length, missNote = miss ? ' (' + miss + ' team' + (miss === 1 ? ' has' : 's have') + ' no figure)' : '';
+      if (list.length <= SHOW_ALL_UP_TO) return label + ', lowest first: ' + list.map(show).join(', ') + '.' + missNote;
+      const lo = list[0][key], hi = list[list.length - 1][key];
+      const atLo = list.filter(r => r[key] === lo).length, atHi = list.filter(r => r[key] === hi).length;
+      if (lo === hi) return label + ': all ' + list.length + ' measured teams are at ' + pc(lo) + '.' + missNote;
+      return label + ': lowest ' + nLow + ': ' + list.slice(0, nLow).map(show).join(', ') + (atLo > nLow ? ' (' + atLo + ' teams are at ' + pc(lo) + ': these are the first ' + nLow + ' by name)' : '')
+        + '; highest ' + nHigh + ': ' + list.slice(-nHigh).reverse().map(show).join(', ') + (atHi > nHigh ? ' (' + atHi + ' teams are at ' + pc(hi) + ')' : '') + '.' + missNote;
     };
+    // a team's recovery of TODAY is nought for everybody until the later file is in: not a ranking (the week's, on a weekend, is not made of today alone)
+    const recToday = laterOut && rows[0].recBasis !== 'week';
     L.push('TEAMS (' + rows.length + '): ' + lowHigh('collPctWeek', 'collection so far this week', 5, 2) + ' '
-      + lowHigh('tRecPct', 'recovery (of ' + (rows[0].recBasis === 'week' ? 'the week\'s' : 'today\'s') + ' uncollected)', 5, 2) + ' ' + lowHigh('salesPct', 'sales this month (of the monthly target)', 5, 2));
+      + (recToday ? 'recovery today by team: not measured until the day\'s later file is in.' : lowHigh('tRecPct', 'recovery (of ' + (rows[0].recBasis === 'week' ? 'the week\'s' : 'today\'s') + ' uncollected)', 5, 2)) + ' ' + lowHigh('salesPct', 'sales this month (of the monthly target)', 5, 2));
   }
   /* THE DASHBOARD'S OTHER CARDS (handbook Part 168): the page draws every card to every holder of the dashboard, so the same people may be given the same figures, from the same answer: no read is added. */
   const WD = x => clean(x && x.weekday);
@@ -346,7 +388,11 @@ const mmss = secs => { const s = Math.max(0, Math.round(Number(secs) || 0)); ret
 export function mineLines(rep, name, today, mon) {
   const me = K(name);
   const users = rep && Array.isArray(rep.users) ? rep.users : [], byDay = rep && Array.isArray(rep.byDay) ? rep.byDay : [];
-  const u = users.find(x => K(x.name) === me) || null;
+  // The report names an officer by the name typed at registration, and two officers of one team can type the same one: their calls cannot be told apart from the report's rows, and adding them up
+  // (today) or taking the first (the week) gave BOTH the wrong figure, with a teammate's calls in it (found by the second reader, 26 Nov). Then no figure is given, and the person is told why.
+  const same = users.filter(x => K(x.name) === me);
+  if (same.length > 1) return ['YOUR CALLS: two officers of your team are registered under the name ' + clean(name) + ', so your calls cannot be told apart from theirs: say you cannot give your own figures until the PMO gives one of the two a different name.'];
+  const u = same[0] || null;
   const day = byDay.filter(r => K(r.officer) === me && String(r.day).slice(0, 10) === today);
   const sum = k => day.reduce((s, r) => s + (Number(r[k]) || 0), 0);
   const calls = sum('calls'), pf = sum('pf'), dur = sum('dur');
@@ -367,12 +413,15 @@ const TTL = { calls: DATA_TTL_MS, standing: DATA_TTL_MS, week: 2 * 60 * 1000, mi
 /* ---------- the answer kept for five minutes, and the one in flight shared ---------- */
 const kept = new Map();
 export function resetClaudianDataForTests() { kept.clear(); portalRunning = 0; portalPeak = 0; portalWaiting.length = 0; }
+/** The key of a person's OWN calls: the OFFICER, never the handset. A handset is handed from officer to officer (the PMO re-registers it, a new officer signs in on it: handbook Part 167, addendum 1), and a reading
+    keyed by the handset served the next officer the last one's name and calls for the minute it was kept (found by the second reader, 26 Nov). */
+const ownKey = subject => { const cu = subject && subject.cu; return cu && cu.user_id ? 'U:' + String(cu.user_id) : 'P:' + String((subject && (subject.key || subject.name)) || ''); };
 /** One view for one set of teams: from the kept reading, or one being made, or a new one. `clock` only measures (how many seconds the reading took); it decides nothing. */
 async function readOne(db, subject, id, nowMs, fmt, clock) {
   // a phone person's own calls need no teams (and are nobody else's: their reading is keyed by the person, never shared with a teammate)
   const teams = id === 'mine' ? null : await teamsOf(db, subject, nowMs);
   if (Array.isArray(teams) && !teams.length) return { lines: ['No teams are in this person\'s scope, so there is nothing to report.'], teams, ms: 0 };
-  const key = id + '|' + todayKey(nowMs) + '|' + (id === 'mine' ? 'P:' + String(subject.key || subject.name || '') : scopeKey(teams)) + '|' + (id === 'standing' ? fmt.std.sales + '/' + fmt.std.col + '/' + fmt.std.rec : '');
+  const key = id + '|' + todayKey(nowMs) + '|' + (id === 'mine' ? ownKey(subject) : scopeKey(teams)) + '|' + (id === 'standing' ? fmt.std.sales + '/' + fmt.std.col + '/' + fmt.std.rec : '');
   const c = kept.get(key);
   // A finished reading is kept for the view's own time (TTL); one still being made is shared (twelve people asking in the same minute are one read), unless it has outlived the host's own sixty seconds: that one is dead.
   if (c && nowMs - c.at < (c.done ? c.ttl : DATA_STUCK_MS)) return c.done ? c.p.then(v => ({ ...v, kept: true })) : c.p;
