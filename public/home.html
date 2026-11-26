@@ -261,7 +261,7 @@ function renderHome(me){
     .then(function(r){ return r.json().then(function(d){ return { status: r.status, body: d }; }); })
     .then(function(res){
       if (res.status >= 200 && res.status < 300 && res.body.ok !== false) renderHome(res.body);
-      else { store('hopeCode', null); renderSignIn(res.body.error || ''); }
+      else { try { if (window.HOPESession && HOPESession.clearHelper) HOPESession.clearHelper(); } catch(e){} store('hopeCode', null); renderSignIn(res.body.error || ''); }      // the helper's kept conversation goes with the refused code (handbook Part 167, addendum 2)
     })
     .catch(function(){ renderSignIn(); });
 })();

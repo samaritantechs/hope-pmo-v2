@@ -854,7 +854,7 @@ var CACHE_LS_KEY = 'hcListCache_v1';
 /* THIS PAGE'S OWN BUILD -- bump it on every change to this file, as app.html's BUILD is bumped.
    api_callBoot reports the one the server has (callBuild); when they differ this page reloads
    itself past every cache the next time it is put away -- see buildNote_. */
-var CALL_BUILD = '2026-11-26-b';
+var CALL_BUILD = '2026-11-26-c';
 var BOOT_LS_KEY = 'hcBoot_v1';
 /* WHERE THE OFFICER WAS, ACROSS A REBIRTH OF THE WHOLE PAGE. Android throws this page away
    during a phone call on the cheap handsets -- exactly the moment an officer is mid-customer
@@ -1350,7 +1350,21 @@ function claudianLater_(){
     }, 8000);
   } catch(e){}
 }
+/* The boot answer names ANOTHER officer than the page was showing: a warm start shows the last officer's stored answer first, and the PMO may have re-pointed the account to somebody else (or completed or
+   corrected its name) since; the fresh answer then lands, perhaps after the helper's file was already mounted. What the helper kept of the last officer goes, on this page's key and the portal's, and what the
+   mounted helper has drawn of it, and the next officer is given an empty bubble (handbook Part 167, addendum 2). The same officer entering twice (the stored answer, then the fresh one) changes nothing. Never
+   throws: it must not be able to keep an officer out of the app. */
+function claudianWho_(d){
+  try {
+    var p = S.boot;
+    if (!p || !d) return;
+    if (String(p.userId || '') === String(d.userId || '') && String(p.name || '') === String(d.name || '')) return;
+    claudianForget_();
+    if (window.ClaudianPMO && ClaudianPMO.mounted && ClaudianPMO.mounted()) ClaudianPMO.show();
+  } catch(e){}
+}
 function enterApp(d){
+  claudianWho_(d);
   S.boot = d; S.syncEverySec = d.syncEverySec || 300;
   S.locOn = d.locReport !== false;                          // Settings > CALL_LOCATION = OFF stops every handset
   $('#scrBoot').classList.add('hide'); $('#scrRegister').classList.add('hide');

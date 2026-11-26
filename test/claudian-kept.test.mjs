@@ -309,3 +309,94 @@ test('the release address is a link in a line, made by fillText: the anchor\'s a
   const back = q.body.children.filter(c => /(^| )m( |$)/.test(c.className) && c !== q.welcome)[0];
   assert.equal(back.children.length, 2); assert.equal(back.children[1].href, p.T.APK_URL);
 });
+
+
+/* ---------------- THE SECOND READER'S FINDINGS ON THE KEPT CONVERSATION (handbook Part 167, addendum 2) ---------------- */
+test('WHOSE LINES THE PANEL HOLDS (F2): when the page comes to name another person after the lines were written, they are forgotten before anything is written under the new mark, and the new person starts empty', () => {
+  const store = new Map(), DEV = 'DEVICE-ID-9f8e7d6c5b4a';
+  const p = page({ store, host: 'call', id: DEV, person: 'JUMA ISSA' });
+  assert.equal(p.K.restore(), false); p.K.st.owner = p.K.who();             // what mount() does
+  p.K.addMsg('u', 'question of JUMA'); p.K.addMsg('a', 'answer for JUMA');
+  assert.equal(p.rec().who, p.T.mark(DEV + '|JUMA ISSA'));
+  assert.equal(p.K.keepOwner(), true, 'the same person: nothing happens');
+  assert.equal(p.K.st.log.length, 2);
+  p.who.person = 'ASHA KOMBO';                                               // the fresh boot answer lands: the page names ASHA now
+  assert.equal(p.K.keepOwner(), false, 'another person: the last one\'s lines are forgotten');
+  assert.equal(store.has('claudianChat.call'), false, 'and the copy kept for the next visit with them');
+  assert.equal(p.K.st.log.length, 0); assert.equal(p.K.st.hist, null);
+  assert.equal(p.K.st.owner, p.T.mark(DEV + '|ASHA KOMBO'), 'the panel is ASHA\'s from here');
+  p.K.addMsg('u', 'question of ASHA');
+  assert.equal(J(p.rec().m), J([['u', 'question of ASHA']]), 'only her own line is kept, and it is kept under her own mark');
+  assert.equal(p.rec().who, p.T.mark(DEV + '|ASHA KOMBO'));
+  // the last net: a write that reaches persist() while the lines are another person's is never written under the new mark
+  const q = page({ store: new Map(), host: 'call', id: DEV, person: 'JUMA ISSA' }); q.K.addMsg('u', 'JUMA asks');
+  q.who.person = 'ASHA KOMBO'; q.K.persist();
+  assert.equal(q.store.has('claudianChat.call'), false, 'nothing is written for ASHA out of JUMA\'s lines, and JUMA\'s copy is gone'); assert.equal(q.K.st.log.length, 0);
+  // the box: a question the new person has typed is theirs and survives the forgetting when they are the one asking; the last person's unsent draft does not
+  const r = page({ store: new Map(), host: 'call', id: DEV, person: 'JUMA ISSA' }); r.K.st.e.ta = { value: 'a draft of JUMA' }; r.K.st.e.ta.style = {}; r.K.addMsg('u', 'q');
+  r.who.person = 'ASHA KOMBO'; r.K.keepOwner(true);
+  assert.equal(r.K.st.e.ta.value, 'a draft of JUMA', 'the person who is asking keeps what is in the box (it is their own when they are the one who presses Send)');
+  r.who.person = 'THIRD OFFICER'; r.K.keepOwner(false);
+  assert.equal(r.K.st.owner, r.T.mark(DEV + '|THIRD OFFICER'));
+  // a page that names the portal's code: another code in the same page is another person (a rotated code)
+  const s = page({ store: new Map(), host: 'portal', id: 'FIRST CODE' }); s.K.addMsg('u', 'q'); s.who.id = 'SECOND CODE';
+  assert.equal(s.K.keepOwner(), false); assert.equal(s.store.has('claudianChat.portal'), false);
+});
+
+test('AN ANSWER ON ITS WAY FOR SOMEBODY WHO IS NO LONGER HERE IS DROPPED (F2): stale() is true when the session ended or the page names another person, and then everything of the last person is forgotten', () => {
+  const p = page({ host: 'call', id: 'DEV', person: 'JUMA ISSA' });
+  p.K.addMsg('u', 'q'); const sess = p.K.st.sess;
+  assert.equal(p.K.stale(sess), false, 'the same session, the same person');
+  assert.equal(p.K.stale(sess - 1), true, 'a session that is over');
+  p.who.person = 'ASHA KOMBO';
+  assert.equal(p.K.stale(sess), true, 'another person now: the answer is dropped');
+  assert.equal(p.K.st.log.length, 0); assert.equal(p.store.has('claudianChat.call'), false);
+  assert.ok(p.K.st.sess > sess, 'and an answer of the old session that arrives later is dropped too');
+  assert.equal(p.K.stale(p.K.st.sess), false, 'the new person\'s own session is live');
+});
+
+test('THE EXPIRY IS A DELETION, not only a filter (F4): the first mount of either page removes the records of BOTH pages that have outlived thirty days, are dated in the future or are not records, and leaves the young ones', () => {
+  const t0 = 1_800_000_000_000, rec = (at, who = 'someone') => JSON.stringify({ v: 1, who, at, ha: 0, hist: null, m: [['u', 'q']] });
+  const run = (portalRec, callRec) => {
+    const store = new Map(); if (portalRec != null) store.set('claudianChat.portal', portalRec); if (callRec != null) store.set('claudianChat.call', callRec);
+    const p = page({ store, host: 'call', id: 'DEV', person: 'X', clock: { t: t0 } });
+    p.K.sweepExpired();
+    return { portal: store.has('claudianChat.portal'), call: store.has('claudianChat.call') };
+  };
+  assert.deepEqual(run(rec(t0 - 31 * DAY), rec(t0 - 31 * DAY)), { portal: false, call: false }, 'both expired: both go');
+  assert.deepEqual(run(rec(t0 - 31 * DAY), rec(t0 - DAY)), { portal: false, call: true }, 'the other page\'s expired record goes, this page\'s young one stays');
+  assert.deepEqual(run(rec(t0 - DAY), rec(t0 - 31 * DAY)), { portal: true, call: false });
+  assert.deepEqual(run(rec(t0 + 2 * DAY), rec(t0 + 2 * 3600000)), { portal: false, call: true }, 'a record from the future goes, a clock a few hours out does not');
+  assert.deepEqual(run('{not json', '"a string"'), { portal: false, call: false }, 'what is not a record at all goes');
+  assert.deepEqual(run(JSON.stringify({ v: 2, who: 'x', at: t0, m: [] }), JSON.stringify({ v: 1, who: 7, at: t0, m: [] })), { portal: false, call: false }, 'a record of another shape goes');
+  assert.deepEqual(run(null, null), { portal: false, call: false }, 'nothing there, nothing made');
+  assert.deepEqual(run(rec(t0 - 30 * DAY), rec(t0 - 30 * DAY - MIN)), { portal: true, call: false }, 'exactly thirty days stays, a minute more goes');
+  const blocked = page({ host: 'call', id: 'DEV', person: 'X', ls: { getItem() { throw new Error('blocked'); } } });
+  assert.doesNotThrow(() => blocked.K.sweepExpired(), 'blocked storage: nothing thrown');
+  // and the module runs it when it is mounted, before it restores anything
+  assert.ok(/st\.mounted = true;\s*paintTheme\(\);\s*sweepExpired\(\);[^\n]*\s*restore\(\);/.test(SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')), 'mount() sweeps first');
+});
+
+test('A FOREIGN CALL RECORD TAKES THE PORTAL\'S COPY WITH IT (F1): a handset that changed hands must not keep the last officer\'s portal conversation; a foreign portal record, or an expired one, takes only its own page\'s', () => {
+  const store = new Map(), DEV = 'DEVICE-ID-9f8e7d6c5b4a';
+  const juma = page({ store, host: 'call', id: DEV, person: 'JUMA ISSA' }); juma.K.addMsg('u', 'JUMA call question');
+  const portal = page({ store, host: 'portal', id: 'ADM 442211', clock: juma.clock }); portal.K.addMsg('u', 'JUMA portal question');
+  assert.deepEqual([...store.keys()].sort(), ['claudianChat.call', 'claudianChat.portal']);
+  const asha = page({ store, host: 'call', id: DEV, person: 'ASHA KOMBO', clock: juma.clock });
+  assert.equal(asha.K.restore(), false);
+  assert.deepEqual([...store.keys()], [], 'the last officer\'s call record and the portal copy are both gone');
+  // the portal side: another code\'s record goes, and the call app\'s record stays (nobody changed hands on the handset)
+  const store2 = new Map();
+  const c = page({ store: store2, host: 'call', id: DEV, person: 'JUMA ISSA' }); c.K.addMsg('u', 'q');
+  const o = page({ store: store2, host: 'portal', id: 'FIRST CODE', clock: c.clock }); o.K.addMsg('u', 'q');
+  const n = page({ store: store2, host: 'portal', id: 'SECOND CODE', clock: c.clock });
+  assert.equal(n.K.restore(), false);
+  assert.deepEqual([...store2.keys()], ['claudianChat.call'], 'only the portal\'s own copy went');
+  // an EXPIRED record of the right person on the call page: only its own key (nobody else is implied)
+  const store3 = new Map();
+  const d = page({ store: store3, host: 'call', id: DEV, person: 'JUMA ISSA' }); d.K.addMsg('u', 'q');
+  const e = page({ store: store3, host: 'portal', id: 'FIRST CODE', clock: d.clock }); e.K.addMsg('u', 'q');
+  const later = page({ store: store3, host: 'call', id: DEV, person: 'JUMA ISSA', clock: { t: d.clock.t + 40 * DAY } });
+  assert.equal(later.K.restore(), false);
+  assert.deepEqual([...store3.keys()], ['claudianChat.portal'], 'an expired record of the same officer takes only itself (the sweep takes the other page\'s expired record at mount)');
+});

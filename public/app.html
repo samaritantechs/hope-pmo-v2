@@ -878,7 +878,7 @@ var IMPREST_DEEPLINK_ID = null;
 /* THE BUILD STAMP. Bumped by hand with every front-end change -- there is no build step in
    this system (public/*.html is served exactly as written), so this string IS the version.
    Read it aloud when a screen looks wrong: it says at once whether the fix is even present. */
-var BUILD = '2026-11-26-d';
+var BUILD = '2026-11-26-e';
 /* SECONDS PER SLIDE ON THE PRESENTATION when Settings holds no PRESENT_SECONDS, and for the moment before /api/me has answered.
    "change default slide seconds from 15 to 45 please" -- the owner, 24 Nov 2026. It is the server's own default
    (PRESENT_SECONDS_DEFAULT in api/me.js; a test holds the two together) and the ONE place the page names it: the Presentation
@@ -961,6 +961,7 @@ function srv(fn, args){
          device, the next time any of them asks the server for anything -- which is what
          "logged out" has to mean when there is no way to reach a handset directly. */
       if (x.status === 401){
+        helperForget_();
         store('hopeCode', null);
         VC.store = {}; if (VC.watch) VC.watch.ok = false;
         document.body.innerHTML = '<div class="msg" style="padding:40px;text-align:center;line-height:1.8">'
@@ -1067,6 +1068,13 @@ $('#code').onkeydown = function(e){ if (e.key==='Enter') signIn(); };
    sign-in box -- the portal's own -- on the address of the screen they had just left. Two
    different sign-in cards for one system is how somebody ends up believing their code stopped
    working. There is one front door and this is it. */
+/* A SIGN-OUT THAT IS NOT THE BUTTON FORGETS THE HELPER'S CONVERSATION TOO. The code the server refuses (a rotated or deleted code: "you have been signed out") and a stored code refused at load drop `hopeCode` and
+   nothing else, and the person's questions and answers stayed in this browser and were drawn again for the same code (the second reader of Part 167, finding F3; handbook Part 167, addendum 2). The mounted
+   helper is hidden first (it forgets, and ends any answer on its way), then both pages' kept conversations are cleared. Safe whether or not the helper's file was ever loaded. */
+function helperForget_(){
+  try { if (window.ClaudianPMO) ClaudianPMO.hide(); } catch(e){}
+  try { if (window.HOPESession && HOPESession.clearHelper) HOPESession.clearHelper(); else { localStorage.removeItem('claudianChat.portal'); localStorage.removeItem('claudianChat.call'); } } catch(e){}
+}
 $('#outBtn').onclick = function(){
   // ONE SIGN-OUT FOR THE SYSTEM AND HOPE CALLS (brand.js, HOPESession): both, not just this page's code.
   if (window.HOPESession) HOPESession.signOutAll(); else { store('hopeCode', null); pushOfficerCode_(''); }
@@ -1076,7 +1084,7 @@ $('#outBtn').onclick = function(){
 /* ...and the other direction: signed out of Calls (which clears hopeCode) while this page is still open -- another tab, or this
    page restored from the back-forward cache -- sends this one back to the sign-in too. */
 function signedOutElsewhere_(){
-  if (S.code && !load('hopeCode')) { pushOfficerCode_(''); window.location.replace('/'); }
+  if (S.code && !load('hopeCode')) { try { if (window.ClaudianPMO) ClaudianPMO.hide(); } catch(e){} pushOfficerCode_(''); window.location.replace('/'); }
 }
 document.addEventListener('visibilitychange', function(){ if (!document.hidden) signedOutElsewhere_(); });
 window.addEventListener('pageshow', function(ev){ if (ev.persisted) signedOutElsewhere_(); });
@@ -7984,7 +7992,7 @@ function wireForms(){
     .then(readJson_)
     .then(function(x){
       if (x.status>=200 && x.status<300 && x.body.ok!==false) { pushOfficerCode_(saved); start(x.body); }
-      else { store('hopeCode', null); pushOfficerCode_(''); $('#code').value=''; $('#signin').classList.remove('booting'); }
+      else { helperForget_(); store('hopeCode', null); pushOfficerCode_(''); $('#code').value=''; $('#signin').classList.remove('booting'); }
     })
     .catch(function(){ $('#signin').classList.remove('booting'); });   // no answer: the box is the way back in
 })();

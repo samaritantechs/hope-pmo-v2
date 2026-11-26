@@ -86,7 +86,7 @@ const client = { messages: { create: async (req) => {
 } } };
 
 /* What the server was asked for, by the pages: so "nothing until the bubble is tapped" is a count, not a hope. */
-const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0, brand: false };
+const seen = { module: [], claudian: [], modules404: false, force: 0, delayStatus: 0, delayAsk: 0, brand: false, delayBoot: 0, portal401: false, meRefuse: false, bootCalls: [] };
 let DEVICE = 'dF';
 const send = (res, code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
 const REAL_PORTAL = new Set(['settings', 'accessCodes', 'officerAccounts', 'systemOpenGet', 'teams', 'claudianStatus', 'claudianSet', 'claudianTest', 'settingSet', 'storageUsage']);
@@ -105,12 +105,13 @@ const srv = http.createServer((req, res) => {
     const f = path.join(ROOT, 'public/mod', path.basename(u.pathname));
     if (fs.existsSync(f)) { res.writeHead(200, { 'Content-Type': 'application/javascript' }); res.end(fs.readFileSync(f)); return; }
   }
-  if (u.pathname === '/api/me') { send(res, 200, { ok: true, build: null }); return; }
+  if (u.pathname === '/api/me') { if (seen.meRefuse) { send(res, 401, { ok: false, error: 'That code is not current.' }); return; } send(res, 200, { ok: true, build: null }); return; }
   if (u.pathname === '/api/portal') {
     let b = ''; req.on('data', c => b += c);
     req.on('end', async () => {
       const { fn, args } = JSON.parse(b || '{}');
       let out;
+      if (seen.portal401) { send(res, 401, { ok: false, error: 'Unknown code' }); return; }
       try { out = REAL_PORTAL.has(fn) ? await portalApi(db, ADMIN, fn, args || {}, NOW) : { rows: [] }; }
       catch (e) { send(res, e.status || 500, { ok: false, error: String((e && e.message) || e) }); return; }
       send(res, 200, { ok: true, ...out, workspace: 'hopepmo' });
@@ -122,6 +123,7 @@ const srv = http.createServer((req, res) => {
     req.on('end', async () => {
       const { fn, args } = JSON.parse(b || '{}');
       let out;
+      if (fn === 'api_callBoot') { seen.bootCalls.push(Date.now()); if (seen.delayBoot) await new Promise(r => setTimeout(r, seen.delayBoot)); }
       try { out = await callApi(db, fn, [DEVICE].concat((args || []).slice(1)), NOW); }
       catch (e) { out = { ok: false, error: String((e && e.message) || e) }; }
       send(res, 200, out == null ? { ok: true } : out);
@@ -738,6 +740,7 @@ await section('A22 (history kept across a reload)', async () => {
   await page.locator('textarea').fill('target za timu');             // two ready answers weigh alike: the nearest are offered as choices
   await page.keyboard.press('Enter');
   await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.body .m:not(.w):not(.t)').length >= 5);
+  await idle(page);                    // the ANSWER has landed (the thinking line is gone): the panel and the record are read of one state, not of two moments (the second reader's T3: this point was racy)
   const before = await convo(page);
   const raw = await kept(page); let rec = null; try { rec = JSON.parse(raw); } catch (e) { /* reported below */ }
   check('A22 every line of the conversation is kept in the browser, under a mark of who it is', !!rec && rec.v === 1 && typeof rec.who === 'string' && rec.who.length >= 6 && rec.m.length === before.length && before.length >= 5, JSON.stringify([rec && rec.v, rec && rec.who, rec && rec.m.length, before.length]));
@@ -1213,6 +1216,241 @@ await section('C8 (a handset registered afresh starts with an empty helper)', as
     await until(a.page, () => !!document.getElementById('claudianPMO'), null, 20000);
     await tap(a.page); await choicesIn(a.page); await idle(a.page);
     check('C8 and the panel holds nothing of the last officer', (await convo(a.page)).length === 0);
+    await a.ctx.close();
+  } finally {
+    DEVICE = 'dF';
+    const users = db._dump('call_users'); const i = users.findIndex(r => r.device_id === 'dNew'); if (i >= 0) users.splice(i, 1);
+  }
+});
+
+
+// ---- THE SECOND READER'S FINDINGS ON THE KEPT CONVERSATION (handbook Part 167, addendum 2). Each of F1 to F3 and F5 is a point that was RED on the code as merged (#832/#833) and is green now.
+await section('R1 (a boot answer that lands after the module mounted, naming another officer: F2)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  const row = db._dump('call_users').find(r => r.device_id === 'dF');
+  const juma = row.name;
+  try {
+    const a = await callPage('R1');
+    await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    const cvJ = await convo(a.page);
+    const rawJ = JSON.parse(await kept(a.page, 'claudianChat.call'));
+    const dev = await a.page.evaluate(() => DEV);
+    check('R1 setup: JUMA ISSA has a kept conversation under mark(dev|JUMA ISSA)', cvJ.length >= 2 && rawJ.who === markOf(dev + '|JUMA ISSA'), JSON.stringify([cvJ.length, rawJ.who]));
+    // the PMO re-pointed the handset's account to ASHA KOMBO, and the network is slow: the boot answer comes AFTER the module mounted (the page's 8 s timer is compressed to 1.5 s, the answer is held 6 s)
+    row.name = 'ASHA KOMBO'; seen.delayBoot = 6000; seen.bootCalls.length = 0;
+    await a.page.reload();
+    await until(a.page, () => !!document.getElementById('claudianPMO'), null, 20000);
+    const atMount = await a.page.evaluate(() => ({ name: S.boot && S.boot.name, entered: S.entered }));
+    check('R1 at mount the page still names the PREVIOUS officer (the warm entry): the known window of Part 167 addendum 1', atMount.name === 'JUMA ISSA', JSON.stringify(atMount));
+    const landed = await until(a.page, () => S.boot && S.boot.name === 'ASHA KOMBO', null, 15000);
+    check('R1 the server\'s fresh answer lands and the page now names ASHA KOMBO', landed);
+    seen.delayBoot = 0;
+    await a.page.waitForTimeout(300);
+    const linesAfter = (await convo(a.page)).map(x => x.text.slice(0, 50));
+    check('R1 CLAIM OF #833, kept: the moment the answer arrives the panel holds NONE of JUMA\'s lines', linesAfter.length === 0, JSON.stringify(linesAfter));
+    check('R1 and JUMA\'s kept record is deleted from the handset (not re-owned by ASHA)', (await kept(a.page, 'claudianChat.call')) === null, String(await kept(a.page, 'claudianChat.call')).slice(0, 80));
+    check('R1 the bubble is still there for ASHA (shown, not hidden)', await a.page.evaluate(() => { const h = document.getElementById('claudianPMO'); return !!h && h.style.display !== 'none'; }));
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    await a.page.locator('.chip').nth(1).click(); await waitAnswer(a.page, 2);
+    const rawA = JSON.parse(await kept(a.page, 'claudianChat.call'));
+    check('R1 ASHA\'s record is ASHA\'s mark and holds NONE of JUMA\'s lines', rawA.who === markOf(dev + '|ASHA KOMBO') && !cvJ.some(x => rawA.m.some(l => l[1] === x.text)), JSON.stringify(rawA.m.map(l => String(l[1]).slice(0, 40))));
+    await a.page.reload(); await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    const found = (await convo(a.page)).map(x => x.text.slice(0, 50));
+    check('R1 ASHA, after a normal reload, finds her own two lines and none of JUMA\'s', found.length >= 2 && !cvJ.some(x => found.includes(x.text.slice(0, 50))), JSON.stringify(found));
+    await a.ctx.close();
+  } finally { row.name = juma; seen.delayBoot = 0; }
+});
+
+await section('R10 (the portal door of a handset whose account the PMO re-pointed: F1)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  const row = db._dump('call_users').find(r => r.device_id === 'dF');
+  const juma = row.name;
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const openPortal = async () => {                                  // the portal in the same storage, signed in with what the call app left in hopeCode (a team code on a real handset; 'ADM' here)
+      const p = await ctx.newPage(); p.setDefaultTimeout(9000);
+      await p.addInitScript(SPEED, 1500);
+      await p.goto(base + '/');
+      const code = await p.evaluate(() => localStorage.getItem('hopeCode') || 'ADM');
+      const me = { name: USERS.ADM.name, role: USERS.ADM.role, teams: USERS.ADM.teams, teamCount: null, tabs: USERS.ADM.tabs, can: { dashboard: true, upload: false, admin: true } };
+      await p.evaluate(([m, c]) => { S.code = c; start(m); S.lang = 'sw'; }, [me, code]);
+      await p.waitForFunction(() => !!document.getElementById('claudianPMO'), null, { timeout: 12000 }).catch(() => {});
+      return p;
+    };
+    // officer JUMA works on this handset: the call app, and the portal through the door (hopeCode is what the registration left)
+    const call = await ctx.newPage(); call.setDefaultTimeout(9000); await call.addInitScript(SPEED, 1500);
+    await call.goto(base + '/call'); await inCall(call);
+    await call.evaluate(() => localStorage.setItem('hopeCode', 'ADM'));
+    await tap(call); await choicesIn(call); await call.locator('.chip').first().click(); await waitAnswer(call, 2);
+    const p1 = await openPortal();
+    await tap(p1); await until(p1, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    await p1.locator('.chip').nth(2).click(); await waitAnswer(p1, 2);
+    check('R10 setup: JUMA has a call-app conversation and a portal conversation on the handset', (await kept(call, 'claudianChat.call')) !== null && (await kept(p1, 'claudianChat.portal')) !== null && (await convo(p1)).length >= 2);
+    await p1.close();
+    // the PMO re-points the account at ASHA (no registration form, no log-out); ASHA opens the app and then the portal door
+    row.name = 'ASHA KOMBO';
+    await call.reload(); await inCall(call);
+    check('R10 the app names ASHA KOMBO and her call-app helper is empty', (await call.evaluate(() => S.boot.name)) === 'ASHA KOMBO' && (await tap(call), await choicesIn(call), await idle(call), (await convo(call)).length === 0));
+    const p2 = await openPortal();
+    await tap(p2); await until(p2, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(p2);
+    const meets = (await convo(p2)).map(x => x.text.slice(0, 40));
+    check('R10 and through the portal door ASHA meets NONE of JUMA\'s portal conversation', meets.length === 0, JSON.stringify(meets));
+    await ctx.close();
+  } finally { row.name = juma; }
+});
+
+await section('R2 (the server refuses the code: "you have been signed out" forgets the conversation: F3)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  seen.brand = true;                                         // the normal page: brand.js is loaded (HOPESession exists)
+  try {
+    const { page, ctx } = await portal('R2');
+    check('R2 setup: the page has the system\'s one sign-out (HOPESession)', await page.evaluate(() => typeof window.HOPESession === 'object'));
+    await page.evaluate(() => localStorage.setItem('hopeCode', 'ADM'));
+    await tap(page);
+    await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    await page.locator('.chip').first().click(); await waitAnswer(page, 2);
+    check('R2 setup: a conversation is kept', (await kept(page)) !== null);
+    seen.portal401 = true;
+    await page.evaluate(() => { srv('teams').catch(function () {}); });
+    await page.waitForTimeout(800);
+    const code = await page.evaluate(() => localStorage.getItem('hopeCode'));
+    const msg = await page.evaluate(() => document.body.innerText.replace(/\s+/g, ' ').slice(0, 140));
+    check('R2 the page signs the person out ("you have been signed out") and drops hopeCode', code === null && /signed out/i.test(msg), JSON.stringify([code, msg]));
+    check('R2 and the kept conversation is gone with it, on both pages\' keys', (await kept(page)) === null && (await kept(page, 'claudianChat.call')) === null, String(await kept(page)).slice(0, 100));
+    seen.portal401 = false;
+    // the same code comes back (a rotated code put back): the person finds no conversation they were signed out of
+    await reenter(page, 'ADM');
+    await tap(page);
+    await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+    check('R2 after being signed out, the same code finds NO conversation', (await convo(page)).length === 0, JSON.stringify((await convo(page)).map(x => x.text.slice(0, 40))));
+    await ctx.close();
+  } finally { seen.portal401 = false; seen.brand = false; }
+});
+
+await section('R2b (a stored code the server refuses at load forgets the conversation: F3)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  seen.brand = true; seen.meRefuse = true;
+  try {
+    const rec = { v: 1, who: markOf('ADM'), at: Date.now(), ha: 0, hist: null, m: [['u', 'a question of long ago'], ['a', 'an answer of long ago']] };
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const page = await ctx.newPage(); page.setDefaultTimeout(6000);
+    page.on('pageerror', e => errs.push('R2b: ' + String(e)));
+    await page.addInitScript(r => { try { localStorage.setItem('hopeCode', 'ADM'); localStorage.setItem('claudianChat.portal', JSON.stringify(r)); } catch (e) {} }, rec);
+    await page.goto(base + '/');
+    await page.waitForTimeout(800);
+    const v = await page.evaluate(() => [localStorage.getItem('hopeCode'), localStorage.getItem('claudianChat.portal'), localStorage.getItem('claudianChat.call')]);
+    check('R2b the stored code is refused at load: the code goes and the kept conversation goes with it', v[0] === null && v[1] === null, JSON.stringify(v).slice(0, 160));
+    await ctx.close();
+  } finally { seen.meRefuse = false; seen.brand = false; }
+});
+
+await section('R11 (the page comes to name another person while the module is mounted: the module forgets the last one before the panel opens or a question is asked: F2, the module\'s own net)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  // the first code's conversation was kept: it is drawn again when the module mounts (the page names that code then)
+  const seed = { v: 1, who: markOf('ADM'), at: Date.now(), ha: 0, hist: null, m: [['u', 'a question kept for the first code'], ['a', 'an answer kept for the first code']] };
+  const { page, ctx } = await portal('R11', { store: { 'claudianChat.portal': JSON.stringify(seed) } });
+  const restored = (await convo(page)).map(x => x.text.slice(0, 30));
+  check('R11 setup: the first code\'s conversation is drawn again at mount', restored.length === 2 && (await kept(page)) !== null, JSON.stringify(restored));
+  // the page comes to name ANOTHER person before anybody has touched the panel (the late boot answer of a handset, a code changed in the same page)
+  await page.evaluate(() => { S.code = 'CLK'; });
+  await tap(page); await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(page);
+  const opened = (await convo(page)).map(x => x.text.slice(0, 40));
+  check('R11 the panel opened for the new person holds NONE of the last person\'s lines, and the copy kept for the next visit is gone', opened.length === 0 && (await kept(page)) === null, JSON.stringify([opened, String(await kept(page)).slice(0, 60)]));
+  await page.locator('.chip').nth(1).click(); await waitAnswer(page, 2);
+  const rec2 = JSON.parse(await kept(page));
+  check('R11 the new person\'s own conversation is kept under their own mark, and holds only their own lines', rec2.who === markOf('CLK') && rec2.m.length >= 2 && !rec2.m.some(l => /kept for the first code/.test(String(l[1]))), JSON.stringify([rec2.who, rec2.m.map(l => String(l[1]).slice(0, 30))]));
+  // the person changes while the panel is OPEN and the new person types a question and presses Send: their question is kept, the last one's lines are not, and the panel stays open
+  await page.evaluate(() => { S.code = 'ADM'; });
+  await page.locator('textarea').fill('target za timu'); await page.keyboard.press('Enter');
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.body .m.u').length >= 1); await idle(page);
+  const after = await convo(page);
+  check('R11 asking after the person changed: only the new question and its answer are there, none of the last person\'s', after.filter(x => x.kind === 'u').length === 1 && after.some(x => /target za timu/.test(x.text)) && !after.some(x => rec2.m.some(l => String(l[1]).slice(0, 30) === x.text.slice(0, 30) && l[0] !== 'u')), JSON.stringify(after.map(x => x.kind + ':' + x.text.slice(0, 30))));
+  check('R11 and the panel stayed open for them', (await shape(page)).open === true);
+  const rec3 = JSON.parse(await kept(page));
+  check('R11 and what is kept is the new mark with their own lines only', rec3.who === markOf('ADM') && rec3.m.length === after.length, JSON.stringify([rec3.who, rec3.m.length, after.length]));
+  // and the same when the new person taps a ready question instead of typing
+  await page.evaluate(() => { S.code = 'CLK'; });
+  await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0);
+  const before = (await convo(page)).length;
+  await page.locator('.chip').first().click(); await waitAnswer(page, 2); await idle(page);
+  const tapped = await convo(page);
+  check('R11 tapping a ready question after the person changed: only that question and its answer are there', before >= 3 && tapped.filter(x => x.kind === 'u').length === 1, JSON.stringify([before, tapped.map(x => x.kind + ':' + x.text.slice(0, 24))]));
+  await ctx.close();
+});
+
+await section('R9 (the PMO corrects the registered name of the same officer: F5, the trade-off kept on purpose)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  const row = db._dump('call_users').find(r => r.device_id === 'dF');
+  const juma = row.name;
+  try {
+    const a = await callPage('R9');
+    await inCall(a.page);
+    const uid0 = await a.page.evaluate(() => S.boot.userId);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    check('R9 setup: the officer has a kept conversation', (await convo(a.page)).length >= 2);
+    row.name = 'JUMA ISSA KOMBO';                                  // the PMO completes the name; same phone, same user id, same handset
+    await a.page.reload(); await inCall(a.page);
+    const after = await a.page.evaluate(() => ({ uid: S.boot.userId, name: S.boot.name }));
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    check('R9 the page knows it is the same person (same userId) after the name was completed', after.uid === uid0 && after.name === 'JUMA ISSA KOMBO', JSON.stringify([uid0, after]));
+    // A completed name and an account handed to another person look the same to the page (the user id comes from the phone number), so a changed name forgets: said in Part 167, addendum 2, and to the owner
+    check('R9 and a changed name forgets the conversation, on purpose (a correction and a hand-over look the same to the page)', (await convo(a.page)).length === 0 && (await kept(a.page, 'claudianChat.call')) === null);
+    await a.ctx.close();
+  } finally { row.name = juma; }
+});
+
+await section('R5d (sign-out while a question is in flight: the next person is not left busy: T1)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  const { page, ctx } = await portal('R5d');
+  await tap(page); await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(page);
+  seen.delayAsk = 2500;
+  await page.locator('textarea').fill('target za timu'); await page.keyboard.press('Enter');
+  await page.waitForTimeout(300);
+  await page.evaluate(() => { window.ClaudianPMO.hide(); });           // what the Toka / doLogout do
+  await page.waitForTimeout(3000); seen.delayAsk = 0;
+  await page.evaluate(() => { window.ClaudianPMO.show(); });
+  await tap(page); await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(page);
+  const s = await page.evaluate(() => { const r = document.getElementById('claudianPMO').shadowRoot; return { sendDisabled: r.querySelector('.send').disabled, lines: [...r.querySelectorAll('.body .m')].slice(1).map(x => x.textContent.slice(0, 40)), kept: localStorage.getItem('claudianChat.portal') }; });
+  check('R5d after sign-out with an answer in flight the next person finds Send enabled, no line of the last one, and nothing kept', !s.sendDisabled && s.lines.length === 0 && s.kept === null, JSON.stringify(s));
+  await ctx.close();
+});
+
+await section('R7 (the last person\'s UNSENT draft in the box at sign-out: T1)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0;
+  const { page, ctx } = await portal('R7');
+  await tap(page); await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(page);
+  await page.locator('textarea').fill('Mshahara wangu ni kiasi gani na kwa nini nimekatwa?');          // typed, never sent
+  await page.evaluate(() => { window.ClaudianPMO.hide(); });                                           // what the Toka / doLogout do
+  await page.evaluate(() => { window.ClaudianPMO.show(); });
+  await tap(page); await until(page, () => document.getElementById('claudianPMO').shadowRoot.querySelectorAll('.chip').length > 0); await idle(page);
+  const box = await page.evaluate(() => document.getElementById('claudianPMO').shadowRoot.querySelector('textarea').value);
+  check('R7 after a sign-out the next person finds the box EMPTY (not the last person\'s unsent draft)', box === '', JSON.stringify(box));
+  await ctx.close();
+});
+
+await section('R6 (the same page: sign-out, then another officer registers: the bubble comes back, empty: T2)', async () => {
+  setting('CLAUDIAN_AI', 'OFF'); C.noteClaudianSettingsWritten(db); C.resetClaudianForTests(); seen.claudian.length = 0; DEVICE = 'dF';
+  try {
+    const a = await callPage('R6');
+    await inCall(a.page);
+    await tap(a.page); await choicesIn(a.page);
+    await a.page.locator('.chip').first().click(); await waitAnswer(a.page, 2);
+    check('R6 setup: the first officer has a kept conversation', (await kept(a.page, 'claudianChat.call')) !== null);
+    await a.page.evaluate(() => { doLogout(); });
+    await a.page.waitForTimeout(300);
+    DEVICE = 'dNew';
+    await a.page.fill('#regPhone', '0712123456'); await a.page.fill('#regName', 'NEW OFFICER'); await a.page.fill('#regPass', 'KON123');
+    await a.page.click('#regBtn');
+    await a.page.waitForFunction(() => typeof S === 'object' && S.entered === true, null, { timeout: 12000 }).catch(() => {});
+    await a.page.waitForTimeout(400);
+    const shown = await a.page.evaluate(() => { const h = document.getElementById('claudianPMO'); return h ? h.style.display : 'NO HOST'; });
+    check('R6 the new officer, in the same page, is offered the bubble (the host is not display:none)', shown !== 'none', String(shown));
+    await tap(a.page); await choicesIn(a.page); await idle(a.page);
+    check('R6 and the panel holds nothing of the first officer', (await convo(a.page)).length === 0);
     await a.ctx.close();
   } finally {
     DEVICE = 'dF';
