@@ -340,8 +340,9 @@ test('WHICH WEEK: last week, this week and today, or not said', () => {
 test('THE KINDS OF FIGURES A PERSON MAY BE GIVEN FOLLOW THEIR SCREENS AND THEIR PHONE: nothing else, and the admin all of the portal\'s', () => {
   assert.deepEqual(D.figuresFor(portal([])), [], 'a person with none of the screens');
   assert.deepEqual(D.figuresFor(portal(['calls'])), ['calls by team (today and this week)']);
-  assert.deepEqual(D.figuresFor(portal(['dashboard'])), ['last full week\'s sales, collection and recovery by team', 'this week\'s and today\'s dashboard figures (sales, collection, early collection, recovery, Expected Defaulters recovery, legal recovery, arrears, loan applications) and how the teams stand']);
-  assert.equal(D.figuresFor(ADMIN).length, 3, 'calls, last week and this week');
+  assert.deepEqual(D.figuresFor(portal(['dashboard'])), ['last full week\'s sales, collection and recovery by team', 'this week\'s and today\'s dashboard figures (sales, collection, early collection, recovery, Expected Defaulters recovery, legal recovery, arrears, loan applications) and how the teams stand', 'this month so far (sales against the monthly target, collection and recovery, week by week, and how the teams stand)']);
+  assert.deepEqual(D.figuresFor(portal(['weekly'])), ['last full week\'s sales, collection and recovery by team', 'this month so far (sales against the monthly target, collection and recovery, week by week, and how the teams stand)'], 'the weekly report holds last week and the month, not the dashboard\'s week');
+  assert.equal(D.figuresFor(ADMIN).length, 4, 'calls, last week, this week and this month');
   assert.deepEqual(D.figuresFor(PHONE_ASHA()), ['their own calls (today and this week)'], 'an officer: their own calls');
   assert.equal(D.figuresFor(PHONE_ASHA({ leader: true })).length, 3, 'a leader: the teams\' calls, last week by team and their own calls');
   assert.deepEqual(D.figuresFor(null), []);
@@ -709,4 +710,123 @@ test('A WEEK READING LIVES TWO MINUTES AND ONE DAY (F15, F16): the same person a
   const late = Date.parse('2026-11-25T20:59:30Z'), after = late + 60 * 1000;          // 23:59:30 and 00:00:30 East Africa time
   await at(late);
   assert.ok(!/ kept$/.test((await at(after)).notes[0]), 'a minute later but another day: not the reading of the day before');
+});
+
+
+/* ---------------- STATS STAGE 3 (handbook Part 170): THE MONTH REPORT ---------------- */
+const MONTH = {
+  month: '2026-11', monthStart: '2026-11-01', monthEnd: '2026-11-30', asOfDate: '2026-11-25', ledgerReady: true,
+  totals: { sales: 480000000, loans: 31, monthTarget: 800000000, salesPct: 60, expected: 900000000, collected: 801000000, colPct: 89, uncollected: 99000000, recovered: 40000000, recPct: 40.4, perfPct: 63.1, perfOn: 3 },
+  rows: [
+    { week: 1, from: '2026-11-02', to: '2026-11-08', started: true, sales: 120000000, loans: 8, salesPct: 60, expected: 200000000, collected: 180000000, colPct: 90, uncollected: 20000000, recovered: 8000000, recPct: 40, perf: 63 },
+    { week: 2, from: '2026-11-09', to: '2026-11-15', started: true, sales: 100000000, loans: 7, salesPct: 50, expected: 210000000, collected: 189000000, colPct: 90, uncollected: 21000000, recovered: 9000000, recPct: 42.9, perf: 61 },
+    { week: 3, from: '2026-11-16', to: '2026-11-22', started: true, sales: 150000000, loans: 10, salesPct: 75, expected: 220000000, collected: 198000000, colPct: 90, uncollected: 22000000, recovered: 9000000, recPct: 40.9, perf: 68 },
+    { week: 4, from: '2026-11-23', to: '2026-11-29', started: true, sales: 110000000, loans: 6, salesPct: 55, expected: 270000000, collected: 234000000, colPct: 86.7, uncollected: 36000000, recovered: 14000000, recPct: 38.9, perf: 60 },
+    { week: 5, from: '2026-11-30', to: '2026-12-06', started: false, sales: 0, loans: 0, salesPct: null, expected: 0, collected: 0, colPct: null, uncollected: 0, recovered: 0, recPct: null, perf: null }],
+  agents: [{ name: 'SECRET AGENT NAME', sales: 1 }], leaders: [{ name: 'SECRET LEADER NAME', pay: 99999 }] };
+test('THE MONTH\'S LINES: the totals against the monthly target, and the weeks that have begun, each as the report says it; a null is "not measured", never a nought; the staff boards of the same answer are not sent', () => {
+  const t = D.monthLines(MONTH).join('\n');
+  assert.match(t, /^MONTH 2026-11 \(2026-11-01 to 2026-11-30\), as of 2026-11-25\. Sales % is the share of the monthly sales target, collection % is collected \/ expected and recovery % is recovered \/ uncollected; "not measured" means it could not be worked out yet\./);
+  assert.match(t, /MONTH SO FAR: sales TZS 480,000,000 from 31 loans \(60% of the monthly target TZS 800,000,000\); collection TZS 801,000,000 of TZS 900,000,000 expected \(89%\); recovery TZS 40,000,000 of TZS 99,000,000 uncollected \(40\.4%\); the three together 63\.1%\./);
+  assert.match(t, /WEEK BY WEEK: week 1 \(2026-11-02 to 2026-11-08\): sales TZS 120,000,000 \(60%\), collection 90%, recovery 40%; week 2 /);
+  assert.match(t, /week 4 \(2026-11-23 to 2026-11-29\): sales TZS 110,000,000 \(55%\), collection 86\.7%, recovery 38\.9%\.$/m, 'the week that has not begun is not listed');
+  assert.ok(!/week 5/.test(t) && !/SECRET|99999|pay/.test(t), 'a week to come and the staff boards are not in the lines');
+  // the pieces that are not there are said, never a nought
+  const none = D.monthLines({ ...MONTH, totals: { sales: 0, loans: 0, monthTarget: null, salesPct: null, expected: null, collected: null, colPct: null, uncollected: null, recovered: null, recPct: null, perfPct: null, perfOn: 0 }, rows: [] }).join('\n');
+  assert.match(none, /sales TZS 0 from 0 loans \(not measured of the monthly target not known\); collection not known of not known expected \(not measured\); recovery not known of not known uncollected \(not measured\); the three together not measured \(of the 0 measured\)\./);
+  assert.match(D.monthLines({ ...MONTH, ledgerReady: false }).join('\n'), /The month's collection and recovery are not worked out yet \(the month ledger is not ready\): say you cannot see them yet, never that they are nil\./);
+  assert.match(D.monthLines({ ...MONTH, totals: { ...MONTH.totals, perfOn: 2 } }).join('\n'), /the three together 63\.1% \(of the 2 measured\)/);
+  for (const bad of [null, undefined, {}, 'x', [], { totals: 5, rows: 'y' }, { rows: [null, 3, {}] }]) assert.doesNotThrow(() => D.monthLines(bad), String(bad));
+  assert.ok(!/<b>/.test(D.monthLines({ ...MONTH, month: '<b>x</b>', rows: [{ week: 1, from: '<i>a</i>', to: 'b', started: true }] }).join('\n')), 'a month and a date are text');
+});
+
+test('THE MONTH\'S TEAMS (handbook Part 170): each team\'s average over the weeks measured, all of them lowest first when few, else the lowest five and the highest two; a team with no figure is said, a null is never a nought, names are text, and the whole month stays small with ninety teams', () => {
+  const team = (name, avg, on = 3) => ({ sn: 1, team: name, branch: 'SECRET BRANCH', W1: avg, W2: avg, avg, on });
+  const few = { ...MONTH, teamTrend: { weeks: [], weeklyTarget: 1, sales: [team('ALPHA', 80), team('BETA', 20), team('GAMMA', 55)], collection: [team('ALPHA', 90), team('BETA', 95), team('GAMMA', null, 0)], recovery: [] } };
+  const t = D.monthLines(few).join('\n');
+  assert.match(t, /^TEAMS \(3\), each one's average over the weeks of this month measured so far: sales \(each week against the weekly sales target\), lowest first: BETA 20%, GAMMA 55%, ALPHA 80%\. collection, lowest first: ALPHA 90%, BETA 95%\. \(1 team has no figure\) recovery: not measured for any team\.$/m);
+  assert.ok(!/SECRET BRANCH/.test(t), 'the team\'s branch is not sent: only its name and its average');
+  // many teams: the lowest five and the highest two of each measure, the order the report ranks by is not the order shown
+  const many = Array.from({ length: 30 }, (_, i) => team('T' + String(i).padStart(2, '0'), (i * 7) % 100));
+  const m = D.monthLines({ ...MONTH, teamTrend: { sales: many, collection: many, recovery: many } }).join('\n');
+  assert.match(m, /sales \(each week against the weekly sales target\): lowest 5: T00 0%, T29 3%, T15 5%, T01 7%, T16 12%; highest 2: T14 98%, T28 96%\./);
+  assert.match(m, /collection: lowest 5: T00 0%, T29 3%, T15 5%, T01 7%, T16 12%; highest 2: T14 98%, T28 96%\. recovery: lowest 5: T00 0%/, 'the same ranking, on each of the three measures');
+  // hostile names are text, and a team of a damaged board is skipped, never thrown on
+  const bad = D.monthLines({ ...MONTH, teamTrend: { sales: [team('<b>x</b>', 10), null, 3, { avg: 5 }, team('OK', 20)], collection: 'nope', recovery: undefined } }).join('\n');
+  assert.ok(!/<b>/.test(bad) && /OK 20%/.test(bad) && /lowest first: b x \/b 10%, OK 20%/.test(bad), 'a name is text; a damaged row is skipped: ' + bad);
+  for (const b2 of [null, 5, 'x', [], { sales: 5 }, { sales: [null] }]) assert.doesNotThrow(() => D.monthLines({ ...MONTH, teamTrend: b2 }), String(b2));
+  assert.ok(!/TEAMS \(/.test(D.monthLines(MONTH).join('\n')), 'an answer with no team board says nothing of teams');
+  // ninety teams on every board: the month stays a few hundred tokens, one fact to a line
+  const ninety = Array.from({ length: 90 }, (_, i) => team('TEAM NUMBER ' + i, (i * 13) % 101));
+  const big = D.monthLines({ ...MONTH, teamTrend: { sales: ninety, collection: ninety, recovery: ninety } });
+  assert.ok(big.join('\n').length < 2600, 'a few hundred tokens at most: ' + big.join('\n').length);
+  for (const ln of big) assert.ok(ln.length < 900, 'one line to a fact: ' + ln.length);
+});
+
+test('THE MONTH SAYS WHEN TODAY IS NOT ALL IN AND WHICH RULE READ THE RECOVERY (handbook Part 170): the later file of the day is named in the header, and a book that reads recovery by the older pairing says so; the report\'s raw note (it can hold a database message) is never sent', () => {
+  const t = D.monthLines(MONTH).join('\n');
+  assert.match(t, /Today's recovery is complete only once the day's later defaulter file is in \(about 20:00 East Africa time, Monday to Saturday\)\./);
+  assert.ok(!/RECOVERY RULE/.test(t) && !/RECOVERY RULE/.test(D.monthLines({ ...MONTH, recoveryRule: 'latest', recoveryNote: null }).join('\n')), 'the latest-files rule says nothing');
+  const p = D.monthLines({ ...MONTH, recoveryRule: 'pairing', recoveryNote: 'recovery_standing failed: SECRET-DB-ERROR 12345' }).join('\n');
+  assert.match(p, /^RECOVERY RULE: this book reads recovery by pairing each day's own two files \(the latest-files rule is not installed here\), so the recovery figures may differ from the dashboard's: say so when you give them\.$/m);
+  assert.ok(!/SECRET-DB-ERROR/.test(p), 'the raw note is not sent');
+});
+
+test('THE MONTH IS READ BY A QUESTION ABOUT THE MONTH, in both languages, and only for those who may be given it: a month question alone does not read the week or last week\'s record', () => {
+  const gmo = portal(['dashboard']), weekly = portal(['weekly']), none = portal(['calls']);
+  for (const q of ['how are we doing this month', 'mauzo ya mwezi huu ni ngapi', 'collection this month so far', 'makusanyo ya mwezi huu ni kiasi gani', 'what is the monthly sales target and how far are we', 'how is our recovery this month', 'monthly collection percentage'])
+    assert.deepEqual(D.viewsFor(gmo, q), ['month'], q);
+  assert.deepEqual(D.viewsFor(weekly, 'how are we doing this month'), ['month'], 'a holder of the weekly report is given the month (the door\'s gate for it is the dashboard or the weekly report)');
+  assert.deepEqual(D.viewsFor(weekly, 'collection this week'), [], 'this week\'s figures are the dashboard\'s: not theirs');
+  assert.deepEqual(D.viewsFor(weekly, 'collection last week'), ['standing'], 'last week\'s record is');
+  assert.deepEqual(D.viewsFor(none, 'how are we doing this month'), [], 'a person with neither screen is read nothing of it');
+  assert.deepEqual(D.viewsFor(ADMIN, 'collection this month and this week').filter(v => v !== 'calls'), ['week', 'month'], 'a question that says both gets both');
+  assert.deepEqual(D.viewsFor(gmo, 'collection yesterday and this month'), ['week', 'month']);
+  // a month asked for in its weeks, or "so far", or as MTD, is still the month alone: the month report carries its weeks, and "sasa" (now) / "week by week" are not a question about this week
+  for (const q of ['mauzo ya mwezi hadi sasa', 'collection mwezi huu kwa kila wiki', 'week by week performance this month', 'sales each week this month', 'MTD sales', 'what is our month to date recovery', 'wiki kwa wiki makusanyo ya mwezi huu']) assert.deepEqual(D.viewsFor(gmo, q), ['month'], q);
+  // but a question that names this week or a day beside the month gets both, as before
+  for (const q of ['sales this month and this week', 'mauzo ya leo na ya mwezi huu', 'collection yesterday and this month']) assert.deepEqual(D.viewsFor(gmo, q), ['week', 'month'], q);
+  // a month ago reads nothing; a rule about the month reads nothing; a phone person is never given it
+  for (const q of ['sales last month', 'mauzo ya mwezi uliopita', 'what does the monthly target mean', 'how is the monthly collection calculated']) assert.deepEqual(D.viewsFor(gmo, q), [], q);
+  assert.deepEqual(D.viewsFor(PHONE_ASHA({ leader: true }), 'how are we doing this month'), [], 'a phone leader is not given the month report (the phone has no portal user for the door to be asked as)');
+  assert.deepEqual(D.viewsFor(gmo, 'how is the collection this week?'), ['week'], 'the week\'s question is as it was');
+  assert.deepEqual(D.viewsFor(PHONE_ASHA({ allTabs: true, tabs: ['dashboard'] }), 'how are we doing this month'), [], 'a phone person is never read the month, whatever the subject says: there is no portal user for the door to be asked as');
+});
+
+test('THE MONTH READING LIVES TWO MINUTES AND TAKES A PLACE LIKE THE DASHBOARD (handbook Part 170): kept at 119 seconds, made again at 121; and the month read, like the week read, goes through the three places', async () => {
+  const db = fakeDb(book()), gmo = asPerson(GMO_USER, ['dashboard']);
+  const at = ms => D.readViews(db, gmo, ['month'], ms, fmt);
+  await at(NOW);
+  assert.match((await at(NOW + 119 * 1000)).notes[0], / kept$/, 'at 119 seconds: kept');
+  assert.ok(!/ kept$/.test((await at(NOW + 121 * 1000)).notes[0]), 'at 121 seconds: made again');
+  // the module's own peak counter only counts what goes through the places, so the property is pinned in the source too: both reads take a place and give it back
+  const src = fs.readFileSync(path.join(ROOT, 'api/_lib/claudian-data.js'), 'utf8');
+  for (const fn of ['readWeek', 'readMonth']) {
+    const body = src.slice(src.indexOf('async function ' + fn + '('), src.indexOf('\n}', src.indexOf('async function ' + fn + '(')));
+    assert.ok(/await portalSlot\(\)/.test(body) && /finally \{ release\(\); \}/.test(body), fn + ' takes a place and gives it back');
+  }
+});
+
+test('THE REAL DOOR GIVES THE MONTH TO THE DASHBOARD OR THE WEEKLY REPORT, for their own teams: a holder is given the lines, a person with neither screen is refused by the door and nothing of the month is read, and the access code is in no line', async () => {
+  const dash = await D.readViews(fakeDb(book()), asPerson(GMO_USER, ['dashboard']), ['month'], NOW, fmt);
+  const text = dash.lines.join('\n');
+  assert.match(text, /^MONTH 2026-11 \(2026-11-01 to 2026-11-30\), as of 2026-11-25\./m); assert.match(text, /MONTH SO FAR: sales TZS /); assert.match(dash.notes[0], /^this month by week \d+\.\ds$/);
+  assert.match(text, /^TEAMS \(\d+\), each one's average over the weeks of this month measured so far: sales \(each week against the weekly sales target\)/m, 'the month report\'s own team board reaches the lines');
+  assert.ok(!/SECRET-GMO-CODE/.test(text));
+  D.resetClaudianDataForTests();
+  const weekly = await D.readViews(fakeDb(book()), asPerson({ ...GMO_USER, tabs: ['weekly'] }, ['weekly']), ['month'], NOW, fmt);
+  assert.match(weekly.lines.join('\n'), /^MONTH 2026-11 /m, 'the weekly report holds the month report');
+  D.resetClaudianDataForTests();
+  const refused = await D.readViews(fakeDb(book()), asPerson({ ...GMO_USER, tabs: ['legal'] }, ['legal']), ['month'], NOW, fmt);
+  assert.ok(!/^MONTH 2026-11 /m.test(refused.lines.join('\n')), 'a person with neither screen is given no month (refused by the door itself)');
+});
+
+test('THE MONTH SHARES THE THREE PLACES OF THE DASHBOARD: week and month reads together never run more than three at once, and every one is answered', async () => {
+  const names = 'ABCDEFGH'.split('');
+  const db = fakeDb(book({ teams: names.map(n => ({ team: 'T' + n, zone: 'Z' })) }));
+  slowTable(db, 'repayment_snapshots', 15);
+  const people = names.map(n => asPerson({ code: 'CODE-' + n, name: 'LEADER ' + n, role: 'GMO', teams: ['T' + n], tabs: ['dashboard'] }, ['dashboard']));
+  const out = await Promise.all(people.map((p, i) => D.readViews(db, p, i % 2 ? ['week', 'month'] : ['month'], NOW, fmt)));
+  for (const o of out) assert.ok(o.lines.length && !o.notes.some(n => /late|failed/.test(n)), o.notes.join(' | '));
+  assert.ok(D.peakPortalReadsForTests() <= D.PORTAL_READS_MAX, 'peak ' + D.peakPortalReadsForTests());
 });
