@@ -325,7 +325,10 @@ test('A QUESTION THAT ASKS FOR FIGURES READS THE FIGURES: this week and today fo
   assert.deepEqual(D.viewsFor(PHONE_ASHA(), 'Simu ya portfolio ni nini?'), []);
   assert.deepEqual(D.viewsFor(PHONE_ASHA({ leader: true }), 'team gani leo hawapigi simu kabisa'), ['calls'], 'a leader asking about teams is given the teams, not their own row');
   assert.deepEqual(D.viewsFor(PHONE_ASHA({ leader: true }), 'how many calls did I make today?'), ['mine'], 'and their own calls when they ask for them');
+  assert.deepEqual(D.viewsFor(PHONE_ASHA({ leader: true }), 'which of my teams calls least'), ['calls'], 'a question about teams is not about the person\'s own row, even with "my" in it');
+  assert.deepEqual(D.viewsFor(PHONE_ASHA({ leader: true }), 'how many calls did my team make today'), ['calls'], 'nor is a count of the team\'s');
   assert.deepEqual(D.viewsFor(gmo, 'how many calls did I make today?'), [], 'a portal person has no phone of their own in the portal');
+  assert.deepEqual(D.viewsFor(PHONE_ASHA({ allTabs: true, tabs: ['dashboard'] }), 'how is the collection this week?'), [], 'a phone person is never read the dashboard, whatever the subject says: there is no portal user for the door to be asked as');
 });
 
 test('WHICH WEEK: last week, this week and today, or not said', () => {
